@@ -78,4 +78,6 @@ CAst is in **alpha**. It is under active development and being distributed priva
 
 ## License
 
+This project is licensed under the [Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International](https://creativecommons.org/licenses/by-nc-nd/4.0/) license. You are free to use and share it for educational and non-commercial purposes, but you may not create derivative works or use it for commercial gain. See [LICENSE](LICENSE) for details.
+
 Developed by Ogetay. For more information, visit [ogetay.com/citizen-astronomy-cast](https://ogetay.com/citizen-astronomy-cast).
