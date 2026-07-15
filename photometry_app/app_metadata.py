@@ -10,7 +10,7 @@ APP_USER_MODEL_ID = "CitizenAstronomy.CAst"
 APP_VERSION = "0.1.1-alpha.1"
 APP_UPDATE_CHANNEL = "alpha"
 # Set this to the public "owner/repository" before publishing the first update.
-APP_UPDATE_GITHUB_REPOSITORY = ""
+APP_UPDATE_GITHUB_REPOSITORY = "OgetayKayali/citizen-astronomy"
 APP_UPDATE_MANIFEST_ASSET_NAME = "CitizenAstronomy-update.json"
 
 _APP_ICON_CANDIDATE_NAMES = (
