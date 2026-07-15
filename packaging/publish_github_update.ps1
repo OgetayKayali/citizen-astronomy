@@ -212,9 +212,9 @@ foreach ($requiredPath in @($specPath, $issPath, $startupSmokePath)) {
 
 Push-Location $projectRoot
 try {
-    $gitRootLines = Invoke-NativeCapture -FilePath $gitPath -ArgumentList @(
+    $gitRootLines = @(Invoke-NativeCapture -FilePath $gitPath -ArgumentList @(
         "rev-parse", "--show-toplevel"
-    ) -Description "Locating the Git repository"
+    ) -Description "Locating the Git repository")
     $pathTrimCharacters = [char[]]@("\", "/")
     $gitRoot = [IO.Path]::GetFullPath([string]$gitRootLines[0]).TrimEnd($pathTrimCharacters)
     if (-not $gitRoot.Equals($projectRoot.TrimEnd($pathTrimCharacters), [StringComparison]::OrdinalIgnoreCase)) {
@@ -258,18 +258,18 @@ try {
     }
     Write-Host "==> Release source files are clean (known generated build artifacts are ignored)"
 
-    $commitLines = Invoke-NativeCapture -FilePath $gitPath -ArgumentList @(
+    $commitLines = @(Invoke-NativeCapture -FilePath $gitPath -ArgumentList @(
         "rev-parse", "HEAD"
-    ) -Description "Reading the release commit"
+    ) -Description "Reading the release commit")
     $commit = ([string]$commitLines[0]).Trim()
 
     Invoke-NativeCommand -FilePath $ghPath -ArgumentList @(
         "auth", "status"
     ) -Description "Validating GitHub CLI authentication"
 
-    $repositoryJsonLines = Invoke-NativeCapture -FilePath $ghPath -ArgumentList @(
+    $repositoryJsonLines = @(Invoke-NativeCapture -FilePath $ghPath -ArgumentList @(
         "repo", "view", $Repository, "--json", "nameWithOwner,isPrivate,visibility"
-    ) -Description "Checking GitHub repository accessibility"
+    ) -Description "Checking GitHub repository accessibility")
     $repositoryData = ($repositoryJsonLines -join [Environment]::NewLine) | ConvertFrom-Json
     if (($repositoryData.isPrivate -eq $true) -or ([string]$repositoryData.visibility -ne "PUBLIC")) {
         throw "GitHub repository '$Repository' is not public. Update publishing requires a public repository."
@@ -427,12 +427,12 @@ try {
         "--prerelease"
     ) -Description "Publishing the GitHub prerelease"
 
-    $releaseUrlLines = Invoke-NativeCapture -FilePath $ghPath -ArgumentList @(
+    $releaseUrlLines = @(Invoke-NativeCapture -FilePath $ghPath -ArgumentList @(
         "release", "view", $tag,
         "--repo", $Repository,
         "--json", "url",
         "--jq", ".url"
-    ) -Description "Reading the published release URL"
+    ) -Description "Reading the published release URL")
     Write-Host "Published prerelease: $(([string]$releaseUrlLines[0]).Trim())"
 } finally {
     Pop-Location
