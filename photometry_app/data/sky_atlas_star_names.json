@@ -1,0 +1,2210 @@
+{
+  "version": 1,
+  "source": "SIMBAD identifier query: NAME * joined to HIP *",
+  "stars": [
+    {
+      "hip": 677,
+      "names": [
+        "Alpheratz",
+        "Sirrah"
+      ]
+    },
+    {
+      "hip": 746,
+      "names": [
+        "Caph"
+      ]
+    },
+    {
+      "hip": 1067,
+      "names": [
+        "Algenib"
+      ]
+    },
+    {
+      "hip": 2081,
+      "names": [
+        "Ankaa"
+      ]
+    },
+    {
+      "hip": 3179,
+      "names": [
+        "Schedar"
+      ]
+    },
+    {
+      "hip": 3419,
+      "names": [
+        "Diphda"
+      ]
+    },
+    {
+      "hip": 3821,
+      "names": [
+        "Achird"
+      ]
+    },
+    {
+      "hip": 3829,
+      "names": [
+        "van Maanen 2",
+        "van Maanen's Star",
+        "van Maanen Star",
+        "vMA 2"
+      ]
+    },
+    {
+      "hip": 4693,
+      "names": [
+        "Butler's Star"
+      ]
+    },
+    {
+      "hip": 5447,
+      "names": [
+        "Mirach"
+      ]
+    },
+    {
+      "hip": 5957,
+      "names": [
+        "KOBE-1"
+      ]
+    },
+    {
+      "hip": 6411,
+      "names": [
+        "Adhil"
+      ]
+    },
+    {
+      "hip": 6686,
+      "names": [
+        "Ruchbah"
+      ]
+    },
+    {
+      "hip": 7097,
+      "names": [
+        "Alpherg"
+      ]
+    },
+    {
+      "hip": 7513,
+      "names": [
+        "Titawin"
+      ]
+    },
+    {
+      "hip": 7588,
+      "names": [
+        "Achernar"
+      ]
+    },
+    {
+      "hip": 8038,
+      "names": [
+        "HD 10611BC"
+      ]
+    },
+    {
+      "hip": 8198,
+      "names": [
+        "Torcular"
+      ]
+    },
+    {
+      "hip": 8645,
+      "names": [
+        "Baten Kaitos"
+      ]
+    },
+    {
+      "hip": 8796,
+      "names": [
+        "Mothallah"
+      ]
+    },
+    {
+      "hip": 8832,
+      "names": [
+        "Mesarthim"
+      ]
+    },
+    {
+      "hip": 8886,
+      "names": [
+        "Segin"
+      ]
+    },
+    {
+      "hip": 8903,
+      "names": [
+        "Sheratan"
+      ]
+    },
+    {
+      "hip": 9487,
+      "names": [
+        "Alrescha"
+      ]
+    },
+    {
+      "hip": 9640,
+      "names": [
+        "Almach"
+      ]
+    },
+    {
+      "hip": 9884,
+      "names": [
+        "Hamal"
+      ]
+    },
+    {
+      "hip": 10826,
+      "names": [
+        "Mira",
+        "Mira A"
+      ]
+    },
+    {
+      "hip": 11569,
+      "names": [
+        "iot Cas AB"
+      ]
+    },
+    {
+      "hip": 11767,
+      "names": [
+        "Lodestar",
+        "North Star",
+        "Polaris"
+      ]
+    },
+    {
+      "hip": 12469,
+      "names": [
+        "LS I +63 303"
+      ]
+    },
+    {
+      "hip": 12706,
+      "names": [
+        "Kaffaljidhma"
+      ]
+    },
+    {
+      "hip": 13268,
+      "names": [
+        "Miram"
+      ]
+    },
+    {
+      "hip": 13288,
+      "names": [
+        "Angetenar"
+      ]
+    },
+    {
+      "hip": 13701,
+      "names": [
+        "Azha"
+      ]
+    },
+    {
+      "hip": 13847,
+      "names": [
+        "Acamar"
+      ]
+    },
+    {
+      "hip": 13879,
+      "names": [
+        "Gorgonea Secunda"
+      ]
+    },
+    {
+      "hip": 14135,
+      "names": [
+        "Menkar"
+      ]
+    },
+    {
+      "hip": 14354,
+      "names": [
+        "Gorgonea Tertia"
+      ]
+    },
+    {
+      "hip": 14576,
+      "names": [
+        "Algol",
+        "Algol A",
+        "Algol B",
+        "Algol C"
+      ]
+    },
+    {
+      "hip": 14668,
+      "names": [
+        "Misam"
+      ]
+    },
+    {
+      "hip": 14817,
+      "names": [
+        "Gorgonea Quarta"
+      ]
+    },
+    {
+      "hip": 14838,
+      "names": [
+        "Botein"
+      ]
+    },
+    {
+      "hip": 15197,
+      "names": [
+        "Zibal"
+      ]
+    },
+    {
+      "hip": 15863,
+      "names": [
+        "Mirfak"
+      ]
+    },
+    {
+      "hip": 16537,
+      "names": [
+        "Ran"
+      ]
+    },
+    {
+      "hip": 17378,
+      "names": [
+        "Rana"
+      ]
+    },
+    {
+      "hip": 17448,
+      "names": [
+        "Atik"
+      ]
+    },
+    {
+      "hip": 17489,
+      "names": [
+        "Celaeno",
+        "Celeno"
+      ]
+    },
+    {
+      "hip": 17499,
+      "names": [
+        "Electra"
+      ]
+    },
+    {
+      "hip": 17531,
+      "names": [
+        "Taygeta",
+        "Taygete"
+      ]
+    },
+    {
+      "hip": 17573,
+      "names": [
+        "Maia"
+      ]
+    },
+    {
+      "hip": 17579,
+      "names": [
+        "Asterope"
+      ]
+    },
+    {
+      "hip": 17608,
+      "names": [
+        "Merope"
+      ]
+    },
+    {
+      "hip": 17702,
+      "names": [
+        "Alcyone"
+      ]
+    },
+    {
+      "hip": 17750,
+      "names": [
+        "GJ 153 BC"
+      ]
+    },
+    {
+      "hip": 17847,
+      "names": [
+        "Atlas"
+      ]
+    },
+    {
+      "hip": 17851,
+      "names": [
+        "Pleione"
+      ]
+    },
+    {
+      "hip": 17891,
+      "names": [
+        "MOAI 1"
+      ]
+    },
+    {
+      "hip": 18543,
+      "names": [
+        "Zaurak"
+      ]
+    },
+    {
+      "hip": 18614,
+      "names": [
+        "Menkhib",
+        "Menkib"
+      ]
+    },
+    {
+      "hip": 19587,
+      "names": [
+        "Beid"
+      ]
+    },
+    {
+      "hip": 19762,
+      "names": [
+        "V773 Tau D"
+      ]
+    },
+    {
+      "hip": 19849,
+      "names": [
+        "Keid"
+      ]
+    },
+    {
+      "hip": 20097,
+      "names": [
+        "V410 Tau AB"
+      ]
+    },
+    {
+      "hip": 20205,
+      "names": [
+        "Prima Hyadum"
+      ]
+    },
+    {
+      "hip": 20390,
+      "names": [
+        "T Tau A",
+        "T Tau IRC",
+        "T Tau N",
+        "T Tau S"
+      ]
+    },
+    {
+      "hip": 20455,
+      "names": [
+        "Secunda Hyadum"
+      ]
+    },
+    {
+      "hip": 20889,
+      "names": [
+        "Ain"
+      ]
+    },
+    {
+      "hip": 21088,
+      "names": [
+        "Stein 2051",
+        "Stein 2051A"
+      ]
+    },
+    {
+      "hip": 21393,
+      "names": [
+        "Theemin"
+      ]
+    },
+    {
+      "hip": 21421,
+      "names": [
+        "Aldebaran"
+      ]
+    },
+    {
+      "hip": 21594,
+      "names": [
+        "Sceptrum"
+      ]
+    },
+    {
+      "hip": 22365,
+      "names": [
+        "Bidelman's Star"
+      ]
+    },
+    {
+      "hip": 22449,
+      "names": [
+        "Tabit"
+      ]
+    },
+    {
+      "hip": 22856,
+      "names": [
+        "BD-00 799AB",
+        "HD 31356AB"
+      ]
+    },
+    {
+      "hip": 23015,
+      "names": [
+        "Hassaleh"
+      ]
+    },
+    {
+      "hip": 23416,
+      "names": [
+        "Almaaz"
+      ]
+    },
+    {
+      "hip": 23875,
+      "names": [
+        "Cursa"
+      ]
+    },
+    {
+      "hip": 24186,
+      "names": [
+        "Kapteyn's",
+        "Kapteyn's star",
+        "Kapteyn Star"
+      ]
+    },
+    {
+      "hip": 24436,
+      "names": [
+        "Rigel"
+      ]
+    },
+    {
+      "hip": 24608,
+      "names": [
+        "Capella"
+      ]
+    },
+    {
+      "hip": 25336,
+      "names": [
+        "Bellatrix"
+      ]
+    },
+    {
+      "hip": 25428,
+      "names": [
+        "Elnath"
+      ]
+    },
+    {
+      "hip": 25606,
+      "names": [
+        "Nihal"
+      ]
+    },
+    {
+      "hip": 25930,
+      "names": [
+        "Mintaka"
+      ]
+    },
+    {
+      "hip": 25985,
+      "names": [
+        "Arneb"
+      ]
+    },
+    {
+      "hip": 26081,
+      "names": [
+        "Wachmann's Flare Star",
+        "Wachmann Variable"
+      ]
+    },
+    {
+      "hip": 26176,
+      "names": [
+        "lambda Ori X-5"
+      ]
+    },
+    {
+      "hip": 26207,
+      "names": [
+        "Heka",
+        "Meissa"
+      ]
+    },
+    {
+      "hip": 26241,
+      "names": [
+        "Hatysa"
+      ]
+    },
+    {
+      "hip": 26311,
+      "names": [
+        "Alnilam"
+      ]
+    },
+    {
+      "hip": 26634,
+      "names": [
+        "Phact"
+      ]
+    },
+    {
+      "hip": 26727,
+      "names": [
+        "Alnitak"
+      ]
+    },
+    {
+      "hip": 27366,
+      "names": [
+        "Saiph"
+      ]
+    },
+    {
+      "hip": 27628,
+      "names": [
+        "Wazn"
+      ]
+    },
+    {
+      "hip": 27989,
+      "names": [
+        "Betelgeuse"
+      ]
+    },
+    {
+      "hip": 28041,
+      "names": [
+        "Gore's Nova"
+      ]
+    },
+    {
+      "hip": 28360,
+      "names": [
+        "Menkalinan"
+      ]
+    },
+    {
+      "hip": 28380,
+      "names": [
+        "Mahasim"
+      ]
+    },
+    {
+      "hip": 29655,
+      "names": [
+        "Propus"
+      ]
+    },
+    {
+      "hip": 30089,
+      "names": [
+        "Red Rectangle"
+      ]
+    },
+    {
+      "hip": 30122,
+      "names": [
+        "Furud"
+      ]
+    },
+    {
+      "hip": 30324,
+      "names": [
+        "Mirzam"
+      ]
+    },
+    {
+      "hip": 30343,
+      "names": [
+        "Tejat"
+      ]
+    },
+    {
+      "hip": 30438,
+      "names": [
+        "Canopus"
+      ]
+    },
+    {
+      "hip": 31646,
+      "names": [
+        "Plaskett's star",
+        "Plaskett star"
+      ]
+    },
+    {
+      "hip": 31681,
+      "names": [
+        "Alhena"
+      ]
+    },
+    {
+      "hip": 32246,
+      "names": [
+        "Mebsuta"
+      ]
+    },
+    {
+      "hip": 32349,
+      "names": [
+        "Sirius",
+        "Sirius A"
+      ]
+    },
+    {
+      "hip": 32439,
+      "names": [
+        "23 H. Cam"
+      ]
+    },
+    {
+      "hip": 32768,
+      "names": [
+        "Altaleban",
+        "Taleban"
+      ]
+    },
+    {
+      "hip": 33579,
+      "names": [
+        "Adhara"
+      ]
+    },
+    {
+      "hip": 34045,
+      "names": [
+        "Muliphein"
+      ]
+    },
+    {
+      "hip": 34088,
+      "names": [
+        "Mekbuda"
+      ]
+    },
+    {
+      "hip": 34444,
+      "names": [
+        "Wezen"
+      ]
+    },
+    {
+      "hip": 34716,
+      "names": [
+        "HD 55271AB"
+      ]
+    },
+    {
+      "hip": 35264,
+      "names": [
+        "Ahadi"
+      ]
+    },
+    {
+      "hip": 35488,
+      "names": [
+        "Bernes 135"
+      ]
+    },
+    {
+      "hip": 35550,
+      "names": [
+        "Wasat"
+      ]
+    },
+    {
+      "hip": 35904,
+      "names": [
+        "Aludra"
+      ]
+    },
+    {
+      "hip": 36188,
+      "names": [
+        "Gomeisa"
+      ]
+    },
+    {
+      "hip": 36208,
+      "names": [
+        "Luyten's star"
+      ]
+    },
+    {
+      "hip": 36377,
+      "names": [
+        "Hadir"
+      ]
+    },
+    {
+      "hip": 36850,
+      "names": [
+        "Castor",
+        "Castor AB"
+      ]
+    },
+    {
+      "hip": 37279,
+      "names": [
+        "Procyon",
+        "Procyon A"
+      ]
+    },
+    {
+      "hip": 37391,
+      "names": [
+        "51 H. Cep"
+      ]
+    },
+    {
+      "hip": 37826,
+      "names": [
+        "Pollux"
+      ]
+    },
+    {
+      "hip": 38170,
+      "names": [
+        "Asmidiske",
+        "Azmidiske"
+      ]
+    },
+    {
+      "hip": 39429,
+      "names": [
+        "Naos"
+      ]
+    },
+    {
+      "hip": 39533,
+      "names": [
+        "BD+47 1522AB",
+        "HD 66263AB"
+      ]
+    },
+    {
+      "hip": 39757,
+      "names": [
+        "Tureis"
+      ]
+    },
+    {
+      "hip": 39953,
+      "names": [
+        "Regor"
+      ]
+    },
+    {
+      "hip": 40167,
+      "names": [
+        "Tegmine"
+      ]
+    },
+    {
+      "hip": 40526,
+      "names": [
+        "Altarf"
+      ]
+    },
+    {
+      "hip": 41037,
+      "names": [
+        "Avior"
+      ]
+    },
+    {
+      "hip": 41075,
+      "names": [
+        "Alsciaukat"
+      ]
+    },
+    {
+      "hip": 41704,
+      "names": [
+        "Muscida"
+      ]
+    },
+    {
+      "hip": 42806,
+      "names": [
+        "Asellus Borealis"
+      ]
+    },
+    {
+      "hip": 42911,
+      "names": [
+        "Asellus Australis"
+      ]
+    },
+    {
+      "hip": 43587,
+      "names": [
+        "Copernicus"
+      ]
+    },
+    {
+      "hip": 44066,
+      "names": [
+        "Acubens"
+      ]
+    },
+    {
+      "hip": 44127,
+      "names": [
+        "Talitha"
+      ]
+    },
+    {
+      "hip": 44816,
+      "names": [
+        "Suhail"
+      ]
+    },
+    {
+      "hip": 45238,
+      "names": [
+        "Miaplacidus"
+      ]
+    },
+    {
+      "hip": 45556,
+      "names": [
+        "Aspidiske"
+      ]
+    },
+    {
+      "hip": 45581,
+      "names": [
+        "HD 80951AB"
+      ]
+    },
+    {
+      "hip": 45941,
+      "names": [
+        "Markeb"
+      ]
+    },
+    {
+      "hip": 46390,
+      "names": [
+        "Alphard"
+      ]
+    },
+    {
+      "hip": 46471,
+      "names": [
+        "Intercrus"
+      ]
+    },
+    {
+      "hip": 46750,
+      "names": [
+        "Alterf"
+      ]
+    },
+    {
+      "hip": 47508,
+      "names": [
+        "Subra"
+      ]
+    },
+    {
+      "hip": 48455,
+      "names": [
+        "Rasalas"
+      ]
+    },
+    {
+      "hip": 49669,
+      "names": [
+        "Regulus"
+      ]
+    },
+    {
+      "hip": 50335,
+      "names": [
+        "Adhafera"
+      ]
+    },
+    {
+      "hip": 50372,
+      "names": [
+        "Tania Borealis"
+      ]
+    },
+    {
+      "hip": 50583,
+      "names": [
+        "Algieba"
+      ]
+    },
+    {
+      "hip": 50801,
+      "names": [
+        "Tania Australis"
+      ]
+    },
+    {
+      "hip": 51255,
+      "names": [
+        "HD 90737AB"
+      ]
+    },
+    {
+      "hip": 53229,
+      "names": [
+        "Praecipua"
+      ]
+    },
+    {
+      "hip": 53568,
+      "names": [
+        "HD 94941AB"
+      ]
+    },
+    {
+      "hip": 53721,
+      "names": [
+        "Chalawan"
+      ]
+    },
+    {
+      "hip": 53740,
+      "names": [
+        "Alkes"
+      ]
+    },
+    {
+      "hip": 53910,
+      "names": [
+        "Merak"
+      ]
+    },
+    {
+      "hip": 54061,
+      "names": [
+        "Dubhe"
+      ]
+    },
+    {
+      "hip": 54365,
+      "names": [
+        "CED 111 IRS 1"
+      ]
+    },
+    {
+      "hip": 54413,
+      "names": [
+        "CED 111 IRS 2"
+      ]
+    },
+    {
+      "hip": 54557,
+      "names": [
+        "CED 112 IRS 3"
+      ]
+    },
+    {
+      "hip": 54744,
+      "names": [
+        "CED 112 IRS 8"
+      ]
+    },
+    {
+      "hip": 54872,
+      "names": [
+        "Zosma"
+      ]
+    },
+    {
+      "hip": 54879,
+      "names": [
+        "Chertan"
+      ]
+    },
+    {
+      "hip": 55042,
+      "names": [
+        "Innes' star"
+      ]
+    },
+    {
+      "hip": 55203,
+      "names": [
+        "Alula Australis"
+      ]
+    },
+    {
+      "hip": 55219,
+      "names": [
+        "Alula Borealis"
+      ]
+    },
+    {
+      "hip": 56211,
+      "names": [
+        "Giausar"
+      ]
+    },
+    {
+      "hip": 56709,
+      "names": [
+        "Przybylski's Star"
+      ]
+    },
+    {
+      "hip": 57146,
+      "names": [
+        "HD 101847BC"
+      ]
+    },
+    {
+      "hip": 57399,
+      "names": [
+        "Taiyangshou"
+      ]
+    },
+    {
+      "hip": 57632,
+      "names": [
+        "Denebola"
+      ]
+    },
+    {
+      "hip": 57757,
+      "names": [
+        "Zavijava"
+      ]
+    },
+    {
+      "hip": 57994,
+      "names": [
+        "HD 103246AB"
+      ]
+    },
+    {
+      "hip": 58001,
+      "names": [
+        "Phecda"
+      ]
+    },
+    {
+      "hip": 58952,
+      "names": [
+        "Tonatiuh"
+      ]
+    },
+    {
+      "hip": 59199,
+      "names": [
+        "Alchiba"
+      ]
+    },
+    {
+      "hip": 59316,
+      "names": [
+        "Minkar"
+      ]
+    },
+    {
+      "hip": 59747,
+      "names": [
+        "Imai"
+      ]
+    },
+    {
+      "hip": 59774,
+      "names": [
+        "Megrez"
+      ]
+    },
+    {
+      "hip": 59803,
+      "names": [
+        "Gienah"
+      ]
+    },
+    {
+      "hip": 59844,
+      "names": [
+        "Welch's Red Variable"
+      ]
+    },
+    {
+      "hip": 60129,
+      "names": [
+        "Zaniah"
+      ]
+    },
+    {
+      "hip": 60718,
+      "names": [
+        "Acrux"
+      ]
+    },
+    {
+      "hip": 60904,
+      "names": [
+        "** STFA 21"
+      ]
+    },
+    {
+      "hip": 60965,
+      "names": [
+        "Algorab"
+      ]
+    },
+    {
+      "hip": 61084,
+      "names": [
+        "Gacrux"
+      ]
+    },
+    {
+      "hip": 61317,
+      "names": [
+        "Chara"
+      ]
+    },
+    {
+      "hip": 61359,
+      "names": [
+        "Kraz"
+      ]
+    },
+    {
+      "hip": 61941,
+      "names": [
+        "Porrima"
+      ]
+    },
+    {
+      "hip": 62223,
+      "names": [
+        "La Superba"
+      ]
+    },
+    {
+      "hip": 62434,
+      "names": [
+        "Mimosa"
+      ]
+    },
+    {
+      "hip": 62956,
+      "names": [
+        "Alioth"
+      ]
+    },
+    {
+      "hip": 63090,
+      "names": [
+        "Minelauva"
+      ]
+    },
+    {
+      "hip": 63125,
+      "names": [
+        "Cor Caroli"
+      ]
+    },
+    {
+      "hip": 63608,
+      "names": [
+        "Vindemiatrix"
+      ]
+    },
+    {
+      "hip": 64241,
+      "names": [
+        "Diadem"
+      ]
+    },
+    {
+      "hip": 65378,
+      "names": [
+        "Mizar"
+      ]
+    },
+    {
+      "hip": 65474,
+      "names": [
+        "Spica"
+      ]
+    },
+    {
+      "hip": 65477,
+      "names": [
+        "Alcor"
+      ]
+    },
+    {
+      "hip": 66249,
+      "names": [
+        "Heze"
+      ]
+    },
+    {
+      "hip": 66815,
+      "names": [
+        "47 Tuc TO Star"
+      ]
+    },
+    {
+      "hip": 66984,
+      "names": [
+        "HD 119361AB"
+      ]
+    },
+    {
+      "hip": 67301,
+      "names": [
+        "Alcaid",
+        "Alkaid"
+      ]
+    },
+    {
+      "hip": 67927,
+      "names": [
+        "Muphrid"
+      ]
+    },
+    {
+      "hip": 68702,
+      "names": [
+        "Agena",
+        "Hadar"
+      ]
+    },
+    {
+      "hip": 68756,
+      "names": [
+        "Thuban"
+      ]
+    },
+    {
+      "hip": 68933,
+      "names": [
+        "Menkent"
+      ]
+    },
+    {
+      "hip": 69673,
+      "names": [
+        "Arcturus"
+      ]
+    },
+    {
+      "hip": 69701,
+      "names": [
+        "Syrma"
+      ]
+    },
+    {
+      "hip": 69974,
+      "names": [
+        "Khambalia"
+      ]
+    },
+    {
+      "hip": 70553,
+      "names": [
+        "Preston's Star"
+      ]
+    },
+    {
+      "hip": 70890,
+      "names": [
+        "Proxima",
+        "Proxima Cen",
+        "Proxima Centauri"
+      ]
+    },
+    {
+      "hip": 71075,
+      "names": [
+        "Seginus"
+      ]
+    },
+    {
+      "hip": 71681,
+      "names": [
+        "Toliman"
+      ]
+    },
+    {
+      "hip": 71683,
+      "names": [
+        "Rigel Kentaurus",
+        "Rigil Kentaurus"
+      ]
+    },
+    {
+      "hip": 72105,
+      "names": [
+        "Izar"
+      ]
+    },
+    {
+      "hip": 72487,
+      "names": [
+        "Merga"
+      ]
+    },
+    {
+      "hip": 72607,
+      "names": [
+        "Kochab"
+      ]
+    },
+    {
+      "hip": 72622,
+      "names": [
+        "Zubenelgenubi"
+      ]
+    },
+    {
+      "hip": 73555,
+      "names": [
+        "Nekkar"
+      ]
+    },
+    {
+      "hip": 73714,
+      "names": [
+        "Brachium"
+      ]
+    },
+    {
+      "hip": 73837,
+      "names": [
+        "PZT+55 5210"
+      ]
+    },
+    {
+      "hip": 74785,
+      "names": [
+        "Zubeneschamali"
+      ]
+    },
+    {
+      "hip": 74793,
+      "names": [
+        "Pherkad Minor"
+      ]
+    },
+    {
+      "hip": 75097,
+      "names": [
+        "Pherkad"
+      ]
+    },
+    {
+      "hip": 75411,
+      "names": [
+        "Alkalurops"
+      ]
+    },
+    {
+      "hip": 75458,
+      "names": [
+        "Edasich"
+      ]
+    },
+    {
+      "hip": 75695,
+      "names": [
+        "Nusakan"
+      ]
+    },
+    {
+      "hip": 76267,
+      "names": [
+        "Alphecca"
+      ]
+    },
+    {
+      "hip": 77070,
+      "names": [
+        "Unukalhai"
+      ]
+    },
+    {
+      "hip": 77233,
+      "names": [
+        "Chow"
+      ]
+    },
+    {
+      "hip": 77450,
+      "names": [
+        "Gudja"
+      ]
+    },
+    {
+      "hip": 78401,
+      "names": [
+        "Dschubba"
+      ]
+    },
+    {
+      "hip": 79374,
+      "names": [
+        "Jabbah"
+      ]
+    },
+    {
+      "hip": 79593,
+      "names": [
+        "Yed Prior"
+      ]
+    },
+    {
+      "hip": 79882,
+      "names": [
+        "Yed Posterior"
+      ]
+    },
+    {
+      "hip": 80112,
+      "names": [
+        "Alniyat"
+      ]
+    },
+    {
+      "hip": 80463,
+      "names": [
+        "Cujam"
+      ]
+    },
+    {
+      "hip": 80763,
+      "names": [
+        "Antares"
+      ]
+    },
+    {
+      "hip": 80816,
+      "names": [
+        "Kornephoros"
+      ]
+    },
+    {
+      "hip": 80838,
+      "names": [
+        "Ogma"
+      ]
+    },
+    {
+      "hip": 80883,
+      "names": [
+        "Marfik"
+      ]
+    },
+    {
+      "hip": 81266,
+      "names": [
+        "Paikauhale"
+      ]
+    },
+    {
+      "hip": 81619,
+      "names": [
+        "CD-27 11061AB",
+        "CPD-27 5448AB",
+        "HD 150148AB"
+      ]
+    },
+    {
+      "hip": 82273,
+      "names": [
+        "Atria"
+      ]
+    },
+    {
+      "hip": 82911,
+      "names": [
+        "OAO 1653-40"
+      ]
+    },
+    {
+      "hip": 83608,
+      "names": [
+        "Alrakis"
+      ]
+    },
+    {
+      "hip": 83733,
+      "names": [
+        "CD-35 11315AB",
+        "CPD-35 6856AB",
+        "HD 154407AB"
+      ]
+    },
+    {
+      "hip": 83895,
+      "names": [
+        "Aldhibah"
+      ]
+    },
+    {
+      "hip": 84012,
+      "names": [
+        "Sabik"
+      ]
+    },
+    {
+      "hip": 84102,
+      "names": [
+        "HD 155727CD"
+      ]
+    },
+    {
+      "hip": 84345,
+      "names": [
+        "Rasalgethi"
+      ]
+    },
+    {
+      "hip": 84379,
+      "names": [
+        "Sarin"
+      ]
+    },
+    {
+      "hip": 84425,
+      "names": [
+        "LSF 1"
+      ]
+    },
+    {
+      "hip": 85670,
+      "names": [
+        "Rastaban"
+      ]
+    },
+    {
+      "hip": 85693,
+      "names": [
+        "Maasym"
+      ]
+    },
+    {
+      "hip": 85696,
+      "names": [
+        "Lesath"
+      ]
+    },
+    {
+      "hip": 85822,
+      "names": [
+        "Yildun"
+      ]
+    },
+    {
+      "hip": 85927,
+      "names": [
+        "Shaula"
+      ]
+    },
+    {
+      "hip": 86032,
+      "names": [
+        "Rasalhague"
+      ]
+    },
+    {
+      "hip": 86228,
+      "names": [
+        "Sargas"
+      ]
+    },
+    {
+      "hip": 86742,
+      "names": [
+        "Cebalrai"
+      ]
+    },
+    {
+      "hip": 86796,
+      "names": [
+        "Cervantes"
+      ]
+    },
+    {
+      "hip": 87585,
+      "names": [
+        "Grumium"
+      ]
+    },
+    {
+      "hip": 87833,
+      "names": [
+        "Eltanin"
+      ]
+    },
+    {
+      "hip": 87937,
+      "names": [
+        "Barnard's star",
+        "Barnard Star"
+      ]
+    },
+    {
+      "hip": 88635,
+      "names": [
+        "Alnasl"
+      ]
+    },
+    {
+      "hip": 89341,
+      "names": [
+        "Polis"
+      ]
+    },
+    {
+      "hip": 89931,
+      "names": [
+        "Kaus Media"
+      ]
+    },
+    {
+      "hip": 90185,
+      "names": [
+        "Kaus Australis"
+      ]
+    },
+    {
+      "hip": 90191,
+      "names": [
+        "Alathfar"
+      ]
+    },
+    {
+      "hip": 90344,
+      "names": [
+        "Fafnir"
+      ]
+    },
+    {
+      "hip": 90496,
+      "names": [
+        "Kaus Borealis"
+      ]
+    },
+    {
+      "hip": 91262,
+      "names": [
+        "Vega"
+      ]
+    },
+    {
+      "hip": 92316,
+      "names": [
+        "Nova Aquila No 3"
+      ]
+    },
+    {
+      "hip": 92420,
+      "names": [
+        "Sheliak"
+      ]
+    },
+    {
+      "hip": 92855,
+      "names": [
+        "Nunki"
+      ]
+    },
+    {
+      "hip": 93194,
+      "names": [
+        "Sulafat"
+      ]
+    },
+    {
+      "hip": 93427,
+      "names": [
+        "Perky"
+      ]
+    },
+    {
+      "hip": 93506,
+      "names": [
+        "Ascella"
+      ]
+    },
+    {
+      "hip": 94141,
+      "names": [
+        "Albaldah"
+      ]
+    },
+    {
+      "hip": 94289,
+      "names": [
+        "BAC 209",
+        "Merrill's star"
+      ]
+    },
+    {
+      "hip": 94376,
+      "names": [
+        "Altais"
+      ]
+    },
+    {
+      "hip": 94481,
+      "names": [
+        "Aladfar"
+      ]
+    },
+    {
+      "hip": 95241,
+      "names": [
+        "Arkab Prior"
+      ]
+    },
+    {
+      "hip": 95294,
+      "names": [
+        "Arkab Posterior"
+      ]
+    },
+    {
+      "hip": 95347,
+      "names": [
+        "Rukbat"
+      ]
+    },
+    {
+      "hip": 95771,
+      "names": [
+        "Anser"
+      ]
+    },
+    {
+      "hip": 95947,
+      "names": [
+        "Albereo",
+        "Albireo"
+      ]
+    },
+    {
+      "hip": 96100,
+      "names": [
+        "Alsafi"
+      ]
+    },
+    {
+      "hip": 96295,
+      "names": [
+        "Campbell's Hydrogen Star",
+        "Campbell's star"
+      ]
+    },
+    {
+      "hip": 96757,
+      "names": [
+        "Sham"
+      ]
+    },
+    {
+      "hip": 97278,
+      "names": [
+        "Tarazed"
+      ]
+    },
+    {
+      "hip": 97433,
+      "names": [
+        "Tyl"
+      ]
+    },
+    {
+      "hip": 97649,
+      "names": [
+        "Altair"
+      ]
+    },
+    {
+      "hip": 97938,
+      "names": [
+        "Libertas"
+      ]
+    },
+    {
+      "hip": 98036,
+      "names": [
+        "Alshain"
+      ]
+    },
+    {
+      "hip": 98906,
+      "names": [
+        "PM I20050+5426"
+      ]
+    },
+    {
+      "hip": 99521,
+      "names": [
+        "HD 191056AB"
+      ]
+    },
+    {
+      "hip": 100027,
+      "names": [
+        "Prima Giedi"
+      ]
+    },
+    {
+      "hip": 100064,
+      "names": [
+        "Algedi"
+      ]
+    },
+    {
+      "hip": 100310,
+      "names": [
+        "Alshat"
+      ]
+    },
+    {
+      "hip": 100325,
+      "names": [
+        "Dabih Minor"
+      ]
+    },
+    {
+      "hip": 100345,
+      "names": [
+        "Dabih",
+        "Dabih Major"
+      ]
+    },
+    {
+      "hip": 100453,
+      "names": [
+        "Sadr"
+      ]
+    },
+    {
+      "hip": 100751,
+      "names": [
+        "Peacock"
+      ]
+    },
+    {
+      "hip": 101341,
+      "names": [
+        "Cyg OB2 5",
+        "VI Cyg 5"
+      ]
+    },
+    {
+      "hip": 101364,
+      "names": [
+        "Cyg OB2 12",
+        "VI Cyg 12"
+      ]
+    },
+    {
+      "hip": 101419,
+      "names": [
+        "Cyg OB2 9",
+        "VI Cyg 9"
+      ]
+    },
+    {
+      "hip": 101425,
+      "names": [
+        "Cyg OB2 8",
+        "Cyg OB2 8A",
+        "VI Cyg 8",
+        "VI Cyg 8A"
+      ]
+    },
+    {
+      "hip": 101769,
+      "names": [
+        "Rotanev"
+      ]
+    },
+    {
+      "hip": 101958,
+      "names": [
+        "Sualocin"
+      ]
+    },
+    {
+      "hip": 102098,
+      "names": [
+        "Deneb"
+      ]
+    },
+    {
+      "hip": 102618,
+      "names": [
+        "Albali"
+      ]
+    },
+    {
+      "hip": 102626,
+      "names": [
+        "Speedy Mic"
+      ]
+    },
+    {
+      "hip": 103527,
+      "names": [
+        "Musica"
+      ]
+    },
+    {
+      "hip": 104382,
+      "names": [
+        "Polaris Australis"
+      ]
+    },
+    {
+      "hip": 104642,
+      "names": [
+        "PN Ou 4"
+      ]
+    },
+    {
+      "hip": 104987,
+      "names": [
+        "Kitalpha"
+      ]
+    },
+    {
+      "hip": 105090,
+      "names": [
+        "Lacaille 8760"
+      ]
+    },
+    {
+      "hip": 105199,
+      "names": [
+        "Alderamin"
+      ]
+    },
+    {
+      "hip": 106032,
+      "names": [
+        "Alfirk"
+      ]
+    },
+    {
+      "hip": 106278,
+      "names": [
+        "Sadalsuud"
+      ]
+    },
+    {
+      "hip": 106786,
+      "names": [
+        "Bunda"
+      ]
+    },
+    {
+      "hip": 106985,
+      "names": [
+        "Nashira"
+      ]
+    },
+    {
+      "hip": 107136,
+      "names": [
+        "Azelfafage"
+      ]
+    },
+    {
+      "hip": 107259,
+      "names": [
+        "Erakis",
+        "Herschel's Garnet Star"
+      ]
+    },
+    {
+      "hip": 107315,
+      "names": [
+        "Enif"
+      ]
+    },
+    {
+      "hip": 107556,
+      "names": [
+        "Deneb Algedi"
+      ]
+    },
+    {
+      "hip": 108085,
+      "names": [
+        "Aldhanab"
+      ]
+    },
+    {
+      "hip": 108917,
+      "names": [
+        "Kurhah"
+      ]
+    },
+    {
+      "hip": 109074,
+      "names": [
+        "Sadalmelik"
+      ]
+    },
+    {
+      "hip": 109268,
+      "names": [
+        "Alnair"
+      ]
+    },
+    {
+      "hip": 109427,
+      "names": [
+        "Biham"
+      ]
+    },
+    {
+      "hip": 110003,
+      "names": [
+        "Ancha"
+      ]
+    },
+    {
+      "hip": 110395,
+      "names": [
+        "Sadachbia"
+      ]
+    },
+    {
+      "hip": 111710,
+      "names": [
+        "Situla"
+      ]
+    },
+    {
+      "hip": 112029,
+      "names": [
+        "Homam"
+      ]
+    },
+    {
+      "hip": 112158,
+      "names": [
+        "Matar"
+      ]
+    },
+    {
+      "hip": 112247,
+      "names": [
+        "Babcock's Star"
+      ]
+    },
+    {
+      "hip": 112748,
+      "names": [
+        "Sadalbari"
+      ]
+    },
+    {
+      "hip": 113136,
+      "names": [
+        "Skat"
+      ]
+    },
+    {
+      "hip": 113283,
+      "names": [
+        "Fomalhaut B"
+      ]
+    },
+    {
+      "hip": 113357,
+      "names": [
+        "Helvetios"
+      ]
+    },
+    {
+      "hip": 113368,
+      "names": [
+        "Fomalhaut"
+      ]
+    },
+    {
+      "hip": 113881,
+      "names": [
+        "Scheat"
+      ]
+    },
+    {
+      "hip": 113963,
+      "names": [
+        "Markab"
+      ]
+    },
+    {
+      "hip": 114046,
+      "names": [
+        "Lacaille 9352"
+      ]
+    },
+    {
+      "hip": 115250,
+      "names": [
+        "Salm"
+      ]
+    },
+    {
+      "hip": 115781,
+      "names": [
+        "HD 220829BC"
+      ]
+    },
+    {
+      "hip": 116076,
+      "names": [
+        "Veritate"
+      ]
+    },
+    {
+      "hip": 116727,
+      "names": [
+        "Errai"
+      ]
+    }
+  ]
+}

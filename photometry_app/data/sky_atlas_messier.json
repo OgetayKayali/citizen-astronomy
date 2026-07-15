@@ -1,0 +1,1764 @@
+{
+  "version": 1,
+  "objects": [
+    {
+      "name": "M1 Crab Nebula",
+      "type": "Supernova Remnant",
+      "catalog": "Messier",
+      "aliases": [
+        "M1",
+        "Crab Nebula",
+        "Messier 1",
+        "NGC 1952"
+      ],
+      "ra_deg": 83.625,
+      "dec_deg": 22.0167,
+      "magnitude": 8.4,
+      "color": "#a7f3d0",
+      "constellation": "Tau",
+      "description": "Messier 1"
+    },
+    {
+      "name": "M2",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M2",
+        "Messier 2",
+        "NGC 7089"
+      ],
+      "ra_deg": 323.375,
+      "dec_deg": -0.8167,
+      "magnitude": 6.5,
+      "color": "#a7f3d0",
+      "constellation": "Aqr",
+      "description": "Messier 2"
+    },
+    {
+      "name": "M3",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M3",
+        "Messier 3",
+        "NGC 5272"
+      ],
+      "ra_deg": 205.55,
+      "dec_deg": 28.3833,
+      "magnitude": 6.2,
+      "color": "#a7f3d0",
+      "constellation": "CVn",
+      "description": "Messier 3"
+    },
+    {
+      "name": "M4",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M4",
+        "Messier 4",
+        "NGC 6121"
+      ],
+      "ra_deg": 245.9,
+      "dec_deg": -26.5333,
+      "magnitude": 5.6,
+      "color": "#a7f3d0",
+      "constellation": "Sco",
+      "description": "Messier 4"
+    },
+    {
+      "name": "M5",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M5",
+        "Messier 5",
+        "NGC 5904"
+      ],
+      "ra_deg": 229.65,
+      "dec_deg": 2.0833,
+      "magnitude": 5.6,
+      "color": "#a7f3d0",
+      "constellation": "Ser",
+      "description": "Messier 5"
+    },
+    {
+      "name": "M6",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M6",
+        "Messier 6",
+        "NGC 6405"
+      ],
+      "ra_deg": 265.025,
+      "dec_deg": -32.2167,
+      "magnitude": 4.2,
+      "color": "#a7f3d0",
+      "constellation": "Sco",
+      "description": "Messier 6"
+    },
+    {
+      "name": "M7",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M7",
+        "Messier 7",
+        "NGC 6475"
+      ],
+      "ra_deg": 268.475,
+      "dec_deg": -34.8167,
+      "magnitude": 4.1,
+      "color": "#a7f3d0",
+      "constellation": "Sco",
+      "description": "Messier 7"
+    },
+    {
+      "name": "M8 Lagoon Nebula",
+      "type": "Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M8",
+        "Lagoon Nebula",
+        "Messier 8",
+        "NGC 6523"
+      ],
+      "ra_deg": 270.95,
+      "dec_deg": -24.3833,
+      "magnitude": 6.0,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 8"
+    },
+    {
+      "name": "M9",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M9",
+        "Messier 9",
+        "NGC 6333"
+      ],
+      "ra_deg": 259.8,
+      "dec_deg": -18.5167,
+      "magnitude": 7.7,
+      "color": "#a7f3d0",
+      "constellation": "Oph",
+      "description": "Messier 9"
+    },
+    {
+      "name": "M10",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M10",
+        "Messier 10",
+        "NGC 6254"
+      ],
+      "ra_deg": 254.275,
+      "dec_deg": -4.1,
+      "magnitude": 6.6,
+      "color": "#a7f3d0",
+      "constellation": "Oph",
+      "description": "Messier 10"
+    },
+    {
+      "name": "M11",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M11",
+        "Messier 11",
+        "NGC 6705"
+      ],
+      "ra_deg": 282.775,
+      "dec_deg": -6.2667,
+      "magnitude": 6.3,
+      "color": "#a7f3d0",
+      "constellation": "Sct",
+      "description": "Messier 11"
+    },
+    {
+      "name": "M12",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M12",
+        "Messier 12",
+        "NGC 6218"
+      ],
+      "ra_deg": 251.8,
+      "dec_deg": -1.95,
+      "magnitude": 6.7,
+      "color": "#a7f3d0",
+      "constellation": "Oph",
+      "description": "Messier 12"
+    },
+    {
+      "name": "M13 Hercules Globular Cluster",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M13",
+        "Hercules Globular Cluster",
+        "Messier 13",
+        "NGC 6205"
+      ],
+      "ra_deg": 250.425,
+      "dec_deg": 36.4667,
+      "magnitude": 5.8,
+      "color": "#a7f3d0",
+      "constellation": "Her",
+      "description": "Messier 13"
+    },
+    {
+      "name": "M14",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M14",
+        "Messier 14",
+        "NGC 6402"
+      ],
+      "ra_deg": 264.4,
+      "dec_deg": -3.25,
+      "magnitude": 7.6,
+      "color": "#a7f3d0",
+      "constellation": "Oph",
+      "description": "Messier 14"
+    },
+    {
+      "name": "M15",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M15",
+        "Messier 15",
+        "NGC 7078"
+      ],
+      "ra_deg": 322.5,
+      "dec_deg": 12.1667,
+      "magnitude": 6.2,
+      "color": "#a7f3d0",
+      "constellation": "Peg",
+      "description": "Messier 15"
+    },
+    {
+      "name": "M16 Eagle Nebula",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M16",
+        "Eagle Nebula",
+        "Messier 16",
+        "NGC 6611"
+      ],
+      "ra_deg": 274.7,
+      "dec_deg": -13.7833,
+      "magnitude": 6.4,
+      "color": "#a7f3d0",
+      "constellation": "Ser",
+      "description": "Messier 16"
+    },
+    {
+      "name": "M17 Swan Nebula",
+      "type": "Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M17",
+        "Swan Nebula",
+        "Messier 17",
+        "NGC 6618"
+      ],
+      "ra_deg": 275.2,
+      "dec_deg": -16.1833,
+      "magnitude": 7.0,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 17"
+    },
+    {
+      "name": "M18",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M18",
+        "Messier 18",
+        "NGC 6613"
+      ],
+      "ra_deg": 274.975,
+      "dec_deg": -17.1333,
+      "magnitude": 7.5,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 18"
+    },
+    {
+      "name": "M19",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M19",
+        "Messier 19",
+        "NGC 6273"
+      ],
+      "ra_deg": 255.65,
+      "dec_deg": -26.2667,
+      "magnitude": 6.8,
+      "color": "#a7f3d0",
+      "constellation": "Oph",
+      "description": "Messier 19"
+    },
+    {
+      "name": "M20 Trifid Nebula",
+      "type": "Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M20",
+        "Trifid Nebula",
+        "Messier 20",
+        "NGC 6514"
+      ],
+      "ra_deg": 270.65,
+      "dec_deg": -23.0333,
+      "magnitude": 9.0,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 20"
+    },
+    {
+      "name": "M21",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M21",
+        "Messier 21",
+        "NGC 6531"
+      ],
+      "ra_deg": 271.15,
+      "dec_deg": -22.5,
+      "magnitude": 6.5,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 21"
+    },
+    {
+      "name": "M22",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M22",
+        "Messier 22",
+        "NGC 6656"
+      ],
+      "ra_deg": 279.1,
+      "dec_deg": -23.9,
+      "magnitude": 5.1,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 22"
+    },
+    {
+      "name": "M23",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M23",
+        "Messier 23",
+        "NGC 6494"
+      ],
+      "ra_deg": 269.2,
+      "dec_deg": -19.0167,
+      "magnitude": 6.9,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 23"
+    },
+    {
+      "name": "M24",
+      "type": "Star Cloud",
+      "catalog": "Messier",
+      "aliases": [
+        "M24",
+        "Messier 24"
+      ],
+      "ra_deg": 274.225,
+      "dec_deg": -18.4833,
+      "magnitude": 4.6,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 24"
+    },
+    {
+      "name": "M25",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M25",
+        "Messier 25",
+        "IC 4725"
+      ],
+      "ra_deg": 277.9,
+      "dec_deg": -19.25,
+      "magnitude": 4.6,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 25"
+    },
+    {
+      "name": "M26",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M26",
+        "Messier 26",
+        "NGC 6694"
+      ],
+      "ra_deg": 281.3,
+      "dec_deg": -9.4,
+      "magnitude": 8.0,
+      "color": "#a7f3d0",
+      "constellation": "Sct",
+      "description": "Messier 26"
+    },
+    {
+      "name": "M27 Dumbbell Nebula",
+      "type": "Planetary Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M27",
+        "Dumbbell Nebula",
+        "Messier 27",
+        "NGC 6853"
+      ],
+      "ra_deg": 299.9,
+      "dec_deg": 22.7167,
+      "magnitude": 7.4,
+      "color": "#a7f3d0",
+      "constellation": "Vul",
+      "description": "Messier 27"
+    },
+    {
+      "name": "M28",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M28",
+        "Messier 28",
+        "NGC 6626"
+      ],
+      "ra_deg": 276.125,
+      "dec_deg": -24.8667,
+      "magnitude": 6.8,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 28"
+    },
+    {
+      "name": "M29",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M29",
+        "Messier 29",
+        "NGC 6913"
+      ],
+      "ra_deg": 305.975,
+      "dec_deg": 38.5333,
+      "magnitude": 7.1,
+      "color": "#a7f3d0",
+      "constellation": "Cyg",
+      "description": "Messier 29"
+    },
+    {
+      "name": "M30",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M30",
+        "Messier 30",
+        "NGC 7099"
+      ],
+      "ra_deg": 325.1,
+      "dec_deg": -23.1833,
+      "magnitude": 7.2,
+      "color": "#a7f3d0",
+      "constellation": "Cap",
+      "description": "Messier 30"
+    },
+    {
+      "name": "M31 Andromeda Galaxy",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M31",
+        "Andromeda Galaxy",
+        "Messier 31",
+        "NGC 224"
+      ],
+      "ra_deg": 10.675,
+      "dec_deg": 41.2667,
+      "magnitude": 3.4,
+      "color": "#a7f3d0",
+      "constellation": "And",
+      "description": "Messier 31"
+    },
+    {
+      "name": "M32",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M32",
+        "Messier 32",
+        "NGC 221"
+      ],
+      "ra_deg": 10.675,
+      "dec_deg": 40.8667,
+      "magnitude": 8.1,
+      "color": "#a7f3d0",
+      "constellation": "And",
+      "description": "Messier 32"
+    },
+    {
+      "name": "M33 Triangulum Galaxy",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M33",
+        "Triangulum Galaxy",
+        "Messier 33",
+        "NGC 598"
+      ],
+      "ra_deg": 23.475,
+      "dec_deg": 30.65,
+      "magnitude": 5.7,
+      "color": "#a7f3d0",
+      "constellation": "Tri",
+      "description": "Messier 33"
+    },
+    {
+      "name": "M34",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M34",
+        "Messier 34",
+        "NGC 1039"
+      ],
+      "ra_deg": 40.5,
+      "dec_deg": 42.7833,
+      "magnitude": 5.5,
+      "color": "#a7f3d0",
+      "constellation": "Per",
+      "description": "Messier 34"
+    },
+    {
+      "name": "M35",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M35",
+        "Messier 35",
+        "NGC 2168"
+      ],
+      "ra_deg": 92.225,
+      "dec_deg": 24.3333,
+      "magnitude": 5.3,
+      "color": "#a7f3d0",
+      "constellation": "Gem",
+      "description": "Messier 35"
+    },
+    {
+      "name": "M36",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M36",
+        "Messier 36",
+        "NGC 1960"
+      ],
+      "ra_deg": 84.025,
+      "dec_deg": 34.1333,
+      "magnitude": 6.3,
+      "color": "#a7f3d0",
+      "constellation": "Aur",
+      "description": "Messier 36"
+    },
+    {
+      "name": "M37",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M37",
+        "Messier 37",
+        "NGC 2099"
+      ],
+      "ra_deg": 88.1,
+      "dec_deg": 32.55,
+      "magnitude": 6.2,
+      "color": "#a7f3d0",
+      "constellation": "Aur",
+      "description": "Messier 37"
+    },
+    {
+      "name": "M38",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M38",
+        "Messier 38",
+        "NGC 1912"
+      ],
+      "ra_deg": 82.1,
+      "dec_deg": 35.8333,
+      "magnitude": 7.4,
+      "color": "#a7f3d0",
+      "constellation": "Aur",
+      "description": "Messier 38"
+    },
+    {
+      "name": "M39",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M39",
+        "Messier 39",
+        "NGC 7092"
+      ],
+      "ra_deg": 323.05,
+      "dec_deg": 48.4333,
+      "magnitude": 4.6,
+      "color": "#a7f3d0",
+      "constellation": "Cyg",
+      "description": "Messier 39"
+    },
+    {
+      "name": "M40",
+      "type": "Double Star",
+      "catalog": "Messier",
+      "aliases": [
+        "M40",
+        "Messier 40"
+      ],
+      "ra_deg": 185.6,
+      "dec_deg": 58.0833,
+      "magnitude": 8.4,
+      "color": "#a7f3d0",
+      "constellation": "UMa",
+      "description": "Messier 40"
+    },
+    {
+      "name": "M41",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M41",
+        "Messier 41",
+        "NGC 2287"
+      ],
+      "ra_deg": 101.5,
+      "dec_deg": -20.7333,
+      "magnitude": 4.6,
+      "color": "#a7f3d0",
+      "constellation": "CMa",
+      "description": "Messier 41"
+    },
+    {
+      "name": "M42 Orion Nebula",
+      "type": "Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M42",
+        "Orion Nebula",
+        "Messier 42",
+        "NGC 1976"
+      ],
+      "ra_deg": 83.85,
+      "dec_deg": -5.45,
+      "magnitude": 4.0,
+      "color": "#a7f3d0",
+      "constellation": "Ori",
+      "description": "Messier 42"
+    },
+    {
+      "name": "M43",
+      "type": "Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M43",
+        "Messier 43",
+        "NGC 1982"
+      ],
+      "ra_deg": 83.9,
+      "dec_deg": -5.2667,
+      "magnitude": 9.0,
+      "color": "#a7f3d0",
+      "constellation": "Ori",
+      "description": "Messier 43"
+    },
+    {
+      "name": "M44 Beehive Cluster",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M44",
+        "Beehive Cluster",
+        "Messier 44",
+        "NGC 2632"
+      ],
+      "ra_deg": 130.025,
+      "dec_deg": 19.9833,
+      "magnitude": 3.7,
+      "color": "#a7f3d0",
+      "constellation": "Cnc",
+      "description": "Messier 44"
+    },
+    {
+      "name": "M45 Pleiades",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M45",
+        "Pleiades",
+        "Messier 45"
+      ],
+      "ra_deg": 56.75,
+      "dec_deg": 24.1167,
+      "magnitude": 1.6,
+      "color": "#a7f3d0",
+      "constellation": "Tau",
+      "description": "Messier 45"
+    },
+    {
+      "name": "M46",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M46",
+        "Messier 46",
+        "NGC 2437"
+      ],
+      "ra_deg": 115.45,
+      "dec_deg": -14.8167,
+      "magnitude": 6.0,
+      "color": "#a7f3d0",
+      "constellation": "Pup",
+      "description": "Messier 46"
+    },
+    {
+      "name": "M47",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M47",
+        "Messier 47",
+        "NGC 2422"
+      ],
+      "ra_deg": 114.15,
+      "dec_deg": -14.5,
+      "magnitude": 5.2,
+      "color": "#a7f3d0",
+      "constellation": "Pup",
+      "description": "Messier 47"
+    },
+    {
+      "name": "M48",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M48",
+        "Messier 48",
+        "NGC 2548"
+      ],
+      "ra_deg": 123.45,
+      "dec_deg": -5.8,
+      "magnitude": 5.5,
+      "color": "#a7f3d0",
+      "constellation": "Hya",
+      "description": "Messier 48"
+    },
+    {
+      "name": "M49",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M49",
+        "Messier 49",
+        "NGC 4472"
+      ],
+      "ra_deg": 187.45,
+      "dec_deg": 8.0,
+      "magnitude": 8.4,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 49"
+    },
+    {
+      "name": "M50",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M50",
+        "Messier 50",
+        "NGC 2323"
+      ],
+      "ra_deg": 105.8,
+      "dec_deg": -8.3333,
+      "magnitude": 6.3,
+      "color": "#a7f3d0",
+      "constellation": "Mon",
+      "description": "Messier 50"
+    },
+    {
+      "name": "M51 Whirlpool Galaxy",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M51",
+        "Whirlpool Galaxy",
+        "Messier 51",
+        "NGC 5194"
+      ],
+      "ra_deg": 202.475,
+      "dec_deg": 47.2,
+      "magnitude": 8.4,
+      "color": "#a7f3d0",
+      "constellation": "CVn",
+      "description": "Messier 51"
+    },
+    {
+      "name": "M52",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M52",
+        "Messier 52",
+        "NGC 7654"
+      ],
+      "ra_deg": 351.05,
+      "dec_deg": 61.5833,
+      "magnitude": 7.3,
+      "color": "#a7f3d0",
+      "constellation": "Cas",
+      "description": "Messier 52"
+    },
+    {
+      "name": "M53",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M53",
+        "Messier 53",
+        "NGC 5024"
+      ],
+      "ra_deg": 198.225,
+      "dec_deg": 18.1667,
+      "magnitude": 7.6,
+      "color": "#a7f3d0",
+      "constellation": "Com",
+      "description": "Messier 53"
+    },
+    {
+      "name": "M54",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M54",
+        "Messier 54",
+        "NGC 6715"
+      ],
+      "ra_deg": 283.775,
+      "dec_deg": -30.4833,
+      "magnitude": 7.6,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 54"
+    },
+    {
+      "name": "M55",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M55",
+        "Messier 55",
+        "NGC 6809"
+      ],
+      "ra_deg": 295.0,
+      "dec_deg": -30.9667,
+      "magnitude": 6.3,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 55"
+    },
+    {
+      "name": "M56",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M56",
+        "Messier 56",
+        "NGC 6779"
+      ],
+      "ra_deg": 289.15,
+      "dec_deg": 30.1833,
+      "magnitude": 8.3,
+      "color": "#a7f3d0",
+      "constellation": "Lyr",
+      "description": "Messier 56"
+    },
+    {
+      "name": "M57 Ring Nebula",
+      "type": "Planetary Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M57",
+        "Ring Nebula",
+        "Messier 57",
+        "NGC 6720"
+      ],
+      "ra_deg": 283.4,
+      "dec_deg": 33.0333,
+      "magnitude": 8.8,
+      "color": "#a7f3d0",
+      "constellation": "Lyr",
+      "description": "Messier 57"
+    },
+    {
+      "name": "M58",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M58",
+        "Messier 58",
+        "NGC 4579"
+      ],
+      "ra_deg": 189.425,
+      "dec_deg": 11.8167,
+      "magnitude": 9.7,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 58"
+    },
+    {
+      "name": "M59",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M59",
+        "Messier 59",
+        "NGC 4621"
+      ],
+      "ra_deg": 190.5,
+      "dec_deg": 11.65,
+      "magnitude": 9.6,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 59"
+    },
+    {
+      "name": "M60",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M60",
+        "Messier 60",
+        "NGC 4649"
+      ],
+      "ra_deg": 190.925,
+      "dec_deg": 11.55,
+      "magnitude": 8.8,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 60"
+    },
+    {
+      "name": "M61",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M61",
+        "Messier 61",
+        "NGC 4303"
+      ],
+      "ra_deg": 185.475,
+      "dec_deg": 4.4667,
+      "magnitude": 9.7,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 61"
+    },
+    {
+      "name": "M62",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M62",
+        "Messier 62",
+        "NGC 6266"
+      ],
+      "ra_deg": 255.3,
+      "dec_deg": -30.1167,
+      "magnitude": 6.5,
+      "color": "#a7f3d0",
+      "constellation": "Oph",
+      "description": "Messier 62"
+    },
+    {
+      "name": "M63",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M63",
+        "Messier 63",
+        "NGC 5055"
+      ],
+      "ra_deg": 198.95,
+      "dec_deg": 42.0333,
+      "magnitude": 8.6,
+      "color": "#a7f3d0",
+      "constellation": "CVn",
+      "description": "Messier 63"
+    },
+    {
+      "name": "M64 Black Eye Galaxy",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M64",
+        "Black Eye Galaxy",
+        "Messier 64",
+        "NGC 4826"
+      ],
+      "ra_deg": 194.175,
+      "dec_deg": 21.6833,
+      "magnitude": 8.5,
+      "color": "#a7f3d0",
+      "constellation": "Com",
+      "description": "Messier 64"
+    },
+    {
+      "name": "M65",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M65",
+        "Messier 65",
+        "NGC 3623"
+      ],
+      "ra_deg": 169.725,
+      "dec_deg": 13.0833,
+      "magnitude": 9.3,
+      "color": "#a7f3d0",
+      "constellation": "Leo",
+      "description": "Messier 65"
+    },
+    {
+      "name": "M66",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M66",
+        "Messier 66",
+        "NGC 3627"
+      ],
+      "ra_deg": 170.05,
+      "dec_deg": 12.9833,
+      "magnitude": 8.9,
+      "color": "#a7f3d0",
+      "constellation": "Leo",
+      "description": "Messier 66"
+    },
+    {
+      "name": "M67",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M67",
+        "Messier 67",
+        "NGC 2682"
+      ],
+      "ra_deg": 132.6,
+      "dec_deg": 11.8167,
+      "magnitude": 6.1,
+      "color": "#a7f3d0",
+      "constellation": "Cnc",
+      "description": "Messier 67"
+    },
+    {
+      "name": "M68",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M68",
+        "Messier 68",
+        "NGC 4590"
+      ],
+      "ra_deg": 189.875,
+      "dec_deg": -26.75,
+      "magnitude": 7.8,
+      "color": "#a7f3d0",
+      "constellation": "Hya",
+      "description": "Messier 68"
+    },
+    {
+      "name": "M69",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M69",
+        "Messier 69",
+        "NGC 6637"
+      ],
+      "ra_deg": 277.85,
+      "dec_deg": -32.35,
+      "magnitude": 7.6,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 69"
+    },
+    {
+      "name": "M70",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M70",
+        "Messier 70",
+        "NGC 6681"
+      ],
+      "ra_deg": 280.8,
+      "dec_deg": -32.3,
+      "magnitude": 7.9,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 70"
+    },
+    {
+      "name": "M71",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M71",
+        "Messier 71",
+        "NGC 6838"
+      ],
+      "ra_deg": 298.45,
+      "dec_deg": 18.7833,
+      "magnitude": 8.2,
+      "color": "#a7f3d0",
+      "constellation": "Sge",
+      "description": "Messier 71"
+    },
+    {
+      "name": "M72",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M72",
+        "Messier 72",
+        "NGC 6981"
+      ],
+      "ra_deg": 313.375,
+      "dec_deg": -12.5333,
+      "magnitude": 9.3,
+      "color": "#a7f3d0",
+      "constellation": "Aqr",
+      "description": "Messier 72"
+    },
+    {
+      "name": "M73",
+      "type": "Asterism",
+      "catalog": "Messier",
+      "aliases": [
+        "M73",
+        "Messier 73",
+        "NGC 6994"
+      ],
+      "ra_deg": 314.725,
+      "dec_deg": -12.6333,
+      "magnitude": 9.0,
+      "color": "#a7f3d0",
+      "constellation": "Aqr",
+      "description": "Messier 73"
+    },
+    {
+      "name": "M74",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M74",
+        "Messier 74",
+        "NGC 628"
+      ],
+      "ra_deg": 24.175,
+      "dec_deg": 15.7833,
+      "magnitude": 9.4,
+      "color": "#a7f3d0",
+      "constellation": "Psc",
+      "description": "Messier 74"
+    },
+    {
+      "name": "M75",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M75",
+        "Messier 75",
+        "NGC 6864"
+      ],
+      "ra_deg": 301.525,
+      "dec_deg": -21.9167,
+      "magnitude": 8.5,
+      "color": "#a7f3d0",
+      "constellation": "Sgr",
+      "description": "Messier 75"
+    },
+    {
+      "name": "M76",
+      "type": "Planetary Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M76",
+        "Messier 76",
+        "NGC 650"
+      ],
+      "ra_deg": 25.6,
+      "dec_deg": 51.5667,
+      "magnitude": 10.1,
+      "color": "#a7f3d0",
+      "constellation": "Per",
+      "description": "Messier 76"
+    },
+    {
+      "name": "M77",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M77",
+        "Messier 77",
+        "NGC 1068"
+      ],
+      "ra_deg": 40.675,
+      "dec_deg": -0.0167,
+      "magnitude": 8.9,
+      "color": "#a7f3d0",
+      "constellation": "Cet",
+      "description": "Messier 77"
+    },
+    {
+      "name": "M78",
+      "type": "Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M78",
+        "Messier 78",
+        "NGC 2068"
+      ],
+      "ra_deg": 86.675,
+      "dec_deg": 0.05,
+      "magnitude": 8.3,
+      "color": "#a7f3d0",
+      "constellation": "Ori",
+      "description": "Messier 78"
+    },
+    {
+      "name": "M79",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M79",
+        "Messier 79",
+        "NGC 1904"
+      ],
+      "ra_deg": 81.125,
+      "dec_deg": -24.55,
+      "magnitude": 7.7,
+      "color": "#a7f3d0",
+      "constellation": "Lep",
+      "description": "Messier 79"
+    },
+    {
+      "name": "M80",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M80",
+        "Messier 80",
+        "NGC 6093"
+      ],
+      "ra_deg": 244.25,
+      "dec_deg": -22.9833,
+      "magnitude": 7.3,
+      "color": "#a7f3d0",
+      "constellation": "Sco",
+      "description": "Messier 80"
+    },
+    {
+      "name": "M81 Bode's Galaxy",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M81",
+        "Bode's Galaxy",
+        "Messier 81",
+        "NGC 3031"
+      ],
+      "ra_deg": 148.9,
+      "dec_deg": 69.0667,
+      "magnitude": 6.9,
+      "color": "#a7f3d0",
+      "constellation": "UMa",
+      "description": "Messier 81"
+    },
+    {
+      "name": "M82 Cigar Galaxy",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M82",
+        "Cigar Galaxy",
+        "Messier 82",
+        "NGC 3034"
+      ],
+      "ra_deg": 148.95,
+      "dec_deg": 69.6833,
+      "magnitude": 8.4,
+      "color": "#a7f3d0",
+      "constellation": "UMa",
+      "description": "Messier 82"
+    },
+    {
+      "name": "M83",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M83",
+        "Messier 83",
+        "NGC 5236"
+      ],
+      "ra_deg": 204.25,
+      "dec_deg": -29.8667,
+      "magnitude": 7.6,
+      "color": "#a7f3d0",
+      "constellation": "Hya",
+      "description": "Messier 83"
+    },
+    {
+      "name": "M84",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M84",
+        "Messier 84",
+        "NGC 4374"
+      ],
+      "ra_deg": 186.275,
+      "dec_deg": 12.8833,
+      "magnitude": 9.1,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 84"
+    },
+    {
+      "name": "M85",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M85",
+        "Messier 85",
+        "NGC 4382"
+      ],
+      "ra_deg": 186.35,
+      "dec_deg": 18.1833,
+      "magnitude": 9.1,
+      "color": "#a7f3d0",
+      "constellation": "Com",
+      "description": "Messier 85"
+    },
+    {
+      "name": "M86",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M86",
+        "Messier 86",
+        "NGC 4406"
+      ],
+      "ra_deg": 186.55,
+      "dec_deg": 12.95,
+      "magnitude": 8.9,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 86"
+    },
+    {
+      "name": "M87",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M87",
+        "Messier 87",
+        "NGC 4486"
+      ],
+      "ra_deg": 187.7,
+      "dec_deg": 12.4,
+      "magnitude": 8.6,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 87"
+    },
+    {
+      "name": "M88",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M88",
+        "Messier 88",
+        "NGC 4501"
+      ],
+      "ra_deg": 188.0,
+      "dec_deg": 14.4167,
+      "magnitude": 9.6,
+      "color": "#a7f3d0",
+      "constellation": "Com",
+      "description": "Messier 88"
+    },
+    {
+      "name": "M89",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M89",
+        "Messier 89",
+        "NGC 4552"
+      ],
+      "ra_deg": 188.925,
+      "dec_deg": 12.55,
+      "magnitude": 9.8,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 89"
+    },
+    {
+      "name": "M90",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M90",
+        "Messier 90",
+        "NGC 4569"
+      ],
+      "ra_deg": 189.2,
+      "dec_deg": 13.1667,
+      "magnitude": 9.5,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 90"
+    },
+    {
+      "name": "M91",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M91",
+        "Messier 91",
+        "NGC 4548"
+      ],
+      "ra_deg": 188.85,
+      "dec_deg": 14.5,
+      "magnitude": 10.2,
+      "color": "#a7f3d0",
+      "constellation": "Com",
+      "description": "Messier 91"
+    },
+    {
+      "name": "M92",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M92",
+        "Messier 92",
+        "NGC 6341"
+      ],
+      "ra_deg": 259.275,
+      "dec_deg": 43.1333,
+      "magnitude": 6.4,
+      "color": "#a7f3d0",
+      "constellation": "Her",
+      "description": "Messier 92"
+    },
+    {
+      "name": "M93",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M93",
+        "Messier 93",
+        "NGC 2447"
+      ],
+      "ra_deg": 116.15,
+      "dec_deg": -23.8667,
+      "magnitude": 6.0,
+      "color": "#a7f3d0",
+      "constellation": "Pup",
+      "description": "Messier 93"
+    },
+    {
+      "name": "M94",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M94",
+        "Messier 94",
+        "NGC 4736"
+      ],
+      "ra_deg": 192.725,
+      "dec_deg": 41.1167,
+      "magnitude": 8.2,
+      "color": "#a7f3d0",
+      "constellation": "CVn",
+      "description": "Messier 94"
+    },
+    {
+      "name": "M95",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M95",
+        "Messier 95",
+        "NGC 3351"
+      ],
+      "ra_deg": 161.0,
+      "dec_deg": 11.7,
+      "magnitude": 9.7,
+      "color": "#a7f3d0",
+      "constellation": "Leo",
+      "description": "Messier 95"
+    },
+    {
+      "name": "M96",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M96",
+        "Messier 96",
+        "NGC 3368"
+      ],
+      "ra_deg": 161.7,
+      "dec_deg": 11.8167,
+      "magnitude": 9.2,
+      "color": "#a7f3d0",
+      "constellation": "Leo",
+      "description": "Messier 96"
+    },
+    {
+      "name": "M97",
+      "type": "Planetary Nebula",
+      "catalog": "Messier",
+      "aliases": [
+        "M97",
+        "Messier 97",
+        "NGC 3587"
+      ],
+      "ra_deg": 168.7,
+      "dec_deg": 55.0167,
+      "magnitude": 9.9,
+      "color": "#a7f3d0",
+      "constellation": "UMa",
+      "description": "Messier 97"
+    },
+    {
+      "name": "M98",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M98",
+        "Messier 98",
+        "NGC 4192"
+      ],
+      "ra_deg": 183.45,
+      "dec_deg": 14.9,
+      "magnitude": 10.1,
+      "color": "#a7f3d0",
+      "constellation": "Com",
+      "description": "Messier 98"
+    },
+    {
+      "name": "M99",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M99",
+        "Messier 99",
+        "NGC 4254"
+      ],
+      "ra_deg": 184.7,
+      "dec_deg": 14.4167,
+      "magnitude": 9.9,
+      "color": "#a7f3d0",
+      "constellation": "Com",
+      "description": "Messier 99"
+    },
+    {
+      "name": "M100",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M100",
+        "Messier 100",
+        "NGC 4321"
+      ],
+      "ra_deg": 185.725,
+      "dec_deg": 15.8167,
+      "magnitude": 9.3,
+      "color": "#a7f3d0",
+      "constellation": "Com",
+      "description": "Messier 100"
+    },
+    {
+      "name": "M101",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M101",
+        "Messier 101",
+        "NGC 5457"
+      ],
+      "ra_deg": 210.8,
+      "dec_deg": 54.35,
+      "magnitude": 7.9,
+      "color": "#a7f3d0",
+      "constellation": "UMa",
+      "description": "Messier 101"
+    },
+    {
+      "name": "M103",
+      "type": "Open Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M103",
+        "Messier 103",
+        "NGC 581"
+      ],
+      "ra_deg": 23.3,
+      "dec_deg": 60.7,
+      "magnitude": 7.4,
+      "color": "#a7f3d0",
+      "constellation": "Cas",
+      "description": "Messier 103"
+    },
+    {
+      "name": "M104 Sombrero Galaxy",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M104",
+        "Sombrero Galaxy",
+        "Messier 104",
+        "NGC 4594"
+      ],
+      "ra_deg": 190.0,
+      "dec_deg": -11.6167,
+      "magnitude": 8.0,
+      "color": "#a7f3d0",
+      "constellation": "Vir",
+      "description": "Messier 104"
+    },
+    {
+      "name": "M105",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M105",
+        "Messier 105",
+        "NGC 3379"
+      ],
+      "ra_deg": 161.95,
+      "dec_deg": 12.5833,
+      "magnitude": 9.3,
+      "color": "#a7f3d0",
+      "constellation": "Leo",
+      "description": "Messier 105"
+    },
+    {
+      "name": "M106",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M106",
+        "Messier 106",
+        "NGC 4258"
+      ],
+      "ra_deg": 184.75,
+      "dec_deg": 47.3,
+      "magnitude": 8.4,
+      "color": "#a7f3d0",
+      "constellation": "CVn",
+      "description": "Messier 106"
+    },
+    {
+      "name": "M107",
+      "type": "Globular Cluster",
+      "catalog": "Messier",
+      "aliases": [
+        "M107",
+        "Messier 107",
+        "NGC 6171"
+      ],
+      "ra_deg": 248.125,
+      "dec_deg": -13.05,
+      "magnitude": 7.9,
+      "color": "#a7f3d0",
+      "constellation": "Oph",
+      "description": "Messier 107"
+    },
+    {
+      "name": "M108",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M108",
+        "Messier 108",
+        "NGC 3556"
+      ],
+      "ra_deg": 167.875,
+      "dec_deg": 55.6667,
+      "magnitude": 10.0,
+      "color": "#a7f3d0",
+      "constellation": "UMa",
+      "description": "Messier 108"
+    },
+    {
+      "name": "M109",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M109",
+        "Messier 109",
+        "NGC 3992"
+      ],
+      "ra_deg": 179.4,
+      "dec_deg": 53.3833,
+      "magnitude": 9.8,
+      "color": "#a7f3d0",
+      "constellation": "UMa",
+      "description": "Messier 109"
+    },
+    {
+      "name": "M110",
+      "type": "Galaxy",
+      "catalog": "Messier",
+      "aliases": [
+        "M110",
+        "Messier 110",
+        "NGC 205"
+      ],
+      "ra_deg": 10.1,
+      "dec_deg": 41.6833,
+      "magnitude": 8.5,
+      "color": "#a7f3d0",
+      "constellation": "And",
+      "description": "Messier 110"
+    }
+  ]
+}

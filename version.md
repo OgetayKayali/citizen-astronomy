@@ -1,3 +1,8 @@
+## 2026-07-15
+- Added `File > Check for Updates` for alpha-review builds. The updater discovers matching prereleases from a configured public GitHub repository, verifies the full Inno installer by size and SHA-256, downloads atomically in the background, and performs an in-place update without removing user settings.
+- Added a one-command local GitHub prerelease publisher that builds and smoke-tests the PyInstaller bundle, creates a versioned Inno installer and strict update manifest, and uploads both release assets.
+- Added a metadata-seeded Gaia WCS fallback for asteroid/comet images that contain pointing and optical metadata but no celestial WCS. The fallback solves rotation and parity from detected/Gaia star patterns before trying astrometry.net.
+
 ## 2026-06-17
 - Fixed asteroid/comet blink playback performance for large FITS sequences such as `E:\Davida\aligned` (100 frames, 4176×6248, ~99.5 MiB each). Blink is now scoped to asteroid/comet mode only; Sky Explorer and other modes are unchanged.
 - Added a blink-active fast path in `photometry_app/ui/main_window.py`: during playback, `_set_active_asteroid_frame()` now calls `_refresh_asteroid_blink_frame_view()` (image swap only) instead of the full `_handle_asteroid_result_selection_changed()` path that rebuilt the details panel and refreshed the asteroid Sky View tab every frame (~0.13–0.31 s/frame on Davida). Sky View and details refresh once when blink stops.

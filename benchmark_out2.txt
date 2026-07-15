@@ -1,0 +1,12 @@
+StarRenderer instanced draw failed (GLError(
+	err = 1282,
+	description = b'invalid operation',
+	baseOperation = glVertexAttribDivisor,
+	cArguments = (0, 0)
+)); permanently falling back to expanded
+Unified star renderer failed this frame; will retry: draw exception: GLError(
+	err = 1282,
+	description = b'invalid operation',
+	baseOperation = glDrawArrays,
+	cArguments = (4, 0, 48)
+)

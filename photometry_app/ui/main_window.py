@@ -8,6 +8,8 @@ import ctypes
 from collections import OrderedDict
 
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+import heapq
 
 import hashlib
 
@@ -25,7 +27,9 @@ import shutil
 
 import tempfile
 
-from dataclasses import dataclass, field, replace
+import warnings
+
+from dataclasses import dataclass, field, fields, replace
 
 import re
 
@@ -36,6 +40,7 @@ from pathlib import Path
 from time import monotonic, perf_counter
 
 from typing import Callable, Sequence, cast
+from types import SimpleNamespace
 
 from urllib.parse import quote_plus
 
@@ -55,12 +60,42 @@ from PySide6.QtWidgets import *
 
 from shiboken6 import isValid
 
-from photometry_app.app_metadata import APP_DISPLAY_NAME, APP_WINDOW_TITLE_NAME, application_icon_path
+from photometry_app.app_metadata import APP_DISPLAY_NAME, APP_VERSION, APP_WINDOW_TITLE_NAME, application_icon_path, application_install_path
 from photometry_app.core.benchmarking import BENCHMARK_ENABLED, get_benchmark_recorder
 from photometry_app.core.alignment import *
-from photometry_app.core.animation_export import export_qimages_to_gif, export_qimages_to_mp4
+from photometry_app.core.animation_export import (
+    StreamingGifWriter,
+    StreamingMp4Writer,
+    mp4_export_dependencies_available,
+    mp4_export_unavailable_message,
+    resolve_astrostack_stack_export_frame_indices,
+    resolve_sky_explorer_comparison_animation_frame_count,
+    resolve_sky_explorer_comparison_animation_timing,
+    sky_explorer_comparison_split_fractions,
+    export_qimages_to_gif,
+    export_qimages_to_gif_for_total_duration,
+    export_qimages_to_mp4,
+    export_qimages_to_mp4_for_total_duration,
+)
+from photometry_app.core.astrostack_metrics import (
+    estimate_global_signal_noise,
+    estimate_region_signal_noise,
+    format_astrostack_metric_value,
+    roi_bounds_to_cropped_data_space,
+    shift_roi_bounds,
+)
+from photometry_app.core.astrostack_presets import (
+    ASTROSTACK_PRESET_FILE_FILTER,
+    materialize_astrostack_preset_crop,
+    materialize_astrostack_preset_layers,
+    materialize_astrostack_preset_region,
+    read_astrostack_overlay_preset,
+    write_astrostack_overlay_preset,
+)
 from photometry_app.core.candidate_training import *
-from photometry_app.core.catalogs import *
+from photometry_app.core.distance_map import DistanceMapResult
+from photometry_app.core.distance_map_clusters import DistanceMapClusterSettings, coerce_distance_map_cluster_settings
+from photometry_app.core.distance_map_display import DistanceMapDisplayOptions, coerce_distance_map_display_options
 from photometry_app.core.calibration import CalibrationPipelineRequest, CalibrationPipelineResult
 from photometry_app.core.discovery import *
 from photometry_app.core.exporters import (
@@ -105,20 +140,35 @@ from photometry_app.core.pipeline import (
 from photometry_app.core.plotting import *
 from photometry_app.core.scanner import *
 from photometry_app.core.settings import *
+from photometry_app.core.catalogs import CatalogTargetAtCoordinate
 from photometry_app.core.sky_atlas import *
+from photometry_app.core.sky_atlas_custom_overlay import (
+    LoadedSkyAtlasCustomOverlay,
+    build_overlay_display_qimage,
+    load_overlay_record,
+)
 from photometry_app.core.sky_explorer import *
 from photometry_app.core.sky_explorer import _sky_explorer_numeric_magnitude
+from photometry_app.core.survey_images import (
+    SurveyImageRequest,
+    fetch_survey_image,
+    scale_wcs_for_pixel_sampling,
+    survey_target_rect_in_source_pixels,
+)
 from photometry_app.core.snr_binning import *
 from photometry_app.core.solar_system import *
 from photometry_app.core.synthetic_tracking import *
 from photometry_app.core.transient import *
 from photometry_app.core.wcs import *
 from photometry_app.ui.dialogs import *
+from photometry_app.ui.distance_map_view import DistanceMapPanel
+from photometry_app.ui.astro_tools_panel import AstroToolsPanel
 from photometry_app.ui.differential_label_dialog import DifferentialQuickLabelDialog
 from photometry_app.ui.hr_plot_widget import *
 from photometry_app.ui.image_view import *
 from photometry_app.ui.levels_dialog import CurvesDialog
 from photometry_app.ui.light_curve_widget import *
+from photometry_app.ui.mode_launcher import ModeLauncherWidget
 from photometry_app.ui.moving_object_label_dialog import MovingObjectQuickLabelDialog
 from photometry_app.ui.moon_system import DEFAULT_MOON_VISUAL_SETTINGS, MoonAsyncEphemerisSampler, MoonAtmosphereModel, MoonCache, MoonDrawState, MoonEarthshineModel, MoonEphemeris, MoonRendererGL, MoonState, MoonTileDiagnostics
 from photometry_app.ui.sky_view_simulation import SkyViewSimulationClock
@@ -127,12 +177,22 @@ from photometry_app.ui.sky_view_location import (
     _SkyViewLocationMapWidget,
     _SkyViewObservingSiteSelection,
 )
+from photometry_app.ui.sky_atlas_custom_overlay_surveys_dialog import SkyAtlasCustomOverlaySurveysDialog
+from photometry_app.ui.sky_atlas_settings_dialog import SkyAtlasDisplaySettings, SkyAtlasSettingsDialog
 from photometry_app.ui.constellation_overlay import ConstellationOverlay, ConstellationOverlaySettings
 from photometry_app.ui.sky_view_milky_way_gl import (
     OpenGLMilkyWayLayer,
     SkyViewMilkyWayGlUniforms,
     SkyViewMilkyWayTileDrawRequest,
     SkyViewMilkyWayTileMeshVertex,
+)
+from photometry_app.ui.sky_view_star_renderer import (
+    BACKEND_INSTANCED,
+    BACKEND_LEGACY,
+    StarHitGrid,
+    StarInstanceInput,
+    StarRenderer,
+    StarRendererSettings,
 )
 from photometry_app.ui.transient_label_dialog import TRANSIENT_QUICK_LABEL_OPTIONS, TransientQuickLabelDialog
 from photometry_app.ui.workers import *
@@ -146,11 +206,26 @@ class _TransientBlinkExportCanceled(Exception):
     pass
 
 
+class _SkyExplorerComparisonExportCanceled(RuntimeError):
+    pass
+
+
 _THEME_NORMAL = "normal"
 _THEME_DARK = "dark"
 _THEME_DRACULA = "dracula"
 _THEME_NORD = "nord"
 _THEME_TOKYO_NIGHT = "tokyo-night"
+
+_SKY_EXPLORER_SURVEY_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("dss2_blue", "DSS2 Blue"),
+    ("shs_ha", "SHS Ha"),
+    ("panstarrs", "PanSTARRS"),
+    ("iphas_dr2_ha", "IPHAS DR2 Ha"),
+)
+_SKY_EXPLORER_SURVEY_FETCH_MARGIN_FRACTION = 0.4
+_SKY_EXPLORER_SURVEY_PREVIEW_MAX_OUTPUT = 512
+_SKY_EXPLORER_SURVEY_DETAIL_PREVIEW = "preview"
+_SKY_EXPLORER_SURVEY_DETAIL_REFINE = "refine"
 _THEME_GRUVBOX = "gruvbox"
 _THEME_CATPPUCCIN = "catppuccin"
 _THEME_SOLARIZED_DARK = "solarized-dark"
@@ -446,6 +521,64 @@ _LIGHT_CURVE_GIF_INITIAL_HOLD_FRAMES = 10
 _LIGHT_CURVE_GIF_FINAL_HOLD_FRAMES = 15
 _LIGHT_CURVE_GIF_FIT_STAGE_TARGET_FRAMES = 30
 _SKY_EXPLORER_MANUAL_ANNOTATION_SOURCE_PREFIX = "sky-manual:"
+_ASTROSTACK_OVERLAY_LAYER_SOURCE_PREFIX = "astrostack-layer:"
+_ASTROSTACK_PLOT_METRICS: dict[str, str] = {
+    "frame_count": "Frame count",
+    "integration_time": "Total integration time",
+    "fwhm": "FWHM",
+    "snr": "SNR",
+    "signal": "Signal",
+    "noise": "Noise",
+}
+_ASTROSTACK_ANNOTATION_FONT_COMBO_WIDTH = 120
+_ASTROSTACK_LAYER_LIST_MAX_HEIGHT = 132
+_ASTROSTACK_PLOT_TITLE_ALIGN_H: tuple[tuple[str, str], ...] = (
+    ("Left", "left"),
+    ("Center", "center"),
+    ("Right", "right"),
+)
+_ASTROSTACK_PLOT_TITLE_ALIGN_V: tuple[tuple[str, str], ...] = (
+    ("Top", "top"),
+    ("Middle", "center"),
+    ("Bottom", "bottom"),
+)
+_ASTROSTACK_PLOT_METRIC_AXIS_LABELS: dict[str, str] = {
+    "frame_count": "Stacked frames",
+    "integration_time": "Integration time (s)",
+    "fwhm": "FWHM (px)",
+    "snr": "SNR",
+    "signal": "Signal",
+    "noise": "Noise",
+}
+_ASTROSTACK_SIGNAL_REGION_COLOR = "#22c55e"
+_ASTROSTACK_BACKGROUND_REGION_COLOR = "#f97316"
+_ASTROSTACK_SIGNAL_MEASURE_LAYER_ID = "__astrostack_measure_signal__"
+_ASTROSTACK_BACKGROUND_MEASURE_LAYER_ID = "__astrostack_measure_background__"
+_ASTROSTACK_DIRECT_EDIT_TOOLS: frozenset[str] = frozenset(
+    {
+        "mouse",
+        "circle",
+        "rectangle",
+        "text",
+        "plot",
+        "signal",
+        "background",
+        "function_signal",
+        "function_noise",
+    }
+)
+_ASTROSTACK_DIRECT_EDIT_DRAW_TOOLS: frozenset[str] = frozenset(
+    {
+        "circle",
+        "rectangle",
+        "text",
+        "plot",
+        "signal",
+        "background",
+        "function_signal",
+        "function_noise",
+    }
+)
 
 _DIFFERENTIAL_DETECTABILITY_LABEL_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Easy", "easy"),
@@ -483,6 +616,8 @@ _ASTEROID_SKY_VIEW_STAR_LIMIT = 250
 _ASTEROID_SKY_VIEW_MAX_STAR_MAGNITUDE = 8.5
 _ASTEROID_ALL_GROUP_KEY = "__all__"
 _ASTEROID_BLINK_INTERVAL_MS = 350
+_MODE_TOOLBAR_BUTTON_HEIGHT = 46
+_MODE_TOOLBAR_BUTTON_RADIUS_PX = 4
 _TRANSIENT_BLINK_INTERVAL_OPTIONS_MS = (100, 180, 350, 700)
 _TRANSIENT_BLINK_INTERVAL_MS = 350
 _SKY_EXPLORER_STROKE_COLOR_COLUMN = 0
@@ -541,6 +676,76 @@ class _SkyExplorerManualAnnotationDrag:
     initial_annotation: _SkyExplorerManualAnnotation
     created_annotation: bool = False
     drag_started: bool = False
+
+
+@dataclass(slots=True)
+class _AstrostackOverlayLayer:
+    layer_id: str
+    shape: str
+    label: str
+    x: float
+    y: float
+    x2: float = 0.0
+    y2: float = 0.0
+    radius: float = 24.0
+    stroke_color: str = "#f8fafc"
+    fill_color: str = "#38bdf8"
+    text_color: str = "#f8fafc"
+    line_width: float = 1.75
+    text_size: float = 24.0
+    opacity: float = 0.75
+    text_font_family: str = ""
+    text_font_style: str = "regular"
+    show_fill: bool = True
+    plot_x_metric: str = "frame_count"
+    plot_y_metric: str = "snr"
+    plot_x_label: str = ""
+    plot_y_label: str = ""
+    plot_include_stack_status: bool = False
+    plot_title_align_h: str = "left"
+    plot_title_align_v: str = "top"
+    plot_title_offset_x: float = 0.0
+    plot_title_offset_y: float = 0.0
+    plot_x_label_offset_x: float = 0.0
+    plot_x_label_offset_y: float = 0.0
+    plot_y_label_offset_x: float = 0.0
+    plot_y_label_offset_y: float = 0.0
+    plot_curve_color: str = "#3d8bfd"
+    plot_curve_opacity: float = 1.0
+    plot_curve_width: float = 0.0
+    plot_highlight_color: str = "#ffd166"
+    plot_highlight_opacity: float = 1.0
+    plot_highlight_radius: float = 0.0
+    plot_corner_radius: float = 0.0
+    plot_accent_text_color: str = "#ffd166"
+    plot_chart_margin_left: float = 0.0
+    plot_chart_margin_right: float = 0.0
+    plot_chart_margin_top: float = 0.0
+    plot_chart_margin_bottom: float = 0.0
+    plot_title_text_color: str = "#f2f2f2"
+    plot_title_text_opacity: float = 1.0
+    plot_title_font_family: str = ""
+    plot_title_font_style: str = "regular"
+    plot_title_font_size: float = 0.0
+    plot_label_text_color: str = "#f2f2f2"
+    plot_label_text_opacity: float = 1.0
+    plot_label_font_family: str = ""
+    plot_label_font_style: str = "regular"
+    plot_label_font_size: float = 0.0
+    function_kind: str = ""
+
+
+@dataclass(slots=True)
+class _AstrostackOverlayLayerDrag:
+    layer_id: str
+    operation: str
+    origin_x: float
+    origin_y: float
+    initial_layer: _AstrostackOverlayLayer
+    created_layer: bool = False
+    drag_started: bool = False
+
+
 _SKY_EXPLORER_LAYER_TITLES: dict[str, str] = {
     "deep_sky": "Deep Sky",
     "general_objects": "General Objects",
@@ -1067,6 +1272,23 @@ class _SkyVisibleObject:
 
     altitude_deg: float
 
+    def update(
+        self,
+        sky_object: SkyAtlasObject,
+        x: float,
+        y: float,
+        visibility_alpha: float,
+        magnitude: float,
+        altitude_deg: float,
+    ) -> None:
+
+        self.sky_object = sky_object
+        self.x = float(x)
+        self.y = float(y)
+        self.visibility_alpha = float(visibility_alpha)
+        self.magnitude = float(magnitude)
+        self.altitude_deg = float(altitude_deg)
+
 
 @dataclass(slots=True)
 class _SkyViewGridFamilyDetailWindow:
@@ -1464,7 +1686,13 @@ class _SkyViewCollectFrameState:
 
     magnitude_scan_cutoff: float
 
+    visible_star_budget: int
+
+    star_candidate_budget: int
+
     rough_cull_view_radius_deg: float
+
+    rough_cull_min_dot: float
 
     rough_cull_disabled: bool
 
@@ -1473,6 +1701,8 @@ class _SkyViewCollectFrameState:
     object_visible_magnitude_limit: float
 
     camera_forward: tuple[float, float, float]
+
+    equatorial_camera_forward: tuple[float, float, float]
 
     camera_up: tuple[float, float, float]
 
@@ -1565,6 +1795,16 @@ class _SkyViewRenderScene:
     milky_way_resolution_mode: str
 
     milky_way_flip_horizontal: bool
+
+    custom_sky_overlays_enabled: bool
+
+    custom_sky_overlay_opacity: float
+
+    custom_sky_overlay_brightness: float
+
+    custom_sky_overlay_saturation: float
+
+    custom_sky_overlay_feather: float
 
     ground_base_color: QColor
 
@@ -3459,7 +3699,9 @@ class _QPainterSkyViewRenderer:
 
         gpu_star_drawn = self.draw_gpu_star_sprites(painter, scene)
 
-        self.draw_object_overlays(painter, scene, draw_star_sprites=not gpu_star_drawn)
+        draw_star_sprites = not gpu_star_drawn and not bool(getattr(self._owner, "_sky_view_unified_stars_drew", False))
+
+        self.draw_object_overlays(painter, scene, draw_star_sprites=draw_star_sprites)
 
         if benchmark_recorder is not None:
 
@@ -3569,6 +3811,8 @@ class _QPainterSkyViewRenderer:
 
         self._owner._draw_milky_way_layer(painter, scene)
 
+        self._owner._draw_custom_sky_overlay_layer(painter, scene)
+
         self._owner._draw_constellation_overlay_layer(painter, scene)
 
     def draw_grid(self, painter: QPainter, scene: _SkyViewRenderScene) -> None:
@@ -3579,30 +3823,37 @@ class _QPainterSkyViewRenderer:
 
         self._owner._record_gl_stars_skipped()
 
-        # GL_STARS is the retained-mode successor path. If both star flags are
-        # set, prefer the new scaffold/future path here and fall back directly
-        # to the QPainter fast-star reference path instead of the legacy
-        # immediate-mode GL_POINTS experiment.
-        if self._owner._sky_view_gl_stars_requested and scene.fast_star_groups:
+        self._owner._sky_view_unified_stars_drew = False
 
-            fast_star_count = sum(len(points) for points in scene.fast_star_groups.values())
+        if self._owner._try_draw_unified_gpu_stars(painter, scene):
 
-            # Stage GL-Star-2C keeps the production gate intentionally
-            # conservative. In sampled real fields the fast-star bucket peaked
-            # well below this threshold, and forcing the retained GL path at
-            # those counts was not clearly faster than the QPainter reference
-            # path, so sub-threshold views should stay on QPainter.
+            self._owner._sky_view_unified_stars_drew = True
+
+            return
+
+        fallback_fast_star_groups = scene.fast_star_groups
+
+        if not fallback_fast_star_groups:
+
+            fallback_fast_star_groups = self._owner._legacy_fast_star_groups_from_visible_objects(scene.visible_objects)
+
+        # Fallback: legacy QPainter / experimental GL paths when the unified
+        # renderer is unavailable for the session.
+        if self._owner._sky_view_gl_stars_requested and fallback_fast_star_groups:
+
+            fast_star_count = sum(len(points) for points in fallback_fast_star_groups.values())
+
             if fast_star_count < self._owner._SKY_VIEW_GL_STARS_MIN_SUBMITTED:
 
                 self._owner._record_gl_stars_threshold_skip(fast_star_count)
 
-                self._owner._draw_fast_star_groups(painter, scene.fast_star_groups)
+                self._owner._draw_fast_star_groups(painter, fallback_fast_star_groups)
 
                 return
 
             if self._owner._try_draw_gl_star_groups(
                 painter,
-                scene.fast_star_groups,
+                fallback_fast_star_groups,
                 scene.viewport_rect,
                 scene.device_pixel_ratio,
                 candidate_count=fast_star_count,
@@ -3612,15 +3863,11 @@ class _QPainterSkyViewRenderer:
 
             self._owner._record_gl_stars_qpainter_fallback()
 
-            self._owner._draw_fast_star_groups(painter, scene.fast_star_groups)
+            self._owner._draw_fast_star_groups(painter, fallback_fast_star_groups)
 
             return
 
-    # Legacy GL_FAINT_STARS remains the older immediate-mode GL_POINTS
-    # experiment. It is only a fallback compatibility path and should not
-    # absorb new renderer work now that GL_STARS owns retained-mode
-    # experimentation.
-        if self._owner._sky_view_gl_faint_stars_active() and scene.fast_star_groups:
+        if self._owner._sky_view_gl_faint_stars_active() and fallback_fast_star_groups:
 
             gl_failure: Exception | None = None
 
@@ -3635,7 +3882,7 @@ class _QPainterSkyViewRenderer:
                 native_painting_started = True
 
                 submitted_point_count = self._owner._draw_gl_faint_star_groups(
-                    scene.fast_star_groups,
+                    fallback_fast_star_groups,
                     scene.viewport_rect,
                     scene.device_pixel_ratio,
                 )
@@ -3664,7 +3911,7 @@ class _QPainterSkyViewRenderer:
 
             self._owner._disable_gl_faint_stars_for_session(gl_failure)
 
-        self._owner._draw_fast_star_groups(painter, scene.fast_star_groups)
+        self._owner._draw_fast_star_groups(painter, fallback_fast_star_groups)
 
     def draw_non_star_glyphs(self, painter: QPainter, scene: _SkyViewRenderScene) -> None:
 
@@ -3698,6 +3945,7 @@ class _QPainterSkyViewRenderer:
             scene.viewport_rect,
             draw_star_sprites=draw_star_sprites,
             ground_geometry=None,
+            all_visible_objects=scene.visible_objects,
         )
 
     def draw_atmosphere_ground(self, painter: QPainter, scene: _SkyViewRenderScene) -> None:
@@ -3842,11 +4090,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     _SPATIAL_INDEX_TILE_DEG = 6.0
 
-    _SPATIAL_INDEX_MAX_FIELD_WIDTH_DEG = 120.0
-
-    _SKY_VIEW_SPATIAL_BIN_MAX_CANDIDATES_FOR_SORT = 10000
-
-    _SKY_VIEW_SPATIAL_BIN_MAX_SELECTED_BINS_FOR_SORT = 256
+    _SPATIAL_INDEX_MAX_FIELD_WIDTH_DEG = 360.0
 
     _GL_BLEND = 0x0BE2
 
@@ -3981,11 +4225,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     _SKY_VIEW_MILKY_WAY_TONE_PRESETS = {
         "atlas": {
-            "brightness": 1.18,
-            "contrast": 1.34,
-            "saturation": 1.55,
-            "black_point": 0.03,
-            "gamma": 0.98,
+            "brightness": 1.3,
+            "contrast": 1.35,
+            "saturation": 2.0,
+            "black_point": 0.0,
+            "gamma": 1.05,
         },
         "dark-sky": {
             "brightness": 1.22,
@@ -4057,6 +4301,20 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._objects: tuple[SkyAtlasObject, ...] = ()
 
         self._spatial_object_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
+
+        self._spatial_star_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
+
+        self._spatial_finite_non_star_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
+
+        self._spatial_magnitude_less_object_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
+
+        self._spatial_candidate_cache_key: tuple[tuple[tuple[int, int], ...], float, int] | None = None
+
+        self._spatial_candidate_cache_value: tuple[SkyAtlasObject, ...] = ()
+
+        self._visible_objects_cache_key: tuple[object, ...] | None = None
+
+        self._visible_objects_cache_value: list[_SkyVisibleObject] = []
 
         self._star_sprite_cache: dict[tuple[str, int, int, int, str], QPixmap] = {}
 
@@ -4153,7 +4411,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._milky_way_enabled = True
 
-        self._milky_way_opacity = 0.48
+        self._milky_way_opacity = 0.65
 
         atlas_tone = self._milky_way_tone_preset_values("atlas")
 
@@ -4169,9 +4427,28 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._milky_way_tone_preset = "atlas"
 
-        self._milky_way_render_mode = "advanced"
+        self._milky_way_render_mode = "full"
 
         self._milky_way_resolution_mode = "high"
+
+        self._custom_sky_overlays_enabled = False
+
+        self._custom_sky_overlay_opacity = 0.85
+
+        self._custom_sky_overlay_brightness = 1.0
+
+        self._custom_sky_overlay_saturation = 1.0
+
+        self._custom_sky_overlay_feather = 0.0
+
+        self._custom_sky_overlay_entries: list[LoadedSkyAtlasCustomOverlay] = []
+
+        self._custom_sky_overlay_display_cache: dict[tuple[object, ...], QImage] = {}
+
+        self._custom_sky_overlay_mesh_cache: dict[
+            tuple[str, int, int, int],
+            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+        ] = {}
 
         self._milky_way_flip_horizontal = False
 
@@ -4283,6 +4560,20 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._star_spike_style = "subtle"
 
+        self._star_magnitude_limit = 8.7
+
+        self._star_brightness = 1.0
+
+        self._star_size_scale = 1.0
+
+        self._star_magnitude_size_contrast = 1.0
+
+        self._star_twinkle_amount = 0.5
+
+        self._object_magnitude_limit = 10.0
+
+        self._object_label_magnitude_limit = 8.0
+
         self._target_center_ra_deg = self._center_ra_deg
 
         self._target_center_dec_deg = self._center_dec_deg
@@ -4314,6 +4605,42 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._rendered_ground_layer_cache: _SkyRenderedGroundLayerCacheEntry | None = None
 
         self._gl_star_field_layer = _OpenGLStarFieldLayer()
+
+        self._star_renderer = StarRenderer()
+
+        self._star_hit_grid = StarHitGrid(cell_size_px=20.0)
+
+        self._sky_view_unified_stars_drew = False
+
+        self._sky_view_star_renderer_disabled_for_session = False
+
+        self._sky_view_last_star_renderer_log = ""
+
+        self._sky_view_star_geometry_content_key: tuple[object, ...] | None = None
+
+        self._sky_view_star_packed_compact: object | None = None
+
+        self._sky_view_star_packed_halo: object | None = None
+
+        self._sky_view_gl_context_destroyed_connected = False
+
+        self._visible_object_pools: tuple[list[_SkyVisibleObject], list[_SkyVisibleObject]] = ([], [])
+
+        self._visible_object_pool_index = 0
+
+        self._horizon_matrix_sync_key: tuple[object, ...] | None = None
+
+        self._star_static_rgb_cache: dict[int, tuple[float, float, float]] = {}
+
+        self._deferred_hit_grid_dirty = False
+
+        self._cached_overlay_label_draw_list: list[
+            tuple[QFont, QPointF, str, QColor, QColor]
+        ] | None = None
+
+        self._cached_overlay_label_key: tuple[object, ...] | None = None
+
+        self._sky_view_last_paint_total_seconds = 0.0
 
         self._sky_view_gl_stars_requested = self._environment_flag_enabled(os.getenv(self._SKY_VIEW_GL_STARS_ENV_VAR))
 
@@ -4666,6 +4993,34 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._objects = tuple(sorted(objects, key=lambda item: (self._magnitude_sort_key(item.magnitude), item.name.casefold())))
 
         self._spatial_object_bins = self._build_spatial_object_bins(self._objects)
+
+        self._spatial_star_bins = self._build_spatial_object_bins(
+            tuple(sky_object for sky_object in self._objects if sky_object.object_type.casefold() == "star")
+        )
+
+        self._spatial_finite_non_star_bins = self._build_spatial_object_bins(
+            tuple(
+                sky_object
+                for sky_object in self._objects
+                if sky_object.object_type.casefold() != "star" and sky_object.magnitude is not None
+            )
+        )
+
+        self._spatial_magnitude_less_object_bins = self._build_spatial_object_bins(
+            tuple(
+                sky_object
+                for sky_object in self._objects
+                if sky_object.object_type.casefold() != "star" and sky_object.magnitude is None
+            )
+        )
+
+        self._spatial_candidate_cache_key = None
+
+        self._spatial_candidate_cache_value = ()
+
+        self._visible_objects_cache_key = None
+
+        self._visible_objects_cache_value = []
 
         if self._selected_object is not None and self._selected_object not in self._objects:
 
@@ -5538,9 +5893,39 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._gl_functions = functions
 
+        self._connect_gl_context_destroyed_cleanup()
+
         self._release_gpu_star_textures()
 
         self._gl_star_field_layer.release()
+
+        self._star_renderer.release()
+
+        self._sky_view_star_renderer_disabled_for_session = False
+
+        if not self._sky_view_star_renderer_disabled_for_session:
+
+            try:
+
+                default_fbo = int(self.defaultFramebufferObject()) if hasattr(self, "defaultFramebufferObject") else 0
+
+                self._star_renderer.initialize(self._gl_functions, default_framebuffer=default_fbo)
+
+                dpr = max(1.0, float(self.devicePixelRatioF()))
+
+                self._star_renderer.resize(
+                    max(1, int(math.ceil(self.width() * dpr))),
+                    max(1, int(math.ceil(self.height() * dpr))),
+                    dpr,
+                )
+
+            except Exception as exc:
+
+                self._sky_view_star_renderer_disabled_for_session = True
+
+                self._star_renderer.release()
+
+                logging.getLogger(__name__).warning("Sky View unified star renderer disabled: %s", exc)
 
         if self._sky_view_gl_stars_requested and not self._sky_view_gl_stars_disabled_for_session:
 
@@ -6106,7 +6491,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def set_milky_way_opacity(self, opacity: float) -> None:
 
-        resolved_opacity = max(0.0, min(0.65, float(opacity)))
+        resolved_opacity = max(0.0, min(0.80, float(opacity)))
 
         if abs(self._milky_way_opacity - resolved_opacity) <= 1.0e-6:
 
@@ -6393,7 +6778,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
     @staticmethod
     def _normalize_milky_way_render_mode(render_mode: str | None) -> str:
 
-        resolved_mode = str(render_mode or "advanced").strip().casefold().replace("-", "_").replace(" ", "_")
+        resolved_mode = str(render_mode or "full").strip().casefold().replace("-", "_").replace(" ", "_")
 
         if resolved_mode in {"basic", "basic_milky_way", "simple", "single", "single_texture"}:
 
@@ -6430,6 +6815,372 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
     def milky_way_render_mode(self) -> str:
 
         return self._milky_way_render_mode
+
+    def prepare_startup_milky_way_cache(self) -> None:
+
+        if not self._milky_way_enabled:
+
+            return
+
+        render_mode = self._normalize_milky_way_render_mode(self._milky_way_render_mode)
+
+        if render_mode != "full":
+
+            return
+
+        asset_info = self._milky_way_runtime_asset_info(render_mode)
+
+        manifest_asset = asset_info.asset if isinstance(asset_info.asset, MilkyWayTilePyramidAsset) else None
+
+        if manifest_asset is None:
+
+            return
+
+        scene = SimpleNamespace(
+            milky_way_resolution_mode=self._milky_way_resolution_mode,
+            milky_way_render_mode=render_mode,
+        )
+
+        self._milky_way_manifest_full_image(manifest_asset, scene)  # type: ignore[arg-type]
+
+    def _invalidate_custom_sky_overlay_view_cache(self) -> None:
+
+        self._custom_sky_overlay_display_cache.clear()
+
+        active_overlay_ids = {entry.overlay_id for entry in self._custom_sky_overlay_entries}
+        self._custom_sky_overlay_mesh_cache = {
+            key: value
+            for key, value in self._custom_sky_overlay_mesh_cache.items()
+            if key[0] in active_overlay_ids
+        }
+
+    def _custom_sky_overlay_display_image(
+        self,
+        overlay: LoadedSkyAtlasCustomOverlay,
+        scene: _SkyViewRenderScene,
+    ) -> QImage | None:
+
+        cache_key = (
+            overlay.overlay_id,
+            round(scene.custom_sky_overlay_brightness, 4),
+            round(scene.custom_sky_overlay_saturation, 4),
+            round(scene.custom_sky_overlay_feather, 4),
+        )
+        cached_image = self._custom_sky_overlay_display_cache.get(cache_key)
+        if cached_image is not None and not cached_image.isNull():
+            return cached_image
+
+        image = build_overlay_display_qimage(
+            overlay,
+            brightness=scene.custom_sky_overlay_brightness,
+            saturation=scene.custom_sky_overlay_saturation,
+            feather=scene.custom_sky_overlay_feather,
+        )
+        if image.isNull():
+            return None
+
+        self._custom_sky_overlay_display_cache[cache_key] = image
+        return image
+
+    def _custom_sky_overlay_mesh_coordinates(
+        self,
+        overlay: LoadedSkyAtlasCustomOverlay,
+        divisions: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+
+        resolved_divisions = max(1, int(divisions))
+        cache_key = (
+            overlay.overlay_id,
+            overlay.width,
+            overlay.height,
+            resolved_divisions,
+        )
+        cached_mesh = self._custom_sky_overlay_mesh_cache.get(cache_key)
+        if cached_mesh is not None:
+            return cached_mesh
+
+        x_edges = np.linspace(0.0, float(overlay.width), resolved_divisions + 1, dtype=np.float64)
+        y_edges = np.linspace(0.0, float(overlay.height), resolved_divisions + 1, dtype=np.float64)
+        pixel_x, pixel_y = np.meshgrid(x_edges, y_edges)
+        ra_deg, dec_deg = overlay.wcs.pixel_to_world_values(pixel_x, pixel_y)
+        mesh = (
+            x_edges,
+            y_edges,
+            np.asarray(ra_deg, dtype=np.float64),
+            np.asarray(dec_deg, dtype=np.float64),
+        )
+        self._custom_sky_overlay_mesh_cache[cache_key] = mesh
+        return mesh
+
+    def _project_custom_sky_overlay_mesh(
+        self,
+        scene: _SkyViewRenderScene,
+        ra_deg: np.ndarray,
+        dec_deg: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+        ra_rad = np.radians(ra_deg)
+        dec_rad = np.radians(dec_deg)
+        cos_dec = np.cos(dec_rad)
+        equatorial = np.stack(
+            (
+                cos_dec * np.cos(ra_rad),
+                cos_dec * np.sin(ra_rad),
+                np.sin(dec_rad),
+            ),
+            axis=-1,
+        )
+
+        equatorial_to_horizon = np.asarray(scene.equatorial_to_horizon_matrix, dtype=np.float64)
+        horizon = np.einsum("ij,...j->...i", equatorial_to_horizon, equatorial)
+        forward = np.asarray(scene.camera_forward, dtype=np.float64)
+        up = np.asarray(scene.camera_up, dtype=np.float64)
+        right = np.asarray(scene.camera_right, dtype=np.float64)
+
+        forward_component = np.einsum("...i,i->...", horizon, forward)
+        up_component = np.einsum("...i,i->...", horizon, up)
+        right_component = np.einsum("...i,i->...", horizon, right)
+        angular_distance = np.arccos(np.clip(forward_component, -1.0, 1.0))
+        sin_distance = np.sin(angular_distance)
+        projection_scale = np.ones_like(angular_distance)
+        regular = np.abs(sin_distance) > 1.0e-9
+        projection_scale[regular] = angular_distance[regular] / sin_distance[regular]
+
+        half_width_rad = math.radians(scene.field_width_deg / 2.0)
+        half_height_rad = math.radians(scene.field_height_deg / 2.0)
+        half_rect_width = scene.viewport_rect.width() / 2.0
+        half_rect_height = scene.viewport_rect.height() / 2.0
+
+        screen_x = (
+            scene.viewport_rect.center().x()
+            + (projection_scale * right_component / max(half_width_rad, 1.0e-9)) * half_rect_width
+        )
+        screen_y = (
+            scene.viewport_rect.center().y()
+            - (projection_scale * up_component / max(half_height_rad, 1.0e-9)) * half_rect_height
+        )
+        visible = (
+            np.isfinite(screen_x)
+            & np.isfinite(screen_y)
+            & (forward_component > 1.0e-6)
+        )
+        return screen_x, screen_y, visible
+
+    @staticmethod
+    def _custom_sky_overlay_quad_transform(
+        source_points: Sequence[QPointF],
+        destination_points: Sequence[QPointF],
+    ) -> QTransform | None:
+
+        if len(source_points) != 4 or len(destination_points) != 4:
+            return None
+
+        try:
+            transform = QTransform.quadToQuad(
+                QPolygonF(list(source_points)),
+                QPolygonF(list(destination_points)),
+            )
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(transform, QTransform) or not transform.isInvertible():
+            return None
+        return transform
+
+    def set_custom_sky_overlays_enabled(self, enabled: bool) -> None:
+
+        resolved_enabled = bool(enabled)
+
+        if self._custom_sky_overlays_enabled == resolved_enabled:
+
+            return
+
+        self._custom_sky_overlays_enabled = resolved_enabled
+
+        self._invalidate_custom_sky_overlay_view_cache()
+
+        self.update()
+
+    def custom_sky_overlays_enabled(self) -> bool:
+
+        return self._custom_sky_overlays_enabled
+
+    def set_custom_sky_overlay_opacity(self, opacity: float) -> None:
+
+        resolved_opacity = max(0.0, min(1.0, float(opacity)))
+
+        if abs(self._custom_sky_overlay_opacity - resolved_opacity) <= 1.0e-6:
+
+            return
+
+        self._custom_sky_overlay_opacity = resolved_opacity
+
+        self._invalidate_custom_sky_overlay_view_cache()
+
+        self.update()
+
+    def custom_sky_overlay_opacity(self) -> float:
+
+        return self._custom_sky_overlay_opacity
+
+    def set_custom_sky_overlay_brightness(self, brightness: float) -> None:
+
+        resolved_brightness = max(0.35, min(2.0, float(brightness)))
+
+        if abs(self._custom_sky_overlay_brightness - resolved_brightness) <= 1.0e-6:
+
+            return
+
+        self._custom_sky_overlay_brightness = resolved_brightness
+
+        self._invalidate_custom_sky_overlay_view_cache()
+
+        self.update()
+
+    def custom_sky_overlay_brightness(self) -> float:
+
+        return self._custom_sky_overlay_brightness
+
+    def set_custom_sky_overlay_saturation(self, saturation: float) -> None:
+
+        resolved_saturation = max(0.0, min(2.4, float(saturation)))
+
+        if abs(self._custom_sky_overlay_saturation - resolved_saturation) <= 1.0e-6:
+
+            return
+
+        self._custom_sky_overlay_saturation = resolved_saturation
+
+        self._invalidate_custom_sky_overlay_view_cache()
+
+        self.update()
+
+    def custom_sky_overlay_saturation(self) -> float:
+
+        return self._custom_sky_overlay_saturation
+
+    def set_custom_sky_overlay_feather(self, feather: float) -> None:
+
+        resolved_feather = max(0.0, min(1.0, float(feather)))
+
+        if abs(self._custom_sky_overlay_feather - resolved_feather) <= 1.0e-6:
+
+            return
+
+        self._custom_sky_overlay_feather = resolved_feather
+
+        self._invalidate_custom_sky_overlay_view_cache()
+
+        self.update()
+
+    def custom_sky_overlay_feather(self) -> float:
+
+        return self._custom_sky_overlay_feather
+
+    def set_custom_sky_overlay_entries(self, entries: Sequence[LoadedSkyAtlasCustomOverlay]) -> None:
+
+        self._custom_sky_overlay_entries = list(entries)
+
+        self._invalidate_custom_sky_overlay_view_cache()
+
+        self.update()
+
+    def custom_sky_overlay_entries(self) -> tuple[LoadedSkyAtlasCustomOverlay, ...]:
+
+        return tuple(self._custom_sky_overlay_entries)
+
+    def _draw_custom_sky_overlay_layer(self, painter: QPainter, scene: _SkyViewRenderScene) -> None:
+
+        if not scene.custom_sky_overlays_enabled or not self._custom_sky_overlay_entries:
+
+            return
+
+        if scene.custom_sky_overlay_opacity <= 1.0e-6:
+
+            return
+
+        painter.save()
+
+        painter.setOpacity(max(0.0, min(1.0, scene.custom_sky_overlay_opacity)))
+
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+
+        painter.setClipRect(scene.viewport_rect)
+
+        mesh_divisions = 4
+        viewport_left = scene.viewport_rect.left()
+        viewport_right = scene.viewport_rect.right()
+        viewport_top = scene.viewport_rect.top()
+        viewport_bottom = scene.viewport_rect.bottom()
+
+        for overlay in self._custom_sky_overlay_entries:
+
+            overlay_image = self._custom_sky_overlay_display_image(overlay, scene)
+            if overlay_image is None or overlay_image.isNull():
+                continue
+
+            try:
+                x_edges, y_edges, ra_deg, dec_deg = self._custom_sky_overlay_mesh_coordinates(
+                    overlay,
+                    mesh_divisions,
+                )
+                screen_x, screen_y, visible = self._project_custom_sky_overlay_mesh(
+                    scene,
+                    ra_deg,
+                    dec_deg,
+                )
+            except Exception:
+                continue
+
+            for row in range(mesh_divisions):
+                for column in range(mesh_divisions):
+                    mesh_indices = (
+                        (row, column),
+                        (row, column + 1),
+                        (row + 1, column + 1),
+                        (row + 1, column),
+                    )
+                    if not all(bool(visible[index]) for index in mesh_indices):
+                        continue
+
+                    destination_points = [
+                        QPointF(float(screen_x[index]), float(screen_y[index]))
+                        for index in mesh_indices
+                    ]
+                    destination_x = [point.x() for point in destination_points]
+                    destination_y = [point.y() for point in destination_points]
+                    if (
+                        max(destination_x) < viewport_left
+                        or min(destination_x) > viewport_right
+                        or max(destination_y) < viewport_top
+                        or min(destination_y) > viewport_bottom
+                    ):
+                        continue
+
+                    source_points = (
+                        QPointF(float(x_edges[column]), float(y_edges[row])),
+                        QPointF(float(x_edges[column + 1]), float(y_edges[row])),
+                        QPointF(float(x_edges[column + 1]), float(y_edges[row + 1])),
+                        QPointF(float(x_edges[column]), float(y_edges[row + 1])),
+                    )
+                    transform = self._custom_sky_overlay_quad_transform(
+                        source_points,
+                        destination_points,
+                    )
+                    if transform is None:
+                        continue
+
+                    source_rect = QRectF(
+                        float(x_edges[column]),
+                        float(y_edges[row]),
+                        float(x_edges[column + 1] - x_edges[column]),
+                        float(y_edges[row + 1] - y_edges[row]),
+                    )
+                    painter.setTransform(transform, combine=False)
+                    painter.drawImage(source_rect, overlay_image, source_rect)
+
+        painter.restore()
 
     def set_milky_way_resolution_mode(self, resolution_mode: str) -> None:
 
@@ -6493,6 +7244,58 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         return self._star_bloom_strength
 
+    def apply_sky_atlas_display_settings(self, display_settings: SkyAtlasDisplaySettings) -> None:
+
+        star_magnitude_limit = max(3.0, min(15.0, float(display_settings.star_magnitude_limit)))
+
+        star_brightness = max(0.35, min(2.0, float(display_settings.star_brightness)))
+
+        star_size_scale = max(0.4, min(2.5, float(display_settings.star_size)))
+
+        star_magnitude_size_contrast = max(0.0, min(2.0, float(display_settings.star_magnitude_size_contrast)))
+
+        star_twinkle_amount = max(0.0, min(1.0, float(display_settings.star_twinkle)))
+
+        object_magnitude_limit = max(1.0, min(16.0, float(display_settings.object_magnitude_limit)))
+
+        object_label_magnitude_limit = max(1.0, min(16.0, float(display_settings.object_label_magnitude_limit)))
+
+        appearance_changed = (
+            abs(self._star_brightness - star_brightness) > 1.0e-6
+            or abs(self._star_size_scale - star_size_scale) > 1.0e-6
+            or abs(self._star_magnitude_size_contrast - star_magnitude_size_contrast) > 1.0e-6
+        )
+
+        self._star_magnitude_limit = star_magnitude_limit
+
+        self._star_brightness = star_brightness
+
+        self._star_size_scale = star_size_scale
+
+        self._star_magnitude_size_contrast = star_magnitude_size_contrast
+
+        self._star_twinkle_amount = star_twinkle_amount
+
+        self._object_magnitude_limit = object_magnitude_limit
+
+        self._object_label_magnitude_limit = object_label_magnitude_limit
+
+        self._star_renderer.apply_settings(
+            field_width_deg=float(self._field_width_deg),
+            star_brightness=star_brightness,
+            star_size=star_size_scale,
+            magnitude_size_contrast=max(0.4, star_magnitude_size_contrast),
+            limiting_magnitude=star_magnitude_limit,
+            twinkle_amount=star_twinkle_amount,
+            device_pixel_ratio=max(1.0, float(self.devicePixelRatioF())),
+        )
+
+        if appearance_changed:
+
+            self._clear_star_sprite_caches()
+
+        self.update()
+
     def set_star_spike_style(self, spike_style: str) -> None:
 
         normalized_style = str(spike_style or "subtle").strip().casefold()
@@ -6517,9 +7320,21 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def _handle_appearance_animation_timeout(self) -> None:
 
-        if self.isVisible():
+        if not self.isVisible():
 
-            self.update()
+            return
+
+        # Avoid animation-driven redraws while the camera is moving; these made
+        # faint stars look like they were blinking or popping during drags.
+        if self._sky_view_interaction_state() != "stable":
+
+            return
+
+        if float(self._star_twinkle_amount) <= 1.0e-6:
+
+            return
+
+        self.update()
 
     def showEvent(self, event) -> None:  # type: ignore[override]
 
@@ -6555,6 +7370,8 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             self._release_gpu_star_textures()
 
+            self._star_renderer.release()
+
             self._gl_milky_way_layer.release()
 
             self._gl_moon_renderer.release()
@@ -6584,6 +7401,22 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._clear_projected_grid_caches()
 
         self._clear_rendered_ground_layer_cache()
+
+        if self._star_renderer.available:
+
+            dpr = max(1.0, float(self.devicePixelRatioF()))
+
+            try:
+
+                self._star_renderer.resize(
+                    max(1, int(math.ceil(self.width() * dpr))),
+                    max(1, int(math.ceil(self.height() * dpr))),
+                    dpr,
+                )
+
+            except Exception:
+
+                pass
 
         super().resizeEvent(event)
 
@@ -6684,6 +7517,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             milky_way_render_mode=self._milky_way_render_mode,
             milky_way_resolution_mode=self._milky_way_resolution_mode,
             milky_way_flip_horizontal=self._milky_way_flip_horizontal,
+            custom_sky_overlays_enabled=self._custom_sky_overlays_enabled,
+            custom_sky_overlay_opacity=self._custom_sky_overlay_opacity,
+            custom_sky_overlay_brightness=self._custom_sky_overlay_brightness,
+            custom_sky_overlay_saturation=self._custom_sky_overlay_saturation,
+            custom_sky_overlay_feather=self._custom_sky_overlay_feather,
             ground_base_color=self._ground_base_color(),
             timing_enabled=timing_enabled,
             grid_detail_enabled=self._sky_view_grid_detail_enabled,
@@ -6734,7 +7572,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             benchmark_paint_token = benchmark_recorder.start_section("sky_view.paintGL")
 
-        total_start = perf_counter() if timing_enabled else 0.0
+        total_start = perf_counter()
 
         collect_seconds = 0.0
 
@@ -6831,10 +7669,12 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         painter.end()
 
+        self._sky_view_last_paint_total_seconds = perf_counter() - total_start
+
         if timing_enabled:
 
             self._record_sky_view_timing(
-                total_seconds=perf_counter() - total_start,
+                total_seconds=self._sky_view_last_paint_total_seconds,
                 collect_seconds=collect_seconds,
                 partition_seconds=partition_seconds,
                 grid_seconds=render_result.grid_seconds,
@@ -7028,6 +7868,17 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             self._apply_drag_rotation(float(delta.x()), float(delta.y()), self._view_rect())
 
             self._drag_origin = event.pos()
+
+            event.accept()
+
+            return
+
+        # Suspend hover work during zoom settle / camera animation.
+        if self._sky_view_interaction_state() != "stable":
+
+            if self._hovered_object is not None:
+
+                self._set_hovered_object(None)
 
             event.accept()
 
@@ -8812,7 +9663,16 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         frame_state = self._sky_view_collect_frame_state(rect)
 
-        candidate_objects, candidate_detail = self._candidate_objects_for_current_view_with_detail(frame_state.field_height_deg)
+        visible_objects_cache_key = self._sky_view_visible_objects_cache_key(rect, frame_state)
+        if not collect_detail_enabled and visible_objects_cache_key == self._visible_objects_cache_key:
+
+            return self._visible_objects_cache_value
+
+        candidate_objects, candidate_detail = self._candidate_objects_for_current_view_with_detail(
+            frame_state.field_height_deg,
+            magnitude_scan_cutoff=frame_state.magnitude_scan_cutoff,
+            star_candidate_budget=frame_state.star_candidate_budget,
+        )
 
         scan_projection_start = perf_counter() if collect_detail_enabled else 0.0
 
@@ -8838,6 +9698,13 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         selected_included = False
 
+        visible_star_count = 0
+
+        # Double-buffer pooled visible objects so a cached frame's objects are not
+        # mutated while building the next miss.
+        self._visible_object_pool_index = 1 - int(self._visible_object_pool_index)
+        visible_object_pool = self._visible_object_pools[self._visible_object_pool_index]
+
         for sky_object in candidate_objects:
 
             magnitude_start = perf_counter() if collect_detail_enabled else 0.0
@@ -8846,7 +9713,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             is_selected = sky_object == self._selected_object
 
-            if magnitude > frame_state.magnitude_scan_cutoff and not is_selected:
+            is_magnitude_less_non_star = sky_object.object_type.casefold() != "star" and sky_object.magnitude is None
+
+            if magnitude > frame_state.magnitude_scan_cutoff and not is_selected and not is_magnitude_less_non_star:
 
                 if collect_detail_enabled:
 
@@ -8856,14 +9725,12 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             scanned_before_magnitude_break_count += 1
 
-            horizon_vector = self._equatorial_to_horizon_vector(sky_object.ra_deg, sky_object.dec_deg)
+            equatorial_vector = self._equatorial_vector(float(sky_object.ra_deg), float(sky_object.dec_deg))
 
-            normalized_horizon_vector = self._vector_normalize(horizon_vector)
-
-            if not self._roughly_in_current_view_horizon_vector_with_state(
-                normalized_horizon_vector,
-                frame_state,
-                is_selected=is_selected,
+            if (
+                not is_selected
+                and not frame_state.rough_cull_disabled
+                and self._vector_dot(frame_state.equatorial_camera_forward, equatorial_vector) < frame_state.rough_cull_min_dot
             ):
 
                 rejected_by_rough_view_cull_count += 1
@@ -8889,6 +9756,16 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                     projection_cull_seconds += perf_counter() - projection_start
 
                 continue
+
+            is_star = sky_object.object_type.casefold() == "star"
+            if is_star and visible_star_count >= frame_state.visible_star_budget and not is_selected:
+
+                continue
+
+            normalized_horizon_vector = self._matrix_vector_multiply(
+                self._equatorial_to_horizon_matrix,
+                equatorial_vector,
+            )
 
             altitude_deg = math.degrees(math.asin(max(-1.0, min(1.0, normalized_horizon_vector[2]))))
 
@@ -8925,8 +9802,15 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             assembly_start = perf_counter() if collect_detail_enabled else 0.0
 
-            visible_objects.append(
-                _SkyVisibleObject(
+            if appended_visible_count < len(visible_object_pool):
+
+                visible_object = visible_object_pool[appended_visible_count]
+
+                visible_object.update(sky_object, x, y, visibility_alpha, magnitude, altitude_deg)
+
+            else:
+
+                visible_object = _SkyVisibleObject(
                     sky_object=sky_object,
                     x=x,
                     y=y,
@@ -8934,13 +9818,20 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                     magnitude=magnitude,
                     altitude_deg=altitude_deg,
                 )
-            )
+
+                visible_object_pool.append(visible_object)
+
+            visible_objects.append(visible_object)
 
             if collect_detail_enabled:
 
                 visible_object_assembly_seconds += perf_counter() - assembly_start
 
             appended_visible_count += 1
+
+            if is_star:
+
+                visible_star_count += 1
 
             if is_selected:
 
@@ -8969,22 +9860,36 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                 x, y = projected
 
-                visible_objects.append(
-                    _SkyVisibleObject(
+                magnitude = self._magnitude_sort_key(selected.magnitude)
+
+                altitude_deg = math.degrees(math.asin(max(-1.0, min(1.0, selected_horizon_vector[2]))))
+
+                if appended_visible_count < len(visible_object_pool):
+
+                    visible_object = visible_object_pool[appended_visible_count]
+
+                    visible_object.update(selected, x, y, 1.0, magnitude, altitude_deg)
+
+                else:
+
+                    visible_object = _SkyVisibleObject(
                         sky_object=selected,
                         x=x,
                         y=y,
                         visibility_alpha=1.0,
-                        magnitude=self._magnitude_sort_key(selected.magnitude),
-                        altitude_deg=math.degrees(math.asin(max(-1.0, min(1.0, selected_horizon_vector[2])))),
+                        magnitude=magnitude,
+                        altitude_deg=altitude_deg,
                     )
-                )
+
+                    visible_object_pool.append(visible_object)
+
+                visible_objects.append(visible_object)
+
+                appended_visible_count += 1
 
                 if collect_detail_enabled:
 
                     visible_object_assembly_seconds += perf_counter() - fallback_start
-
-                appended_visible_count += 1
 
             if collect_detail_enabled:
 
@@ -9015,17 +9920,54 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                 total_collect_seconds=perf_counter() - collect_total_start,
             )
 
+        else:
+
+            self._visible_objects_cache_key = visible_objects_cache_key
+            self._visible_objects_cache_value = visible_objects
+
         return visible_objects
+
+    def _sky_view_visible_objects_cache_key(
+        self,
+        rect: QRectF,
+        frame_state: _SkyViewCollectFrameState,
+    ) -> tuple[object, ...]:
+
+        return (
+            id(self._objects),
+            float(rect.left()),
+            float(rect.top()),
+            float(rect.width()),
+            float(rect.height()),
+            float(self._field_width_deg),
+            float(self._center_ra_deg),
+            float(self._center_dec_deg),
+            frame_state.camera_forward,
+            frame_state.camera_up,
+            frame_state.camera_right,
+            self._equatorial_to_horizon_matrix,
+            float(frame_state.star_visible_magnitude_limit),
+            float(frame_state.object_visible_magnitude_limit),
+            int(frame_state.visible_star_budget),
+            bool(self._show_ground),
+            id(self._selected_object),
+        )
 
     def _sky_view_collect_frame_state(self, rect: QRectF) -> _SkyViewCollectFrameState:
 
         field_height_deg = self._field_height_deg(rect)
 
-        star_visible_magnitude_limit = self._interpolated_magnitude_limit(8.7, 3.1, exponent=1.75)
+        visible_star_budget, star_candidate_budget = self._sky_view_star_budgets(rect)
 
-        object_visible_magnitude_limit = self._interpolated_magnitude_limit(6.5, 1.5, exponent=1.35)
+        star_visible_magnitude_limit = self._star_visible_magnitude_limit_for_current_fov()
 
-        magnitude_scan_cutoff = max(star_visible_magnitude_limit + 0.85, object_visible_magnitude_limit + 0.8) + 0.05
+        object_visible_magnitude_limit = self._interpolated_magnitude_limit(
+            self._object_magnitude_limit,
+            max(1.0, self._object_magnitude_limit - 5.5),
+            exponent=0.9,
+        )
+
+        magnitude_scan_cutoff = max(star_visible_magnitude_limit + 0.55, object_visible_magnitude_limit + 0.65) + 0.05
 
         rough_cull_margin_deg = max(1.0, min(8.0, max(self._field_width_deg, field_height_deg) * 0.06))
 
@@ -9044,11 +9986,15 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         return _SkyViewCollectFrameState(
             field_height_deg=field_height_deg,
             magnitude_scan_cutoff=magnitude_scan_cutoff,
+            visible_star_budget=visible_star_budget,
+            star_candidate_budget=star_candidate_budget,
             rough_cull_view_radius_deg=rough_cull_view_radius_deg,
+            rough_cull_min_dot=math.cos(math.radians(max(0.0, min(180.0, rough_cull_view_radius_deg)))),
             rough_cull_disabled=self._field_width_deg >= 180.0,
             star_visible_magnitude_limit=star_visible_magnitude_limit,
             object_visible_magnitude_limit=object_visible_magnitude_limit,
             camera_forward=camera_forward,
+            equatorial_camera_forward=self._horizon_to_equatorial_vector(camera_forward),
             camera_up=camera_up,
             camera_right=camera_right,
             half_width_rad=math.radians(self._field_width_deg / 2.0),
@@ -9059,6 +10005,14 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             half_rect_width=rect.width() / 2.0,
             half_rect_height=rect.height() / 2.0,
         )
+
+    def _sky_view_star_budgets(self, rect: QRectF) -> tuple[int, int]:
+
+        # Keep the same density budget while dragging/zooming so stars do not
+        # pop in and out between interaction and settled frames.
+        viewport_area = max(1.0, float(rect.width()) * float(rect.height()))
+        visible_budget = max(2400, min(9000, int(round(viewport_area / 120.0))))
+        return visible_budget, visible_budget * 3
 
     def _roughly_in_current_view_horizon_vector_with_state(
         self,
@@ -9072,16 +10026,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             return True
 
-        angular_distance_deg = math.degrees(
-            math.acos(
-                max(
-                    -1.0,
-                    min(1.0, self._vector_dot(frame_state.camera_forward, normalized_horizon_vector)),
-                )
-            )
-        )
-
-        return angular_distance_deg <= frame_state.rough_cull_view_radius_deg
+        return self._vector_dot(frame_state.camera_forward, normalized_horizon_vector) >= frame_state.rough_cull_min_dot
 
     def _visibility_alpha_for_magnitude_with_frame_state(
         self,
@@ -9094,17 +10039,21 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             return 1.0
 
+        if sky_object.object_type.casefold() != "star" and sky_object.magnitude is None:
+
+            return 1.0 if self._field_width_deg <= 90.0 else max(0.0, (120.0 - self._field_width_deg) / 30.0)
+
         if sky_object.object_type.casefold() != "star":
 
             limit = frame_state.object_visible_magnitude_limit
 
-            fade_window = 0.8
+            fade_window = 0.7
 
         else:
 
             limit = self._effective_star_visible_magnitude_limit(frame_state.star_visible_magnitude_limit, magnitude)
 
-            fade_window = 0.85
+            fade_window = 0.55
 
         raw_alpha = (limit + fade_window - magnitude) / (fade_window * 2.0)
 
@@ -9163,9 +10112,13 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def _visibility_magnitude_scan_cutoff(self) -> float:
 
-        star_cutoff = self._interpolated_magnitude_limit(8.7, 3.1, exponent=1.75) + 0.85
+        star_cutoff = self._star_visible_magnitude_limit_for_current_fov() + 0.55
 
-        object_cutoff = self._interpolated_magnitude_limit(6.5, 1.5, exponent=1.35) + 0.8
+        object_cutoff = self._interpolated_magnitude_limit(
+            self._object_magnitude_limit,
+            max(1.0, self._object_magnitude_limit - 5.5),
+            exponent=0.9,
+        ) + 0.65
 
         return max(star_cutoff, object_cutoff) + 0.05
 
@@ -9178,6 +10131,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
     def _candidate_objects_for_current_view_with_detail(
         self,
         field_height_deg: float,
+        *,
+        magnitude_scan_cutoff: float | None = None,
+        star_candidate_budget: int | None = None,
     ) -> tuple[Sequence[SkyAtlasObject], _SkyViewCollectCandidateDetail]:
 
         enumeration_start = perf_counter()
@@ -9203,52 +10159,81 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         detail.spatial_candidate_count_estimate = sum(len(self._spatial_object_bins.get(key, ())) for key in bin_keys)
 
-        if (
-            detail.selected_bin_count > self._SKY_VIEW_SPATIAL_BIN_MAX_SELECTED_BINS_FOR_SORT
-            or detail.spatial_candidate_count_estimate > self._SKY_VIEW_SPATIAL_BIN_MAX_CANDIDATES_FOR_SORT
-        ):
+        resolved_magnitude_scan_cutoff = (
+            self._visibility_magnitude_scan_cutoff()
+            if magnitude_scan_cutoff is None
+            else float(magnitude_scan_cutoff)
+        )
+        resolved_star_candidate_budget = (
+            self._sky_view_star_budgets(QRectF(self.rect()))[1]
+            if star_candidate_budget is None
+            else max(1, int(star_candidate_budget))
+        )
+        cache_key = (bin_keys, round(resolved_magnitude_scan_cutoff, 6), resolved_star_candidate_budget)
+        if cache_key == self._spatial_candidate_cache_key:
 
-            detail.used_spatial_bins = False
-
-            detail.candidate_path = "spatial_bins_fallback_full_list"
-
-            detail.fallback_to_full_list = True
-
-            detail.candidate_count_before_sorting = len(self._objects)
+            detail.candidate_count_before_sorting = len(self._spatial_candidate_cache_value)
 
             detail.enumeration_seconds = perf_counter() - enumeration_start
 
-            return self._objects, detail
-
-        candidate_objects: list[SkyAtlasObject] = []
+            return self._spatial_candidate_cache_value, detail
 
         candidate_merge_start = perf_counter()
 
+        def candidate_order_key(item: SkyAtlasObject) -> tuple[float, str]:
+
+            return self._magnitude_sort_key(item.magnitude), item.name.casefold()
+
+        selected_star_bins = tuple(
+            self._spatial_star_bins[key]
+            for key in bin_keys
+            if key in self._spatial_star_bins
+        )
+        star_candidates: list[SkyAtlasObject] = []
+        for sky_object in heapq.merge(*selected_star_bins, key=candidate_order_key):
+
+            if (
+                self._magnitude_sort_key(sky_object.magnitude) > resolved_magnitude_scan_cutoff
+                or len(star_candidates) >= resolved_star_candidate_budget
+            ):
+
+                break
+
+            star_candidates.append(sky_object)
+
+        selected_finite_non_star_bins = tuple(
+            self._spatial_finite_non_star_bins[key]
+            for key in bin_keys
+            if key in self._spatial_finite_non_star_bins
+        )
+        finite_non_star_candidates: list[SkyAtlasObject] = []
+        for sky_object in heapq.merge(*selected_finite_non_star_bins, key=candidate_order_key):
+
+            if self._magnitude_sort_key(sky_object.magnitude) > resolved_magnitude_scan_cutoff:
+
+                break
+
+            finite_non_star_candidates.append(sky_object)
+
+        candidate_objects = list(
+            heapq.merge(
+                star_candidates,
+                finite_non_star_candidates,
+                key=candidate_order_key,
+            )
+        )
+
         for key in bin_keys:
 
-            candidate_objects.extend(self._spatial_object_bins.get(key, ()))
+            candidate_objects.extend(self._spatial_magnitude_less_object_bins.get(key, ()))
 
+        candidate_result = tuple(candidate_objects)
+        self._spatial_candidate_cache_key = cache_key
+        self._spatial_candidate_cache_value = candidate_result
         detail.candidate_merge_seconds = perf_counter() - candidate_merge_start
-
-        detail.candidate_count_before_sorting = len(candidate_objects)
-
-        # Collect-2 diagnosis: the sampled Orion/Rigel slow case stayed on
-        # this normal spatial-bins path with the same structural counts as the
-        # steady-state view. The observed spike came from transient candidate
-        # enumeration/sort jitter here, not from GL, grid/ground, labels, or
-        # selected-object fallback, so do not retune thresholds or fallback
-        # behavior without new steady-state evidence.
-        sort_start = perf_counter()
-
-        candidate_objects.sort(key=lambda item: (self._magnitude_sort_key(item.magnitude), item.name.casefold()))
-
-        detail.sort_seconds = perf_counter() - sort_start
-
-        detail.per_frame_sort_happened = True
-
+        detail.candidate_count_before_sorting = len(candidate_result)
         detail.enumeration_seconds = perf_counter() - enumeration_start
-
-        return candidate_objects, detail
+        return candidate_result, detail
 
     def _build_spatial_object_bins(
         self,
@@ -9372,7 +10357,22 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         gpu_star_draws: list[tuple[tuple[str, int, int, int, str], float, float, float, float]] = []
 
+        # Prefer the unified GPU path only after it has a viable GL resource
+        # state. If the renderer falls back to the no-VAO compatibility path,
+        # keep legacy QPainter stars available as a visible safety net.
+        use_unified_stars = bool(
+            getattr(self, "_star_renderer", None) is not None
+            and self._star_renderer.available
+            and not getattr(self, "_sky_view_star_renderer_disabled_for_session", False)
+            and (
+                self._star_renderer.backend_name == BACKEND_INSTANCED
+                or bool(getattr(self._star_renderer, "_require_vao", True))
+            )
+        )
+
         use_gpu_star_pass = self._can_use_gpu_star_pass()
+
+        interaction_busy = self._sky_view_interaction_state() != "stable"
 
         for visible_object in reversed(visible_objects):
 
@@ -9388,11 +10388,34 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             visibility_alpha, _background_size_scale = self._moon_focus_background_presentation(sky_object, visibility_alpha, magnitude)
 
-            if visibility_alpha <= 0.015 and sky_object.object_type.casefold() == "star":
+            is_star = sky_object.object_type.casefold() == "star"
+
+            if visibility_alpha <= 0.015 and is_star:
 
                 continue
 
-            if self._should_draw_fast_star(sky_object, magnitude):
+            if use_unified_stars and is_star:
+
+                needs_overlay = (
+                    sky_object == self._selected_object
+                    or (not interaction_busy and sky_object == self._hovered_object)
+                    or (
+                        sky_object.label_visible
+                        and self._should_label_object(sky_object)
+                    )
+                )
+
+                if needs_overlay:
+
+                    rich_objects.append(visible_object)
+
+                continue
+
+            if (
+                self._should_draw_fast_star(sky_object, magnitude)
+                and sky_object != self._selected_object
+                and sky_object != self._hovered_object
+            ):
 
                 fast_star_groups.setdefault(
                     self._fast_star_group_key(sky_object.color, magnitude, visibility_alpha),
@@ -9403,7 +10426,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             rich_objects.append(visible_object)
 
-            if use_gpu_star_pass and sky_object.object_type.casefold() == "star":
+            if use_gpu_star_pass and is_star:
 
                 draw_alpha, size_scale, _altitude_deg = self._resolved_star_appearance(
                     sky_object,
@@ -9419,6 +10442,44 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                     gpu_star_draws.append((cache_key, float(x), float(y), draw_alpha, size_scale))
 
         return fast_star_groups, rich_objects, gpu_star_draws
+
+    def _legacy_fast_star_groups_from_visible_objects(
+        self,
+        visible_objects: Sequence[_SkyVisibleObject],
+    ) -> dict[tuple[str, int, float], list[QPointF]]:
+
+        groups: dict[tuple[str, int, float], list[QPointF]] = {}
+
+        for visible_object in visible_objects:
+
+            sky_object = visible_object.sky_object
+
+            if sky_object.object_type.casefold() != "star":
+
+                continue
+
+            magnitude = visible_object.magnitude
+
+            visibility_alpha, _background_size_scale = self._moon_focus_background_presentation(
+                sky_object,
+                visible_object.visibility_alpha,
+                magnitude,
+            )
+
+            if visibility_alpha <= 0.015:
+
+                continue
+
+            if sky_object == self._selected_object or sky_object == self._hovered_object:
+
+                continue
+
+            groups.setdefault(
+                self._fast_star_group_key(sky_object.color, magnitude, visibility_alpha),
+                [],
+            ).append(QPointF(float(visible_object.x), float(visible_object.y)))
+
+        return groups
 
     def _draw_non_star_objects(
         self,
@@ -9489,6 +10550,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         *,
         draw_star_sprites: bool,
         ground_geometry: _SkyGroundViewportGeometry | None,
+        all_visible_objects: Sequence[_SkyVisibleObject] | None = None,
     ) -> None:
 
         timing_enabled = self._sky_view_timing_window is not None
@@ -9509,7 +10571,47 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._sky_view_last_drawn_label_count = 0
 
-        self._last_projected_objects = []
+        interaction_busy = self._sky_view_interaction_state() != "stable"
+
+        label_cache_key = (
+            round(float(self._center_ra_deg), 4),
+            round(float(self._center_dec_deg), 4),
+            round(float(self._field_width_deg), 4),
+            round(float(rect.width()), 1),
+            round(float(rect.height()), 1),
+            id(self._selected_object) if self._selected_object is not None else 0,
+            id(self._hovered_object) if self._hovered_object is not None else 0,
+            len(rich_objects),
+            int(
+                round(
+                    sum(
+                        float(item.x) + float(item.y) * 0.017 + float(item.magnitude) * 3.0
+                        for item in rich_objects
+                    )
+                    * 10.0
+                )
+            )
+            if rich_objects
+            else 0,
+        )
+
+        reuse_cached_labels = (
+            not interaction_busy
+            and label_cache_key == self._cached_overlay_label_key
+            and self._cached_overlay_label_draw_list is not None
+        )
+
+        if interaction_busy:
+
+            self._deferred_hit_grid_dirty = True
+
+        elif not reuse_cached_labels:
+
+            self._last_projected_objects = []
+
+            self._star_hit_grid.clear()
+
+            self._deferred_hit_grid_dirty = False
 
         self._sky_view_moon_marker_hidden_due_to_extended_body = False
 
@@ -9524,6 +10626,8 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         ] = []
 
         object_label_avoid_bounds: dict[SkyAtlasObject, QRectF] = {}
+
+        rich_object_ids = {id(visible_object.sky_object) for visible_object in rich_objects}
 
         painter.save()
 
@@ -9611,9 +10715,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                 (hit_radius + 2.0) * 2.0,
             )
 
-            if sky_object.selectable:
+            if (not interaction_busy) and (not reuse_cached_labels):
 
                 self._last_projected_objects.append((x, y, hit_radius, sky_object))
+
+                self._star_hit_grid.insert(x, y, hit_radius, sky_object)
 
             if sky_object == self._selected_object:
 
@@ -9631,7 +10737,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                     painter.drawEllipse(QRectF(x - hit_radius - 2.0, y - hit_radius - 2.0, (hit_radius + 2.0) * 2.0, (hit_radius + 2.0) * 2.0))
 
-            elif sky_object == self._hovered_object:
+            elif (not interaction_busy) and sky_object == self._hovered_object:
 
                 if use_extended_moon_overlay:
 
@@ -9647,7 +10753,12 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                     painter.drawEllipse(QRectF(x - hit_radius - 1.0, y - hit_radius - 1.0, (hit_radius + 1.0) * 2.0, (hit_radius + 1.0) * 2.0))
 
-            if sky_object.label_visible and self._should_label_object(sky_object) and not use_extended_moon_overlay:
+            if (
+                (not reuse_cached_labels)
+                and sky_object.label_visible
+                and self._should_label_object(sky_object)
+                and not use_extended_moon_overlay
+            ):
 
                 measure_before = self._sky_view_last_label_measure_seconds
 
@@ -9683,35 +10794,122 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                     (perf_counter() - object_start) - star_overlay_seconds - label_candidate_call_seconds,
                 )
 
-        layout_start = perf_counter() if timing_enabled else 0.0
+        if all_visible_objects is not None and (not interaction_busy) and (not reuse_cached_labels):
 
-        resolved_candidates = self._resolved_non_overlapping_object_label_candidates(
-            label_candidates,
-            rect=rect,
-            object_avoid_bounds=object_label_avoid_bounds,
-        )
+            self._register_fast_path_hit_targets(
+                painter,
+                all_visible_objects,
+                rich_object_ids=rich_object_ids,
+                object_label_avoid_bounds=object_label_avoid_bounds,
+            )
 
-        if timing_enabled:
+        if interaction_busy:
 
-            self._sky_view_last_label_layout_seconds = perf_counter() - layout_start
+            label_draw_start = perf_counter() if timing_enabled else 0.0
+
+            drawn_label_count = 0
+
+            labeled_sources: set[int] = set()
+
+            for _priority, font, origin, _bounds, text, text_color, shadow_color, source_object in label_candidates:
+
+                source_id = id(source_object)
+
+                if source_id in labeled_sources:
+
+                    continue
+
+                labeled_sources.add(source_id)
+
+                painter.setFont(font)
+
+                painter.setPen(QPen(shadow_color, 1.2))
+
+                painter.drawText(QPoint(int(round(origin.x() + 1.0)), int(round(origin.y() + 1.0))), text)
+
+                painter.setPen(QPen(text_color, 1.0))
+
+                painter.drawText(QPoint(int(round(origin.x())), int(round(origin.y()))), text)
+
+                drawn_label_count += 1
+
+            self._cached_overlay_label_draw_list = None
+
+            self._cached_overlay_label_key = None
+
+            if timing_enabled:
+
+                self._sky_view_last_label_draw_seconds = perf_counter() - label_draw_start
+
+                self._sky_view_last_drawn_label_count = drawn_label_count
+
+                self._sky_view_last_label_seconds = (
+                    self._sky_view_last_label_candidate_seconds
+                    + self._sky_view_last_label_measure_seconds
+                    + self._sky_view_last_label_draw_seconds
+                )
+
+            painter.restore()
+
+            return
 
         label_draw_start = perf_counter() if timing_enabled else 0.0
 
         drawn_label_count = 0
 
-        for _priority, font, origin, _bounds, text, text_color, shadow_color, _source_object in resolved_candidates:
+        if reuse_cached_labels:
 
-            painter.setFont(font)
+            assert self._cached_overlay_label_draw_list is not None
 
-            painter.setPen(QPen(shadow_color, 1.2))
+            for font, origin, text, text_color, shadow_color in self._cached_overlay_label_draw_list:
 
-            painter.drawText(QPoint(int(round(origin.x() + 1.0)), int(round(origin.y() + 1.0))), text)
+                painter.setFont(font)
 
-            painter.setPen(QPen(text_color, 1.0))
+                painter.setPen(QPen(shadow_color, 1.2))
 
-            painter.drawText(QPoint(int(round(origin.x())), int(round(origin.y()))), text)
+                painter.drawText(QPoint(int(round(origin.x() + 1.0)), int(round(origin.y() + 1.0))), text)
 
-            drawn_label_count += 1
+                painter.setPen(QPen(text_color, 1.0))
+
+                painter.drawText(QPoint(int(round(origin.x())), int(round(origin.y()))), text)
+
+                drawn_label_count += 1
+
+        else:
+
+            layout_start = perf_counter() if timing_enabled else 0.0
+
+            resolved_candidates = self._resolved_non_overlapping_object_label_candidates(
+                label_candidates,
+                rect=rect,
+                object_avoid_bounds=object_label_avoid_bounds,
+            )
+
+            if timing_enabled:
+
+                self._sky_view_last_label_layout_seconds = perf_counter() - layout_start
+
+            draw_list: list[tuple[QFont, QPointF, str, QColor, QColor]] = []
+
+            for _priority, font, origin, _bounds, text, text_color, shadow_color, _source_object in resolved_candidates:
+
+                painter.setFont(font)
+
+                painter.setPen(QPen(shadow_color, 1.2))
+
+                painter.drawText(QPoint(int(round(origin.x() + 1.0)), int(round(origin.y() + 1.0))), text)
+
+                painter.setPen(QPen(text_color, 1.0))
+
+                painter.drawText(QPoint(int(round(origin.x())), int(round(origin.y()))), text)
+
+                draw_list.append((font, origin, text, text_color, shadow_color))
+
+                drawn_label_count += 1
+
+            self._cached_overlay_label_draw_list = draw_list
+
+            self._cached_overlay_label_key = label_cache_key
 
         if self._sky_view_moon_marker_hidden_due_to_extended_body and self._is_moon_sky_object(self._selected_object):
 
@@ -9733,6 +10931,110 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             )
 
         painter.restore()
+
+    def _register_fast_path_hit_targets(
+        self,
+        painter: QPainter,
+        all_visible_objects: Sequence[_SkyVisibleObject],
+        *,
+        rich_object_ids: set[int],
+        object_label_avoid_bounds: dict[SkyAtlasObject, QRectF],
+    ) -> None:
+
+        for visible_object in all_visible_objects:
+
+            sky_object = visible_object.sky_object
+
+            if id(sky_object) in rich_object_ids:
+
+                continue
+
+            if visible_object.visibility_alpha <= 0.015:
+
+                continue
+
+            x = float(visible_object.x)
+
+            y = float(visible_object.y)
+
+            hit_radius = self._hit_radius_for_visible_object(visible_object)
+
+            object_label_avoid_bounds[sky_object] = QRectF(
+                x - hit_radius - 2.0,
+                y - hit_radius - 2.0,
+                (hit_radius + 2.0) * 2.0,
+                (hit_radius + 2.0) * 2.0,
+            )
+
+            self._last_projected_objects.append((x, y, hit_radius, sky_object))
+
+            self._star_hit_grid.insert(x, y, hit_radius, sky_object)
+
+            if sky_object == self._selected_object:
+
+                painter.setPen(QPen(QColor("#fbbf24"), 1.8))
+
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+
+                painter.drawEllipse(
+                    QRectF(x - hit_radius - 2.0, y - hit_radius - 2.0, (hit_radius + 2.0) * 2.0, (hit_radius + 2.0) * 2.0)
+                )
+
+            elif sky_object == self._hovered_object:
+
+                painter.setPen(QPen(QColor(184, 208, 248, 138), 1.2))
+
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+
+                painter.drawEllipse(
+                    QRectF(x - hit_radius - 1.0, y - hit_radius - 1.0, (hit_radius + 1.0) * 2.0, (hit_radius + 1.0) * 2.0)
+                )
+
+    def _hit_radius_for_visible_object(self, visible_object: _SkyVisibleObject) -> float:
+
+        sky_object = visible_object.sky_object
+
+        magnitude = float(visible_object.magnitude)
+
+        visibility_alpha = float(visible_object.visibility_alpha)
+
+        if sky_object.object_type.casefold() == "star":
+
+            appearance = self._star_renderer.appearance_for_magnitude(magnitude, visibility=visibility_alpha)
+
+            if appearance.visible and appearance.compact_radius_px > 0.0:
+
+                # compact_radius_px is already in logical pixels.
+                radius = appearance.compact_radius_px
+
+                return max(6.0, radius * 2.2 + 4.0)
+
+            draw_alpha, size_scale, _altitude_deg = self._resolved_star_appearance(
+                sky_object,
+                magnitude,
+                visibility_alpha,
+                altitude_deg=visible_object.altitude_deg,
+            )
+
+            if self._should_draw_fast_star(sky_object, magnitude):
+
+                point_width = self._fast_star_point_width(magnitude, visibility_alpha)
+
+                return max(6.0, point_width * 3.5 + 4.0)
+
+            star_radius = self._star_radius(magnitude, max(0.08, draw_alpha)) * size_scale
+
+            return max(8.0, star_radius + 4.0)
+
+        visibility_alpha, background_size_scale = self._moon_focus_background_presentation(
+            sky_object,
+            visibility_alpha,
+            magnitude,
+        )
+
+        radius = max(3.5, min(12.0, 11.0 - magnitude * 0.42)) * (0.55 + 0.45 * visibility_alpha) * background_size_scale
+
+        return max(10.0, radius * 1.5)
 
     def _build_object_label_candidates(
         self,
@@ -9865,23 +11167,10 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         horizontal_gap = hit_radius + (12.0 if is_star else 9.5)
 
-        diagonal_gap = hit_radius + (8.5 if is_star else 7.5)
-
-        vertical_gap = hit_radius + (7.5 if is_star else 6.5)
-
-        lower_baseline = y + hit_radius + text_ascent + (3.5 if is_star else 3.0)
-
-        upper_baseline = y - vertical_gap
-
+        # Keep a stable label anchor. Alternate placements kept text on-screen
+        # near edges, but made labels flip around while panning.
         return (
             QPointF(x + horizontal_gap, baseline_y),
-            QPointF(x + diagonal_gap, upper_baseline),
-            QPointF(x + diagonal_gap, lower_baseline),
-            QPointF(x - horizontal_gap - text_width, baseline_y),
-            QPointF(x - diagonal_gap - text_width, upper_baseline),
-            QPointF(x - diagonal_gap - text_width, lower_baseline),
-            QPointF(x - (text_width / 2.0), upper_baseline),
-            QPointF(x - (text_width / 2.0), y + hit_radius + text_height + 3.5),
         )
 
     def _object_label_importance_weight(self, sky_object: SkyAtlasObject, magnitude: float) -> float:
@@ -10122,7 +11411,17 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         bloom_bucket = max(4, min(36, int(round(self._star_bloom_strength * 10.0))))
 
-        return (str(color_name), magnitude_bucket, bloom_bucket, 0, self._star_spike_style)
+        size_bucket = max(4, min(25, int(round(self._star_size_scale * 10.0))))
+
+        contrast_bucket = max(0, min(20, int(round(self._star_magnitude_size_contrast * 10.0))))
+
+        return (
+            str(color_name),
+            magnitude_bucket,
+            bloom_bucket,
+            size_bucket * 100 + contrast_bucket,
+            self._star_spike_style,
+        )
 
     def _star_sprite(self, color_name: str, magnitude: float) -> QPixmap:
 
@@ -10199,7 +11498,10 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         base_color = self._display_star_color(color_name, magnitude)
 
-        visual_weight = max(0.025, min(6.2, math.exp(-0.46 * float(magnitude))))
+        visual_weight = max(
+            0.025,
+            min(6.2, math.exp(-0.46 * float(self._star_magnitude_size_contrast) * float(magnitude))),
+        )
 
         brightness_phase = max(0.0, min(1.0, (3.2 - float(magnitude)) / 5.2))
 
@@ -10207,7 +11509,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         tinted_core = self._blended_color(base_color, QColor("#fcfeff"), 0.52 + brightness_phase * 0.16)
 
-        core_radius = max(0.58, min(5.25, 0.56 + 1.48 * pow(visual_weight, 0.92)))
+        core_radius = max(0.58, min(5.25, 0.56 + 1.48 * pow(visual_weight, 0.92))) * float(self._star_size_scale)
 
         bloom_radius = max(core_radius + 0.82, core_radius * (1.82 + 0.38 * clamped_bloom) + 2.35 * pow(visual_weight, 0.66))
 
@@ -10857,6 +12159,334 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                 error,
             )
 
+    def _connect_gl_context_destroyed_cleanup(self) -> None:
+
+        if self._sky_view_gl_context_destroyed_connected:
+
+            return
+
+        context = self.context()
+
+        if context is None:
+
+            return
+
+        try:
+
+            context.aboutToBeDestroyed.connect(self._handle_gl_context_about_to_be_destroyed)
+
+            self._sky_view_gl_context_destroyed_connected = True
+
+        except Exception as exc:
+
+            logging.getLogger(__name__).warning("Unable to connect OpenGL aboutToBeDestroyed: %s", exc)
+
+    def _handle_gl_context_about_to_be_destroyed(self) -> None:
+
+        logging.getLogger(__name__).info("Sky View OpenGL context aboutToBeDestroyed; releasing star renderer resources")
+
+        try:
+
+            self._star_renderer.release()
+
+        except Exception as exc:
+
+            logging.getLogger(__name__).warning("Star renderer release during context destroy failed: %s", exc)
+
+        try:
+
+            self._gl_star_field_layer.release()
+
+        except Exception:
+
+            pass
+
+        self._gl_functions = None
+
+        self._sky_view_star_geometry_content_key = None
+
+        self._sky_view_star_packed_compact = None
+
+        self._sky_view_star_packed_halo = None
+
+    def _try_draw_unified_gpu_stars(self, painter: QPainter, scene: _SkyViewRenderScene) -> bool:
+
+        logger = logging.getLogger(__name__)
+
+        if self._sky_view_star_renderer_disabled_for_session:
+
+            reason = self._star_renderer.disabled_reason or "previously disabled for session"
+
+            self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
+
+            logger.warning("StarRenderer using legacy fallback: %s", reason)
+
+            return False
+
+        if self._gl_functions is None:
+
+            reason = "OpenGL functions not ready on widget"
+
+            self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
+
+            logger.warning("StarRenderer legacy fallback: %s", reason)
+
+            return False
+
+        if (
+            self._star_renderer.available
+            and self._star_renderer.backend_name != BACKEND_INSTANCED
+            and not bool(getattr(self._star_renderer, "_require_vao", True))
+        ):
+
+            self._sky_view_last_star_renderer_log = (
+                f"backend={BACKEND_LEGACY} reason=no_vao_expanded_visual_fallback"
+            )
+
+            return False
+
+        star_inputs: list[StarInstanceInput] = []
+
+        ground_on = bool(self._show_ground)
+
+        for index, visible_object in enumerate(scene.visible_objects):
+
+            sky_object = visible_object.sky_object
+
+            if sky_object.object_type.casefold() != "star":
+
+                continue
+
+            visibility_alpha, _size = self._moon_focus_background_presentation(
+                sky_object,
+                visible_object.visibility_alpha,
+                visible_object.magnitude,
+            )
+
+            if visibility_alpha <= 0.015 and sky_object != self._selected_object:
+
+                continue
+
+            extinction = 1.0
+
+            if ground_on:
+
+                extinction = float(self._atmospheric_extinction_alpha(visible_object.altitude_deg))
+
+            star_inputs.append(
+                StarInstanceInput(
+                    x_px=float(visible_object.x),
+                    y_px=float(visible_object.y),
+                    magnitude=float(visible_object.magnitude),
+                    color=str(sky_object.color or "#f8fbff"),
+                    altitude_deg=float(visible_object.altitude_deg),
+                    visibility=float(visibility_alpha),
+                    star_id=index + 1,
+                    extinction=extinction,
+                    selected=sky_object is self._selected_object,
+                )
+            )
+
+        settings = StarRendererSettings(
+            field_width_deg=float(self._field_width_deg),
+            star_brightness=float(self._star_brightness),
+            star_size=float(self._star_size_scale),
+            magnitude_size_contrast=max(0.4, float(self._star_magnitude_size_contrast)),
+            limiting_magnitude=float(self._star_magnitude_limit),
+            twinkle_amount=float(self._star_twinkle_amount),
+            device_pixel_ratio=max(1.0, float(scene.device_pixel_ratio)),
+            interaction_stable=self._sky_view_interaction_state() == "stable",
+            time_seconds=float(monotonic()),
+            moon_focus_dim=1.0,
+        )
+
+        interaction_busy = self._sky_view_interaction_state() != "stable"
+
+        # During interaction, positions change every frame — always repack.
+        # Only skip pack/upload on stable frames (e.g. twinkle-only updates).
+        if interaction_busy:
+
+            compact, halo = self._star_renderer.pack_instances(star_inputs, settings)
+
+            self._sky_view_star_geometry_content_key = None
+
+            self._sky_view_star_packed_compact = compact
+
+            self._sky_view_star_packed_halo = halo
+
+            geometry_content_key = (
+                "busy",
+                len(star_inputs),
+                round(float(self._center_ra_deg), 3),
+                round(float(self._center_dec_deg), 3),
+                round(float(self._field_width_deg), 3),
+            )
+
+        else:
+
+            geometry_content_key = (
+                len(star_inputs),
+                round(settings.field_width_deg, 4),
+                round(settings.star_brightness, 4),
+                round(settings.star_size, 4),
+                round(settings.magnitude_size_contrast, 4),
+                round(settings.limiting_magnitude, 4),
+                round(settings.device_pixel_ratio, 4),
+                round(settings.halo_threshold_magnitude, 4),
+                round(settings.halo_intensity, 4),
+                round(settings.halo_radius_scale, 4),
+                bool(ground_on),
+                id(self._selected_object) if self._selected_object is not None else 0,
+                round(float(self._center_ra_deg), 4),
+                round(float(self._center_dec_deg), 4),
+                # Cheap content fingerprint instead of per-star tuples.
+                int(
+                    round(
+                        sum(
+                            item.x_px + item.y_px * 0.019 + item.magnitude * 7.0 + item.visibility * 3.0
+                            for item in star_inputs
+                        )
+                        * 100.0
+                    )
+                )
+                if star_inputs
+                else 0,
+            )
+
+            if (
+                geometry_content_key == self._sky_view_star_geometry_content_key
+                and self._sky_view_star_packed_compact is not None
+                and self._sky_view_star_packed_halo is not None
+            ):
+
+                compact = self._sky_view_star_packed_compact
+
+                halo = self._sky_view_star_packed_halo
+
+                self._star_renderer.apply_settings(
+                    twinkle_amount=settings.twinkle_amount,
+                    interaction_stable=settings.interaction_stable,
+                    time_seconds=settings.time_seconds,
+                )
+
+            else:
+
+                compact, halo = self._star_renderer.pack_instances(star_inputs, settings)
+
+                self._sky_view_star_geometry_content_key = geometry_content_key
+
+                self._sky_view_star_packed_compact = compact
+
+                self._sky_view_star_packed_halo = halo
+
+        native_started = False
+
+        try:
+
+            painter.beginNativePainting()
+
+            native_started = True
+
+            default_fbo = int(self.defaultFramebufferObject()) if hasattr(self, "defaultFramebufferObject") else 0
+
+            # Initialize GL resources only after beginNativePainting so the
+            # drawable / VAO are created with the paint context current.
+            if not self._star_renderer.available:
+
+                if self._gl_functions is None:
+
+                    reason = "OpenGL functions not ready on widget"
+
+                    self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
+
+                    logger.warning("StarRenderer legacy fallback: %s", reason)
+
+                    return False
+
+                try:
+
+                    if not self._star_renderer.initialize(self._gl_functions, default_framebuffer=default_fbo):
+
+                        reason = self._star_renderer.disabled_reason or "initialize returned False"
+
+                        self._sky_view_star_renderer_disabled_for_session = True
+
+                        self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
+
+                        logger.warning("StarRenderer initialize failed; legacy fallback: %s", reason)
+
+                        return False
+
+                except Exception as exc:
+
+                    reason = f"initialize exception: {exc}"
+
+                    self._sky_view_star_renderer_disabled_for_session = True
+
+                    self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
+
+                    logger.warning("StarRenderer initialize exception; legacy fallback: %s", reason)
+
+                    return False
+
+            metrics = self._star_renderer.draw(
+                viewport_rect=scene.viewport_rect,
+                device_pixel_ratio=float(scene.device_pixel_ratio),
+                compact_instances=compact,
+                halo_instances=halo,
+                settings=settings,
+                default_framebuffer=default_fbo,
+                geometry_content_key=geometry_content_key,
+            )
+
+            self._sky_view_gl_stars_last_candidate_count = metrics.candidate_count
+
+            self._sky_view_gl_stars_last_submitted_count = metrics.visible_star_count
+
+            self._sky_view_gl_stars_last_draw_seconds = (
+                metrics.compact_draw_seconds + metrics.halo_draw_seconds + metrics.tonemap_seconds
+            )
+
+            self._sky_view_gl_stars_last_upload_seconds = metrics.upload_seconds
+
+            self._sky_view_gl_stars_last_qpainter_fallback = False
+
+            self._sky_view_last_star_renderer_log = self._star_renderer.metrics_log_line()
+
+            if metrics.backend != BACKEND_INSTANCED and not bool(getattr(self._star_renderer, "_require_vao", True)):
+
+                self._sky_view_gl_stars_last_qpainter_fallback = True
+
+                self._sky_view_last_star_renderer_log += " visual_fallback=qPainter_no_vao"
+
+                return False
+
+            return True
+
+        except Exception as exc:
+
+            reason = f"draw exception: {exc}"
+
+            # Do not destroy shaders/VAO every frame — that thrashing prevents
+            # recovery and recreates resources on the wrong context timing.
+            self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
+
+            logger.warning("Unified star renderer failed this frame; will retry: %s", reason)
+
+            return False
+
+        finally:
+
+            if native_started:
+
+                try:
+
+                    painter.endNativePainting()
+
+                except Exception:
+
+                    pass
+
     def _try_draw_gl_star_groups(
         self,
         painter: QPainter,
@@ -11039,15 +12669,32 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         extinction_alpha = self._atmospheric_extinction_alpha(altitude_deg) if self._show_ground else 1.0
 
-        draw_alpha = max(0.0, min(1.0, float(visibility_alpha) * extinction_alpha * twinkle_gain))
+        magnitude_brightness = self._star_relative_brightness_weight(magnitude)
 
-        size_scale = max(
-            0.9,
+        draw_alpha = max(
+            0.0,
             min(
-                1.18,
-                0.98 + (self._star_bloom_strength - 1.0) * 0.18 + (twinkle_gain - 1.0) * 0.08,
+                1.0,
+                float(visibility_alpha)
+                * extinction_alpha
+                * twinkle_gain
+                * float(self._star_brightness)
+                * magnitude_brightness,
             ),
         )
+
+        size_scale = max(
+            0.85,
+            min(
+                1.35,
+                (
+                    0.94
+                    + (self._star_bloom_strength - 1.0) * 0.18
+                    + (twinkle_gain - 1.0) * 0.05
+                    + (magnitude_brightness - 0.55) * 0.42
+                ),
+            ),
+        ) * float(self._star_size_scale)
 
         moon_focus_alpha, moon_focus_size_scale = self._moon_focus_background_presentation(sky_object, 1.0, magnitude)
 
@@ -11431,6 +13078,12 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                 f"wheel:{timing_window.wheel_settle_update_request_count}"
             ),
         ]
+
+        star_renderer_log = str(getattr(self, "_sky_view_last_star_renderer_log", "") or "").strip()
+
+        if star_renderer_log:
+
+            parts.append(f"star_renderer[{star_renderer_log}]")
 
         if timing_window.cardinal_seconds > 0.0:
 
@@ -11957,25 +13610,46 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             return 1.0
 
+        # Keep interaction frames stable so stars do not pulse while dragging.
+        if self._sky_view_interaction_state() != "stable":
+
+            return 1.0
+
+        # Faint point stars look buggy when twinkle pushes them on/off.
+        if float(magnitude) >= 5.2 or float(self._star_twinkle_amount) <= 1.0e-6:
+
+            return 1.0
+
         altitude_sine = math.sin(math.radians(max(-5.0, min(90.0, float(altitude_deg)))))
 
         twinkle_factor = max(0.1, min(1.0, 1.0 - 0.9 * max(0.0, altitude_sine)))
 
-        brightness_weight = max(0.0, min(1.0, (6.0 - magnitude) / 6.0))
+        brightness_weight = max(0.0, min(1.0, (5.0 - magnitude) / 5.0))
 
-        twinkle_amount = 0.12 + brightness_weight * 0.05
+        twinkle_amount = (0.08 + brightness_weight * 0.04) * (float(self._star_twinkle_amount) * 1.6)
 
         frame_index = int(getattr(self, "_twinkle_frame_index", 0))
 
         if frame_index <= 0:
 
-            frame_index = int(monotonic() * 18.0)
+            frame_index = int(monotonic() * 12.0)
 
         seed = int(round(self._stable_phase_seed(sky_object) * 104729.0))
 
         random_coefficient = self._twinkle_random_unit(seed ^ (frame_index * 1103515245))
 
-        return max(0.78, min(1.0, 1.0 - twinkle_factor * twinkle_amount * random_coefficient))
+        return max(0.88, min(1.0, 1.0 - twinkle_factor * twinkle_amount * random_coefficient))
+
+    def _star_relative_brightness_weight(self, magnitude: float) -> float:
+
+        contrast = max(0.4, min(2.0, float(self._star_magnitude_size_contrast)))
+
+        # Emphasize bright stars more strongly than faint ones.
+        flux_weight = math.pow(10.0, -0.28 * contrast * float(magnitude))
+
+        reference = math.pow(10.0, -0.28 * contrast * 1.0)
+
+        return max(0.22, min(1.25, 0.28 + 0.72 * (flux_weight / max(1.0e-6, reference))))
 
     @staticmethod
     def _twinkle_random_unit(seed: int) -> float:
@@ -14754,7 +16428,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         try:
 
-            for x_index, y_index, tile_path in tile_paths:
+            for tile_index, (x_index, y_index, tile_path) in enumerate(tile_paths):
 
                 tile_image = QImage(str(tile_path))
 
@@ -14800,6 +16474,10 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                 drew_any = True
 
                 painter.drawImage(target_x, target_y, tile_image)
+
+                if tile_index % 8 == 7:
+
+                    QApplication.processEvents()
 
         finally:
 
@@ -19031,7 +20709,24 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def _sync_horizon_transform_matrices(self) -> None:
 
-        self._equatorial_to_horizon_matrix = self._build_equatorial_to_horizon_matrix()
+        # Quantize LST so tiny simulation ticks do not thrash collect/projection caches.
+        local_sidereal_time_deg = self._local_sidereal_time_deg(self._observation_time_utc, self._observer_longitude_deg)
+
+        quantized_lst_deg = round(float(local_sidereal_time_deg) * 20.0) / 20.0  # 0.05 deg ≈ 12 s
+
+        sync_key = (
+            quantized_lst_deg,
+            round(float(self._observer_latitude_deg), 4),
+            round(float(self._observer_longitude_deg), 4),
+        )
+
+        if sync_key == self._horizon_matrix_sync_key:
+
+            return
+
+        self._horizon_matrix_sync_key = sync_key
+
+        self._equatorial_to_horizon_matrix = self._build_equatorial_to_horizon_matrix_for_lst(quantized_lst_deg)
 
         self._horizon_to_equatorial_matrix = self._matrix_transpose(self._equatorial_to_horizon_matrix)
 
@@ -19065,6 +20760,13 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         local_sidereal_time_deg = self._local_sidereal_time_deg(self._observation_time_utc, self._observer_longitude_deg)
 
+        return self._build_equatorial_to_horizon_matrix_for_lst(local_sidereal_time_deg)
+
+    def _build_equatorial_to_horizon_matrix_for_lst(
+        self,
+        local_sidereal_time_deg: float,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+
         latitude_rad = math.radians(self._observer_latitude_deg)
 
         local_sidereal_time_rad = math.radians(local_sidereal_time_deg)
@@ -19083,7 +20785,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             (cos_latitude * cos_lst, cos_latitude * sin_lst, sin_latitude),
         )
 
-    def _equatorial_vector(self, ra_deg: float, dec_deg: float) -> tuple[float, float, float]:
+    @staticmethod
+    @lru_cache(maxsize=65536)
+    def _equatorial_vector(ra_deg: float, dec_deg: float) -> tuple[float, float, float]:
 
         ra_rad = math.radians(float(ra_deg) % 360.0)
 
@@ -19425,18 +21129,22 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             int(round(color.blue() * inverse_ratio + target.blue() * ratio)),
         )
 
-    @classmethod
-    def _fast_star_group_key(cls, color_name: str, magnitude: float, visibility_alpha: float) -> tuple[str, int, float]:
+    def _fast_star_group_key(self, color_name: str, magnitude: float, visibility_alpha: float) -> tuple[str, int, float]:
 
-        display_color = cls._display_star_color(color_name, magnitude, fast_path=True)
+        display_color = self._display_star_color(color_name, magnitude, fast_path=True)
 
         normalized_visibility = max(0.0, min(1.0, float(visibility_alpha)))
 
-        alpha = max(10, min(188, int(round(14.0 + 196.0 * pow(normalized_visibility, 1.28)))))
+        magnitude_brightness = self._star_relative_brightness_weight(magnitude)
+
+        alpha = max(
+            12,
+            min(220, int(round((18.0 + 210.0 * pow(normalized_visibility, 1.15)) * magnitude_brightness))),
+        )
 
         alpha_bucket = int(round(alpha / 18.0) * 18)
 
-        width_bucket = round(cls._fast_star_point_width(magnitude, visibility_alpha) * 2.0) / 2.0
+        width_bucket = round(self._fast_star_point_width(magnitude, visibility_alpha) * 2.0) / 2.0
 
         return display_color.name(QColor.NameFormat.HexRgb), alpha_bucket, width_bucket
 
@@ -19447,24 +21155,27 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         neutral_color = QColor("#eaf0ff")
 
-        brightness_weight = max(0.0, min(1.0, math.exp(-0.26 * max(-1.5, float(magnitude))) / 1.42))
+        brightness_weight = max(0.0, min(1.0, math.exp(-0.32 * max(-1.5, float(magnitude))) / 1.35))
 
-        color_emphasis = 0.38 + 0.82 * brightness_weight
+        color_emphasis = 0.34 + 0.9 * brightness_weight
 
         if fast_path:
 
-            color_emphasis *= 0.86
+            color_emphasis *= 0.9
 
         return cls._blended_color(neutral_color, source_color, max(0.28, min(0.99, color_emphasis)))
 
-    @staticmethod
-    def _fast_star_point_width(magnitude: float, visibility_alpha: float) -> float:
+    def _fast_star_point_width(self, magnitude: float, visibility_alpha: float) -> float:
 
-        intensity = max(0.025, min(2.4, math.exp(-0.44 * max(0.0, float(magnitude) - 0.2))))
+        contrast = max(0.4, min(2.0, float(getattr(self, "_star_magnitude_size_contrast", 1.0))))
 
-        base_width = 0.46 + 0.78 * pow(intensity, 0.96)
+        intensity = max(0.015, min(4.0, math.exp(-0.48 * contrast * max(-0.5, float(magnitude)))))
 
-        return max(0.48, min(1.85, base_width * (0.22 + 0.78 * pow(max(0.0, min(1.0, float(visibility_alpha))), 0.9))))
+        base_width = 0.55 + 1.35 * pow(intensity, 0.85)
+
+        alpha_scale = 0.18 + 0.82 * pow(max(0.0, min(1.0, float(visibility_alpha))), 0.8)
+
+        return max(0.35, min(2.6, base_width * alpha_scale))
 
     def _draw_fast_star_groups(self, painter: QPainter, groups: dict[tuple[str, int, float], list[QPointF]]) -> None:
 
@@ -19501,11 +21212,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
     @staticmethod
     def _star_radius(magnitude: float, visibility_alpha: float) -> float:
 
-        visual_size = 0.44 + 3.05 * pow(max(0.025, min(6.2, math.exp(-0.42 * float(magnitude)))), 0.92)
+        visual_size = 0.42 + 3.55 * pow(max(0.02, min(7.0, math.exp(-0.52 * float(magnitude)))), 0.9)
 
         visual_alpha = max(0.05, min(1.0, float(visibility_alpha)))
 
-        return max(0.42, min(8.0, visual_size)) * (0.17 + 0.83 * pow(visual_alpha, 0.76))
+        return max(0.4, min(9.0, visual_size)) * (0.16 + 0.84 * pow(visual_alpha, 0.72))
 
     @staticmethod
     def _star_glow_radius(star_radius: float) -> float:
@@ -19852,17 +21563,31 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def _object_at_position(self, x: float, y: float) -> SkyAtlasObject | None:
 
-        best_match: tuple[float, SkyAtlasObject] | None = None
+        best_match: tuple[float, float, SkyAtlasObject] | None = None
 
-        for projected_x, projected_y, hit_radius, sky_object in self._last_projected_objects:
+        candidates = self._star_hit_grid.query(float(x), float(y))
+
+        if not candidates:
+
+            candidates = self._last_projected_objects
+
+        for projected_x, projected_y, hit_radius, sky_object in candidates:
 
             distance = math.hypot(projected_x - x, projected_y - y)
 
-            if distance <= hit_radius and (best_match is None or distance < best_match[0]):
+            if distance > hit_radius:
 
-                best_match = (distance, sky_object)
+                continue
 
-        return None if best_match is None else best_match[1]
+            magnitude = self._magnitude_sort_key(sky_object.magnitude)
+
+            if best_match is None or distance < best_match[0] - 0.75 or (
+                abs(distance - best_match[0]) <= 0.75 and magnitude < best_match[1]
+            ):
+
+                best_match = (distance, magnitude, sky_object)
+
+        return None if best_match is None else best_match[2]
 
     def _emit_info_for_object(self, sky_object: SkyAtlasObject | None) -> None:
 
@@ -19910,7 +21635,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         if sky_object.object_type.casefold() != "star":
 
-            return self._field_width_deg <= 140.0 and magnitude <= 6.5
+            if sky_object.magnitude is None:
+
+                return self._field_width_deg <= 45.0
+
+            return self._field_width_deg <= 140.0 and magnitude <= self._object_label_magnitude_limit
 
         if sky_object.searchable:
 
@@ -19940,13 +21669,18 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             return 1.0
 
+        if sky_object.object_type.casefold() != "star" and sky_object.magnitude is None:
+
+            # Catalog objects without magnitudes (e.g. LDN/LBN) stay visible when zoomed in.
+            return 1.0 if self._field_width_deg <= 90.0 else max(0.0, (120.0 - self._field_width_deg) / 30.0)
+
         limit = self._visible_magnitude_limit(sky_object, magnitude)
 
         if limit is None:
 
             return 0.0
 
-        fade_window = 0.85 if sky_object.object_type.casefold() == "star" else 0.8
+        fade_window = 0.55 if sky_object.object_type.casefold() == "star" else 0.7
 
         raw_alpha = (limit + fade_window - magnitude) / (fade_window * 2.0)
 
@@ -19956,15 +21690,30 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         if sky_object.object_type.casefold() != "star":
 
-            return self._interpolated_magnitude_limit(6.5, 1.5, exponent=1.35)
+            return self._interpolated_magnitude_limit(
+                self._object_magnitude_limit,
+                max(1.0, self._object_magnitude_limit - 5.5),
+                exponent=0.9,
+            )
 
         if magnitude is None:
 
             magnitude = self._magnitude_sort_key(sky_object.magnitude)
 
         return self._effective_star_visible_magnitude_limit(
-            self._interpolated_magnitude_limit(8.7, 3.1, exponent=1.75),
+            self._star_visible_magnitude_limit_for_current_fov(),
             magnitude,
+        )
+
+    def _star_visible_magnitude_limit_for_current_fov(self) -> float:
+
+        # Stellarium-like LOD: wide fields keep only brighter stars; the user
+        # magnitude limit is reached when zooming in.
+        wide_limit = max(3.6, min(5.0, float(self._star_magnitude_limit) - 8.0))
+        return self._interpolated_magnitude_limit(
+            float(self._star_magnitude_limit),
+            wide_limit,
+            exponent=0.85,
         )
 
     def _effective_star_visible_magnitude_limit(self, base_limit: float, magnitude: float) -> float:
@@ -19977,7 +21726,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         release = max(0.0, min(1.0, (float(magnitude) - 3.6) / 1.8))
 
-        return 0.5 * self._smoothstep(normalized) * (1.0 - 0.6 * self._smoothstep(release))
+        return 0.35 * self._smoothstep(normalized) * (1.0 - 0.6 * self._smoothstep(release))
 
     def _interpolated_magnitude_limit(self, narrow_limit: float, wide_limit: float, *, exponent: float = 1.0) -> float:
 
@@ -22391,7 +24140,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._filter_targets_checkbox.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        self._filter_targets_checkbox.setToolTip("Target filtering is always applied before light curves. Adjust the quick filters here or edit their defaults in Settings > General.")
+        self._filter_targets_checkbox.setToolTip("Target filtering is always applied before light curves. Adjust the quick filters here or edit their defaults in Settings > Differential Photometry.")
 
         pipeline_checks_layout.addWidget(self._filter_targets_checkbox)
 
@@ -22455,7 +24204,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._designation_filters_checkbox.setChecked(True)
 
-        self._designation_filters_checkbox.setToolTip("Use the Variable Star Designation Filters selected in Settings > General. Turn this off to include every VSX designation family returned by the catalogs.")
+        self._designation_filters_checkbox.setToolTip("Use the Variable Star Designation Filters selected in Settings > Differential Photometry. Turn this off to include every VSX designation family returned by the catalogs.")
 
         filter_layout.addWidget(self._designation_filters_checkbox)
 
@@ -22467,7 +24216,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._brightest_variables_checkbox.setChecked(True)
 
-        self._brightest_variables_checkbox.setToolTip("Use the Settings > General Brightest Variable Stars to Analyze percentage for this run, or adjust the percent here without changing the saved default.")
+        self._brightest_variables_checkbox.setToolTip("Use the Settings > Differential Photometry Brightest Variable Stars to Analyze percentage for this run, or adjust the percent here without changing the saved default.")
 
         self._brightest_variables_checkbox.toggled.connect(self._handle_brightest_variables_toggled)
 
@@ -22481,7 +24230,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._brightest_percent_input.setValue(self._default_options.brightest_variable_percent)
 
-        self._brightest_percent_input.setToolTip("Workflow override for Settings > General > Brightest Variable Stars to Analyze. 100% means all designation/magnitude-range matches are eligible.")
+        self._brightest_percent_input.setToolTip("Workflow override for Settings > Differential Photometry > Brightest Variable Stars to Analyze. 100% means all designation/magnitude-range matches are eligible.")
 
         brightest_row.addWidget(self._brightest_percent_input)
 
@@ -22491,7 +24240,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._analyze_best_checkbox.setChecked(False)
 
-        self._analyze_best_checkbox.setToolTip("Estimate the field limit like Sky Explorer Mag Limit, then keep targets whose image ADU values are in the AAVSO-friendly range. Settings > General still provides the catalog/designation defaults.")
+        self._analyze_best_checkbox.setToolTip("Estimate the field limit like Sky Explorer Mag Limit, then keep targets whose image ADU values are in the AAVSO-friendly range. Settings > Differential Photometry still provides the catalog/designation defaults.")
 
         self._analyze_best_checkbox.toggled.connect(self._handle_analyze_best_toggled)
 
@@ -23196,15 +24945,27 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_worker: SkyExplorerWorker | None = None
 
+        self._distance_map_worker: DistanceMapWorker | None = None
+
+        self._sky_atlas_custom_overlay_surveys_dialog: SkyAtlasCustomOverlaySurveysDialog | None = None
+
+        self._current_distance_map_source_image: Path | None = None
+
         self._sky_explorer_mag_limit_worker: SkyExplorerWorker | None = None
+
+        self._sky_explorer_survey_worker = None
+
+        self._sky_explorer_survey_worker_context: tuple[object, ...] | None = None
+
+        self._pending_sky_explorer_survey_request: tuple[object, tuple[object, ...]] | None = None
 
         self._sky_explorer_result_gaia_query_signature: tuple[float, bool, int | None] | None = None
 
         self._pending_sky_explorer_result_gaia_query_signature: tuple[float, bool, int | None] | None = None
 
-        self._sky_explorer_mag_limit_query_signature: tuple[float, bool, int | None] | None = None
+        self._sky_explorer_mag_limit_query_signature: tuple[float,] | None = None
 
-        self._pending_sky_explorer_mag_limit_query_signature: tuple[float, bool, int | None] | None = None
+        self._pending_sky_explorer_mag_limit_query_signature: tuple[float,] | None = None
 
         self._calculate_period_worker: CalculatePeriodWorker | None = None
 
@@ -23213,6 +24974,12 @@ class MainWindow(QMainWindow):
         self._pending_fit_period_request: dict[str, object] | None = None
 
         self._literature_period_worker: LiteraturePeriodWorker | None = None
+
+        self._update_check_worker: UpdateCheckWorker | None = None
+
+        self._update_download_worker: UpdateDownloadWorker | None = None
+
+        self._update_download_progress_dialog: QProgressDialog | None = None
 
         self._differential_workflow_dialog: _DifferentialWorkflowDialog | None = None
 
@@ -24311,9 +26078,15 @@ class MainWindow(QMainWindow):
 
         self._sync_source_comparison_overlay_columns()
 
-        self._results_filter_button = QPushButton("Filter")
+        self._results_filter_button = QPushButton()
 
         self._results_filter_button.setToolTip("Filter the Source Results and File Results tables by source metrics.")
+
+        self._results_filter_button.setAccessibleName("Filter Source Results")
+
+        self._results_filter_button.setIcon(self._create_differential_gear_icon())
+
+        self._results_filter_button.setIconSize(QSize(20, 20))
 
         self._results_filter_button.setCheckable(True)
 
@@ -24878,6 +26651,10 @@ class MainWindow(QMainWindow):
         self._image_center_object_button.setEnabled(False)
 
         self._image_center_object_button.setToolTip("When enabled, automatically center the image on the selected Source Results target.")
+
+        self._image_center_object_button.setMinimumWidth(
+            self.fontMetrics().horizontalAdvance("Center Object") + 32
+        )
 
         self._image_center_object_button.toggled.connect(self._handle_image_center_object_toggled)
 
@@ -25659,6 +27436,22 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_curve_points: tuple[tuple[float, float], ...] = ()
 
+        self._sky_explorer_active_survey_key: str | None = None
+
+        self._sky_explorer_survey_result = None
+
+        self._sky_explorer_survey_result_context: tuple[object, ...] | None = None
+
+        self._sky_explorer_survey_last_error: str | None = None
+
+        self._sky_explorer_survey_display: AnnotatedImageDisplay | None = None
+
+        self._sky_explorer_survey_levels = (0.0, 0.5, 1.0)
+
+        self._sky_explorer_survey_curve_points: tuple[tuple[float, float], ...] = ()
+
+        self._sky_explorer_survey_request_generation = 0
+
         self._sky_explorer_show_auto_annotations = True
 
         self._sky_explorer_annotation_tool = "mouse"
@@ -25695,11 +27488,21 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_manual_annotations_by_image: dict[str, list[_SkyExplorerManualAnnotation]] = {}
 
-        self._sky_view_catalog_objects = load_local_sky_atlas_objects()
+        self._sky_explorer_detected_objects_by_image: dict[str, list[SkyExplorerObject]] = {}
+
+        self._sky_explorer_detected_object_identities_by_image: dict[str, set[tuple[str, str, str]]] = {}
+
+        self._sky_explorer_detect_worker: SkyExplorerDetectWorker | None = None
+
+        self._sky_view_catalog_objects = load_sky_atlas_objects(None, enabled_deep_sky_catalogs={"Messier", "NGC"})
 
         self._sky_view_search_results: tuple[SkyAtlasObject, ...] = ()
 
         self._sky_view_scientific_catalog_loaded = False
+
+        self._sky_view_loaded_star_magnitude_limit = 0.0
+
+        self._sky_view_loaded_deep_sky_catalogs: frozenset[str] = frozenset()
 
         self._sky_view_scientific_catalog_error: str | None = None
 
@@ -25723,6 +27526,174 @@ class MainWindow(QMainWindow):
 
         self._sky_view_time_flow_timer.timeout.connect(self._advance_sky_view_time_flow)
 
+        self._current_astrostack_root_path: Path | None = None
+
+        self._astrostack_frame_paths: list[Path] = []
+
+        self._astrostack_frame_scan_results: dict[Path, FileScanResult] = {}
+
+        self._current_astrostack_source_image: Path | None = None
+
+        self._astrostack_image_levels = (0.0, 0.5, 1.0)
+
+        self._astrostack_image_curve_points: tuple[tuple[float, float], ...] = ()
+
+        self._astrostack_roi_selections: list[_HrRoiSelection] = []
+
+        self._astrostack_active_roi_selection: _HrRoiSelection | None = None
+
+        self._astrostack_roi_drag_origin: tuple[float, float] | None = None
+
+        self._astrostack_signal_region: _HrRoiSelection | None = None
+
+        self._astrostack_background_region: _HrRoiSelection | None = None
+
+        self._astrostack_active_measure_region: _HrRoiSelection | None = None
+
+        self._astrostack_measure_region_drag_origin: tuple[float, float] | None = None
+
+        self._astrostack_crop_mode_active = False
+
+        self._astrostack_cropped_display_cache: dict[tuple[object, ...], AnnotatedImageDisplay] = {}
+
+        self._astrostack_snr_panel_visible = True
+
+        self._astrostack_snr_frame_indices: tuple[int, ...] = ()
+
+        self._astrostack_snr_values: tuple[float, ...] = ()
+
+        self._astrostack_fwhm_values: tuple[float, ...] = ()
+
+        self._astrostack_signal_values: tuple[float, ...] = ()
+
+        self._astrostack_noise_values: tuple[float, ...] = ()
+
+        self._astrostack_snr_highlight_index: int | None = None
+
+        self._astrostack_plot_metrics_preview_mode = True
+
+        self._astrostack_function_metric_overrides: dict[str, float] | None = None
+
+        self._astrostack_frame_exposure_seconds: tuple[float, ...] = ()
+
+        self._astrostack_annotation_tool = "hand"
+
+        self._astrostack_annotation_stroke_color = "#38bdf8"
+
+        self._astrostack_annotation_fill_color = "#38bdf8"
+
+        self._astrostack_annotation_text_color = "#f8fafc"
+
+        self._astrostack_annotation_text_font_family = ""
+
+        self._astrostack_annotation_text_font_style = "regular"
+
+        self._astrostack_annotation_text_size = 24.0
+
+        self._astrostack_annotation_function_prefix = ""
+
+        self._astrostack_annotation_function_text_color = "#f8fafc"
+
+        self._astrostack_annotation_function_text_font_family = ""
+
+        self._astrostack_annotation_function_text_font_style = "regular"
+
+        self._astrostack_annotation_function_text_size = 24.0
+
+        self._astrostack_annotation_line_width = 1.75
+
+        self._astrostack_annotation_opacity = 0.75
+
+        self._astrostack_annotation_plot_title = "Stack SNR"
+
+        self._astrostack_annotation_plot_x_metric = "frame_count"
+
+        self._astrostack_annotation_plot_y_metric = "snr"
+
+        self._astrostack_annotation_plot_x_label = ""
+
+        self._astrostack_annotation_plot_y_label = ""
+
+        self._astrostack_annotation_plot_title_align_h = "left"
+
+        self._astrostack_annotation_plot_title_align_v = "top"
+
+        self._astrostack_annotation_plot_title_offset_x = 0.0
+
+        self._astrostack_annotation_plot_title_offset_y = 0.0
+
+        self._astrostack_annotation_plot_x_label_offset_x = 0.0
+
+        self._astrostack_annotation_plot_x_label_offset_y = 0.0
+
+        self._astrostack_annotation_plot_y_label_offset_x = 0.0
+
+        self._astrostack_annotation_plot_y_label_offset_y = 0.0
+
+        self._astrostack_annotation_plot_curve_color = "#3d8bfd"
+
+        self._astrostack_annotation_plot_curve_opacity = 1.0
+
+        self._astrostack_annotation_plot_curve_width = 0.0
+
+        self._astrostack_annotation_plot_highlight_color = "#ffd166"
+
+        self._astrostack_annotation_plot_highlight_opacity = 1.0
+
+        self._astrostack_annotation_plot_highlight_radius = 0.0
+
+        self._astrostack_annotation_plot_corner_radius = 0.0
+
+        self._astrostack_annotation_plot_accent_text_color = "#ffd166"
+
+        self._astrostack_annotation_plot_chart_margin_left = 0.0
+
+        self._astrostack_annotation_plot_chart_margin_right = 0.0
+
+        self._astrostack_annotation_plot_chart_margin_top = 0.0
+
+        self._astrostack_annotation_plot_chart_margin_bottom = 0.0
+
+        self._astrostack_annotation_plot_title_text_color = "#f2f2f2"
+
+        self._astrostack_annotation_plot_title_text_opacity = 1.0
+
+        self._astrostack_annotation_plot_title_font_family = ""
+
+        self._astrostack_annotation_plot_title_font_style = "regular"
+
+        self._astrostack_annotation_plot_title_font_size = 0.0
+
+        self._astrostack_annotation_plot_label_text_color = "#f2f2f2"
+
+        self._astrostack_annotation_plot_label_text_opacity = 1.0
+
+        self._astrostack_annotation_plot_label_font_family = ""
+
+        self._astrostack_annotation_plot_label_font_style = "regular"
+
+        self._astrostack_annotation_plot_label_font_size = 0.0
+
+        self._astrostack_reference_snr = 1.0
+
+        self._astrostack_reference_signal = 1.0
+
+        self._astrostack_reference_noise = 1.0
+
+        self._astrostack_reference_fwhm = 3.0
+
+        self._astrostack_overlay_layers: list[_AstrostackOverlayLayer] = []
+
+        self._astrostack_overlay_layer_counter = 0
+
+        self._selected_astrostack_layer_id: str | None = None
+
+        self._astrostack_overlay_layer_drag: _AstrostackOverlayLayerDrag | None = None
+
+        self._pending_astrostack_text_layer_position: tuple[float, float] | None = None
+
+        self._pending_astrostack_text_layer_dragged = False
+
         self._hr_diagram_panel = self._create_hr_diagram_panel()
 
         self._asteroid_detection_panel = self._create_asteroid_detection_panel()
@@ -25734,6 +27705,10 @@ class MainWindow(QMainWindow):
         self._sky_view_panel = self._create_sky_view_panel()
 
         self._sky_explorer_panel = self._create_sky_explorer_panel()
+
+        self._distance_map_panel = self._create_distance_map_panel()
+
+        self._astro_tools_panel = self._create_astro_tools_panel()
 
         self._app_mode_stack = _CurrentPageStackedWidget()
 
@@ -25751,6 +27726,10 @@ class MainWindow(QMainWindow):
 
         self._app_mode_stack.addWidget(self._sky_explorer_panel)
 
+        self._app_mode_stack.addWidget(self._distance_map_panel)
+
+        self._app_mode_stack.addWidget(self._astro_tools_panel)
+
 
 
         container = QWidget()
@@ -25765,7 +27744,19 @@ class MainWindow(QMainWindow):
 
         container.setLayout(container_layout)
 
-        self.setCentralWidget(container)
+        self._main_app_container = container
+
+        self._mode_launcher = ModeLauncherWidget(self)
+
+        self._mode_launcher.mode_selected.connect(self._handle_mode_launcher_selection)
+
+        self._central_shell = QStackedWidget()
+
+        self._central_shell.addWidget(self._mode_launcher)
+
+        self._central_shell.addWidget(self._main_app_container)
+
+        self.setCentralWidget(self._central_shell)
 
 
 
@@ -26049,22 +28040,6 @@ class MainWindow(QMainWindow):
 
         self._asteroid_splitter_settings_sync_enabled = False
 
-        self._current_astrostack_root_path: Path | None = None
-
-        self._astrostack_frame_paths: list[Path] = []
-
-        self._current_astrostack_source_image: Path | None = None
-
-        self._astrostack_image_levels = (0.0, 0.5, 1.0)
-
-        self._astrostack_image_curve_points: tuple[tuple[float, float], ...] = ()
-
-        self._astrostack_roi_selections: list[_HrRoiSelection] = []
-
-        self._astrostack_active_roi_selection: _HrRoiSelection | None = None
-
-        self._astrostack_roi_drag_origin: tuple[float, float] | None = None
-
         self._asteroid_all_frame_paths: list[Path] = []
 
         self._asteroid_frame_paths: list[Path] = []
@@ -26263,6 +28238,94 @@ class MainWindow(QMainWindow):
         self._sync_differential_primary_button()
 
         self._sync_interface_tips()
+
+        self._sync_mode_launcher_visibility()
+
+    def _sync_mode_launcher_accent(self) -> None:
+
+        if not hasattr(self, "_mode_launcher"):
+
+            return
+
+        accent = self._resolved_theme_editor_colors().get("accent", "#3d8bfd")
+
+        self._mode_launcher.set_accent_color(str(accent))
+
+    def _sync_mode_launcher_visibility(self) -> None:
+
+        if not hasattr(self, "_central_shell"):
+
+            return
+
+        if self._settings is None:
+
+            show_launcher = True
+
+        else:
+
+            show_launcher = bool(self._settings.show_mode_launcher_on_startup)
+
+        if show_launcher:
+
+            self._show_mode_launcher_screen()
+
+            return
+
+        self._hide_mode_launcher_screen()
+
+    def _show_mode_launcher_screen(self) -> None:
+
+        self._sync_mode_launcher_accent()
+
+        self.setWindowTitle(APP_DISPLAY_NAME)
+
+        self._mode_launcher.clear_card_focus()
+
+        self.menuBar().setVisible(False)
+
+        if hasattr(self, "_interface_tip_timer"):
+
+            self._interface_tip_timer.stop()
+
+        if hasattr(self, "_interface_tip_label"):
+
+            self._interface_tip_label.clear()
+
+            self._interface_tip_label.setVisible(False)
+
+        status_bar = self.statusBar()
+
+        if status_bar is not None:
+
+            status_bar.clearMessage()
+
+            status_bar.setVisible(False)
+
+        self._central_shell.setCurrentWidget(self._mode_launcher)
+
+    def _hide_mode_launcher_screen(self) -> None:
+
+        self.menuBar().setVisible(True)
+
+        self._central_shell.setCurrentWidget(self._main_app_container)
+
+        self._apply_app_mode(self._current_app_mode())
+
+    def _handle_mode_launcher_selection(self, mode: AppMode) -> None:
+
+        self.menuBar().setVisible(True)
+
+        if self.statusBar() is not None:
+
+            self.statusBar().setVisible(True)
+
+        self._central_shell.setCurrentWidget(self._main_app_container)
+
+        self._handle_app_mode_changed(mode)
+
+    def _open_mode_launcher_screen(self) -> None:
+
+        self._show_mode_launcher_screen()
 
     def _create_hr_diagram_panel(self) -> QWidget:
 
@@ -26714,23 +28777,17 @@ class MainWindow(QMainWindow):
 
         self._asteroid_synthetic_track_button.clicked.connect(self._start_asteroid_synthetic_tracking)
 
-        self._asteroid_trajectory_button = QPushButton("Trajectory")
+        self._asteroid_trajectory_button = QPushButton("Plots")
 
-        self._asteroid_trajectory_button.setToolTip("Open a trajectory window for the selected predicted object across the current frame group.")
+        self._asteroid_trajectory_button.setToolTip("Open plots for the selected predicted object across the current frame group.")
 
         self._asteroid_trajectory_button.clicked.connect(self._open_selected_asteroid_trajectory)
 
-        self._asteroid_3d_button = QPushButton("3D View")
+        self._asteroid_3d_button = QPushButton("Trajectory View")
 
-        self._asteroid_3d_button.setToolTip("Open a heliocentric 3D view for the selected predicted object or selected object set using JPL Horizons state vectors around the current frame group.")
+        self._asteroid_3d_button.setToolTip("Open a heliocentric trajectory view for the selected predicted object or selected object set using JPL Horizons state vectors around the current frame group.")
 
         self._asteroid_3d_button.clicked.connect(self._open_selected_asteroid_3d_view)
-
-        self._asteroid_plan_button = QPushButton("Plan Object")
-
-        self._asteroid_plan_button.setToolTip("Search globally for an asteroid/comet and open a heliocentric planning view over a chosen future UTC window.")
-
-        self._asteroid_plan_button.clicked.connect(self._open_asteroid_object_planner)
 
         self._asteroid_recover_button = QPushButton("Recover Known")
 
@@ -26745,12 +28802,6 @@ class MainWindow(QMainWindow):
         self._asteroid_discover_button.setToolTip("Search the current solved frame group for unmatched moving candidates after excluding the current known-object predictions.")
 
         self._asteroid_discover_button.clicked.connect(self._start_asteroid_discovery)
-
-        self._asteroid_discovery_test_button = QPushButton("Test")
-
-        self._asteroid_discovery_test_button.setToolTip("Run a residual-search debug export for the current solved group and save the background model, per-frame residuals, and a residual stack.")
-
-        self._asteroid_discovery_test_button.clicked.connect(self._start_asteroid_discovery_test)
 
         self._asteroid_info_panel_toggle_button = QPushButton()
 
@@ -27068,9 +29119,41 @@ class MainWindow(QMainWindow):
 
         workflow_row.addWidget(self._asteroid_align_button)
 
-        workflow_row.addWidget(self._asteroid_discover_button)
+        self._asteroid_workflow_separator = QFrame()
 
-        workflow_row.addWidget(self._asteroid_discovery_test_button)
+        self._asteroid_workflow_separator.setFrameShape(QFrame.Shape.VLine)
+
+        self._asteroid_workflow_separator.setFrameShadow(QFrame.Shadow.Plain)
+
+        self._asteroid_workflow_separator.setFixedWidth(1)
+
+        workflow_row.addWidget(self._asteroid_workflow_separator)
+
+        self._asteroid_functional_actions_group = QWidget()
+
+        self._asteroid_functional_actions_group.setObjectName("asteroidFunctionalActionsGroup")
+
+        self._asteroid_functional_actions_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        functional_actions_layout = QHBoxLayout()
+
+        functional_actions_layout.setContentsMargins(6, 4, 6, 4)
+
+        functional_actions_layout.setSpacing(6)
+
+        self._asteroid_functional_actions_layout = functional_actions_layout
+
+        functional_actions_layout.addWidget(self._asteroid_discover_button)
+
+        functional_actions_layout.addWidget(self._asteroid_3d_button)
+
+        functional_actions_layout.addWidget(self._asteroid_synthetic_track_button)
+
+        functional_actions_layout.addWidget(self._asteroid_trajectory_button)
+
+        self._asteroid_functional_actions_group.setLayout(functional_actions_layout)
+
+        workflow_row.addWidget(self._asteroid_functional_actions_group)
 
         workflow_row.addStretch(1)
 
@@ -27081,24 +29164,6 @@ class MainWindow(QMainWindow):
         workflow_row.addWidget(QLabel("Frame"))
 
         workflow_row.addWidget(self._asteroid_frame_selector)
-
-
-
-        selection_actions_row = QHBoxLayout()
-
-        selection_actions_row.setSpacing(6)
-
-        self._asteroid_selection_actions_layout = selection_actions_row
-
-        selection_actions_row.addWidget(self._asteroid_trajectory_button)
-
-        selection_actions_row.addWidget(self._asteroid_3d_button)
-
-        selection_actions_row.addWidget(self._asteroid_plan_button)
-
-        selection_actions_row.addWidget(self._asteroid_synthetic_track_button)
-
-        selection_actions_row.addStretch(1)
 
 
 
@@ -27124,13 +29189,13 @@ class MainWindow(QMainWindow):
 
         self._asteroid_results_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
+        self._asteroid_results_group.setMinimumWidth(0)
+
         results_layout = QVBoxLayout()
 
         results_layout.setContentsMargins(12, 10, 12, 12)
 
         results_layout.setSpacing(8)
-
-        results_layout.addLayout(selection_actions_row)
 
         self._asteroid_results_tabs = QTabWidget()
 
@@ -27148,11 +29213,13 @@ class MainWindow(QMainWindow):
 
         self._asteroid_results_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        self._asteroid_results_splitter.setChildrenCollapsible(False)
+        self._asteroid_results_splitter.setChildrenCollapsible(True)
 
         self._asteroid_results_splitter.addWidget(self._asteroid_results_table)
 
         self._asteroid_results_splitter.addWidget(self._asteroid_results_tabs)
+
+        self._asteroid_results_tabs.setMinimumHeight(0)
 
         self._asteroid_results_splitter.setStretchFactor(0, 4)
 
@@ -27162,7 +29229,23 @@ class MainWindow(QMainWindow):
 
         self._asteroid_results_splitter.splitterMoved.connect(self._handle_asteroid_splitter_sizes_changed)
 
+        self._asteroid_results_panel_restore_handle = QPushButton("▲  Work Log · Inspector · Sky View")
+
+        self._asteroid_results_panel_restore_handle.setFlat(True)
+
+        self._asteroid_results_panel_restore_handle.setCursor(Qt.CursorShape.SizeVerCursor)
+
+        self._asteroid_results_panel_restore_handle.setToolTip(
+            "The lower details panel is hidden. Click here or drag the splitter handle up from the bottom edge to restore it."
+        )
+
+        self._asteroid_results_panel_restore_handle.clicked.connect(self._restore_asteroid_results_panel)
+
+        self._asteroid_results_panel_restore_handle.hide()
+
         results_layout.addWidget(self._asteroid_results_splitter, stretch=1)
+
+        results_layout.addWidget(self._asteroid_results_panel_restore_handle)
 
         self._asteroid_results_group.setLayout(results_layout)
 
@@ -27174,7 +29257,9 @@ class MainWindow(QMainWindow):
 
         self._asteroid_image_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        image_layout = QVBoxLayout()
+        self._asteroid_image_content = QWidget()
+
+        image_layout = QVBoxLayout(self._asteroid_image_content)
 
         image_layout.setContentsMargins(12, 10, 12, 12)
 
@@ -27212,7 +29297,31 @@ class MainWindow(QMainWindow):
 
         image_layout.addWidget(self._asteroid_image_view, stretch=1)
 
-        self._asteroid_image_group.setLayout(image_layout)
+        self._asteroid_left_panel_restore_handle = QPushButton("▶  Predicted Objects")
+
+        self._asteroid_left_panel_restore_handle.setFlat(True)
+
+        self._asteroid_left_panel_restore_handle.setCursor(Qt.CursorShape.SizeHorCursor)
+
+        self._asteroid_left_panel_restore_handle.setToolTip(
+            "The results panel is hidden. Click here or drag the splitter handle to the right to restore Predicted Objects, Work Log, Inspector, and Sky View."
+        )
+
+        self._asteroid_left_panel_restore_handle.clicked.connect(self._restore_asteroid_left_panel)
+
+        self._asteroid_left_panel_restore_handle.hide()
+
+        image_group_layout = QHBoxLayout()
+
+        image_group_layout.setContentsMargins(0, 0, 0, 0)
+
+        image_group_layout.setSpacing(0)
+
+        image_group_layout.addWidget(self._asteroid_left_panel_restore_handle)
+
+        image_group_layout.addWidget(self._asteroid_image_content, stretch=1)
+
+        self._asteroid_image_group.setLayout(image_group_layout)
 
 
 
@@ -27222,7 +29331,7 @@ class MainWindow(QMainWindow):
 
         self._asteroid_main_splitter.addWidget(self._asteroid_image_group)
 
-        self._asteroid_main_splitter.setChildrenCollapsible(False)
+        self._asteroid_main_splitter.setChildrenCollapsible(True)
 
         self._asteroid_main_splitter.setHandleWidth(10)
 
@@ -27248,6 +29357,3089 @@ class MainWindow(QMainWindow):
 
         return panel
 
+# Snippet to splice into main_window.py — astrostack overlay layer system
+
+    def _next_astrostack_overlay_layer_id(self) -> str:
+        self._astrostack_overlay_layer_counter += 1
+        return f"layer-{self._astrostack_overlay_layer_counter}"
+
+    def _astrostack_layer_display_name(self, layer: _AstrostackOverlayLayer) -> str:
+        shape_label = {
+            "circle": "Circle",
+            "rectangle": "Rectangle",
+            "text": "Text",
+            "plot": "Plot",
+            "function": "Function",
+        }.get(layer.shape, "Layer")
+        if layer.shape == "function":
+            if layer.function_kind == "signal":
+                return "Signal value"
+            if layer.function_kind == "noise":
+                return "Noise value"
+            return "Function"
+        label = layer.label.strip()
+        if layer.shape == "plot":
+            title = label or "Plot"
+            if len(title) > 28:
+                title = f"{title[:25]}..."
+            return f"Plot: {title}"
+        if label:
+            if len(label) > 28:
+                label = f"{label[:25]}..."
+            return f"{shape_label}: {label}"
+        return shape_label
+
+    def _astrostack_overlay_layers_ordered_for_draw(self) -> list[_AstrostackOverlayLayer]:
+        return list(self._astrostack_overlay_layers)
+
+    def _astrostack_layer_by_id(self, layer_id: str | None) -> _AstrostackOverlayLayer | None:
+        if not layer_id:
+            return None
+        for layer in self._astrostack_overlay_layers:
+            if layer.layer_id == layer_id:
+                return layer
+        return None
+
+    def _replace_astrostack_overlay_layer(self, updated_layer: _AstrostackOverlayLayer) -> None:
+        for index, layer in enumerate(self._astrostack_overlay_layers):
+            if layer.layer_id == updated_layer.layer_id:
+                self._astrostack_overlay_layers[index] = updated_layer
+                return
+
+    def _remove_astrostack_overlay_layer_by_id(self, layer_id: str) -> None:
+        self._astrostack_overlay_layers = [layer for layer in self._astrostack_overlay_layers if layer.layer_id != layer_id]
+        if self._selected_astrostack_layer_id == layer_id:
+            self._selected_astrostack_layer_id = None
+
+    def _normalize_astrostack_rect_layer(self, layer: _AstrostackOverlayLayer) -> _AstrostackOverlayLayer:
+        if layer.shape not in {"rectangle", "plot"}:
+            return layer
+        left = min(float(layer.x), float(layer.x2))
+        right = max(float(layer.x), float(layer.x2))
+        top = min(float(layer.y), float(layer.y2))
+        bottom = max(float(layer.y), float(layer.y2))
+        return replace(layer, x=left, y=top, x2=right, y2=bottom)
+
+    def _astrostack_layer_id_from_source_id(self, source_id: object) -> str | None:
+        text = str(source_id or "")
+        if not text.startswith(_ASTROSTACK_OVERLAY_LAYER_SOURCE_PREFIX):
+            return None
+        layer_id = text[len(_ASTROSTACK_OVERLAY_LAYER_SOURCE_PREFIX) :].strip()
+        return layer_id or None
+
+    def _astrostack_layer_hit_score(self, layer: _AstrostackOverlayLayer, image_x: float, image_y: float) -> float | None:
+        if layer.shape in {"rectangle", "plot"}:
+            normalized = self._normalize_astrostack_rect_layer(layer)
+            width = max(1.0, float(normalized.x2) - float(normalized.x))
+            height = max(1.0, float(normalized.y2) - float(normalized.y))
+            padding = 4.0
+            if not (
+                float(normalized.x) - padding <= image_x <= float(normalized.x) + width + padding
+                and float(normalized.y) - padding <= image_y <= float(normalized.y) + height + padding
+            ):
+                return None
+            center_x = float(normalized.x) + width * 0.5
+            center_y = float(normalized.y) + height * 0.5
+            normalized_dx = (image_x - center_x) / max(1.0, width * 0.5)
+            normalized_dy = (image_y - center_y) / max(1.0, height * 0.5)
+            return normalized_dx * normalized_dx + normalized_dy * normalized_dy
+        if layer.shape in {"text", "function"}:
+            label = (
+                self._astrostack_function_display_text(layer)
+                if layer.shape == "function"
+                else (layer.label.strip() or "Text")
+            )
+            text_bounds = AnnotatedImageView._overlay_text_bounds_in_image_space(
+                ImageOverlay(
+                    source_id=f"{_ASTROSTACK_OVERLAY_LAYER_SOURCE_PREFIX}{layer.layer_id}",
+                    name=label,
+                    x=float(layer.x),
+                    y=float(layer.y),
+                    aperture_radius=1.0,
+                    annulus_inner_radius=1.0,
+                    annulus_outer_radius=1.0,
+                    color=layer.text_color,
+                    text_font=self._astrostack_layer_text_font(layer),
+                    text_size=max(6.0, float(layer.text_size)),
+                    marker_style="text",
+                    fixed_label_position=True,
+                )
+            )
+            padding = max(4.0, float(layer.text_size) * 0.2)
+            hit_rect = text_bounds.adjusted(-padding, -padding, padding, padding)
+            if not hit_rect.contains(QPointF(float(image_x), float(image_y))):
+                return None
+            half_width = max(1.0, hit_rect.width() * 0.5)
+            half_height = max(1.0, hit_rect.height() * 0.5)
+            normalized_dx = (image_x - hit_rect.center().x()) / half_width
+            normalized_dy = (image_y - hit_rect.center().y()) / half_height
+            return normalized_dx * normalized_dx + normalized_dy * normalized_dy
+        dx = float(image_x) - float(layer.x)
+        dy = float(image_y) - float(layer.y)
+        hit_radius = max(10.0, float(layer.radius) + 4.0)
+        distance_squared = dx * dx + dy * dy
+        if distance_squared > hit_radius * hit_radius:
+            return None
+        return distance_squared / max(1.0, hit_radius * hit_radius)
+
+    def _astrostack_layer_at(self, image_x: float, image_y: float) -> _AstrostackOverlayLayer | None:
+        best_layer: _AstrostackOverlayLayer | None = None
+        best_score: float | None = None
+        for layer in reversed(self._astrostack_overlay_layers):
+            score = self._astrostack_layer_hit_score(layer, image_x, image_y)
+            if score is None:
+                continue
+            if best_score is None or score < best_score:
+                best_score = score
+                best_layer = layer
+        return best_layer
+
+    def _astrostack_layer_handle_at(self, layer: _AstrostackOverlayLayer, image_x: float, image_y: float) -> str | None:
+        if layer.shape in {"text", "function"}:
+            if self._astrostack_layer_hit_score(layer, image_x, image_y) is not None:
+                return "move"
+            return None
+        hit_radius = max(7.0, min(18.0, max(float(layer.radius), 8.0) * 0.12))
+        if layer.shape in {"rectangle", "plot"}:
+            normalized = self._normalize_astrostack_rect_layer(layer)
+            corners = (
+                ("resize_nw", float(normalized.x), float(normalized.y)),
+                ("resize_ne", float(normalized.x2), float(normalized.y)),
+                ("resize_sw", float(normalized.x), float(normalized.y2)),
+                ("resize_se", float(normalized.x2), float(normalized.y2)),
+            )
+            for operation, corner_x, corner_y in corners:
+                if math.hypot(float(image_x) - corner_x, float(image_y) - corner_y) <= hit_radius:
+                    return operation
+            if (
+                float(normalized.x) <= image_x <= float(normalized.x2)
+                and float(normalized.y) <= image_y <= float(normalized.y2)
+            ):
+                return "move"
+            return None
+        handle_x = float(layer.x) + float(layer.radius)
+        handle_y = float(layer.y)
+        if math.hypot(float(image_x) - handle_x, float(image_y) - handle_y) <= hit_radius:
+            return "resize_radius"
+        if math.hypot(float(image_x) - float(layer.x), float(image_y) - float(layer.y)) <= max(10.0, float(layer.radius) + 4.0):
+            return "move"
+        return None
+
+    def _normalize_astrostack_annotation_text_style(self, style: str | None) -> str:
+        normalized_style = str(style or "regular").strip().lower()
+        if normalized_style not in {"regular", "bold", "italic", "bold-italic"}:
+            return "regular"
+        return normalized_style
+
+    def _astrostack_layer_text_font(self, layer: _AstrostackOverlayLayer) -> QFont | None:
+        font_family = str(layer.text_font_family or "").strip()
+        text_style = self._normalize_astrostack_annotation_text_style(layer.text_font_style)
+        if not font_family and text_style == "regular":
+            return None
+        font = QFont(font_family) if font_family else QFont()
+        font.setBold(text_style in {"bold", "bold-italic"})
+        font.setItalic(text_style in {"italic", "bold-italic"})
+        font.setPointSizeF(max(6.0, float(layer.text_size)))
+        return font
+
+    def _astrostack_build_plot_style(self, layer: _AstrostackOverlayLayer) -> ImagePlotStyle:
+        return ImagePlotStyle(
+            corner_radius=float(layer.plot_corner_radius),
+            stroke_color=str(layer.stroke_color or "#3a3a3a"),
+            stroke_width=max(0.0, float(layer.line_width)),
+            stroke_opacity=max(0.0, min(1.0, float(layer.opacity))),
+            fill_color=str(layer.fill_color or "#121212"),
+            fill_opacity=max(0.0, min(1.0, float(layer.opacity))),
+            title_align_h=str(layer.plot_title_align_h or "left"),
+            title_align_v=str(layer.plot_title_align_v or "top"),
+            title_offset_x=float(layer.plot_title_offset_x),
+            title_offset_y=float(layer.plot_title_offset_y),
+            x_label_offset_x=float(layer.plot_x_label_offset_x),
+            x_label_offset_y=float(layer.plot_x_label_offset_y),
+            y_label_offset_x=float(layer.plot_y_label_offset_x),
+            y_label_offset_y=float(layer.plot_y_label_offset_y),
+            curve_color=str(layer.plot_curve_color or "#3d8bfd"),
+            curve_opacity=max(0.0, min(1.0, float(layer.plot_curve_opacity))),
+            curve_width=max(0.0, float(layer.plot_curve_width)),
+            highlight_color=str(layer.plot_highlight_color or "#ffd166"),
+            highlight_opacity=max(0.0, min(1.0, float(layer.plot_highlight_opacity))),
+            highlight_radius=max(0.0, float(layer.plot_highlight_radius)),
+            chart_margin_left=float(layer.plot_chart_margin_left),
+            chart_margin_right=float(layer.plot_chart_margin_right),
+            chart_margin_top=float(layer.plot_chart_margin_top),
+            chart_margin_bottom=float(layer.plot_chart_margin_bottom),
+            title_text_color=str(layer.plot_title_text_color or "#f2f2f2"),
+            title_text_opacity=max(0.0, min(1.0, float(layer.plot_title_text_opacity))),
+            title_font_family=str(layer.plot_title_font_family or ""),
+            title_font_style=self._normalize_astrostack_annotation_text_style(layer.plot_title_font_style),
+            title_font_size=max(0.0, float(layer.plot_title_font_size)),
+            label_text_color=str(layer.plot_label_text_color or "#f2f2f2"),
+            label_text_opacity=max(0.0, min(1.0, float(layer.plot_label_text_opacity))),
+            label_font_family=str(layer.plot_label_font_family or ""),
+            label_font_style=self._normalize_astrostack_annotation_text_style(layer.plot_label_font_style),
+            label_font_size=max(0.0, float(layer.plot_label_font_size)),
+            accent_text_color=str(layer.plot_accent_text_color or "#ffd166"),
+        )
+
+    def _astrostack_layer_to_overlay(
+        self,
+        layer: _AstrostackOverlayLayer,
+        *,
+        function_metric_values: dict[str, float] | None = None,
+    ) -> ImageOverlay:
+        is_selected = layer.layer_id == self._selected_astrostack_layer_id
+        accent_color = self._current_custom_theme_colors().get("accent", "#3d8bfd") if is_selected else None
+        shape = str(layer.shape or "circle")
+        marker_style = (
+            "text"
+            if shape in {"text", "function"}
+            else ("plot" if shape == "plot" else ("rectangle" if shape == "rectangle" else "circle"))
+        )
+        show_label = True if shape in {"text", "function"} else False
+        annotation_opacity = max(0.0, min(1.0, float(layer.opacity)))
+        fill_color = layer.fill_color if layer.show_fill and shape not in {"text", "function"} else None
+        overlay_font = self._astrostack_layer_text_font(layer)
+        function_kind = ""
+        if shape in {"text", "function"}:
+            function_kind = self._astrostack_layer_function_kind(layer) if shape == "function" else ""
+            label = (
+                self._astrostack_function_display_text(
+                    layer,
+                    function_metric_values=function_metric_values,
+                    metric_kind=function_kind or None,
+                )
+                if shape == "function"
+                else (layer.label.strip() or "Text")
+            )
+            text_font = overlay_font or QFont()
+            text_font.setPointSizeF(max(6.0, float(layer.text_size)))
+            text_bounds = QFontMetricsF(text_font).boundingRect(label)
+            overlay_x = float(layer.x)
+            overlay_y = float(layer.y)
+            overlay_radius = max(5.0, float(text_bounds.width()) * 0.5)
+            minor_radius = max(5.0, float(text_bounds.height()) * 0.5)
+        elif shape in {"rectangle", "plot"}:
+            normalized = self._normalize_astrostack_rect_layer(layer)
+            width = max(1.0, float(normalized.x2) - float(normalized.x))
+            height = max(1.0, float(normalized.y2) - float(normalized.y))
+            overlay_x = float(normalized.x)
+            overlay_y = float(normalized.y)
+            overlay_radius = width
+            minor_radius = height
+        else:
+            overlay_x = float(layer.x)
+            overlay_y = float(layer.y)
+            overlay_radius = max(1.0, float(layer.radius))
+            minor_radius = overlay_radius
+        line_chart = self._build_astrostack_plot_line_chart(layer) if shape == "plot" else None
+        chart_panel = self._build_astrostack_plot_chart_panel(layer) if shape == "plot" else None
+        plot_title = layer.label.strip() or "Plot" if shape == "plot" else None
+        if shape in {"text", "function"}:
+            overlay_name = label
+        elif shape == "plot":
+            overlay_name = layer.label.strip() or "Plot"
+        else:
+            overlay_name = layer.label.strip() or "Layer"
+        return ImageOverlay(
+            source_id=f"{_ASTROSTACK_OVERLAY_LAYER_SOURCE_PREFIX}{layer.layer_id}",
+            name=overlay_name,
+            x=overlay_x,
+            y=overlay_y,
+            aperture_radius=overlay_radius,
+            annulus_inner_radius=overlay_radius,
+            annulus_outer_radius=overlay_radius,
+            color=layer.stroke_color,
+            show_annulus=False,
+            show_handles=is_selected and self._astrostack_annotation_tool == "mouse" and shape not in {"text", "function"},
+            marker_style=marker_style,
+            show_marker=True,
+            show_label=show_label,
+            pen_width=max(0.0, float(layer.line_width)),
+            text_color=layer.text_color,
+            fill_color=fill_color,
+            fill_opacity=annotation_opacity,
+            stroke_opacity=annotation_opacity,
+            text_size=max(6.0, float(layer.text_size)),
+            text_opacity=annotation_opacity,
+            text_font=overlay_font,
+            accent_color=accent_color,
+            show_center_dot=shape == "circle",
+            outline_color="#111827" if shape not in {"text", "function"} else None,
+            outline_width=1.0 if shape not in {"text", "function"} else 0.0,
+            ellipse_minor_radius=minor_radius if shape in {"rectangle", "circle", "text", "function", "plot"} else None,
+            rotation_degrees=0.0,
+            fixed_label_position=shape in {"text", "function"},
+            line_chart=line_chart,
+            plot_title=plot_title,
+            chart_overlay_panel=chart_panel,
+            plot_include_stack_status=bool(layer.plot_include_stack_status) if shape == "plot" else False,
+            plot_style=self._astrostack_build_plot_style(layer) if shape == "plot" else None,
+            dynamic_metric_kind=(function_kind or None) if shape == "function" else None,
+        )
+
+    def _build_astrostack_plot_chart_panel(self, layer: _AstrostackOverlayLayer) -> ImageChartOverlayPanel:
+        line_chart = self._build_astrostack_plot_line_chart(layer)
+        integration_text = "--"
+        frame_text = "0/0"
+        if layer.plot_include_stack_status:
+            total_frame_count = len(getattr(self, "_astrostack_frame_paths", []))
+            frame_indices = getattr(self, "_astrostack_snr_frame_indices", ())
+            highlight_index = getattr(self, "_astrostack_snr_highlight_index", None)
+            current_frame = 0
+            if highlight_index is not None and 0 <= highlight_index < len(frame_indices):
+                current_frame = int(frame_indices[highlight_index])
+            elif frame_indices:
+                current_frame = int(frame_indices[-1])
+            frame_text = f"{current_frame}/{max(0, total_frame_count)}"
+            integration_text = self._format_astrostack_integration_time(
+                self._astrostack_integration_seconds(current_frame)
+            )
+        return ImageChartOverlayPanel(
+            title=layer.label.strip() or "Stack SNR",
+            line_chart=line_chart,
+            integration_text=integration_text,
+            frame_text=frame_text,
+        )
+
+    def _astrostack_plot_metric_axis_label(self, metric_key: str, custom_label: str) -> str:
+        custom = str(custom_label or "").strip()
+        if custom:
+            return custom
+        normalized_key = str(metric_key or "frame_count").strip().lower()
+        return _ASTROSTACK_PLOT_METRIC_AXIS_LABELS.get(normalized_key, normalized_key.replace("_", " ").title())
+
+    def _astrostack_existing_frame_paths(self) -> list[Path]:
+        return [path for path in getattr(self, "_astrostack_frame_paths", []) if path.exists()]
+
+    def _astrostack_plot_measured_metric_series(self, metric_key: str) -> tuple[float, ...]:
+        measured_indices = tuple(getattr(self, "_astrostack_snr_frame_indices", ()) or ())
+        if not measured_indices:
+            return ()
+        normalized_key = str(metric_key or "frame_count").strip().lower()
+        measured_snr = tuple(getattr(self, "_astrostack_snr_values", ()) or ())
+        measured_fwhm = tuple(getattr(self, "_astrostack_fwhm_values", ()) or ())
+        measured_signal = tuple(getattr(self, "_astrostack_signal_values", ()) or ())
+        measured_noise = tuple(getattr(self, "_astrostack_noise_values", ()) or ())
+        if normalized_key == "frame_count":
+            return tuple(float(index) for index in measured_indices)
+        if normalized_key == "integration_time":
+            if len(measured_snr) != len(measured_indices):
+                return ()
+            exposure_seconds = self._ensure_astrostack_frame_exposure_seconds()
+            prefix_totals: list[float] = []
+            running_total = 0.0
+            for exposure in exposure_seconds:
+                running_total += max(0.0, float(exposure))
+                prefix_totals.append(running_total)
+            values: list[float] = []
+            for index in measured_indices:
+                exposure_index = int(index) - 1
+                if 0 <= exposure_index < len(prefix_totals):
+                    values.append(prefix_totals[exposure_index])
+                else:
+                    values.append(prefix_totals[-1] if prefix_totals else 0.0)
+            return tuple(values)
+        if normalized_key == "snr" and len(measured_snr) == len(measured_indices):
+            return tuple(float(value) for value in measured_snr)
+        if normalized_key == "fwhm" and len(measured_fwhm) == len(measured_indices):
+            return tuple(float(value) for value in measured_fwhm)
+        if normalized_key == "signal" and len(measured_signal) == len(measured_indices):
+            return tuple(float(value) for value in measured_signal)
+        if normalized_key == "noise" and len(measured_noise) == len(measured_indices):
+            return tuple(float(value) for value in measured_noise)
+        return ()
+
+    def _astrostack_plot_metric_series(self, metric_key: str) -> tuple[float, ...]:
+        if not self._astrostack_existing_frame_paths():
+            return ()
+        return self._astrostack_plot_measured_metric_series(metric_key)
+
+    def _build_astrostack_plot_line_chart(self, layer: _AstrostackOverlayLayer) -> ImageInfoLineChart:
+        x_values = self._astrostack_plot_metric_series(layer.plot_x_metric)
+        y_values = self._astrostack_plot_metric_series(layer.plot_y_metric)
+        if x_values and y_values and len(x_values) != len(y_values):
+            min_length = min(len(x_values), len(y_values))
+            x_values = x_values[:min_length]
+            y_values = y_values[:min_length]
+        highlight_index = getattr(self, "_astrostack_snr_highlight_index", None)
+        if highlight_index is not None and highlight_index >= len(x_values):
+            highlight_index = len(x_values) - 1 if x_values else None
+        return ImageInfoLineChart(
+            x_label=self._astrostack_plot_metric_axis_label(layer.plot_x_metric, layer.plot_x_label),
+            y_label=self._astrostack_plot_metric_axis_label(layer.plot_y_metric, layer.plot_y_label),
+            x_values=x_values,
+            y_values=y_values,
+            highlight_index=highlight_index,
+        )
+
+    def _astrostack_plot_image_dimensions(self, image_path: Path) -> tuple[int, int]:
+
+        if not image_path.exists():
+
+            return 0, 0
+
+        try:
+
+            _header, image_width, image_height = read_header_and_shape(image_path)
+
+        except Exception:
+
+            return 0, 0
+
+        if image_width is None or image_height is None:
+
+            return 0, 0
+
+        crop_bounds = self._astrostack_alignment_crop_bounds()
+
+        if crop_bounds is None:
+
+            return int(image_width), int(image_height)
+
+        min_x, min_y, max_x, max_y = crop_bounds
+
+        return max(0, max_x - min_x), max(0, max_y - min_y)
+
+    def _maybe_repair_undersized_astrostack_stack_plots(self, image_width: int, image_height: int) -> None:
+
+        if image_width <= 0 or image_height <= 0:
+
+            return
+
+        expected = AnnotatedImageView.default_chart_overlay_rect(float(image_width), float(image_height), title="Stack SNR")
+
+        expected_width = expected.width()
+
+        expected_height = expected.height()
+
+        repaired_layers: list[_AstrostackOverlayLayer] = []
+
+        repaired = False
+
+        for layer in self._astrostack_overlay_layers:
+
+            if layer.shape != "plot" or not layer.plot_include_stack_status:
+
+                repaired_layers.append(layer)
+
+                continue
+
+            width = max(1.0, float(layer.x2) - float(layer.x))
+
+            height = max(1.0, float(layer.y2) - float(layer.y))
+
+            if width < expected_width * 0.5 or height < expected_height * 0.5:
+
+                repaired_layers.append(
+                    replace(
+                        layer,
+                        x=float(expected.left()),
+                        y=float(expected.top()),
+                        x2=float(expected.right()),
+                        y2=float(expected.bottom()),
+                    )
+                )
+
+                repaired = True
+
+            else:
+
+                repaired_layers.append(layer)
+
+        if repaired:
+
+            self._astrostack_overlay_layers = repaired_layers
+
+    def _ensure_default_astrostack_plot_layer(self, image_width: int, image_height: int) -> None:
+        if any(layer.shape == "plot" and layer.plot_include_stack_status for layer in self._astrostack_overlay_layers):
+            return
+        bounds = AnnotatedImageView.default_chart_overlay_rect(float(image_width), float(image_height), title="Stack SNR")
+        layer = _AstrostackOverlayLayer(
+            layer_id=self._next_astrostack_overlay_layer_id(),
+            shape="plot",
+            label="Stack SNR",
+            x=float(bounds.left()),
+            y=float(bounds.top()),
+            x2=float(bounds.right()),
+            y2=float(bounds.bottom()),
+            stroke_color="#3a3a3a",
+            fill_color="#121212",
+            text_color="#f2f2f2",
+            line_width=1.0,
+            text_size=0.0,
+            opacity=228.0 / 255.0,
+            plot_x_metric="frame_count",
+            plot_y_metric="snr",
+            plot_x_label="",
+            plot_y_label="",
+            plot_include_stack_status=True,
+            show_fill=True,
+        )
+        self._astrostack_overlay_layers.append(layer)
+        self._select_astrostack_layer(layer.layer_id, refresh=False)
+
+    def _sync_astrostack_stack_plot_layer_bounds(self, image_width: int, image_height: int) -> None:
+        bounds = AnnotatedImageView.default_chart_overlay_rect(float(image_width), float(image_height), title="Stack SNR")
+        updated_layers: list[_AstrostackOverlayLayer] = []
+        for layer in self._astrostack_overlay_layers:
+            if layer.shape == "plot" and layer.plot_include_stack_status:
+                updated_layers.append(
+                    replace(
+                        layer,
+                        x=float(bounds.left()),
+                        y=float(bounds.top()),
+                        x2=float(bounds.right()),
+                        y2=float(bounds.bottom()),
+                    )
+                )
+            else:
+                updated_layers.append(layer)
+        self._astrostack_overlay_layers = updated_layers
+
+    def _astrostack_layer_overlays(
+        self,
+        *,
+        function_metric_values: dict[str, float] | None = None,
+        include_measurement_regions: bool = False,
+    ) -> list[ImageOverlay]:
+        layers = self._astrostack_overlay_layers_ordered_for_draw()
+        if not getattr(self, "_astrostack_snr_panel_visible", True):
+            layers = [
+                layer
+                for layer in layers
+                if not (layer.shape == "plot" and layer.plot_include_stack_status)
+            ]
+        overlays: list[ImageOverlay] = []
+        if include_measurement_regions:
+            overlays.extend(self._astrostack_measurement_region_export_overlays())
+        overlays.extend(
+            self._astrostack_layer_to_overlay(layer, function_metric_values=function_metric_values)
+            for layer in layers
+        )
+        return overlays
+
+    def _astrostack_layer_function_kind(self, layer: _AstrostackOverlayLayer) -> str:
+        function_kind = str(layer.function_kind or "").strip().lower()
+        if function_kind in {"signal", "noise"}:
+            return function_kind
+        display_name = self._astrostack_layer_display_name(layer).strip().lower()
+        if "signal" in display_name:
+            return "signal"
+        if "noise" in display_name:
+            return "noise"
+        return ""
+
+    def _astrostack_metric_value_at_highlight(self, metric_key: str) -> float:
+        normalized_key = str(metric_key or "").strip().lower()
+        series = self._astrostack_plot_measured_metric_series(normalized_key)
+        if series:
+            highlight_index = getattr(self, "_astrostack_snr_highlight_index", None)
+            if highlight_index is not None and 0 <= highlight_index < len(series):
+                value = float(series[highlight_index])
+            else:
+                value = float(series[-1])
+            if normalized_key == "signal" and value <= 0.0:
+                snr_series = self._astrostack_plot_measured_metric_series("snr")
+                noise_series = self._astrostack_plot_measured_metric_series("noise")
+                if snr_series and noise_series:
+                    if highlight_index is not None and 0 <= highlight_index < len(snr_series) and highlight_index < len(noise_series):
+                        derived = float(snr_series[highlight_index]) * float(noise_series[highlight_index])
+                    else:
+                        derived = float(snr_series[-1]) * float(noise_series[-1])
+                    if derived > 0.0:
+                        return derived
+            return value
+        if normalized_key == "signal":
+            return float(getattr(self, "_astrostack_reference_signal", 1e-6))
+        if normalized_key == "noise":
+            return float(getattr(self, "_astrostack_reference_noise", 1e-6))
+        if normalized_key == "snr":
+            return float(getattr(self, "_astrostack_reference_snr", 1.0))
+        return 0.0
+
+    def _astrostack_measurement_region_export_overlays(self) -> list[ImageOverlay]:
+        overlays: list[ImageOverlay] = []
+        region_specs = (
+            (getattr(self, "_astrostack_signal_region", None), "signal", _ASTROSTACK_SIGNAL_REGION_COLOR),
+            (getattr(self, "_astrostack_background_region", None), "background", _ASTROSTACK_BACKGROUND_REGION_COLOR),
+        )
+        for region, mode, color in region_specs:
+            if region is None or not self._astrostack_roi_selection_has_area(region):
+                continue
+            display_region = self._astrostack_measure_region_to_display(region)
+            x0, y0, x1, y1 = self._astrostack_roi_bounds(display_region)
+            left = min(float(x0), float(x1))
+            top = min(float(y0), float(y1))
+            width = max(1.0, abs(float(x1) - float(x0)))
+            height = max(1.0, abs(float(y1) - float(y0)))
+            overlays.append(
+                ImageOverlay(
+                    source_id=f"astrostack-measure-{mode}",
+                    name="",
+                    x=left,
+                    y=top,
+                    aperture_radius=width,
+                    annulus_inner_radius=width,
+                    annulus_outer_radius=width,
+                    color=color,
+                    show_annulus=False,
+                    show_handles=False,
+                    marker_style="rectangle",
+                    show_marker=True,
+                    show_label=False,
+                    pen_width=1.5,
+                    fill_color=color,
+                    fill_opacity=48.0 / 255.0,
+                    stroke_opacity=1.0,
+                    ellipse_minor_radius=height,
+                    show_center_dot=False,
+                    outline_color=None,
+                    outline_width=0.0,
+                )
+            )
+        return overlays
+
+    def _astrostack_function_overlay_label_text(self, overlay: ImageOverlay) -> str:
+        layer_id = self._astrostack_layer_id_from_source_id(overlay.source_id)
+        layer = self._astrostack_layer_by_id(layer_id) if layer_id is not None else None
+        metric_kind = str(overlay.dynamic_metric_kind or "").strip().lower()
+        if metric_kind not in {"signal", "noise"} and layer is not None:
+            metric_kind = self._astrostack_layer_function_kind(layer)
+        if metric_kind not in {"signal", "noise"}:
+            return str(overlay.name or "")
+        overrides = getattr(self, "_astrostack_function_metric_overrides", None)
+        if overrides is not None and metric_kind in overrides:
+            metric_value = float(overrides[metric_kind])
+        else:
+            metric_value = self._astrostack_metric_value_at_highlight(metric_kind)
+        formatted_value = format_astrostack_metric_value(metric_kind, metric_value)
+        prefix = layer.label.strip() if layer is not None else ""
+        if prefix:
+            return f"{prefix} {formatted_value}"
+        default_prefix = "Signal" if metric_kind == "signal" else "Noise"
+        return f"{default_prefix}: {formatted_value}"
+
+    def _astrostack_is_measure_layer_id(self, layer_id: str | None) -> bool:
+        return layer_id in {
+            _ASTROSTACK_SIGNAL_MEASURE_LAYER_ID,
+            _ASTROSTACK_BACKGROUND_MEASURE_LAYER_ID,
+        }
+
+    def _astrostack_measure_layer_display_name(self, layer_id: str) -> str:
+        if layer_id == _ASTROSTACK_SIGNAL_MEASURE_LAYER_ID:
+            return "Signal region"
+        if layer_id == _ASTROSTACK_BACKGROUND_MEASURE_LAYER_ID:
+            return "Background region"
+        return "Measurement region"
+
+    def _astrostack_measurement_regions_defined(self) -> bool:
+        return self._astrostack_measure_regions_ready()
+
+    def _astrostack_roi_bounds(self, selection: _HrRoiSelection) -> tuple[float, float, float, float]:
+        return (
+            float(selection.x0),
+            float(selection.y0),
+            float(selection.x1),
+            float(selection.y1),
+        )
+
+    def _astrostack_crop_origin(self) -> tuple[float, float] | None:
+        crop_bounds = self._astrostack_alignment_crop_bounds()
+        if crop_bounds is None:
+            return None
+        crop_x0, crop_y0, _, _ = crop_bounds
+        return float(crop_x0), float(crop_y0)
+
+    def _astrostack_measure_region_to_full_image(self, selection: _HrRoiSelection) -> _HrRoiSelection:
+        origin = self._astrostack_crop_origin()
+        if origin is None:
+            return selection
+        x0, y0, x1, y1 = shift_roi_bounds(self._astrostack_roi_bounds(selection), origin[0], origin[1])
+        return replace(selection, x0=x0, y0=y0, x1=x1, y1=y1)
+
+    def _astrostack_measure_region_to_display(self, selection: _HrRoiSelection) -> _HrRoiSelection:
+        origin = self._astrostack_crop_origin()
+        if origin is None:
+            return selection
+        x0, y0, x1, y1 = shift_roi_bounds(self._astrostack_roi_bounds(selection), -origin[0], -origin[1])
+        return replace(selection, x0=x0, y0=y0, x1=x1, y1=y1)
+
+    def _current_astrostack_signal_value(self) -> float:
+        return self._astrostack_metric_value_at_highlight("signal")
+
+    def _current_astrostack_noise_value(self) -> float:
+        return self._astrostack_metric_value_at_highlight("noise")
+
+    def _astrostack_function_display_text(
+        self,
+        layer: _AstrostackOverlayLayer,
+        *,
+        function_metric_values: dict[str, float] | None = None,
+        metric_kind: str | None = None,
+    ) -> str:
+        resolved_kind = str(metric_kind or self._astrostack_layer_function_kind(layer) or "").strip().lower()
+        if resolved_kind == "signal":
+            metric_value = (function_metric_values or {}).get("signal")
+            if metric_value is None:
+                metric_value = self._astrostack_metric_value_at_highlight("signal")
+        elif resolved_kind == "noise":
+            metric_value = (function_metric_values or {}).get("noise")
+            if metric_value is None:
+                metric_value = self._astrostack_metric_value_at_highlight("noise")
+        else:
+            return layer.label.strip() or "Function"
+        formatted_value = format_astrostack_metric_value(resolved_kind, float(metric_value))
+        prefix = layer.label.strip()
+        if prefix:
+            return f"{prefix} {formatted_value}"
+        default_prefix = "Signal" if resolved_kind == "signal" else "Noise"
+        return f"{default_prefix}: {formatted_value}"
+
+    def _astrostack_measure_region_payload(self, selection: _HrRoiSelection | None) -> dict[str, object] | None:
+        if selection is None:
+            return None
+        return {
+            "shape": str(selection.shape),
+            "mode": str(selection.mode),
+            "x0": float(selection.x0),
+            "y0": float(selection.y0),
+            "x1": float(selection.x1),
+            "y1": float(selection.y1),
+        }
+
+    def _astrostack_measure_region_from_payload(self, payload: dict[str, object] | None) -> _HrRoiSelection | None:
+        if payload is None:
+            return None
+        return _HrRoiSelection(
+            shape=str(payload.get("shape", "rectangle")),
+            x0=float(payload["x0"]),
+            y0=float(payload["y0"]),
+            x1=float(payload["x1"]),
+            y1=float(payload["y1"]),
+            mode=str(payload.get("mode", "include")),
+        )
+
+    def _astrostack_measurement_selection_overlay_for(
+        self,
+        selection: _HrRoiSelection,
+        *,
+        active: bool = False,
+    ) -> SelectionOverlay:
+        mode = str(selection.mode or "").strip().lower()
+        if mode == "signal":
+            base_color = _ASTROSTACK_SIGNAL_REGION_COLOR
+        elif mode == "background":
+            base_color = _ASTROSTACK_BACKGROUND_REGION_COLOR
+        else:
+            base_color = self._current_hr_roi_color()
+        color = QColor(base_color).lighter(125).name() if active else base_color
+        return SelectionOverlay(
+            shape=selection.shape,
+            x0=selection.x0,
+            y0=selection.y0,
+            x1=selection.x1,
+            y1=selection.y1,
+            color=color,
+        )
+
+    def _current_astrostack_measurement_selection_overlays(self) -> list[SelectionOverlay]:
+        overlays: list[SelectionOverlay] = []
+        signal_region = getattr(self, "_astrostack_signal_region", None)
+        background_region = getattr(self, "_astrostack_background_region", None)
+        active_measure_region = getattr(self, "_astrostack_active_measure_region", None)
+        selected_id = getattr(self, "_selected_astrostack_layer_id", None)
+        if signal_region is not None:
+            overlays.append(
+                self._astrostack_measurement_selection_overlay_for(
+                    self._astrostack_measure_region_to_display(signal_region),
+                    active=selected_id == _ASTROSTACK_SIGNAL_MEASURE_LAYER_ID,
+                )
+            )
+        if background_region is not None:
+            overlays.append(
+                self._astrostack_measurement_selection_overlay_for(
+                    self._astrostack_measure_region_to_display(background_region),
+                    active=selected_id == _ASTROSTACK_BACKGROUND_MEASURE_LAYER_ID,
+                )
+            )
+        if active_measure_region is not None:
+            overlays.append(self._astrostack_measurement_selection_overlay_for(active_measure_region, active=True))
+        return overlays
+
+    def _current_astrostack_crop_selection_overlays(self) -> list[SelectionOverlay]:
+        overlays = [self._astrostack_selection_overlay_for(selection) for selection in self._astrostack_roi_selections]
+        if self._astrostack_active_roi_selection is not None:
+            overlays.append(self._astrostack_selection_overlay_for(self._astrostack_active_roi_selection, active=True))
+        return overlays
+
+    def _refresh_astrostack_measure_region_preview(self, *, update_controls: bool = True) -> None:
+        if not hasattr(self, "_astrostack_image_view"):
+            return
+        self._astrostack_image_view.set_selection_overlays(self._astrostack_preview_selection_overlays())
+        if update_controls:
+            self._sync_astrostack_controls()
+
+    def _clear_astrostack_measurement_regions(self) -> None:
+        self._astrostack_signal_region = None
+        self._astrostack_background_region = None
+        self._astrostack_active_measure_region = None
+        self._astrostack_measure_region_drag_origin = None
+
+    def _set_astrostack_annotation_tool(self, tool: str, *, refresh: bool = True) -> None:
+        normalized_tool = str(tool or "hand").strip().lower()
+        allowed_tools = {
+            "hand",
+            "mouse",
+            "circle",
+            "rectangle",
+            "text",
+            "plot",
+            "signal",
+            "background",
+            "function_signal",
+            "function_noise",
+        }
+        if normalized_tool not in allowed_tools:
+            normalized_tool = "hand"
+        self._astrostack_annotation_tool = normalized_tool
+        self._astrostack_overlay_layer_drag = None
+        self._pending_astrostack_text_layer_position = None
+        self._pending_astrostack_text_layer_dragged = False
+        self._astrostack_active_measure_region = None
+        self._astrostack_measure_region_drag_origin = None
+        self._sync_astrostack_annotation_tool_buttons()
+        self._sync_astrostack_function_tool_buttons()
+        self._sync_astrostack_annotation_property_controls()
+        self._sync_astrostack_functions_property_controls()
+        self._apply_astrostack_view_interaction_mode()
+        if refresh and hasattr(self, "_astrostack_image_view"):
+            self._refresh_astrostack_image_view(reset_view=False)
+
+    def _astrostack_view_interaction_flags(self) -> tuple[bool, bool, bool, bool]:
+        active_tool = str(getattr(self, "_astrostack_annotation_tool", "hand"))
+        crop_active = bool(getattr(self, "_astrostack_crop_mode_active", False))
+        direct_edit_enabled = not crop_active and active_tool in _ASTROSTACK_DIRECT_EDIT_TOOLS
+        direct_edit_draw_enabled = not crop_active and active_tool in _ASTROSTACK_DIRECT_EDIT_DRAW_TOOLS
+        direct_edit_select_enabled = not crop_active and active_tool == "mouse"
+        gesture_roi_enabled = crop_active
+        return direct_edit_enabled, direct_edit_draw_enabled, direct_edit_select_enabled, gesture_roi_enabled
+
+    def _apply_astrostack_view_interaction_mode(self) -> None:
+        if not hasattr(self, "_astrostack_image_view"):
+            return
+        direct_edit_enabled, direct_edit_draw_enabled, direct_edit_select_enabled, gesture_roi_enabled = (
+            self._astrostack_view_interaction_flags()
+        )
+        self._astrostack_image_view.set_interaction_mode(
+            gesture_roi_enabled=gesture_roi_enabled,
+            gesture_roi_shift_required=False,
+            direct_edit_enabled=direct_edit_enabled,
+            direct_edit_draw_enabled=direct_edit_draw_enabled,
+            direct_edit_select_enabled=direct_edit_select_enabled,
+        )
+
+    def _sync_astrostack_annotation_tool_buttons(self) -> None:
+        buttons = getattr(self, "_astrostack_annotation_tool_buttons", {})
+        active_tool = getattr(self, "_astrostack_annotation_tool", "hand")
+        for tool_key, tool_button in buttons.items():
+            tool_button.blockSignals(True)
+            tool_button.setChecked(tool_key == active_tool)
+            tool_button.blockSignals(False)
+        self._sync_astrostack_annotation_tool_button_styles()
+
+    def _sync_astrostack_annotation_tool_button_styles(self) -> None:
+        buttons = getattr(self, "_astrostack_annotation_tool_buttons", {})
+        if not buttons:
+            return
+        colors = self._current_custom_theme_colors()
+        accent = str(colors.get("accent", "#3d8bfd"))
+        accent_soft = QColor(accent).lighter(125).name()
+        panel_bg = colors.get("panel_bg", "#2b2b2b")
+        card_bg = QColor(panel_bg).lighter(106).name()
+        card_border = QColor(panel_bg).lighter(122).name()
+        active_tool = getattr(self, "_astrostack_annotation_tool", "hand")
+        inactive_style = (
+            "QPushButton {"
+            f"background-color: {card_bg};"
+            f"border: 1px solid {card_border};"
+            "border-radius: 6px;"
+            "padding: 0;"
+            "}"
+            f"QPushButton:hover {{ border: 1px solid {accent_soft}; }}"
+        )
+        active_style = (
+            "QPushButton {"
+            f"background-color: {card_bg};"
+            f"border: 2px solid {accent};"
+            "border-radius: 6px;"
+            "padding: 0;"
+            "}"
+            f"QPushButton:hover {{ border: 2px solid {accent_soft}; }}"
+        )
+        for tool_key, tool_button in buttons.items():
+            tool_button.setStyleSheet(active_style if tool_key == active_tool else inactive_style)
+
+    def _sync_astrostack_annotation_tool_icons(self) -> None:
+        buttons = getattr(self, "_astrostack_annotation_tool_buttons", {})
+        if not buttons:
+            return
+        icon_color = self._current_custom_theme_colors().get("text", "#f8fafc")
+        for tool_key, tool_button in buttons.items():
+            tool_button.setIcon(self._create_astrostack_annotation_tool_icon(tool_key, color_hex=icon_color))
+
+    def _sync_astrostack_function_tool_buttons(self) -> None:
+        buttons = getattr(self, "_astrostack_function_tool_buttons", {})
+        if not buttons:
+            return
+        active_tool = getattr(self, "_astrostack_annotation_tool", "hand")
+        for tool_key, tool_button in buttons.items():
+            tool_button.blockSignals(True)
+            tool_button.setChecked(tool_key == active_tool)
+            tool_button.blockSignals(False)
+        colors = self._current_custom_theme_colors()
+        accent = str(colors.get("accent", "#3d8bfd"))
+        accent_soft = QColor(accent).lighter(125).name()
+        panel_bg = colors.get("panel_bg", "#2b2b2b")
+        card_bg = QColor(panel_bg).lighter(106).name()
+        card_border = QColor(panel_bg).lighter(122).name()
+        inactive_style = (
+            "QPushButton {"
+            f"background-color: {card_bg};"
+            f"border: 1px solid {card_border};"
+            "border-radius: 6px;"
+            "padding: 0;"
+            "}"
+            f"QPushButton:hover {{ border: 1px solid {accent_soft}; }}"
+        )
+        active_style = (
+            "QPushButton {"
+            f"background-color: {card_bg};"
+            f"border: 2px solid {accent};"
+            "border-radius: 6px;"
+            "padding: 0;"
+            "}"
+            f"QPushButton:hover {{ border: 2px solid {accent_soft}; }}"
+        )
+        for tool_key, tool_button in buttons.items():
+            tool_button.setStyleSheet(active_style if tool_key == active_tool else inactive_style)
+
+    def _sync_astrostack_function_tool_icons(self) -> None:
+        buttons = getattr(self, "_astrostack_function_tool_buttons", {})
+        if not buttons:
+            return
+        icon_color = self._current_custom_theme_colors().get("text", "#f8fafc")
+        for tool_key, tool_button in buttons.items():
+            tool_button.setIcon(self._create_astrostack_annotation_tool_icon(tool_key, color_hex=icon_color))
+
+    def _sync_astrostack_functions_property_controls(self) -> None:
+        properties_group = getattr(self, "_astrostack_functions_properties_group", None)
+        properties_stack = getattr(self, "_astrostack_functions_properties_stack", None)
+        if properties_group is None or properties_stack is None:
+            return
+        active_tool = getattr(self, "_astrostack_annotation_tool", "hand")
+        selected_layer = self._astrostack_layer_by_id(self._selected_astrostack_layer_id)
+        show_function_properties = active_tool in {"function_signal", "function_noise"} or (
+            selected_layer is not None and selected_layer.shape == "function"
+        )
+        properties_stack.setCurrentIndex(1 if show_function_properties else 0)
+        hint_label = getattr(self, "_astrostack_functions_properties_hint", None)
+        if hint_label is not None:
+            hint_label.setVisible(not show_function_properties)
+
+    def _create_astrostack_annotation_tool_icon(self, tool: str, *, color_hex: str) -> QIcon:
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        color = QColor(color_hex)
+        pen = QPen(color, 1.8)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        normalized_tool = str(tool or "hand").strip().lower()
+        if normalized_tool == "hand":
+            path = QPainterPath()
+            path.moveTo(6.0, 14.0)
+            path.cubicTo(4.0, 10.0, 4.5, 5.5, 7.0, 4.0)
+            path.cubicTo(8.5, 3.0, 10.0, 3.5, 10.5, 5.0)
+            path.cubicTo(11.0, 3.5, 12.5, 3.0, 14.0, 4.0)
+            path.cubicTo(16.5, 5.5, 17.0, 10.0, 15.0, 14.0)
+            path.lineTo(13.5, 17.0)
+            path.lineTo(7.5, 17.0)
+            path.closeSubpath()
+            painter.fillPath(path, color)
+        elif normalized_tool == "mouse":
+            path = QPainterPath()
+            path.moveTo(4.0, 2.0)
+            path.lineTo(4.0, 16.5)
+            path.lineTo(8.2, 12.4)
+            path.lineTo(10.8, 17.5)
+            path.lineTo(12.9, 16.3)
+            path.lineTo(10.1, 11.4)
+            path.lineTo(15.8, 11.1)
+            path.closeSubpath()
+            painter.fillPath(path, color)
+        elif normalized_tool == "circle":
+            painter.drawEllipse(QRectF(3.5, 3.5, 13.0, 13.0))
+        elif normalized_tool == "rectangle":
+            painter.drawRect(QRectF(3.5, 5.0, 13.0, 10.0))
+        elif normalized_tool == "plot":
+            painter.drawLine(QPointF(3.5, 15.0), QPointF(6.5, 11.0))
+            painter.drawLine(QPointF(6.5, 11.0), QPointF(10.0, 13.0))
+            painter.drawLine(QPointF(10.0, 13.0), QPointF(16.5, 5.0))
+            painter.drawLine(QPointF(3.5, 16.5), QPointF(16.5, 16.5))
+            painter.drawLine(QPointF(3.5, 16.5), QPointF(3.5, 5.0))
+        elif normalized_tool in {"signal", "function_signal"}:
+            font = painter.font()
+            font.setPointSizeF(11.5)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(QRectF(0.0, 0.0, 20.0, 20.0), int(Qt.AlignmentFlag.AlignCenter), "S")
+        elif normalized_tool == "background":
+            font = painter.font()
+            font.setPointSizeF(11.5)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(QRectF(0.0, 0.0, 20.0, 20.0), int(Qt.AlignmentFlag.AlignCenter), "B")
+        elif normalized_tool == "function_noise":
+            font = painter.font()
+            font.setPointSizeF(10.5)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(QRectF(0.0, 0.0, 20.0, 20.0), int(Qt.AlignmentFlag.AlignCenter), "N")
+        else:
+            font = painter.font()
+            font.setPointSizeF(11.5)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(QRectF(0.0, 0.0, 20.0, 20.0), int(Qt.AlignmentFlag.AlignCenter), "T")
+        painter.end()
+        return QIcon(pixmap)
+
+    def _choose_astrostack_annotation_stroke_color(self) -> None:
+        selected_color = QColorDialog.getColor(QColor(self._astrostack_annotation_stroke_color), self, "Choose Stroke Color")
+        if not selected_color.isValid():
+            return
+        self._astrostack_annotation_stroke_color = selected_color.name().lower()
+        self._sync_astrostack_annotation_stroke_color_button()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _choose_astrostack_annotation_fill_color(self) -> None:
+        selected_color = QColorDialog.getColor(QColor(self._astrostack_annotation_fill_color), self, "Choose Fill Color")
+        if not selected_color.isValid():
+            return
+        self._astrostack_annotation_fill_color = selected_color.name().lower()
+        self._sync_astrostack_annotation_fill_color_button()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _choose_astrostack_annotation_text_color(self) -> None:
+        selected_color = QColorDialog.getColor(QColor(self._astrostack_annotation_text_color), self, "Choose Text Color")
+        if not selected_color.isValid():
+            return
+        self._astrostack_annotation_text_color = selected_color.name().lower()
+        self._sync_astrostack_annotation_text_color_button()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _choose_astrostack_plot_curve_color(self) -> None:
+        selected_color = QColorDialog.getColor(QColor(self._astrostack_annotation_plot_curve_color), self, "Choose Curve Color")
+        if not selected_color.isValid():
+            return
+        self._astrostack_annotation_plot_curve_color = selected_color.name().lower()
+        self._sync_astrostack_plot_style_color_buttons()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _choose_astrostack_plot_highlight_color(self) -> None:
+        selected_color = QColorDialog.getColor(QColor(self._astrostack_annotation_plot_highlight_color), self, "Choose Highlight Color")
+        if not selected_color.isValid():
+            return
+        self._astrostack_annotation_plot_highlight_color = selected_color.name().lower()
+        self._sync_astrostack_plot_style_color_buttons()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _choose_astrostack_plot_accent_text_color(self) -> None:
+        selected_color = QColorDialog.getColor(QColor(self._astrostack_annotation_plot_accent_text_color), self, "Choose Accent Text Color")
+        if not selected_color.isValid():
+            return
+        self._astrostack_annotation_plot_accent_text_color = selected_color.name().lower()
+        self._sync_astrostack_plot_style_color_buttons()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_annotation_opacity_changed(self, value: int) -> None:
+        self._astrostack_annotation_opacity = max(0.05, min(1.0, float(value) / 100.0))
+        self._sync_astrostack_annotation_opacity_controls()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_annotation_opacity_label_dragged(self, delta_x: int) -> None:
+        if delta_x == 0:
+            return
+        current_percent = int(round(max(0.05, min(1.0, float(self._astrostack_annotation_opacity))) * 100.0))
+        self._handle_astrostack_annotation_opacity_changed(max(5, min(100, current_percent + delta_x)))
+
+    def _handle_astrostack_annotation_line_width_changed(self, value: float) -> None:
+        self._astrostack_annotation_line_width = max(0.5, min(12.0, float(value)))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_annotation_text_font_changed(self, font: QFont) -> None:
+        self._astrostack_annotation_text_font_family = font.family()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_annotation_text_style_changed(self, _index: int = 0) -> None:
+        style_combo = getattr(self, "_astrostack_annotation_text_style_combo", None)
+        if style_combo is None:
+            return
+        self._astrostack_annotation_text_font_style = str(style_combo.currentData(Qt.ItemDataRole.UserRole) or "regular")
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_annotation_text_size_changed(self, value: int) -> None:
+        self._astrostack_annotation_text_size = max(6.0, float(value))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_function_prefix_changed(self, text: str) -> None:
+        self._astrostack_annotation_function_prefix = str(text or "")
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _choose_astrostack_function_text_color(self) -> None:
+        selected_color = QColorDialog.getColor(
+            QColor(self._astrostack_annotation_function_text_color),
+            self,
+            "Choose Function Text Color",
+        )
+        if not selected_color.isValid():
+            return
+        self._astrostack_annotation_function_text_color = selected_color.name().lower()
+        self._sync_astrostack_function_text_color_button()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _sync_astrostack_function_text_color_button(self) -> None:
+        color_button = getattr(self, "_astrostack_annotation_function_text_color_button", None)
+        if color_button is None:
+            return
+        color_value = getattr(self, "_astrostack_annotation_function_text_color", "#f8fafc")
+        color_button.setStyleSheet(
+            f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+        )
+        color_button.setText("")
+
+    def _handle_astrostack_function_text_font_changed(self, font: QFont) -> None:
+        self._astrostack_annotation_function_text_font_family = font.family()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_function_text_style_changed(self, _index: int = 0) -> None:
+        style_combo = getattr(self, "_astrostack_annotation_function_text_style_combo", None)
+        if style_combo is None:
+            return
+        self._astrostack_annotation_function_text_font_style = str(
+            style_combo.currentData(Qt.ItemDataRole.UserRole) or "regular"
+        )
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_function_text_size_changed(self, value: int) -> None:
+        self._astrostack_annotation_function_text_size = max(6.0, float(value))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _sync_astrostack_function_text_font_controls(self) -> None:
+        font_combo = getattr(self, "_astrostack_annotation_function_text_font_combo", None)
+        style_combo = getattr(self, "_astrostack_annotation_function_text_style_combo", None)
+        size_spin = getattr(self, "_astrostack_annotation_function_text_size_spin", None)
+        prefix_input = getattr(self, "_astrostack_annotation_function_prefix_input", None)
+        if font_combo is not None and self._astrostack_annotation_function_text_font_family:
+            font_combo.blockSignals(True)
+            font_combo.setCurrentFont(QFont(self._astrostack_annotation_function_text_font_family))
+            font_combo.blockSignals(False)
+        if style_combo is not None:
+            target_index = style_combo.findData(self._astrostack_annotation_function_text_font_style)
+            style_combo.blockSignals(True)
+            style_combo.setCurrentIndex(target_index if target_index >= 0 else 0)
+            style_combo.blockSignals(False)
+        if size_spin is not None:
+            size_spin.blockSignals(True)
+            size_spin.setValue(int(round(max(6.0, float(self._astrostack_annotation_function_text_size)))))
+            size_spin.blockSignals(False)
+        if prefix_input is not None:
+            prefix_input.blockSignals(True)
+            prefix_input.setText(str(self._astrostack_annotation_function_prefix or ""))
+            prefix_input.blockSignals(False)
+        self._sync_astrostack_function_text_color_button()
+
+    def _handle_astrostack_plot_title_align_h_changed(self, _index: int = 0) -> None:
+        combo = getattr(self, "_astrostack_annotation_plot_title_align_h_combo", None)
+        if combo is None:
+            return
+        self._astrostack_annotation_plot_title_align_h = str(combo.currentData(Qt.ItemDataRole.UserRole) or "left")
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_title_align_v_changed(self, _index: int = 0) -> None:
+        combo = getattr(self, "_astrostack_annotation_plot_title_align_v_combo", None)
+        if combo is None:
+            return
+        self._astrostack_annotation_plot_title_align_v = str(combo.currentData(Qt.ItemDataRole.UserRole) or "top")
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_title_offset_x_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_title_offset_x = float(value)
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_title_offset_y_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_title_offset_y = float(value)
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_x_label_offset_x_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_x_label_offset_x = float(value)
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_x_label_offset_y_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_x_label_offset_y = float(value)
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_y_label_offset_x_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_y_label_offset_x = float(value)
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_y_label_offset_y_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_y_label_offset_y = float(value)
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_curve_opacity_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_curve_opacity = max(0.0, min(1.0, float(value)))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_curve_width_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_curve_width = max(0.0, float(value))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_highlight_opacity_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_highlight_opacity = max(0.0, min(1.0, float(value)))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_highlight_radius_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_highlight_radius = max(0.0, float(value))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_corner_radius_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_corner_radius = max(0.0, float(value))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_chart_margin_changed(self, edge: str, percent_value: float) -> None:
+        fraction = max(0.0, min(0.5, float(percent_value) / 100.0))
+        attr = f"_astrostack_annotation_plot_chart_margin_{edge}"
+        setattr(self, attr, fraction)
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_title_font_size_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_title_font_size = max(0.0, float(value))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_label_font_size_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_label_font_size = max(0.0, float(value))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_title_font_changed(self, font: QFont) -> None:
+        self._astrostack_annotation_plot_title_font_family = font.family()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_label_font_changed(self, font: QFont) -> None:
+        self._astrostack_annotation_plot_label_font_family = font.family()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_title_style_changed(self, _index: int = 0) -> None:
+        style_combo = getattr(self, "_astrostack_annotation_plot_title_style_combo", None)
+        if style_combo is None:
+            return
+        self._astrostack_annotation_plot_title_font_style = str(
+            style_combo.currentData(Qt.ItemDataRole.UserRole) or "regular"
+        )
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_label_style_changed(self, _index: int = 0) -> None:
+        style_combo = getattr(self, "_astrostack_annotation_plot_label_style_combo", None)
+        if style_combo is None:
+            return
+        self._astrostack_annotation_plot_label_font_style = str(
+            style_combo.currentData(Qt.ItemDataRole.UserRole) or "regular"
+        )
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_title_text_opacity_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_title_text_opacity = max(0.0, min(1.0, float(value)))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_label_text_opacity_changed(self, value: float) -> None:
+        self._astrostack_annotation_plot_label_text_opacity = max(0.0, min(1.0, float(value)))
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _choose_astrostack_plot_title_text_color(self) -> None:
+        selected_color = QColorDialog.getColor(
+            QColor(self._astrostack_annotation_plot_title_text_color), self, "Choose Title Color"
+        )
+        if not selected_color.isValid():
+            return
+        self._astrostack_annotation_plot_title_text_color = selected_color.name().lower()
+        self._sync_astrostack_plot_text_color_buttons()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _choose_astrostack_plot_label_text_color(self) -> None:
+        selected_color = QColorDialog.getColor(
+            QColor(self._astrostack_annotation_plot_label_text_color), self, "Choose Label Color"
+        )
+        if not selected_color.isValid():
+            return
+        self._astrostack_annotation_plot_label_text_color = selected_color.name().lower()
+        self._sync_astrostack_plot_text_color_buttons()
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _astrostack_plot_layer_from_property_state(self, selected_layer: _AstrostackOverlayLayer) -> _AstrostackOverlayLayer:
+        return replace(
+            selected_layer,
+            label=str(self._astrostack_annotation_plot_title or "Plot").strip() or "Plot",
+            plot_x_metric=str(self._astrostack_annotation_plot_x_metric or "frame_count"),
+            plot_y_metric=str(self._astrostack_annotation_plot_y_metric or "snr"),
+            plot_x_label=str(self._astrostack_annotation_plot_x_label or ""),
+            plot_y_label=str(self._astrostack_annotation_plot_y_label or ""),
+            stroke_color=self._astrostack_annotation_stroke_color,
+            fill_color=self._astrostack_annotation_fill_color,
+            line_width=max(0.5, float(self._astrostack_annotation_line_width)),
+            opacity=max(0.05, min(1.0, float(self._astrostack_annotation_opacity))),
+            plot_title_align_h=str(self._astrostack_annotation_plot_title_align_h or "left"),
+            plot_title_align_v=str(self._astrostack_annotation_plot_title_align_v or "top"),
+            plot_title_offset_x=float(self._astrostack_annotation_plot_title_offset_x),
+            plot_title_offset_y=float(self._astrostack_annotation_plot_title_offset_y),
+            plot_x_label_offset_x=float(self._astrostack_annotation_plot_x_label_offset_x),
+            plot_x_label_offset_y=float(self._astrostack_annotation_plot_x_label_offset_y),
+            plot_y_label_offset_x=float(self._astrostack_annotation_plot_y_label_offset_x),
+            plot_y_label_offset_y=float(self._astrostack_annotation_plot_y_label_offset_y),
+            plot_curve_color=str(self._astrostack_annotation_plot_curve_color or "#3d8bfd"),
+            plot_curve_opacity=max(0.0, min(1.0, float(self._astrostack_annotation_plot_curve_opacity))),
+            plot_curve_width=max(0.0, float(self._astrostack_annotation_plot_curve_width)),
+            plot_highlight_color=str(self._astrostack_annotation_plot_highlight_color or "#ffd166"),
+            plot_highlight_opacity=max(0.0, min(1.0, float(self._astrostack_annotation_plot_highlight_opacity))),
+            plot_highlight_radius=max(0.0, float(self._astrostack_annotation_plot_highlight_radius)),
+            plot_corner_radius=max(0.0, float(self._astrostack_annotation_plot_corner_radius)),
+            plot_accent_text_color=str(self._astrostack_annotation_plot_accent_text_color or "#ffd166"),
+            plot_chart_margin_left=float(self._astrostack_annotation_plot_chart_margin_left),
+            plot_chart_margin_right=float(self._astrostack_annotation_plot_chart_margin_right),
+            plot_chart_margin_top=float(self._astrostack_annotation_plot_chart_margin_top),
+            plot_chart_margin_bottom=float(self._astrostack_annotation_plot_chart_margin_bottom),
+            plot_title_text_color=str(self._astrostack_annotation_plot_title_text_color or "#f2f2f2"),
+            plot_title_text_opacity=max(0.0, min(1.0, float(self._astrostack_annotation_plot_title_text_opacity))),
+            plot_title_font_family=self._astrostack_annotation_plot_title_font_family,
+            plot_title_font_style=self._normalize_astrostack_annotation_text_style(
+                self._astrostack_annotation_plot_title_font_style
+            ),
+            plot_title_font_size=max(0.0, float(self._astrostack_annotation_plot_title_font_size)),
+            plot_label_text_color=str(self._astrostack_annotation_plot_label_text_color or "#f2f2f2"),
+            plot_label_text_opacity=max(0.0, min(1.0, float(self._astrostack_annotation_plot_label_text_opacity))),
+            plot_label_font_family=self._astrostack_annotation_plot_label_font_family,
+            plot_label_font_style=self._normalize_astrostack_annotation_text_style(
+                self._astrostack_annotation_plot_label_font_style
+            ),
+            plot_label_font_size=max(0.0, float(self._astrostack_annotation_plot_label_font_size)),
+        )
+
+    def _sync_astrostack_annotation_property_controls(self) -> None:
+        properties_group = getattr(self, "_astrostack_annotation_properties_group", None)
+        properties_stack = getattr(self, "_astrostack_annotation_properties_stack", None)
+        if properties_group is None or properties_stack is None:
+            return
+        active_tool = getattr(self, "_astrostack_annotation_tool", "hand")
+        stack_index = {"hand": 0, "mouse": 0, "circle": 1, "rectangle": 1, "text": 2, "plot": 0, "signal": 0, "background": 0, "function_signal": 0, "function_noise": 0}.get(
+            active_tool, 0
+        )
+        properties_stack.setCurrentIndex(stack_index)
+        properties_group.setVisible(True)
+        self._sync_astrostack_functions_property_controls()
+
+    def _sync_astrostack_annotation_opacity_controls(self) -> None:
+        opacity_percent = int(round(max(0.05, min(1.0, float(self._astrostack_annotation_opacity))) * 100.0))
+        opacity_button = getattr(self, "_astrostack_annotation_opacity_button", None)
+        if opacity_button is not None:
+            opacity_button.setText(f"{opacity_percent}%")
+        plot_opacity_button = getattr(self, "_astrostack_annotation_plot_opacity_button", None)
+        if plot_opacity_button is not None:
+            plot_opacity_button.setText(f"{opacity_percent}%")
+        opacity_slider = getattr(self, "_astrostack_annotation_opacity_slider", None)
+        if opacity_slider is not None:
+            opacity_slider.blockSignals(True)
+            opacity_slider.setValue(opacity_percent)
+            opacity_slider.blockSignals(False)
+        plot_opacity_slider = getattr(self, "_astrostack_annotation_plot_opacity_slider", None)
+        if plot_opacity_slider is not None:
+            plot_opacity_slider.blockSignals(True)
+            plot_opacity_slider.setValue(opacity_percent)
+            plot_opacity_slider.blockSignals(False)
+
+    def _sync_astrostack_annotation_text_font_controls(self) -> None:
+        font_combo = getattr(self, "_astrostack_annotation_text_font_combo", None)
+        style_combo = getattr(self, "_astrostack_annotation_text_style_combo", None)
+        size_spin = getattr(self, "_astrostack_annotation_text_size_spin", None)
+        if font_combo is not None and self._astrostack_annotation_text_font_family:
+            font_combo.blockSignals(True)
+            font_combo.setCurrentFont(QFont(self._astrostack_annotation_text_font_family))
+            font_combo.blockSignals(False)
+        if style_combo is not None:
+            target_index = style_combo.findData(self._astrostack_annotation_text_font_style)
+            style_combo.blockSignals(True)
+            style_combo.setCurrentIndex(target_index if target_index >= 0 else 0)
+            style_combo.blockSignals(False)
+        if size_spin is not None:
+            size_spin.blockSignals(True)
+            size_spin.setValue(int(round(max(6.0, float(self._astrostack_annotation_text_size)))))
+            size_spin.blockSignals(False)
+
+    def _sync_astrostack_annotation_stroke_color_button(self) -> None:
+        color_button = getattr(self, "_astrostack_annotation_stroke_color_button", None)
+        if color_button is None:
+            return
+        color_value = getattr(self, "_astrostack_annotation_stroke_color", "#38bdf8")
+        color_button.setStyleSheet(
+            f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+        )
+        color_button.setText("")
+        plot_color_button = getattr(self, "_astrostack_annotation_plot_stroke_color_button", None)
+        if plot_color_button is not None:
+            plot_color_button.setStyleSheet(
+                f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+            )
+            plot_color_button.setText("")
+
+    def _sync_astrostack_annotation_fill_color_button(self) -> None:
+        color_button = getattr(self, "_astrostack_annotation_fill_color_button", None)
+        if color_button is None:
+            return
+        color_value = getattr(self, "_astrostack_annotation_fill_color", "#38bdf8")
+        color_button.setStyleSheet(
+            f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+        )
+        color_button.setText("")
+        plot_color_button = getattr(self, "_astrostack_annotation_plot_fill_color_button", None)
+        if plot_color_button is not None:
+            plot_color_button.setStyleSheet(
+                f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+            )
+            plot_color_button.setText("")
+
+    def _sync_astrostack_annotation_text_color_button(self) -> None:
+        color_button = getattr(self, "_astrostack_annotation_text_color_button", None)
+        if color_button is None:
+            return
+        color_value = getattr(self, "_astrostack_annotation_text_color", "#f8fafc")
+        color_button.setStyleSheet(
+            f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+        )
+        color_button.setText("")
+        plot_text_color_button = getattr(self, "_astrostack_annotation_plot_label_text_color_button", None)
+        if plot_text_color_button is not None:
+            plot_text_color_button.setStyleSheet(
+                f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+            )
+            plot_text_color_button.setText("")
+
+    def _sync_astrostack_plot_text_color_buttons(self) -> None:
+        title_button = getattr(self, "_astrostack_annotation_plot_title_text_color_button", None)
+        if title_button is not None:
+            title_color = getattr(self, "_astrostack_annotation_plot_title_text_color", "#f2f2f2")
+            title_button.setStyleSheet(
+                f"background-color: {title_color}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+            )
+            title_button.setText("")
+        label_button = getattr(self, "_astrostack_annotation_plot_label_text_color_button", None)
+        if label_button is not None:
+            label_color = getattr(self, "_astrostack_annotation_plot_label_text_color", "#f2f2f2")
+            label_button.setStyleSheet(
+                f"background-color: {label_color}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+            )
+            label_button.setText("")
+
+    def _sync_astrostack_plot_style_color_buttons(self) -> None:
+        curve_button = getattr(self, "_astrostack_annotation_plot_curve_color_button", None)
+        if curve_button is not None:
+            curve_color = getattr(self, "_astrostack_annotation_plot_curve_color", "#3d8bfd")
+            curve_button.setStyleSheet(
+                f"background-color: {curve_color}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+            )
+            curve_button.setText("")
+        highlight_button = getattr(self, "_astrostack_annotation_plot_highlight_color_button", None)
+        if highlight_button is not None:
+            highlight_color = getattr(self, "_astrostack_annotation_plot_highlight_color", "#ffd166")
+            highlight_button.setStyleSheet(
+                f"background-color: {highlight_color}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+            )
+            highlight_button.setText("")
+        accent_button = getattr(self, "_astrostack_annotation_plot_accent_color_button", None)
+        if accent_button is not None:
+            accent_color = getattr(self, "_astrostack_annotation_plot_accent_text_color", "#ffd166")
+            accent_button.setStyleSheet(
+                f"background-color: {accent_color}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
+            )
+            accent_button.setText("")
+
+    def _apply_astrostack_annotation_properties_to_selected_layer(self) -> None:
+        selected_layer = self._astrostack_layer_by_id(self._selected_astrostack_layer_id)
+        if selected_layer is None:
+            return
+        shape = str(selected_layer.shape or "")
+        if shape == "text":
+            updated_layer = replace(
+                selected_layer,
+                text_color=self._astrostack_annotation_text_color,
+                text_font_family=self._astrostack_annotation_text_font_family,
+                text_font_style=self._normalize_astrostack_annotation_text_style(self._astrostack_annotation_text_font_style),
+                text_size=max(6.0, float(self._astrostack_annotation_text_size)),
+                opacity=max(0.05, min(1.0, float(self._astrostack_annotation_opacity))),
+            )
+        elif shape == "function":
+            updated_layer = replace(
+                selected_layer,
+                label=self._astrostack_annotation_function_prefix,
+                text_color=self._astrostack_annotation_function_text_color,
+                text_font_family=self._astrostack_annotation_function_text_font_family,
+                text_font_style=self._normalize_astrostack_annotation_text_style(
+                    self._astrostack_annotation_function_text_font_style
+                ),
+                text_size=max(6.0, float(self._astrostack_annotation_function_text_size)),
+                opacity=max(0.05, min(1.0, float(self._astrostack_annotation_opacity))),
+            )
+        elif shape == "plot":
+            updated_layer = self._astrostack_plot_layer_from_property_state(selected_layer)
+        else:
+            updated_layer = replace(
+                selected_layer,
+                stroke_color=self._astrostack_annotation_stroke_color,
+                fill_color=self._astrostack_annotation_fill_color,
+                line_width=max(0.5, float(self._astrostack_annotation_line_width)),
+                opacity=max(0.05, min(1.0, float(self._astrostack_annotation_opacity))),
+            )
+        self._replace_astrostack_overlay_layer(updated_layer)
+        self._sync_astrostack_layer_list_widget()
+        self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+
+    def _sync_astrostack_layer_list_widget(self) -> None:
+        list_widget = getattr(self, "_astrostack_layer_list", None)
+        if list_widget is None:
+            return
+        list_widget.blockSignals(True)
+        list_widget.clear()
+        for layer in reversed(self._astrostack_overlay_layers):
+            item = QListWidgetItem(self._astrostack_layer_display_name(layer))
+            item.setData(Qt.ItemDataRole.UserRole, layer.layer_id)
+            list_widget.addItem(item)
+            if layer.layer_id == self._selected_astrostack_layer_id:
+                item.setSelected(True)
+        if getattr(self, "_astrostack_signal_region", None) is not None:
+            item = QListWidgetItem(self._astrostack_measure_layer_display_name(_ASTROSTACK_SIGNAL_MEASURE_LAYER_ID))
+            item.setData(Qt.ItemDataRole.UserRole, _ASTROSTACK_SIGNAL_MEASURE_LAYER_ID)
+            list_widget.addItem(item)
+            if self._selected_astrostack_layer_id == _ASTROSTACK_SIGNAL_MEASURE_LAYER_ID:
+                item.setSelected(True)
+        if getattr(self, "_astrostack_background_region", None) is not None:
+            item = QListWidgetItem(self._astrostack_measure_layer_display_name(_ASTROSTACK_BACKGROUND_MEASURE_LAYER_ID))
+            item.setData(Qt.ItemDataRole.UserRole, _ASTROSTACK_BACKGROUND_MEASURE_LAYER_ID)
+            list_widget.addItem(item)
+            if self._selected_astrostack_layer_id == _ASTROSTACK_BACKGROUND_MEASURE_LAYER_ID:
+                item.setSelected(True)
+        list_widget.blockSignals(False)
+        move_up_button = getattr(self, "_astrostack_layer_move_up_button", None)
+        move_down_button = getattr(self, "_astrostack_layer_move_down_button", None)
+        remove_button = getattr(self, "_astrostack_layer_remove_button", None)
+        save_preset_button = getattr(self, "_astrostack_layer_save_preset_button", None)
+        selected_index = self._astrostack_selected_layer_index()
+        is_measure_layer = self._astrostack_is_measure_layer_id(self._selected_astrostack_layer_id)
+        has_selection = selected_index is not None or is_measure_layer
+        has_layers = bool(self._astrostack_overlay_layers) or (
+            getattr(self, "_astrostack_signal_region", None) is not None
+            or getattr(self, "_astrostack_background_region", None) is not None
+        )
+        if move_up_button is not None:
+            move_up_button.setEnabled(
+                not is_measure_layer
+                and has_selection
+                and selected_index is not None
+                and selected_index < len(self._astrostack_overlay_layers) - 1
+            )
+        if move_down_button is not None:
+            move_down_button.setEnabled(
+                not is_measure_layer
+                and has_selection
+                and selected_index is not None
+                and selected_index > 0
+            )
+        if remove_button is not None:
+            remove_button.setEnabled(has_selection)
+        if save_preset_button is not None:
+            save_preset_button.setEnabled(has_layers)
+
+    def _astrostack_selected_layer_index(self) -> int | None:
+        if not self._selected_astrostack_layer_id:
+            return None
+        for index, layer in enumerate(self._astrostack_overlay_layers):
+            if layer.layer_id == self._selected_astrostack_layer_id:
+                return index
+        return None
+
+    def _select_astrostack_layer(self, layer_id: str | None, *, refresh: bool = True) -> None:
+        self._selected_astrostack_layer_id = layer_id
+        if self._astrostack_is_measure_layer_id(layer_id):
+            if layer_id == _ASTROSTACK_SIGNAL_MEASURE_LAYER_ID:
+                self._set_astrostack_annotation_tool("signal", refresh=False)
+            elif layer_id == _ASTROSTACK_BACKGROUND_MEASURE_LAYER_ID:
+                self._set_astrostack_annotation_tool("background", refresh=False)
+            self._sync_astrostack_layer_list_widget()
+            if refresh and hasattr(self, "_astrostack_image_view"):
+                self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+            return
+        selected_layer = self._astrostack_layer_by_id(layer_id)
+        if selected_layer is not None:
+            if selected_layer.shape == "text":
+                self._astrostack_annotation_text_color = selected_layer.text_color
+                self._astrostack_annotation_text_font_family = selected_layer.text_font_family
+                self._astrostack_annotation_text_font_style = selected_layer.text_font_style
+                self._astrostack_annotation_text_size = float(selected_layer.text_size)
+            elif selected_layer.shape == "function":
+                self._astrostack_annotation_function_prefix = selected_layer.label
+                self._astrostack_annotation_function_text_color = selected_layer.text_color
+                self._astrostack_annotation_function_text_font_family = selected_layer.text_font_family
+                self._astrostack_annotation_function_text_font_style = selected_layer.text_font_style
+                self._astrostack_annotation_function_text_size = float(selected_layer.text_size)
+            elif selected_layer.shape == "plot":
+                self._astrostack_annotation_plot_title = selected_layer.label.strip() or "Plot"
+                self._astrostack_annotation_plot_x_metric = selected_layer.plot_x_metric
+                self._astrostack_annotation_plot_y_metric = selected_layer.plot_y_metric
+                self._astrostack_annotation_plot_x_label = selected_layer.plot_x_label
+                self._astrostack_annotation_plot_y_label = selected_layer.plot_y_label
+                self._astrostack_annotation_stroke_color = selected_layer.stroke_color
+                self._astrostack_annotation_fill_color = selected_layer.fill_color
+                self._astrostack_annotation_line_width = float(selected_layer.line_width)
+                self._astrostack_annotation_plot_title_align_h = selected_layer.plot_title_align_h
+                self._astrostack_annotation_plot_title_align_v = selected_layer.plot_title_align_v
+                self._astrostack_annotation_plot_title_offset_x = float(selected_layer.plot_title_offset_x)
+                self._astrostack_annotation_plot_title_offset_y = float(selected_layer.plot_title_offset_y)
+                self._astrostack_annotation_plot_x_label_offset_x = float(selected_layer.plot_x_label_offset_x)
+                self._astrostack_annotation_plot_x_label_offset_y = float(selected_layer.plot_x_label_offset_y)
+                self._astrostack_annotation_plot_y_label_offset_x = float(selected_layer.plot_y_label_offset_x)
+                self._astrostack_annotation_plot_y_label_offset_y = float(selected_layer.plot_y_label_offset_y)
+                self._astrostack_annotation_plot_curve_color = selected_layer.plot_curve_color
+                self._astrostack_annotation_plot_curve_opacity = float(selected_layer.plot_curve_opacity)
+                self._astrostack_annotation_plot_curve_width = float(selected_layer.plot_curve_width)
+                self._astrostack_annotation_plot_highlight_color = selected_layer.plot_highlight_color
+                self._astrostack_annotation_plot_highlight_opacity = float(selected_layer.plot_highlight_opacity)
+                self._astrostack_annotation_plot_highlight_radius = float(selected_layer.plot_highlight_radius)
+                self._astrostack_annotation_plot_corner_radius = float(selected_layer.plot_corner_radius)
+                self._astrostack_annotation_plot_accent_text_color = selected_layer.plot_accent_text_color
+                self._astrostack_annotation_plot_chart_margin_left = float(selected_layer.plot_chart_margin_left)
+                self._astrostack_annotation_plot_chart_margin_right = float(selected_layer.plot_chart_margin_right)
+                self._astrostack_annotation_plot_chart_margin_top = float(selected_layer.plot_chart_margin_top)
+                self._astrostack_annotation_plot_chart_margin_bottom = float(selected_layer.plot_chart_margin_bottom)
+                self._astrostack_annotation_plot_title_text_color = selected_layer.plot_title_text_color
+                self._astrostack_annotation_plot_title_text_opacity = float(selected_layer.plot_title_text_opacity)
+                self._astrostack_annotation_plot_title_font_family = selected_layer.plot_title_font_family
+                self._astrostack_annotation_plot_title_font_style = selected_layer.plot_title_font_style
+                self._astrostack_annotation_plot_title_font_size = float(selected_layer.plot_title_font_size)
+                self._astrostack_annotation_plot_label_text_color = selected_layer.plot_label_text_color
+                self._astrostack_annotation_plot_label_text_opacity = float(selected_layer.plot_label_text_opacity)
+                self._astrostack_annotation_plot_label_font_family = selected_layer.plot_label_font_family
+                self._astrostack_annotation_plot_label_font_style = selected_layer.plot_label_font_style
+                self._astrostack_annotation_plot_label_font_size = float(selected_layer.plot_label_font_size)
+            else:
+                self._astrostack_annotation_stroke_color = selected_layer.stroke_color
+                self._astrostack_annotation_fill_color = selected_layer.fill_color
+                self._astrostack_annotation_line_width = float(selected_layer.line_width)
+            self._astrostack_annotation_opacity = float(selected_layer.opacity)
+            self._sync_astrostack_annotation_stroke_color_button()
+            self._sync_astrostack_annotation_fill_color_button()
+            self._sync_astrostack_annotation_text_color_button()
+            self._sync_astrostack_annotation_opacity_controls()
+            self._sync_astrostack_annotation_text_font_controls()
+            self._sync_astrostack_function_text_font_controls()
+            self._sync_astrostack_plot_property_controls()
+        self._sync_astrostack_functions_property_controls()
+        self._sync_astrostack_layer_list_widget()
+        if refresh and hasattr(self, "_astrostack_image_view"):
+            self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+
+    def _handle_astrostack_layer_selection_changed(self) -> None:
+        list_widget = getattr(self, "_astrostack_layer_list", None)
+        if list_widget is None:
+            return
+        selected_items = list_widget.selectedItems()
+        if not selected_items:
+            self._select_astrostack_layer(None, refresh=True)
+            return
+        layer_id = str(selected_items[0].data(Qt.ItemDataRole.UserRole) or "")
+        self._select_astrostack_layer(layer_id or None, refresh=True)
+
+    def _move_astrostack_layer_up(self) -> None:
+        index = self._astrostack_selected_layer_index()
+        if index is None or index >= len(self._astrostack_overlay_layers) - 1:
+            return
+        layers = self._astrostack_overlay_layers
+        layers[index], layers[index + 1] = layers[index + 1], layers[index]
+        self._sync_astrostack_layer_list_widget()
+        self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+
+    def _move_astrostack_layer_down(self) -> None:
+        index = self._astrostack_selected_layer_index()
+        if index is None or index <= 0:
+            return
+        layers = self._astrostack_overlay_layers
+        layers[index], layers[index - 1] = layers[index - 1], layers[index]
+        self._sync_astrostack_layer_list_widget()
+        self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+
+    def _remove_selected_astrostack_layer(self) -> None:
+        layer_id = self._selected_astrostack_layer_id
+        if not layer_id:
+            return
+        if layer_id == _ASTROSTACK_SIGNAL_MEASURE_LAYER_ID:
+            self._astrostack_signal_region = None
+            self._selected_astrostack_layer_id = None
+            self._refresh_astrostack_snr_curve_preview()
+            self._sync_astrostack_layer_list_widget()
+            self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+            self.statusBar().showMessage("Removed Deep Stack signal measurement region.", 3000)
+            return
+        if layer_id == _ASTROSTACK_BACKGROUND_MEASURE_LAYER_ID:
+            self._astrostack_background_region = None
+            self._selected_astrostack_layer_id = None
+            self._refresh_astrostack_snr_curve_preview()
+            self._sync_astrostack_layer_list_widget()
+            self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+            self.statusBar().showMessage("Removed Deep Stack background measurement region.", 3000)
+            return
+        self._remove_astrostack_overlay_layer_by_id(layer_id)
+        self._sync_astrostack_layer_list_widget()
+        self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+
+    def _astrostack_reference_image_dimensions(self) -> tuple[int, int] | None:
+
+        image_path = self._current_astrostack_source_image
+
+        if image_path is None or not image_path.exists():
+
+            frame_paths = self._astrostack_existing_frame_paths()
+
+            image_path = frame_paths[0] if frame_paths else None
+
+        if image_path is None or not image_path.exists():
+
+            return None
+
+        try:
+
+            _header, image_width, image_height = read_header_and_shape(image_path)
+
+            return max(1, int(image_width)), max(1, int(image_height))
+
+        except Exception:
+
+            return None
+
+    def _astrostack_active_crop_payload(self) -> dict[str, object] | None:
+
+        selection = self._astrostack_active_roi_selection_for_crop()
+
+        if selection is None:
+
+            return None
+
+        return {
+            "shape": selection.shape,
+            "mode": selection.mode,
+            "x0": float(selection.x0),
+            "y0": float(selection.y0),
+            "x1": float(selection.x1),
+            "y1": float(selection.y1),
+        }
+
+    def _astrostack_overlay_layer_from_dict(self, payload: dict[str, object]) -> _AstrostackOverlayLayer:
+        allowed_fields = {field.name for field in fields(_AstrostackOverlayLayer)}
+        filtered = {key: value for key, value in payload.items() if key in allowed_fields}
+        filtered["layer_id"] = self._next_astrostack_overlay_layer_id()
+        return _AstrostackOverlayLayer(**filtered)
+
+    def _default_astrostack_preset_path(self) -> Path:
+        root_path = getattr(self, "_current_astrostack_root_path", None)
+        base_directory = root_path if isinstance(root_path, Path) and root_path.exists() else Path.home()
+        return base_directory / "astrostack-layers.astrostack.json"
+
+    def _save_astrostack_layer_preset(self) -> None:
+        if not self._astrostack_overlay_layers:
+            QMessageBox.information(self, "Save Preset", "Add at least one overlay layer before saving a preset.")
+            return
+        reference_size = self._astrostack_reference_image_dimensions()
+        if reference_size is None:
+            QMessageBox.information(
+                self,
+                "Save Preset",
+                "Open a Deep Stack image folder before saving a preset so layer positions and crop can be stored relative to the image.",
+            )
+            return
+        selected_path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save Deep Stack Preset",
+            str(self._default_astrostack_preset_path()),
+            ASTROSTACK_PRESET_FILE_FILTER,
+        )
+        if not selected_path:
+            return
+        output_path = Path(selected_path)
+        if output_path.suffix.lower() != ".json":
+            output_path = output_path.with_suffix(".astrostack.json")
+        try:
+            write_astrostack_overlay_preset(
+                output_path,
+                self._astrostack_overlay_layers,
+                reference_size=reference_size,
+                crop=self._astrostack_active_crop_payload(),
+                signal_region=self._astrostack_measure_region_payload(
+                    getattr(self, "_astrostack_signal_region", None)
+                ),
+                background_region=self._astrostack_measure_region_payload(
+                    getattr(self, "_astrostack_background_region", None)
+                ),
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Save Preset", f"Could not save preset file.\n\n{exc}")
+            return
+        self.statusBar().showMessage(f"Saved Deep Stack preset to {output_path.name}.", 5000)
+
+    def _load_astrostack_layer_preset(self) -> None:
+        start_directory = self._default_astrostack_preset_path().parent
+        selected_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Load Deep Stack Preset",
+            str(start_directory),
+            ASTROSTACK_PRESET_FILE_FILTER,
+        )
+        if not selected_path:
+            return
+        if self._astrostack_overlay_layers or self._astrostack_roi_selections:
+            decision = QMessageBox.question(
+                self,
+                "Load Preset",
+                "Replace the current overlay layers and crop with the preset?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if decision != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            preset_state = read_astrostack_overlay_preset(Path(selected_path))
+        except ValueError as exc:
+            QMessageBox.warning(self, "Load Preset", str(exc))
+            return
+        target_size = self._astrostack_reference_image_dimensions()
+        if preset_state.version >= 2 and preset_state.reference_size is not None and target_size is None:
+            QMessageBox.information(
+                self,
+                "Load Preset",
+                "Open a Deep Stack image folder before loading this preset so layer positions and crop can be restored for the current image.",
+            )
+            return
+        if target_size is None and preset_state.version >= 2 and preset_state.reference_size is not None:
+            target_size = preset_state.reference_size
+        materialized_layers = materialize_astrostack_preset_layers(
+            preset_state,
+            target_size or preset_state.reference_size or (1, 1),
+        )
+        loaded_layers = [self._astrostack_overlay_layer_from_dict(payload) for payload in materialized_layers]
+        self._astrostack_overlay_layers = loaded_layers
+        self._selected_astrostack_layer_id = loaded_layers[0].layer_id if loaded_layers else None
+        crop_payload = materialize_astrostack_preset_crop(
+            preset_state,
+            target_size or preset_state.reference_size or (1, 1),
+        )
+        if crop_payload is not None:
+            self._astrostack_roi_selections = [
+                _HrRoiSelection(
+                    shape=str(crop_payload.get("shape", "rectangle")),
+                    x0=float(crop_payload["x0"]),
+                    y0=float(crop_payload["y0"]),
+                    x1=float(crop_payload["x1"]),
+                    y1=float(crop_payload["y1"]),
+                    mode=str(crop_payload.get("mode", "include")),
+                )
+            ]
+            self._astrostack_active_roi_selection = None
+            self._astrostack_roi_drag_origin = None
+        else:
+            self._clear_astrostack_roi_selection()
+        signal_payload = materialize_astrostack_preset_region(
+            preset_state.signal_region,
+            preset=preset_state,
+            target_size=target_size or preset_state.reference_size or (1, 1),
+        )
+        background_payload = materialize_astrostack_preset_region(
+            preset_state.background_region,
+            preset=preset_state,
+            target_size=target_size or preset_state.reference_size or (1, 1),
+        )
+        self._astrostack_signal_region = self._astrostack_measure_region_from_payload(signal_payload)
+        self._astrostack_background_region = self._astrostack_measure_region_from_payload(background_payload)
+        self._astrostack_active_measure_region = None
+        self._astrostack_measure_region_drag_origin = None
+        if loaded_layers:
+            self._select_astrostack_layer(loaded_layers[0].layer_id, refresh=False)
+        self._sync_astrostack_layer_list_widget()
+        self._refresh_astrostack_snr_curve_preview()
+        self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+        self.statusBar().showMessage(f"Loaded {len(loaded_layers)} Deep Stack layer(s) from preset.", 5000)
+
+    def _prompt_astrostack_text_layer_label(self) -> str | None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Text Layer")
+        layout = QVBoxLayout(dialog)
+        text_input = QLineEdit(dialog)
+        text_input.setPlaceholderText("Enter label text")
+        text_input.setText("Text")
+        text_input.selectAll()
+        layout.addWidget(QLabel("Text"))
+        layout.addWidget(text_input)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dialog)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        text_input.returnPressed.connect(dialog.accept)
+        layout.addWidget(buttons)
+        text_input.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return None
+        return text_input.text().strip() or "Text"
+
+    def _start_astrostack_drawn_layer(self, shape: str, image_x: float, image_y: float) -> None:
+        layer = _AstrostackOverlayLayer(
+            layer_id=self._next_astrostack_overlay_layer_id(),
+            shape=shape,
+            label="Stack SNR" if shape == "plot" else "",
+            x=float(image_x),
+            y=float(image_y),
+            x2=float(image_x),
+            y2=float(image_y),
+            radius=2.0,
+            stroke_color="#3a3a3a" if shape == "plot" else self._astrostack_annotation_stroke_color,
+            fill_color="#121212" if shape == "plot" else self._astrostack_annotation_fill_color,
+            text_color="#f2f2f2" if shape == "plot" else self._astrostack_annotation_text_color,
+            line_width=1.0 if shape == "plot" else max(0.5, float(self._astrostack_annotation_line_width)),
+            text_size=0.0 if shape == "plot" else max(6.0, float(self._astrostack_annotation_text_size)),
+            opacity=228.0 / 255.0 if shape == "plot" else max(0.05, min(1.0, float(self._astrostack_annotation_opacity))),
+            text_font_family=self._astrostack_annotation_text_font_family,
+            text_font_style=self._normalize_astrostack_annotation_text_style(self._astrostack_annotation_text_font_style),
+            show_fill=True,
+            plot_x_metric=self._astrostack_annotation_plot_x_metric,
+            plot_y_metric=self._astrostack_annotation_plot_y_metric,
+            plot_x_label=self._astrostack_annotation_plot_x_label,
+            plot_y_label=self._astrostack_annotation_plot_y_label,
+            plot_title_align_h=self._astrostack_annotation_plot_title_align_h,
+            plot_title_align_v=self._astrostack_annotation_plot_title_align_v,
+            plot_title_offset_x=self._astrostack_annotation_plot_title_offset_x,
+            plot_title_offset_y=self._astrostack_annotation_plot_title_offset_y,
+            plot_x_label_offset_x=self._astrostack_annotation_plot_x_label_offset_x,
+            plot_x_label_offset_y=self._astrostack_annotation_plot_x_label_offset_y,
+            plot_y_label_offset_x=self._astrostack_annotation_plot_y_label_offset_x,
+            plot_y_label_offset_y=self._astrostack_annotation_plot_y_label_offset_y,
+            plot_curve_color=self._astrostack_annotation_plot_curve_color,
+            plot_curve_opacity=self._astrostack_annotation_plot_curve_opacity,
+            plot_curve_width=self._astrostack_annotation_plot_curve_width,
+            plot_highlight_color=self._astrostack_annotation_plot_highlight_color,
+            plot_highlight_opacity=self._astrostack_annotation_plot_highlight_opacity,
+            plot_highlight_radius=self._astrostack_annotation_plot_highlight_radius,
+            plot_corner_radius=self._astrostack_annotation_plot_corner_radius,
+            plot_accent_text_color=self._astrostack_annotation_plot_accent_text_color,
+            plot_chart_margin_left=self._astrostack_annotation_plot_chart_margin_left,
+            plot_chart_margin_right=self._astrostack_annotation_plot_chart_margin_right,
+            plot_chart_margin_top=self._astrostack_annotation_plot_chart_margin_top,
+            plot_chart_margin_bottom=self._astrostack_annotation_plot_chart_margin_bottom,
+            plot_title_text_color=self._astrostack_annotation_plot_title_text_color,
+            plot_title_text_opacity=self._astrostack_annotation_plot_title_text_opacity,
+            plot_title_font_family=self._astrostack_annotation_plot_title_font_family,
+            plot_title_font_style=self._normalize_astrostack_annotation_text_style(
+                self._astrostack_annotation_plot_title_font_style
+            ),
+            plot_title_font_size=self._astrostack_annotation_plot_title_font_size,
+            plot_label_text_color=self._astrostack_annotation_plot_label_text_color,
+            plot_label_text_opacity=self._astrostack_annotation_plot_label_text_opacity,
+            plot_label_font_family=self._astrostack_annotation_plot_label_font_family,
+            plot_label_font_style=self._normalize_astrostack_annotation_text_style(
+                self._astrostack_annotation_plot_label_font_style
+            ),
+            plot_label_font_size=self._astrostack_annotation_plot_label_font_size,
+        )
+        self._astrostack_overlay_layers.append(layer)
+        self._selected_astrostack_layer_id = layer.layer_id
+        operation = "draw_rectangle" if shape in {"rectangle", "plot"} else "draw_circle"
+        self._astrostack_overlay_layer_drag = _AstrostackOverlayLayerDrag(
+            layer_id=layer.layer_id,
+            operation=operation,
+            origin_x=float(image_x),
+            origin_y=float(image_y),
+            initial_layer=layer,
+            created_layer=True,
+        )
+        self._sync_astrostack_layer_list_widget()
+        self._refresh_astrostack_image_view(reset_view=False)
+
+    def _add_astrostack_text_layer_from_tool(self, image_x: float, image_y: float) -> None:
+        label = self._prompt_astrostack_text_layer_label()
+        if label is None:
+            return
+        layer = _AstrostackOverlayLayer(
+            layer_id=self._next_astrostack_overlay_layer_id(),
+            shape="text",
+            label=label,
+            x=float(image_x),
+            y=float(image_y),
+            text_color=self._astrostack_annotation_text_color,
+            text_size=max(6.0, float(self._astrostack_annotation_text_size)),
+            opacity=max(0.05, min(1.0, float(self._astrostack_annotation_opacity))),
+            text_font_family=self._astrostack_annotation_text_font_family,
+            text_font_style=self._normalize_astrostack_annotation_text_style(self._astrostack_annotation_text_font_style),
+        )
+        self._astrostack_overlay_layers.append(layer)
+        self._selected_astrostack_layer_id = layer.layer_id
+        self._sync_astrostack_layer_list_widget()
+        self._refresh_astrostack_image_view(reset_view=False)
+        self.statusBar().showMessage("Added Deep Stack text layer.", 3000)
+
+    def _add_astrostack_function_layer_from_tool(self, image_x: float, image_y: float, tool: str) -> None:
+        function_kind = "signal" if str(tool).endswith("signal") else "noise"
+        layer = _AstrostackOverlayLayer(
+            layer_id=self._next_astrostack_overlay_layer_id(),
+            shape="function",
+            function_kind=function_kind,
+            label=self._astrostack_annotation_function_prefix,
+            x=float(image_x),
+            y=float(image_y),
+            text_color=self._astrostack_annotation_function_text_color,
+            text_size=max(6.0, float(self._astrostack_annotation_function_text_size)),
+            opacity=max(0.05, min(1.0, float(self._astrostack_annotation_opacity))),
+            text_font_family=self._astrostack_annotation_function_text_font_family,
+            text_font_style=self._normalize_astrostack_annotation_text_style(
+                self._astrostack_annotation_function_text_font_style
+            ),
+        )
+        self._astrostack_overlay_layers.append(layer)
+        self._selected_astrostack_layer_id = layer.layer_id
+        self._sync_astrostack_layer_list_widget()
+        self._refresh_astrostack_image_view(reset_view=False)
+        label_name = "Signal" if function_kind == "signal" else "Noise"
+        self.statusBar().showMessage(f"Added Deep Stack {label_name} function label.", 3000)
+
+    def _handle_astrostack_plot_title_changed(self, text: str) -> None:
+        self._astrostack_annotation_plot_title = str(text or "Plot").strip() or "Plot"
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_x_metric_changed(self, _index: int = 0) -> None:
+        combo = getattr(self, "_astrostack_annotation_plot_x_metric_combo", None)
+        if combo is None:
+            return
+        self._astrostack_annotation_plot_x_metric = str(combo.currentData(Qt.ItemDataRole.UserRole) or "frame_count")
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_y_metric_changed(self, _index: int = 0) -> None:
+        combo = getattr(self, "_astrostack_annotation_plot_y_metric_combo", None)
+        if combo is None:
+            return
+        self._astrostack_annotation_plot_y_metric = str(combo.currentData(Qt.ItemDataRole.UserRole) or "snr")
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_x_label_changed(self, text: str) -> None:
+        self._astrostack_annotation_plot_x_label = str(text or "")
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _handle_astrostack_plot_y_label_changed(self, text: str) -> None:
+        self._astrostack_annotation_plot_y_label = str(text or "")
+        self._apply_astrostack_annotation_properties_to_selected_layer()
+
+    def _sync_astrostack_plot_property_controls(self) -> None:
+        title_input = getattr(self, "_astrostack_annotation_plot_title_input", None)
+        x_metric_combo = getattr(self, "_astrostack_annotation_plot_x_metric_combo", None)
+        y_metric_combo = getattr(self, "_astrostack_annotation_plot_y_metric_combo", None)
+        x_label_input = getattr(self, "_astrostack_annotation_plot_x_label_input", None)
+        y_label_input = getattr(self, "_astrostack_annotation_plot_y_label_input", None)
+        if title_input is not None:
+            title_input.blockSignals(True)
+            title_input.setText(str(self._astrostack_annotation_plot_title or "Plot"))
+            title_input.blockSignals(False)
+        if x_metric_combo is not None:
+            target_index = x_metric_combo.findData(self._astrostack_annotation_plot_x_metric)
+            x_metric_combo.blockSignals(True)
+            x_metric_combo.setCurrentIndex(target_index if target_index >= 0 else 0)
+            x_metric_combo.blockSignals(False)
+        if y_metric_combo is not None:
+            target_index = y_metric_combo.findData(self._astrostack_annotation_plot_y_metric)
+            y_metric_combo.blockSignals(True)
+            y_metric_combo.setCurrentIndex(target_index if target_index >= 0 else 0)
+            y_metric_combo.blockSignals(False)
+        if x_label_input is not None:
+            x_label_input.blockSignals(True)
+            x_label_input.setText(str(self._astrostack_annotation_plot_x_label or ""))
+            x_label_input.blockSignals(False)
+        if y_label_input is not None:
+            y_label_input.blockSignals(True)
+            y_label_input.setText(str(self._astrostack_annotation_plot_y_label or ""))
+            y_label_input.blockSignals(False)
+        title_align_h_combo = getattr(self, "_astrostack_annotation_plot_title_align_h_combo", None)
+        if title_align_h_combo is not None:
+            target_index = title_align_h_combo.findData(self._astrostack_annotation_plot_title_align_h)
+            title_align_h_combo.blockSignals(True)
+            title_align_h_combo.setCurrentIndex(target_index if target_index >= 0 else 0)
+            title_align_h_combo.blockSignals(False)
+        title_align_v_combo = getattr(self, "_astrostack_annotation_plot_title_align_v_combo", None)
+        if title_align_v_combo is not None:
+            target_index = title_align_v_combo.findData(self._astrostack_annotation_plot_title_align_v)
+            title_align_v_combo.blockSignals(True)
+            title_align_v_combo.setCurrentIndex(target_index if target_index >= 0 else 0)
+            title_align_v_combo.blockSignals(False)
+        for attr, value in (
+            ("_astrostack_annotation_plot_title_offset_x_spin", self._astrostack_annotation_plot_title_offset_x),
+            ("_astrostack_annotation_plot_title_offset_y_spin", self._astrostack_annotation_plot_title_offset_y),
+            ("_astrostack_annotation_plot_x_label_offset_x_spin", self._astrostack_annotation_plot_x_label_offset_x),
+            ("_astrostack_annotation_plot_x_label_offset_y_spin", self._astrostack_annotation_plot_x_label_offset_y),
+            ("_astrostack_annotation_plot_y_label_offset_x_spin", self._astrostack_annotation_plot_y_label_offset_x),
+            ("_astrostack_annotation_plot_y_label_offset_y_spin", self._astrostack_annotation_plot_y_label_offset_y),
+            ("_astrostack_annotation_plot_curve_opacity_spin", self._astrostack_annotation_plot_curve_opacity),
+            ("_astrostack_annotation_plot_curve_width_spin", self._astrostack_annotation_plot_curve_width),
+            ("_astrostack_annotation_plot_highlight_opacity_spin", self._astrostack_annotation_plot_highlight_opacity),
+            ("_astrostack_annotation_plot_highlight_radius_spin", self._astrostack_annotation_plot_highlight_radius),
+            ("_astrostack_annotation_plot_corner_radius_spin", self._astrostack_annotation_plot_corner_radius),
+            ("_astrostack_annotation_plot_title_font_size_spin", self._astrostack_annotation_plot_title_font_size),
+            ("_astrostack_annotation_plot_label_font_size_spin", self._astrostack_annotation_plot_label_font_size),
+            ("_astrostack_annotation_plot_title_text_opacity_spin", self._astrostack_annotation_plot_title_text_opacity),
+            ("_astrostack_annotation_plot_label_text_opacity_spin", self._astrostack_annotation_plot_label_text_opacity),
+        ):
+            spin = getattr(self, attr, None)
+            if spin is not None:
+                spin.blockSignals(True)
+                spin.setValue(float(value))
+                spin.blockSignals(False)
+        for attr, fraction in (
+            ("_astrostack_annotation_plot_chart_margin_left_spin", self._astrostack_annotation_plot_chart_margin_left),
+            ("_astrostack_annotation_plot_chart_margin_right_spin", self._astrostack_annotation_plot_chart_margin_right),
+            ("_astrostack_annotation_plot_chart_margin_top_spin", self._astrostack_annotation_plot_chart_margin_top),
+            ("_astrostack_annotation_plot_chart_margin_bottom_spin", self._astrostack_annotation_plot_chart_margin_bottom),
+        ):
+            spin = getattr(self, attr, None)
+            if spin is not None:
+                spin.blockSignals(True)
+                spin.setValue(float(fraction) * 100.0)
+                spin.blockSignals(False)
+        plot_line_width_spin = getattr(self, "_astrostack_annotation_plot_line_width_spin", None)
+        if plot_line_width_spin is not None:
+            plot_line_width_spin.blockSignals(True)
+            plot_line_width_spin.setValue(float(self._astrostack_annotation_line_width))
+            plot_line_width_spin.blockSignals(False)
+        title_font_combo = getattr(self, "_astrostack_annotation_plot_title_font_combo", None)
+        title_style_combo = getattr(self, "_astrostack_annotation_plot_title_style_combo", None)
+        label_font_combo = getattr(self, "_astrostack_annotation_plot_label_font_combo", None)
+        label_style_combo = getattr(self, "_astrostack_annotation_plot_label_style_combo", None)
+        if title_font_combo is not None and self._astrostack_annotation_plot_title_font_family:
+            title_font_combo.blockSignals(True)
+            title_font_combo.setCurrentFont(QFont(self._astrostack_annotation_plot_title_font_family))
+            title_font_combo.blockSignals(False)
+        if label_font_combo is not None and self._astrostack_annotation_plot_label_font_family:
+            label_font_combo.blockSignals(True)
+            label_font_combo.setCurrentFont(QFont(self._astrostack_annotation_plot_label_font_family))
+            label_font_combo.blockSignals(False)
+        if title_style_combo is not None:
+            target_index = title_style_combo.findData(self._astrostack_annotation_plot_title_font_style)
+            title_style_combo.blockSignals(True)
+            title_style_combo.setCurrentIndex(target_index if target_index >= 0 else 0)
+            title_style_combo.blockSignals(False)
+        if label_style_combo is not None:
+            target_index = label_style_combo.findData(self._astrostack_annotation_plot_label_font_style)
+            label_style_combo.blockSignals(True)
+            label_style_combo.setCurrentIndex(target_index if target_index >= 0 else 0)
+            label_style_combo.blockSignals(False)
+        self._sync_astrostack_annotation_stroke_color_button()
+        self._sync_astrostack_annotation_fill_color_button()
+        self._sync_astrostack_annotation_text_color_button()
+        self._sync_astrostack_plot_text_color_buttons()
+        self._sync_astrostack_plot_style_color_buttons()
+        self._sync_astrostack_annotation_opacity_controls()
+
+    def _fix_astrostack_font_combo_width(self, combo: QFontComboBox) -> None:
+        combo.setFixedWidth(_ASTROSTACK_ANNOTATION_FONT_COMBO_WIDTH)
+        combo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def _style_astrostack_section_label(self, label: QLabel) -> None:
+        font = label.font()
+        font.setPointSizeF(max(10.5, font.pointSizeF() + 1.5))
+        font.setBold(True)
+        label.setFont(font)
+
+    def _make_astrostack_plot_property_section(self, title: str) -> tuple[QWidget, QVBoxLayout]:
+        section = QWidget()
+        section.setObjectName("astrostackPlotPropertySection")
+        section.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        section.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(10, 8, 10, 10)
+        section_layout.setSpacing(6)
+
+        header = QLabel(title)
+        header.setObjectName("astrostackPlotPropertySectionTitle")
+        header_font = header.font()
+        header_font.setBold(True)
+        header_font.setPointSizeF(max(9.5, header_font.pointSizeF()))
+        header.setFont(header_font)
+
+        rule = QFrame(section)
+        rule.setObjectName("astrostackPlotPropertySectionRule")
+        rule.setFrameShape(QFrame.Shape.NoFrame)
+        rule.setFixedHeight(1)
+        rule.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        content_host = QWidget()
+        content_layout = QVBoxLayout(content_host)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(6)
+
+        section_layout.addWidget(header)
+        section_layout.addWidget(rule)
+        section_layout.addWidget(content_host)
+
+        if not hasattr(self, "_astrostack_plot_property_sections"):
+            self._astrostack_plot_property_sections = []
+        self._astrostack_plot_property_sections.append(section)
+
+        return section, content_layout
+
+    def _sync_astrostack_plot_property_section_styles(self) -> None:
+        sections = getattr(self, "_astrostack_plot_property_sections", [])
+        if not sections:
+            return
+        colors = self._current_custom_theme_colors()
+        accent = str(colors.get("accent", "#3d8bfd"))
+        panel_bg = str(colors.get("panel_bg", "#2b2b2b"))
+        text = str(colors.get("text", "#f8fafc"))
+        section_bg = QColor(panel_bg).lighter(108).name()
+        accent_border = QColor(accent).lighter(120).name()
+        section_style = (
+            "QWidget#astrostackPlotPropertySection {"
+            f"background-color: {section_bg};"
+            f"border: 1px solid {accent_border};"
+            "border-radius: 8px;"
+            "}"
+            "QFrame#astrostackPlotPropertySectionRule {"
+            f"background-color: {accent};"
+            "border: none;"
+            "}"
+            "QLabel#astrostackPlotPropertySectionTitle {"
+            f"color: {text};"
+            "padding: 0;"
+            "margin: 0;"
+            "}"
+        )
+        for section in sections:
+            section.setStyleSheet(section_style)
+
+    def _sync_astrostack_functions_group_style(self) -> None:
+        functions_group = getattr(self, "_astrostack_functions_properties_group", None)
+        tools_group = getattr(self, "_astrostack_functions_tools_group", None)
+        if functions_group is None:
+            return
+        colors = self._current_custom_theme_colors()
+        accent = str(colors.get("accent", "#3d8bfd"))
+        panel_bg = str(colors.get("panel_bg", "#2b2b2b"))
+        text = str(colors.get("text", "#f8fafc"))
+        section_bg = QColor(panel_bg).lighter(104).name()
+        accent_border = QColor(accent).lighter(108).name()
+        functions_group.setStyleSheet(
+            "QWidget#astrostackFunctionsGroup {"
+            f"background-color: {section_bg};"
+            f"border: 1px solid {accent_border};"
+            "border-radius: 8px;"
+            "}"
+            f"QLabel {{ color: {text}; }}"
+        )
+        if tools_group is not None:
+            card_bg = QColor(panel_bg).lighter(106).name()
+            tools_group.setStyleSheet(
+                "QWidget#astrostackFunctionsToolsGroup {"
+                f"background-color: {card_bg};"
+                "border-radius: 6px;"
+                "}"
+            )
+
+    @staticmethod
+    def _wrap_astrostack_properties_page_top(content: QWidget) -> QWidget:
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(content, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addStretch(1)
+        return wrapper
+
+    def _apply_astrostack_annotation_toolbar_sizing(self) -> None:
+        tools_group = getattr(self, "_astrostack_annotation_tools_group", None)
+        properties_group = getattr(self, "_astrostack_annotation_properties_group", None)
+        properties_stack = getattr(self, "_astrostack_annotation_properties_stack", None)
+        toolbar_height = 40
+        if tools_group is not None:
+            tools_group.setFixedHeight(toolbar_height)
+            tools_group.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        if properties_stack is not None:
+            properties_stack.setFixedHeight(toolbar_height)
+            properties_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        if properties_group is not None:
+            properties_group.setFixedHeight(toolbar_height)
+            properties_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def _apply_astrostack_overlay_control_panel_sizing(self) -> None:
+
+        panel = getattr(self, "_astrostack_overlay_control_panel", None)
+
+        plot_properties_scroll = getattr(self, "_astrostack_plot_properties_scroll", None)
+
+        if panel is None or plot_properties_scroll is None:
+            return
+        plot_widget = plot_properties_scroll.widget()
+        if plot_widget is not None:
+            plot_widget.adjustSize()
+            property_width = plot_widget.sizeHint().width()
+        else:
+            property_width = 280
+        panel_width = max(300, property_width + 24)
+
+        plot_properties_scroll.setMinimumHeight(260)
+        plot_properties_scroll.setMaximumHeight(16777215)
+        plot_properties_scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+
+        plot_properties_group = getattr(self, "_astrostack_plot_properties_group", None)
+        if plot_properties_group is not None:
+            plot_properties_group.setMinimumHeight(300)
+            plot_properties_group.setMaximumHeight(16777215)
+            plot_properties_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+
+        panel.setMinimumWidth(panel_width)
+        panel.setMaximumWidth(16777215)
+        self._apply_astrostack_annotation_toolbar_sizing()
+
+    def _create_astrostack_overlay_control_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("astrostackOverlayControlPanel")
+        outer_layout = QVBoxLayout(panel)
+        outer_layout.setContentsMargins(8, 8, 8, 8)
+        outer_layout.setSpacing(10)
+
+        self._astrostack_annotation_hand_button = QPushButton("Hand")
+        self._astrostack_annotation_mouse_button = QPushButton("Mouse")
+        self._astrostack_annotation_circle_button = QPushButton("Circle")
+        self._astrostack_annotation_rectangle_button = QPushButton("Rectangle")
+        self._astrostack_annotation_text_button = QPushButton("Text")
+        self._astrostack_annotation_plot_button = QPushButton("Plot")
+        self._astrostack_annotation_signal_button = QPushButton("Signal")
+        self._astrostack_annotation_background_button = QPushButton("Background")
+        self._astrostack_annotation_tool_buttons = {
+            "hand": self._astrostack_annotation_hand_button,
+            "mouse": self._astrostack_annotation_mouse_button,
+            "circle": self._astrostack_annotation_circle_button,
+            "rectangle": self._astrostack_annotation_rectangle_button,
+            "text": self._astrostack_annotation_text_button,
+            "plot": self._astrostack_annotation_plot_button,
+            "signal": self._astrostack_annotation_signal_button,
+            "background": self._astrostack_annotation_background_button,
+        }
+        for tool_key, tool_button in self._astrostack_annotation_tool_buttons.items():
+            tool_button.setText("")
+            tool_button.setCheckable(True)
+            tool_button.setFixedSize(34, 34)
+            tool_button.setIconSize(QSize(18, 18))
+            tool_button.clicked.connect(lambda _checked=False, key=tool_key: self._set_astrostack_annotation_tool(key))
+        self._astrostack_annotation_hand_button.setToolTip("Drag to pan the image.")
+        self._astrostack_annotation_mouse_button.setToolTip("Select and move overlay layers.")
+        self._astrostack_annotation_circle_button.setToolTip("Draw circular overlay layers.")
+        self._astrostack_annotation_rectangle_button.setToolTip("Draw rectangular overlay layers.")
+        self._astrostack_annotation_text_button.setToolTip("Place text overlay layers.")
+        self._astrostack_annotation_plot_button.setToolTip("Draw plot overlay layers with stack metrics.")
+        self._astrostack_annotation_signal_button.setToolTip("Draw the signal measurement region for SNR.")
+        self._astrostack_annotation_background_button.setToolTip("Draw the background measurement region for SNR.")
+
+        self._astrostack_annotation_tools_group = QWidget()
+        self._astrostack_annotation_tools_group.setObjectName("astrostackAnnotationToolsGroup")
+        self._astrostack_annotation_tools_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        tools_layout = QHBoxLayout(self._astrostack_annotation_tools_group)
+        tools_layout.setContentsMargins(8, 4, 8, 4)
+        tools_layout.setSpacing(6)
+        for tool_button in self._astrostack_annotation_tool_buttons.values():
+            tools_layout.addWidget(tool_button)
+        self._sync_astrostack_annotation_tool_buttons()
+        self._sync_astrostack_annotation_tool_icons()
+
+        self._astrostack_annotation_stroke_color_button = QPushButton("Stroke")
+        self._astrostack_annotation_stroke_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_stroke_color_button.clicked.connect(self._choose_astrostack_annotation_stroke_color)
+        self._astrostack_annotation_stroke_label = QLabel("Stroke")
+        self._astrostack_annotation_fill_color_button = QPushButton("Fill")
+        self._astrostack_annotation_fill_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_fill_color_button.clicked.connect(self._choose_astrostack_annotation_fill_color)
+        self._astrostack_annotation_fill_label = QLabel("Fill")
+        self._astrostack_annotation_text_color_button = QPushButton("Text")
+        self._astrostack_annotation_text_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_text_color_button.clicked.connect(self._choose_astrostack_annotation_text_color)
+        self._astrostack_annotation_text_color_label = QLabel("Text")
+        self._astrostack_annotation_text_font_combo = QFontComboBox()
+        self._fix_astrostack_font_combo_width(self._astrostack_annotation_text_font_combo)
+        self._astrostack_annotation_text_font_combo.currentFontChanged.connect(self._handle_astrostack_annotation_text_font_changed)
+        self._astrostack_annotation_text_style_combo = QComboBox()
+        self._astrostack_annotation_text_style_combo.addItem("Regular", "regular")
+        self._astrostack_annotation_text_style_combo.addItem("Bold", "bold")
+        self._astrostack_annotation_text_style_combo.addItem("Italic", "italic")
+        self._astrostack_annotation_text_style_combo.addItem("Bold Italic", "bold-italic")
+        self._astrostack_annotation_text_style_combo.setFixedWidth(96)
+        self._astrostack_annotation_text_style_combo.currentIndexChanged.connect(self._handle_astrostack_annotation_text_style_changed)
+        self._astrostack_annotation_text_size_spin = QSpinBox()
+        self._astrostack_annotation_text_size_spin.setRange(6, 120)
+        self._astrostack_annotation_text_size_spin.setSuffix(" pt")
+        self._astrostack_annotation_text_size_spin.setValue(int(round(self._astrostack_annotation_text_size)))
+        self._astrostack_annotation_text_size_spin.setFixedWidth(72)
+
+        self._astrostack_annotation_text_size_spin.valueChanged.connect(self._handle_astrostack_annotation_text_size_changed)
+        self._astrostack_annotation_opacity_label = _HorizontalDragAdjustLabel("Opacity")
+        self._astrostack_annotation_opacity_label.valueDragged.connect(self._handle_astrostack_annotation_opacity_label_dragged)
+        self._astrostack_annotation_line_width_label = QLabel("Weight")
+        self._astrostack_annotation_line_width_spin = QDoubleSpinBox(self)
+        self._astrostack_annotation_line_width_spin.setRange(0.5, 12.0)
+        self._astrostack_annotation_line_width_spin.setDecimals(2)
+        self._astrostack_annotation_line_width_spin.setSingleStep(0.25)
+        self._astrostack_annotation_line_width_spin.setSuffix(" px")
+        self._astrostack_annotation_line_width_spin.setValue(self._astrostack_annotation_line_width)
+        self._astrostack_annotation_line_width_spin.setFixedWidth(72)
+        self._astrostack_annotation_line_width_spin.valueChanged.connect(self._handle_astrostack_annotation_line_width_changed)
+        self._astrostack_annotation_opacity_button = QToolButton(self)
+        self._astrostack_annotation_opacity_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._astrostack_annotation_opacity_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._astrostack_annotation_opacity_button.setFixedWidth(52)
+        self._astrostack_annotation_opacity_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self._astrostack_annotation_opacity_slider.setRange(5, 100)
+        self._astrostack_annotation_opacity_slider.setFixedWidth(116)
+        opacity_popup_widget = QWidget(self)
+        opacity_popup_layout = QVBoxLayout(opacity_popup_widget)
+        opacity_popup_layout.setContentsMargins(8, 8, 8, 8)
+        opacity_popup_layout.addWidget(self._astrostack_annotation_opacity_slider)
+        opacity_popup_widget.setFixedWidth(132)
+        opacity_widget_action = QWidgetAction(self)
+        opacity_widget_action.setDefaultWidget(opacity_popup_widget)
+        opacity_menu = QMenu(self)
+        opacity_menu.addAction(opacity_widget_action)
+        self._astrostack_annotation_opacity_button.setMenu(opacity_menu)
+        self._astrostack_annotation_opacity_slider.valueChanged.connect(self._handle_astrostack_annotation_opacity_changed)
+        self._sync_astrostack_annotation_opacity_controls()
+        self._sync_astrostack_annotation_stroke_color_button()
+        self._sync_astrostack_annotation_fill_color_button()
+        self._sync_astrostack_annotation_text_color_button()
+        self._sync_astrostack_annotation_text_font_controls()
+
+        shape_properties = QWidget()
+        shape_properties_layout = QHBoxLayout(shape_properties)
+        shape_properties_layout.setContentsMargins(0, 0, 0, 0)
+        shape_properties_layout.setSpacing(6)
+        shape_properties_layout.addWidget(self._astrostack_annotation_stroke_label)
+        shape_properties_layout.addWidget(self._astrostack_annotation_stroke_color_button)
+        shape_properties_layout.addWidget(self._astrostack_annotation_fill_label)
+        shape_properties_layout.addWidget(self._astrostack_annotation_fill_color_button)
+        shape_properties_layout.addWidget(self._astrostack_annotation_line_width_label)
+        shape_properties_layout.addWidget(self._astrostack_annotation_line_width_spin)
+        shape_properties_layout.addWidget(self._astrostack_annotation_opacity_label)
+        shape_properties_layout.addWidget(self._astrostack_annotation_opacity_button)
+        shape_properties_layout.addStretch(1)
+        shape_properties.setLayout(shape_properties_layout)
+
+        text_properties = QWidget()
+        text_properties_layout = QHBoxLayout(text_properties)
+        text_properties_layout.setContentsMargins(0, 0, 0, 0)
+        text_properties_layout.setSpacing(6)
+        text_properties_layout.addWidget(self._astrostack_annotation_text_color_label)
+        text_properties_layout.addWidget(self._astrostack_annotation_text_color_button)
+        text_properties_layout.addWidget(self._astrostack_annotation_text_font_combo)
+        text_properties_layout.addWidget(self._astrostack_annotation_text_size_spin)
+        text_properties_layout.addWidget(self._astrostack_annotation_text_style_combo)
+        text_properties_layout.addStretch(1)
+        text_properties.setLayout(text_properties_layout)
+
+        function_properties = QWidget()
+        function_properties_layout = QHBoxLayout(function_properties)
+        function_properties_layout.setContentsMargins(0, 0, 0, 0)
+        function_properties_layout.setSpacing(6)
+        self._astrostack_annotation_function_prefix_input = QLineEdit()
+        self._astrostack_annotation_function_prefix_input.setPlaceholderText("Optional prefix")
+        self._astrostack_annotation_function_prefix_input.textChanged.connect(
+            self._handle_astrostack_function_prefix_changed
+        )
+        self._astrostack_annotation_function_text_color_button = QPushButton("Text")
+        self._astrostack_annotation_function_text_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_function_text_color_button.clicked.connect(
+            self._choose_astrostack_function_text_color
+        )
+        self._astrostack_annotation_function_text_font_combo = QFontComboBox()
+        self._fix_astrostack_font_combo_width(self._astrostack_annotation_function_text_font_combo)
+        self._astrostack_annotation_function_text_font_combo.currentFontChanged.connect(
+            self._handle_astrostack_function_text_font_changed
+        )
+        self._astrostack_annotation_function_text_size_spin = QSpinBox()
+        self._astrostack_annotation_function_text_size_spin.setRange(6, 120)
+        self._astrostack_annotation_function_text_size_spin.setSuffix(" pt")
+        self._astrostack_annotation_function_text_size_spin.setValue(int(round(self._astrostack_annotation_function_text_size)))
+        self._astrostack_annotation_function_text_size_spin.setFixedWidth(72)
+        self._astrostack_annotation_function_text_size_spin.valueChanged.connect(
+            self._handle_astrostack_function_text_size_changed
+        )
+        self._astrostack_annotation_function_text_style_combo = QComboBox()
+        self._astrostack_annotation_function_text_style_combo.addItem("Regular", "regular")
+        self._astrostack_annotation_function_text_style_combo.addItem("Bold", "bold")
+        self._astrostack_annotation_function_text_style_combo.addItem("Italic", "italic")
+        self._astrostack_annotation_function_text_style_combo.addItem("Bold Italic", "bold-italic")
+        self._astrostack_annotation_function_text_style_combo.setFixedWidth(96)
+        self._astrostack_annotation_function_text_style_combo.currentIndexChanged.connect(
+            self._handle_astrostack_function_text_style_changed
+        )
+        function_properties_layout.addWidget(QLabel("Prefix"))
+        function_properties_layout.addWidget(self._astrostack_annotation_function_prefix_input, stretch=1)
+        function_properties_layout.addWidget(self._astrostack_annotation_function_text_color_button)
+        function_properties_layout.addWidget(self._astrostack_annotation_function_text_font_combo)
+        function_properties_layout.addWidget(self._astrostack_annotation_function_text_size_spin)
+        function_properties_layout.addWidget(self._astrostack_annotation_function_text_style_combo)
+        function_properties_layout.addStretch(1)
+        function_properties.setLayout(function_properties_layout)
+
+        self._astrostack_annotation_plot_title_input = QLineEdit()
+        self._astrostack_annotation_plot_title_input.setPlaceholderText("Plot title")
+        self._astrostack_annotation_plot_title_input.setText(self._astrostack_annotation_plot_title)
+        self._astrostack_annotation_plot_title_input.textChanged.connect(self._handle_astrostack_plot_title_changed)
+        self._astrostack_annotation_plot_x_metric_combo = QComboBox()
+        self._astrostack_annotation_plot_y_metric_combo = QComboBox()
+        for metric_key, metric_label in _ASTROSTACK_PLOT_METRICS.items():
+            self._astrostack_annotation_plot_x_metric_combo.addItem(metric_label, metric_key)
+            self._astrostack_annotation_plot_y_metric_combo.addItem(metric_label, metric_key)
+        self._astrostack_annotation_plot_x_metric_combo.setFixedWidth(150)
+        self._astrostack_annotation_plot_y_metric_combo.setFixedWidth(150)
+        self._astrostack_annotation_plot_x_metric_combo.currentIndexChanged.connect(self._handle_astrostack_plot_x_metric_changed)
+        self._astrostack_annotation_plot_y_metric_combo.currentIndexChanged.connect(self._handle_astrostack_plot_y_metric_changed)
+        self._astrostack_annotation_plot_x_label_input = QLineEdit()
+        self._astrostack_annotation_plot_x_label_input.setPlaceholderText("X label")
+        self._astrostack_annotation_plot_x_label_input.textChanged.connect(self._handle_astrostack_plot_x_label_changed)
+        self._astrostack_annotation_plot_y_label_input = QLineEdit()
+        self._astrostack_annotation_plot_y_label_input.setPlaceholderText("Y label")
+        self._astrostack_annotation_plot_y_label_input.textChanged.connect(self._handle_astrostack_plot_y_label_changed)
+        self._astrostack_annotation_plot_stroke_color_button = QPushButton("Stroke")
+        self._astrostack_annotation_plot_stroke_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_plot_stroke_color_button.clicked.connect(self._choose_astrostack_annotation_stroke_color)
+        self._astrostack_annotation_plot_fill_color_button = QPushButton("Fill")
+        self._astrostack_annotation_plot_fill_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_plot_fill_color_button.clicked.connect(self._choose_astrostack_annotation_fill_color)
+        self._astrostack_annotation_plot_line_width_spin = QDoubleSpinBox(self)
+        self._astrostack_annotation_plot_line_width_spin.setRange(0.5, 12.0)
+        self._astrostack_annotation_plot_line_width_spin.setDecimals(2)
+        self._astrostack_annotation_plot_line_width_spin.setSingleStep(0.25)
+        self._astrostack_annotation_plot_line_width_spin.setSuffix(" px")
+        self._astrostack_annotation_plot_line_width_spin.setValue(self._astrostack_annotation_line_width)
+        self._astrostack_annotation_plot_line_width_spin.setFixedWidth(72)
+        self._astrostack_annotation_plot_line_width_spin.valueChanged.connect(self._handle_astrostack_annotation_line_width_changed)
+        self._astrostack_annotation_plot_opacity_button = QToolButton(self)
+        self._astrostack_annotation_plot_opacity_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._astrostack_annotation_plot_opacity_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._astrostack_annotation_plot_opacity_button.setFixedWidth(52)
+        self._astrostack_annotation_plot_opacity_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self._astrostack_annotation_plot_opacity_slider.setRange(5, 100)
+        self._astrostack_annotation_plot_opacity_slider.setFixedWidth(116)
+        plot_opacity_popup_widget = QWidget(self)
+        plot_opacity_popup_layout = QVBoxLayout(plot_opacity_popup_widget)
+        plot_opacity_popup_layout.setContentsMargins(8, 8, 8, 8)
+        plot_opacity_popup_layout.addWidget(self._astrostack_annotation_plot_opacity_slider)
+        plot_opacity_popup_widget.setFixedWidth(132)
+        plot_opacity_widget_action = QWidgetAction(self)
+        plot_opacity_widget_action.setDefaultWidget(plot_opacity_popup_widget)
+        plot_opacity_menu = QMenu(self)
+        plot_opacity_menu.addAction(plot_opacity_widget_action)
+        self._astrostack_annotation_plot_opacity_button.setMenu(plot_opacity_menu)
+        self._astrostack_annotation_plot_opacity_button.setToolTip("Background opacity of the plot panel.")
+        self._astrostack_annotation_plot_opacity_slider.valueChanged.connect(self._handle_astrostack_annotation_opacity_changed)
+
+        def _make_plot_offset_spin(*, handler) -> QDoubleSpinBox:
+            spin = QDoubleSpinBox(self)
+            spin.setRange(-80.0, 80.0)
+            spin.setDecimals(1)
+            spin.setSingleStep(1.0)
+            spin.setSuffix(" px")
+            spin.setFixedWidth(72)
+            spin.valueChanged.connect(handler)
+            return spin
+
+        def _make_plot_margin_spin(*, edge: str) -> QDoubleSpinBox:
+            spin = QDoubleSpinBox(self)
+            spin.setRange(0.0, 50.0)
+            spin.setDecimals(1)
+            spin.setSingleStep(1.0)
+            spin.setSuffix(" %")
+            spin.setSpecialValueText("Auto")
+            spin.setFixedWidth(72)
+            spin.valueChanged.connect(lambda value, edge=edge: self._handle_astrostack_plot_chart_margin_changed(edge, value))
+            return spin
+
+        def _make_plot_font_size_spin(*, handler) -> QDoubleSpinBox:
+            spin = QDoubleSpinBox(self)
+            spin.setRange(0.0, 9999.0)
+            spin.setDecimals(1)
+            spin.setSingleStep(1.0)
+            spin.setSuffix(" px")
+            spin.setSpecialValueText("Auto")
+            spin.setFixedWidth(80)
+            spin.valueChanged.connect(handler)
+            return spin
+
+        self._astrostack_plot_property_sections = []
+        self._astrostack_annotation_plot_title_align_h_combo = QComboBox()
+        for label, value in _ASTROSTACK_PLOT_TITLE_ALIGN_H:
+            self._astrostack_annotation_plot_title_align_h_combo.addItem(label, value)
+        self._astrostack_annotation_plot_title_align_h_combo.setFixedWidth(88)
+        self._astrostack_annotation_plot_title_align_h_combo.currentIndexChanged.connect(
+            self._handle_astrostack_plot_title_align_h_changed
+        )
+        self._astrostack_annotation_plot_title_align_v_combo = QComboBox()
+        for label, value in _ASTROSTACK_PLOT_TITLE_ALIGN_V:
+            self._astrostack_annotation_plot_title_align_v_combo.addItem(label, value)
+        self._astrostack_annotation_plot_title_align_v_combo.setFixedWidth(88)
+        self._astrostack_annotation_plot_title_align_v_combo.currentIndexChanged.connect(
+            self._handle_astrostack_plot_title_align_v_changed
+        )
+        self._astrostack_annotation_plot_title_offset_x_spin = _make_plot_offset_spin(
+            handler=self._handle_astrostack_plot_title_offset_x_changed
+        )
+        self._astrostack_annotation_plot_title_offset_y_spin = _make_plot_offset_spin(
+            handler=self._handle_astrostack_plot_title_offset_y_changed
+        )
+        self._astrostack_annotation_plot_x_label_offset_x_spin = _make_plot_offset_spin(
+            handler=self._handle_astrostack_plot_x_label_offset_x_changed
+        )
+        self._astrostack_annotation_plot_x_label_offset_y_spin = _make_plot_offset_spin(
+            handler=self._handle_astrostack_plot_x_label_offset_y_changed
+        )
+        self._astrostack_annotation_plot_y_label_offset_x_spin = _make_plot_offset_spin(
+            handler=self._handle_astrostack_plot_y_label_offset_x_changed
+        )
+        self._astrostack_annotation_plot_y_label_offset_y_spin = _make_plot_offset_spin(
+            handler=self._handle_astrostack_plot_y_label_offset_y_changed
+        )
+        self._astrostack_annotation_plot_curve_color_button = QPushButton("Curve")
+        self._astrostack_annotation_plot_curve_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_plot_curve_color_button.clicked.connect(self._choose_astrostack_plot_curve_color)
+        self._astrostack_annotation_plot_curve_opacity_spin = QDoubleSpinBox(self)
+        self._astrostack_annotation_plot_curve_opacity_spin.setRange(0.0, 1.0)
+        self._astrostack_annotation_plot_curve_opacity_spin.setDecimals(2)
+        self._astrostack_annotation_plot_curve_opacity_spin.setSingleStep(0.05)
+        self._astrostack_annotation_plot_curve_opacity_spin.setFixedWidth(72)
+        self._astrostack_annotation_plot_curve_opacity_spin.valueChanged.connect(self._handle_astrostack_plot_curve_opacity_changed)
+        self._astrostack_annotation_plot_curve_width_spin = QDoubleSpinBox(self)
+        self._astrostack_annotation_plot_curve_width_spin.setRange(0.0, 12.0)
+        self._astrostack_annotation_plot_curve_width_spin.setDecimals(2)
+        self._astrostack_annotation_plot_curve_width_spin.setSingleStep(0.25)
+        self._astrostack_annotation_plot_curve_width_spin.setSuffix(" px")
+        self._astrostack_annotation_plot_curve_width_spin.setSpecialValueText("Auto")
+        self._astrostack_annotation_plot_curve_width_spin.setFixedWidth(72)
+        self._astrostack_annotation_plot_curve_width_spin.valueChanged.connect(self._handle_astrostack_plot_curve_width_changed)
+        self._astrostack_annotation_plot_highlight_color_button = QPushButton("Pt")
+        self._astrostack_annotation_plot_highlight_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_plot_highlight_color_button.clicked.connect(self._choose_astrostack_plot_highlight_color)
+        self._astrostack_annotation_plot_highlight_opacity_spin = QDoubleSpinBox(self)
+        self._astrostack_annotation_plot_highlight_opacity_spin.setRange(0.0, 1.0)
+        self._astrostack_annotation_plot_highlight_opacity_spin.setDecimals(2)
+        self._astrostack_annotation_plot_highlight_opacity_spin.setSingleStep(0.05)
+        self._astrostack_annotation_plot_highlight_opacity_spin.setFixedWidth(72)
+        self._astrostack_annotation_plot_highlight_opacity_spin.valueChanged.connect(
+            self._handle_astrostack_plot_highlight_opacity_changed
+        )
+        self._astrostack_annotation_plot_highlight_radius_spin = QDoubleSpinBox(self)
+        self._astrostack_annotation_plot_highlight_radius_spin.setRange(0.0, 24.0)
+        self._astrostack_annotation_plot_highlight_radius_spin.setDecimals(2)
+        self._astrostack_annotation_plot_highlight_radius_spin.setSingleStep(0.5)
+        self._astrostack_annotation_plot_highlight_radius_spin.setSuffix(" px")
+        self._astrostack_annotation_plot_highlight_radius_spin.setSpecialValueText("Auto")
+        self._astrostack_annotation_plot_highlight_radius_spin.setFixedWidth(72)
+        self._astrostack_annotation_plot_highlight_radius_spin.valueChanged.connect(
+            self._handle_astrostack_plot_highlight_radius_changed
+        )
+        self._astrostack_annotation_plot_corner_radius_spin = QDoubleSpinBox(self)
+        self._astrostack_annotation_plot_corner_radius_spin.setRange(0.0, 48.0)
+        self._astrostack_annotation_plot_corner_radius_spin.setDecimals(1)
+        self._astrostack_annotation_plot_corner_radius_spin.setSingleStep(1.0)
+        self._astrostack_annotation_plot_corner_radius_spin.setSuffix(" px")
+        self._astrostack_annotation_plot_corner_radius_spin.setSpecialValueText("Auto")
+        self._astrostack_annotation_plot_corner_radius_spin.setFixedWidth(72)
+        self._astrostack_annotation_plot_corner_radius_spin.valueChanged.connect(self._handle_astrostack_plot_corner_radius_changed)
+        self._astrostack_annotation_plot_chart_margin_left_spin = _make_plot_margin_spin(edge="left")
+        self._astrostack_annotation_plot_chart_margin_right_spin = _make_plot_margin_spin(edge="right")
+        self._astrostack_annotation_plot_chart_margin_top_spin = _make_plot_margin_spin(edge="top")
+        self._astrostack_annotation_plot_chart_margin_bottom_spin = _make_plot_margin_spin(edge="bottom")
+        def _make_plot_text_opacity_spin(*, handler) -> QDoubleSpinBox:
+            spin = QDoubleSpinBox(self)
+            spin.setRange(0.0, 1.0)
+            spin.setDecimals(2)
+            spin.setSingleStep(0.05)
+            spin.setFixedWidth(72)
+            spin.valueChanged.connect(handler)
+            return spin
+
+        def _make_plot_style_combo(*, handler) -> QComboBox:
+            combo = QComboBox()
+            combo.addItem("Regular", "regular")
+            combo.addItem("Bold", "bold")
+            combo.addItem("Italic", "italic")
+            combo.addItem("Bold Italic", "bold-italic")
+            combo.setFixedWidth(96)
+            combo.currentIndexChanged.connect(handler)
+            return combo
+
+        self._astrostack_annotation_plot_title_font_size_spin = _make_plot_font_size_spin(
+            handler=self._handle_astrostack_plot_title_font_size_changed
+        )
+        self._astrostack_annotation_plot_label_font_size_spin = _make_plot_font_size_spin(
+            handler=self._handle_astrostack_plot_label_font_size_changed
+        )
+        self._astrostack_annotation_plot_title_text_color_button = QPushButton("Color")
+        self._astrostack_annotation_plot_title_text_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_plot_title_text_color_button.clicked.connect(self._choose_astrostack_plot_title_text_color)
+        self._astrostack_annotation_plot_label_text_color_button = QPushButton("Color")
+        self._astrostack_annotation_plot_label_text_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_plot_label_text_color_button.clicked.connect(self._choose_astrostack_plot_label_text_color)
+        self._astrostack_annotation_plot_title_text_opacity_spin = _make_plot_text_opacity_spin(
+            handler=self._handle_astrostack_plot_title_text_opacity_changed
+        )
+        self._astrostack_annotation_plot_label_text_opacity_spin = _make_plot_text_opacity_spin(
+            handler=self._handle_astrostack_plot_label_text_opacity_changed
+        )
+        self._astrostack_annotation_plot_accent_color_button = QPushButton("Accent")
+        self._astrostack_annotation_plot_accent_color_button.setFixedSize(28, 28)
+        self._astrostack_annotation_plot_accent_color_button.clicked.connect(self._choose_astrostack_plot_accent_text_color)
+        self._astrostack_annotation_plot_title_font_combo = QFontComboBox()
+        self._fix_astrostack_font_combo_width(self._astrostack_annotation_plot_title_font_combo)
+        self._astrostack_annotation_plot_title_font_combo.currentFontChanged.connect(self._handle_astrostack_plot_title_font_changed)
+        self._astrostack_annotation_plot_label_font_combo = QFontComboBox()
+        self._fix_astrostack_font_combo_width(self._astrostack_annotation_plot_label_font_combo)
+        self._astrostack_annotation_plot_label_font_combo.currentFontChanged.connect(self._handle_astrostack_plot_label_font_changed)
+        self._astrostack_annotation_plot_title_style_combo = _make_plot_style_combo(
+            handler=self._handle_astrostack_plot_title_style_changed
+        )
+        self._astrostack_annotation_plot_label_style_combo = _make_plot_style_combo(
+            handler=self._handle_astrostack_plot_label_style_changed
+        )
+        self._sync_astrostack_plot_property_controls()
+
+        plot_properties = QWidget()
+        plot_properties_layout = QVBoxLayout(plot_properties)
+        plot_properties_layout.setContentsMargins(2, 2, 2, 6)
+        plot_properties_layout.setSpacing(10)
+
+        data_section, data_layout = self._make_astrostack_plot_property_section("Data")
+        data_title_row = QHBoxLayout()
+        data_title_row.addWidget(QLabel("Title"))
+        data_title_row.addWidget(self._astrostack_annotation_plot_title_input, stretch=1)
+        data_layout.addLayout(data_title_row)
+        data_metrics_row = QHBoxLayout()
+        data_metrics_row.addWidget(QLabel("X metric"))
+        data_metrics_row.addWidget(self._astrostack_annotation_plot_x_metric_combo)
+        data_metrics_row.addWidget(QLabel("Y metric"))
+        data_metrics_row.addWidget(self._astrostack_annotation_plot_y_metric_combo)
+        data_metrics_row.addStretch(1)
+        data_layout.addLayout(data_metrics_row)
+        data_labels_row = QHBoxLayout()
+        data_labels_row.addWidget(QLabel("X label"))
+        data_labels_row.addWidget(self._astrostack_annotation_plot_x_label_input, stretch=1)
+        data_labels_row.addWidget(QLabel("Y label"))
+        data_labels_row.addWidget(self._astrostack_annotation_plot_y_label_input, stretch=1)
+        data_layout.addLayout(data_labels_row)
+        plot_properties_layout.addWidget(data_section)
+
+        card_section, card_layout = self._make_astrostack_plot_property_section("Card")
+        card_row = QHBoxLayout()
+        card_row.addWidget(QLabel("Stroke"))
+        card_row.addWidget(self._astrostack_annotation_plot_stroke_color_button)
+        card_row.addWidget(QLabel("Fill"))
+        card_row.addWidget(self._astrostack_annotation_plot_fill_color_button)
+        card_row.addWidget(QLabel("Weight"))
+        card_row.addWidget(self._astrostack_annotation_plot_line_width_spin)
+        card_row.addWidget(QLabel("Radius"))
+        card_row.addWidget(self._astrostack_annotation_plot_corner_radius_spin)
+        card_row.addWidget(QLabel("Opacity"))
+        card_row.addWidget(self._astrostack_annotation_plot_opacity_button)
+        card_row.addStretch(1)
+        card_layout.addLayout(card_row)
+        plot_properties_layout.addWidget(card_section)
+
+        title_section, title_layout = self._make_astrostack_plot_property_section("Text · Title")
+        title_align_row = QHBoxLayout()
+        title_align_row.addWidget(QLabel("Horizontal"))
+        title_align_row.addWidget(self._astrostack_annotation_plot_title_align_h_combo)
+        title_align_row.addWidget(QLabel("Vertical"))
+        title_align_row.addWidget(self._astrostack_annotation_plot_title_align_v_combo)
+        title_align_row.addStretch(1)
+        title_layout.addLayout(title_align_row)
+        title_offset_row = QHBoxLayout()
+        title_offset_row.addWidget(QLabel("Offset X"))
+        title_offset_row.addWidget(self._astrostack_annotation_plot_title_offset_x_spin)
+        title_offset_row.addWidget(QLabel("Offset Y"))
+        title_offset_row.addWidget(self._astrostack_annotation_plot_title_offset_y_spin)
+        title_offset_row.addStretch(1)
+        title_layout.addLayout(title_offset_row)
+        title_style_row = QHBoxLayout()
+        title_style_row.addWidget(QLabel("Color"))
+        title_style_row.addWidget(self._astrostack_annotation_plot_title_text_color_button)
+        title_style_row.addWidget(QLabel("Font"))
+        title_style_row.addWidget(self._astrostack_annotation_plot_title_font_combo)
+        title_style_row.addWidget(QLabel("Style"))
+        title_style_row.addWidget(self._astrostack_annotation_plot_title_style_combo)
+        title_style_row.addWidget(QLabel("Size"))
+        title_style_row.addWidget(self._astrostack_annotation_plot_title_font_size_spin)
+        title_style_row.addWidget(QLabel("Opacity"))
+        title_style_row.addWidget(self._astrostack_annotation_plot_title_text_opacity_spin)
+        title_style_row.addStretch(1)
+        title_layout.addLayout(title_style_row)
+        plot_properties_layout.addWidget(title_section)
+
+        label_section, label_layout = self._make_astrostack_plot_property_section("Text · Labels")
+        label_style_row = QHBoxLayout()
+        label_style_row.addWidget(QLabel("Color"))
+        label_style_row.addWidget(self._astrostack_annotation_plot_label_text_color_button)
+        label_style_row.addWidget(QLabel("Font"))
+        label_style_row.addWidget(self._astrostack_annotation_plot_label_font_combo)
+        label_style_row.addWidget(QLabel("Style"))
+        label_style_row.addWidget(self._astrostack_annotation_plot_label_style_combo)
+        label_style_row.addWidget(QLabel("Size"))
+        label_style_row.addWidget(self._astrostack_annotation_plot_label_font_size_spin)
+        label_style_row.addWidget(QLabel("Opacity"))
+        label_style_row.addWidget(self._astrostack_annotation_plot_label_text_opacity_spin)
+        label_layout.addLayout(label_style_row)
+        label_accent_row = QHBoxLayout()
+        label_accent_row.addWidget(QLabel("Accent"))
+        label_accent_row.addWidget(self._astrostack_annotation_plot_accent_color_button)
+        label_accent_row.addStretch(1)
+        label_layout.addLayout(label_accent_row)
+        label_offset_row = QHBoxLayout()
+        label_offset_row.addWidget(QLabel("X label"))
+        label_offset_row.addWidget(self._astrostack_annotation_plot_x_label_offset_x_spin)
+        label_offset_row.addWidget(self._astrostack_annotation_plot_x_label_offset_y_spin)
+        label_offset_row.addWidget(QLabel("Y label"))
+        label_offset_row.addWidget(self._astrostack_annotation_plot_y_label_offset_x_spin)
+        label_offset_row.addWidget(self._astrostack_annotation_plot_y_label_offset_y_spin)
+        label_offset_row.addStretch(1)
+        label_layout.addLayout(label_offset_row)
+        plot_properties_layout.addWidget(label_section)
+
+        plot_area_section, plot_area_layout = self._make_astrostack_plot_property_section("Plot area")
+        plot_margin_row = QHBoxLayout()
+        plot_margin_row.addWidget(QLabel("Left"))
+        plot_margin_row.addWidget(self._astrostack_annotation_plot_chart_margin_left_spin)
+        plot_margin_row.addWidget(QLabel("Right"))
+        plot_margin_row.addWidget(self._astrostack_annotation_plot_chart_margin_right_spin)
+        plot_margin_row.addWidget(QLabel("Top"))
+        plot_margin_row.addWidget(self._astrostack_annotation_plot_chart_margin_top_spin)
+        plot_margin_row.addWidget(QLabel("Bottom"))
+        plot_margin_row.addWidget(self._astrostack_annotation_plot_chart_margin_bottom_spin)
+        plot_margin_row.addStretch(1)
+        plot_area_layout.addLayout(plot_margin_row)
+        plot_properties_layout.addWidget(plot_area_section)
+
+        chart_section, chart_layout = self._make_astrostack_plot_property_section("Chart")
+        curve_row = QHBoxLayout()
+        curve_row.addWidget(QLabel("Curve"))
+        curve_row.addWidget(self._astrostack_annotation_plot_curve_color_button)
+        curve_row.addWidget(QLabel("Opacity"))
+        curve_row.addWidget(self._astrostack_annotation_plot_curve_opacity_spin)
+        curve_row.addWidget(QLabel("Width"))
+        curve_row.addWidget(self._astrostack_annotation_plot_curve_width_spin)
+        curve_row.addStretch(1)
+        chart_layout.addLayout(curve_row)
+        highlight_row = QHBoxLayout()
+        highlight_row.addWidget(QLabel("Highlight"))
+        highlight_row.addWidget(self._astrostack_annotation_plot_highlight_color_button)
+        highlight_row.addWidget(QLabel("Opacity"))
+        highlight_row.addWidget(self._astrostack_annotation_plot_highlight_opacity_spin)
+        highlight_row.addWidget(QLabel("Radius"))
+        highlight_row.addWidget(self._astrostack_annotation_plot_highlight_radius_spin)
+        highlight_row.addStretch(1)
+        chart_layout.addLayout(highlight_row)
+        plot_properties_layout.addWidget(chart_section)
+        plot_properties_layout.addStretch(1)
+        self._sync_astrostack_plot_property_section_styles()
+
+        plot_properties_scroll = QScrollArea()
+        plot_properties_scroll.setWidgetResizable(True)
+        plot_properties_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        plot_properties_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        plot_properties_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        plot_properties_scroll.setWidget(plot_properties)
+        self._astrostack_plot_properties_scroll = plot_properties_scroll
+
+        empty_properties = QWidget()
+        empty_properties_layout = QHBoxLayout(empty_properties)
+        empty_properties_layout.setContentsMargins(0, 0, 0, 0)
+        empty_properties_hint = QLabel("Select a drawing tool to edit overlay properties.")
+        empty_properties_hint.setWordWrap(True)
+        empty_properties_hint.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        empty_properties_layout.addWidget(empty_properties_hint)
+        empty_properties_layout.addStretch(1)
+
+        self._astrostack_annotation_properties_stack = QStackedWidget()
+        self._astrostack_annotation_properties_stack.addWidget(empty_properties)
+        self._astrostack_annotation_properties_stack.addWidget(shape_properties)
+        self._astrostack_annotation_properties_stack.addWidget(text_properties)
+        self._astrostack_annotation_properties_title = QLabel("Properties")
+        self._style_astrostack_section_label(self._astrostack_annotation_properties_title)
+        self._astrostack_annotation_properties_group = QWidget()
+        self._astrostack_annotation_properties_group.setObjectName("astrostackAnnotationPropertiesGroup")
+        self._astrostack_annotation_properties_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        annotation_properties_layout = QHBoxLayout(self._astrostack_annotation_properties_group)
+        annotation_properties_layout.setContentsMargins(8, 4, 8, 4)
+        annotation_properties_layout.setSpacing(8)
+        annotation_properties_layout.addWidget(self._astrostack_annotation_properties_title)
+        annotation_properties_layout.addWidget(self._astrostack_annotation_properties_stack, stretch=1)
+        self._sync_astrostack_annotation_property_controls()
+
+        self._astrostack_plot_properties_title = QLabel("Plot Properties")
+        self._style_astrostack_section_label(self._astrostack_plot_properties_title)
+        self._astrostack_plot_properties_group = QWidget()
+        self._astrostack_plot_properties_group.setObjectName("astrostackPlotPropertiesGroup")
+        self._astrostack_plot_properties_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        plot_properties_group_layout = QVBoxLayout(self._astrostack_plot_properties_group)
+        plot_properties_group_layout.setContentsMargins(8, 8, 8, 8)
+        plot_properties_group_layout.setSpacing(8)
+        plot_properties_group_layout.addWidget(self._astrostack_plot_properties_title)
+        plot_properties_group_layout.addWidget(plot_properties_scroll, stretch=1)
+        self._sync_astrostack_plot_property_controls()
+
+        self._astrostack_functions_title = QLabel("Functions")
+        self._style_astrostack_section_label(self._astrostack_functions_title)
+        self._astrostack_function_signal_button = QPushButton("Signal")
+        self._astrostack_function_noise_button = QPushButton("Noise")
+        self._astrostack_function_tool_buttons = {
+            "function_signal": self._astrostack_function_signal_button,
+            "function_noise": self._astrostack_function_noise_button,
+        }
+        for tool_key, tool_button in self._astrostack_function_tool_buttons.items():
+            tool_button.setText("")
+            tool_button.setCheckable(True)
+            tool_button.setFixedSize(34, 34)
+            tool_button.setIconSize(QSize(18, 18))
+            tool_button.clicked.connect(lambda _checked=False, key=tool_key: self._set_astrostack_annotation_tool(key))
+        self._astrostack_function_signal_button.setToolTip("Place a live Signal value label on the export.")
+        self._astrostack_function_noise_button.setToolTip("Place a live Noise value label on the export.")
+        self._astrostack_functions_tools_group = QWidget()
+        self._astrostack_functions_tools_group.setObjectName("astrostackFunctionsToolsGroup")
+        self._astrostack_functions_tools_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        functions_tools_layout = QHBoxLayout(self._astrostack_functions_tools_group)
+        functions_tools_layout.setContentsMargins(8, 4, 8, 4)
+        functions_tools_layout.setSpacing(6)
+        for tool_button in self._astrostack_function_tool_buttons.values():
+            functions_tools_layout.addWidget(tool_button)
+        functions_tools_layout.addStretch(1)
+        self._sync_astrostack_function_tool_buttons()
+        self._sync_astrostack_function_tool_icons()
+        self._astrostack_functions_properties_hint = QLabel(
+            "Add Signal and Noise labels to show live measurement values in the stack export."
+        )
+        self._astrostack_functions_properties_hint.setWordWrap(True)
+        self._astrostack_functions_properties_stack = QStackedWidget()
+        self._astrostack_functions_properties_stack.addWidget(self._astrostack_functions_properties_hint)
+        self._astrostack_functions_properties_stack.addWidget(function_properties)
+        self._astrostack_functions_properties_group = QWidget()
+        self._astrostack_functions_properties_group.setObjectName("astrostackFunctionsGroup")
+        self._astrostack_functions_properties_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        functions_group_layout = QVBoxLayout(self._astrostack_functions_properties_group)
+        functions_group_layout.setContentsMargins(8, 8, 8, 8)
+        functions_group_layout.setSpacing(8)
+        functions_group_layout.addWidget(self._astrostack_functions_title)
+        functions_group_layout.addWidget(self._astrostack_functions_tools_group)
+        functions_group_layout.addWidget(self._astrostack_functions_properties_stack)
+        self._sync_astrostack_functions_property_controls()
+        self._sync_astrostack_functions_group_style()
+
+        self._astrostack_layers_title = QLabel("Layers")
+        self._style_astrostack_section_label(self._astrostack_layers_title)
+        self._astrostack_layer_list = QListWidget()
+        self._astrostack_layer_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._astrostack_layer_list.setMaximumHeight(_ASTROSTACK_LAYER_LIST_MAX_HEIGHT)
+        self._astrostack_layer_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._astrostack_layer_list.itemSelectionChanged.connect(self._handle_astrostack_layer_selection_changed)
+        layer_buttons_row = QHBoxLayout()
+        self._astrostack_layer_move_up_button = QPushButton("Up")
+        self._astrostack_layer_move_up_button.setToolTip("Move the selected layer up (toward the front).")
+        self._astrostack_layer_move_up_button.clicked.connect(self._move_astrostack_layer_up)
+        self._astrostack_layer_move_down_button = QPushButton("Down")
+        self._astrostack_layer_move_down_button.setToolTip("Move the selected layer down (toward the back).")
+        self._astrostack_layer_move_down_button.clicked.connect(self._move_astrostack_layer_down)
+        self._astrostack_layer_remove_button = QPushButton("Remove")
+        self._astrostack_layer_remove_button.setToolTip("Remove the selected layer.")
+        self._astrostack_layer_remove_button.clicked.connect(self._remove_selected_astrostack_layer)
+        layer_buttons_row.addWidget(self._astrostack_layer_move_up_button)
+        layer_buttons_row.addWidget(self._astrostack_layer_move_down_button)
+        layer_buttons_row.addWidget(self._astrostack_layer_remove_button)
+        preset_buttons_row = QHBoxLayout()
+        self._astrostack_layer_save_preset_button = QPushButton("Save Preset")
+        self._astrostack_layer_save_preset_button.setToolTip("Save the current overlay layers to a preset file.")
+        self._astrostack_layer_save_preset_button.clicked.connect(self._save_astrostack_layer_preset)
+        self._astrostack_layer_load_preset_button = QPushButton("Load Preset")
+        self._astrostack_layer_load_preset_button.setToolTip("Load overlay layers from a saved preset file.")
+        self._astrostack_layer_load_preset_button.clicked.connect(self._load_astrostack_layer_preset)
+        preset_buttons_row.addWidget(self._astrostack_layer_save_preset_button)
+        preset_buttons_row.addWidget(self._astrostack_layer_load_preset_button)
+
+        self._astrostack_layers_group = QWidget()
+        self._astrostack_layers_group.setObjectName("astrostackLayersGroup")
+        self._astrostack_layers_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layers_group_layout = QVBoxLayout(self._astrostack_layers_group)
+        layers_group_layout.setContentsMargins(8, 8, 8, 8)
+        layers_group_layout.setSpacing(8)
+        layers_group_layout.addWidget(self._astrostack_layers_title)
+        layers_group_layout.addWidget(self._astrostack_layer_list)
+        layers_group_layout.addLayout(layer_buttons_row)
+        layers_group_layout.addLayout(preset_buttons_row)
+
+        self._astrostack_snr_panel_toggle_button = QPushButton()
+        self._astrostack_snr_panel_toggle_button.setToolTip("Show or hide the stack SNR chart overlay on the preview and export.")
+        self._astrostack_snr_panel_toggle_button.clicked.connect(self._toggle_astrostack_snr_panel)
+        self._update_astrostack_snr_panel_toggle_button()
+
+        outer_layout.addWidget(self._astrostack_plot_properties_group, stretch=1)
+        outer_layout.addWidget(self._astrostack_functions_properties_group)
+        outer_layout.addWidget(self._astrostack_layers_group)
+        outer_layout.addWidget(self._astrostack_snr_panel_toggle_button)
+        self._astrostack_overlay_control_panel = panel
+        self._apply_astrostack_overlay_control_panel_sizing()
+        self._sync_astrostack_layer_list_widget()
+        return panel
+
+    def _handle_astrostack_image_overlay_clicked(self, overlay: object) -> None:
+        if not isinstance(overlay, ImageOverlay):
+            return
+        if getattr(self, "_astrostack_annotation_tool", "hand") != "mouse":
+            return
+        layer_id = self._astrostack_layer_id_from_source_id(overlay.source_id)
+        if layer_id is None:
+            return
+        self._select_astrostack_layer(layer_id, refresh=True)
+        self.statusBar().showMessage("Selected Deep Stack overlay layer.", 3000)
+
+    def _handle_astrostack_image_context_requested(
+        self,
+        image_x: float,
+        image_y: float,
+        global_position: QPoint,
+        _modifiers: object,
+    ) -> None:
+        if self._astrostack_crop_mode_active:
+            return
+        if getattr(self, "_astrostack_annotation_tool", "hand") != "mouse":
+            return
+        target_layer = self._astrostack_layer_at(image_x, image_y)
+        if target_layer is None:
+            return
+        menu = QMenu(self)
+        remove_action = menu.addAction("Remove Layer")
+        selected_action = menu.exec(global_position)
+        if selected_action is remove_action:
+            self._remove_astrostack_overlay_layer_by_id(target_layer.layer_id)
+            self._sync_astrostack_layer_list_widget()
+            self._refresh_astrostack_image_view(reset_view=False)
+            self.statusBar().showMessage("Removed Deep Stack overlay layer.", 3000)
+
     def _create_astrostack_panel(self) -> QWidget:
 
         panel = QWidget()
@@ -27256,51 +32448,27 @@ class MainWindow(QMainWindow):
 
         layout.setContentsMargins(0, 0, 0, 0)
 
-        layout.setSpacing(8)
+        layout.setSpacing(0)
 
         self._astrostack_open_button = QPushButton("Open")
 
-        self._astrostack_open_button.setToolTip("Open a folder of plate-solved frames for cumulative Astrostack animation export.")
+        self._astrostack_open_button.setToolTip("Open a folder of plate-solved frames for cumulative Deep Stack animation export.")
 
         self._astrostack_open_button.clicked.connect(self._browse_for_astrostack_folder)
 
         self._astrostack_stack_button = QPushButton("Stack")
 
-        self._astrostack_stack_button.setToolTip("Align the loaded frames and export a cumulative Astrostack GIF that shows the signal-to-noise improvement over time.")
+        self._astrostack_stack_button.setToolTip("Align the loaded frames and export a cumulative Deep Stack GIF that shows the signal-to-noise improvement over time.")
 
         self._astrostack_stack_button.clicked.connect(self._export_astrostack_animation)
 
-        self._astrostack_source_input = QLineEdit()
+        self._astrostack_crop_button = QPushButton("Crop")
 
-        self._astrostack_source_input.setReadOnly(True)
+        self._astrostack_crop_button.setToolTip("Draw a rectangular crop on the reference frame for the cumulative stack export.")
 
-        self._astrostack_source_input.setPlaceholderText("Astrostack image folder")
+        self._astrostack_crop_button.clicked.connect(self._handle_astrostack_crop_button_clicked)
 
         self._astrostack_frame_count_label = QLabel("Frames: 0")
-
-        header_row = QHBoxLayout()
-
-        header_row.setContentsMargins(0, 0, 0, 0)
-
-        header_row.setSpacing(8)
-
-        header_row.addWidget(self._astrostack_open_button)
-
-        header_row.addWidget(self._astrostack_stack_button)
-
-        header_row.addStretch(1)
-
-        header_row.addWidget(self._astrostack_frame_count_label)
-
-        self._astrostack_image_view = AnnotatedImageView(self)
-
-        self._astrostack_image_view.set_message("Open an Astrostack folder to inspect the reference frame and define an optional rectangular ROI with Shift-drag.")
-
-        self._astrostack_image_view.imagePressed.connect(self._handle_astrostack_image_pressed)
-
-        self._astrostack_image_view.imageMoved.connect(self._handle_astrostack_image_moved)
-
-        self._astrostack_image_view.imageReleased.connect(self._handle_astrostack_image_released)
 
         self._astrostack_image_stretch_combo = QComboBox()
 
@@ -27332,57 +32500,147 @@ class MainWindow(QMainWindow):
 
         self._astrostack_image_reset_display_button.clicked.connect(self._reset_astrostack_image_display_controls)
 
-        self._astrostack_roi_mode_combo = QComboBox()
+        self._astrostack_display_section_label = self._create_differential_section_menu_button("Display")
 
-        self._astrostack_roi_mode_combo.addItem("Rectangle ROI", "rectangle")
+        self._astrostack_display_controls_group = self._create_display_menu_content(
 
-        self._astrostack_roi_clear_button = QPushButton("Clear ROI")
+            self._astrostack_image_stretch_combo,
 
-        self._astrostack_roi_clear_button.clicked.connect(self._clear_astrostack_roi_selection)
+            self._astrostack_adjust_levels_button,
 
-        controls_row = QHBoxLayout()
+            self._astrostack_image_invert_checkbox,
 
-        controls_row.setContentsMargins(0, 0, 0, 0)
+            trailing_widgets=(self._astrostack_image_reset_view_button, self._astrostack_image_reset_display_button),
 
-        controls_row.setSpacing(6)
-
-        controls_row.addWidget(QLabel("Stretch:"))
-
-        controls_row.addWidget(self._astrostack_image_stretch_combo)
-
-        controls_row.addWidget(self._astrostack_adjust_levels_button)
-
-        controls_row.addWidget(self._astrostack_image_invert_checkbox)
-
-        controls_row.addWidget(self._astrostack_image_reset_display_button)
-
-        controls_row.addWidget(self._astrostack_image_reset_view_button)
-
-        controls_row.addSpacing(12)
-
-        controls_row.addWidget(QLabel("ROI:"))
-
-        controls_row.addWidget(self._astrostack_roi_mode_combo)
-
-        controls_row.addWidget(self._astrostack_roi_clear_button)
-
-        controls_row.addStretch(1)
-
-        self._astrostack_status_label = QLabel(
-            "Open a folder of plate-solved frames. Use Shift-drag on the image to define an optional rectangular ROI; if no ROI is defined the full aligned frame is stacked."
         )
 
-        self._astrostack_status_label.setWordWrap(True)
+        self._astrostack_display_section_menu = self._create_differential_section_menu(
 
-        layout.addLayout(header_row)
+            self._astrostack_display_section_label,
 
-        layout.addWidget(self._astrostack_source_input)
+            self._astrostack_display_controls_group,
 
-        layout.addLayout(controls_row)
+        )
 
-        layout.addWidget(self._astrostack_image_view, stretch=1)
+        self._astrostack_image_view = AnnotatedImageView(self)
 
-        layout.addWidget(self._astrostack_status_label)
+        self._astrostack_image_view.set_overlay_label_formatter(self._astrostack_function_overlay_label_text)
+
+        self._astrostack_image_view.set_message("Open a Deep Stack folder to inspect the reference frame and define an optional crop with the Crop tool.")
+
+        self._astrostack_image_view.imagePressed.connect(self._handle_astrostack_image_pressed)
+
+        self._astrostack_image_view.imageMoved.connect(self._handle_astrostack_image_moved)
+
+        self._astrostack_image_view.imageReleased.connect(self._handle_astrostack_image_released)
+
+        self._astrostack_image_view.imageOverlayClicked.connect(self._handle_astrostack_image_overlay_clicked)
+
+        self._astrostack_image_view.imageContextRequested.connect(self._handle_astrostack_image_context_requested)
+
+        self._astrostack_crop_tip_label = QLabel("")
+
+        self._astrostack_crop_tip_label.setWordWrap(False)
+
+        self._astrostack_crop_tip_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+
+        crop_tip_metrics = self._astrostack_crop_tip_label.fontMetrics()
+
+        crop_tip_line_height = crop_tip_metrics.height()
+
+        previous_tip_area_height = crop_tip_line_height + 16
+
+        self._astrostack_crop_tip_label.setFixedHeight(
+            max(crop_tip_line_height, previous_tip_area_height // 2)
+        )
+
+        self._astrostack_crop_tip_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self._astrostack_overlay_control_panel = self._create_astrostack_overlay_control_panel()
+
+        header_left_widget = QWidget()
+
+        header_left_layout = QHBoxLayout(header_left_widget)
+
+        header_left_layout.setContentsMargins(0, 0, 0, 0)
+
+        header_left_layout.setSpacing(8)
+
+        header_left_layout.addWidget(self._astrostack_open_button)
+
+        header_left_layout.addWidget(self._astrostack_stack_button)
+
+        header_left_layout.addWidget(self._astrostack_crop_button)
+
+        header_left_layout.addWidget(self._astrostack_display_section_label)
+
+        header_right_widget = QWidget()
+
+        header_right_layout = QHBoxLayout(header_right_widget)
+
+        header_right_layout.setContentsMargins(0, 0, 0, 0)
+
+        header_right_layout.setSpacing(6)
+
+        header_right_layout.addWidget(self._astrostack_annotation_tools_group)
+
+        header_right_layout.addWidget(self._astrostack_annotation_properties_group, stretch=1)
+
+        header_right_layout.addStretch(1)
+
+        header_right_layout.addWidget(self._astrostack_frame_count_label)
+
+        self._astrostack_header_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        self._astrostack_header_splitter.setChildrenCollapsible(False)
+
+        self._astrostack_header_splitter.addWidget(header_left_widget)
+
+        self._astrostack_header_splitter.addWidget(header_right_widget)
+
+        self._astrostack_header_splitter.setStretchFactor(0, 0)
+
+        self._astrostack_header_splitter.setStretchFactor(1, 1)
+
+        image_column = QWidget()
+
+        image_column_layout = QVBoxLayout(image_column)
+
+        image_column_layout.setContentsMargins(0, 0, 0, 0)
+
+        image_column_layout.setSpacing(0)
+
+        image_column_layout.addWidget(self._astrostack_image_view, stretch=1)
+
+        image_column_layout.addWidget(self._astrostack_crop_tip_label)
+
+        self._astrostack_content_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        self._astrostack_content_splitter.setChildrenCollapsible(False)
+
+        self._astrostack_content_splitter.addWidget(self._astrostack_overlay_control_panel)
+
+        self._astrostack_content_splitter.addWidget(image_column)
+
+        self._astrostack_content_splitter.setStretchFactor(0, 0)
+
+        self._astrostack_content_splitter.setStretchFactor(1, 1)
+
+        control_panel_width = max(300, self._astrostack_overlay_control_panel.minimumWidth())
+
+        self._astrostack_content_splitter.setSizes([control_panel_width, 900])
+
+        self._astrostack_header_splitter.setSizes(self._astrostack_content_splitter.sizes())
+
+        self._astrostack_content_splitter.splitterMoved.connect(self._sync_astrostack_header_splitter_from_main)
+
+        self._astrostack_header_splitter.splitterMoved.connect(self._sync_astrostack_main_splitter_from_header)
+
+        layout.addWidget(self._astrostack_header_splitter)
+
+        layout.addSpacing(8)
+
+        layout.addWidget(self._astrostack_content_splitter, stretch=1)
 
         panel.setLayout(layout)
 
@@ -27390,7 +32648,47 @@ class MainWindow(QMainWindow):
 
         self._sync_astrostack_controls()
 
+        self._set_astrostack_annotation_tool("hand", refresh=False)
+
+        self._schedule_astrostack_header_splitter_sync()
+
         return panel
+
+    def _sync_astrostack_header_splitter_from_main(self) -> None:
+
+        if getattr(self, "_astrostack_splitter_sync_in_progress", False):
+
+            return
+
+        self._astrostack_splitter_sync_in_progress = True
+
+        try:
+
+            self._astrostack_header_splitter.setSizes(self._astrostack_content_splitter.sizes())
+
+        finally:
+
+            self._astrostack_splitter_sync_in_progress = False
+
+    def _sync_astrostack_main_splitter_from_header(self) -> None:
+
+        if getattr(self, "_astrostack_splitter_sync_in_progress", False):
+
+            return
+
+        self._astrostack_splitter_sync_in_progress = True
+
+        try:
+
+            self._astrostack_content_splitter.setSizes(self._astrostack_header_splitter.sizes())
+
+        finally:
+
+            self._astrostack_splitter_sync_in_progress = False
+
+    def _schedule_astrostack_header_splitter_sync(self) -> None:
+
+        QTimer.singleShot(0, self._sync_astrostack_header_splitter_from_main)
 
     def _sync_astrostack_controls(self) -> None:
 
@@ -27420,9 +32718,427 @@ class MainWindow(QMainWindow):
 
         self._astrostack_image_reset_view_button.setEnabled(has_image)
 
-        self._astrostack_roi_mode_combo.setEnabled(has_image)
+        self._astrostack_display_section_label.setEnabled(has_image)
 
-        self._astrostack_roi_clear_button.setEnabled(has_image and bool(roi_selections or active_roi_selection))
+        if hasattr(self, "_astrostack_snr_panel_toggle_button"):
+
+            self._astrostack_snr_panel_toggle_button.setEnabled(has_image or has_frames)
+
+        self._sync_astrostack_crop_button()
+
+    def _sync_astrostack_crop_button(self) -> None:
+
+        if not hasattr(self, "_astrostack_crop_button"):
+
+            return
+
+        current_source_image = getattr(self, "_current_astrostack_source_image", None)
+
+        has_image = current_source_image is not None and current_source_image.exists()
+
+        has_crop = bool(getattr(self, "_astrostack_roi_selections", []))
+
+        crop_mode_active = bool(getattr(self, "_astrostack_crop_mode_active", False))
+
+        if has_crop:
+
+            self._astrostack_crop_mode_active = False
+
+            self._astrostack_crop_button.setText("Reset")
+
+            self._astrostack_crop_button.setToolTip("Clear the current crop and use the full aligned frame.")
+
+        else:
+
+            self._astrostack_crop_button.setText("Crop")
+
+            if crop_mode_active:
+
+                self._astrostack_crop_button.setToolTip("Drag on the image to define a crop. Click Crop again to cancel.")
+
+            else:
+
+                self._astrostack_crop_button.setToolTip("Draw a rectangular crop on the reference frame for the cumulative stack export.")
+
+        self._astrostack_crop_button.setEnabled(has_image)
+
+        secondary_style = getattr(self, "_astrostack_toolbar_secondary_style", "")
+
+        active_style = getattr(self, "_astrostack_toolbar_crop_active_style", secondary_style)
+
+        self._astrostack_crop_button.setStyleSheet(active_style if crop_mode_active and not has_crop else secondary_style)
+
+        self._sync_astrostack_image_gesture_mode()
+
+    def _sync_astrostack_image_gesture_mode(self) -> None:
+
+        if not hasattr(self, "_astrostack_image_view"):
+
+            return
+
+        self._apply_astrostack_view_interaction_mode()
+
+        self._sync_astrostack_crop_tip()
+
+    def _sync_astrostack_crop_tip(self) -> None:
+
+        if not hasattr(self, "_astrostack_crop_tip_label"):
+
+            return
+
+        crop_mode_active = bool(getattr(self, "_astrostack_crop_mode_active", False))
+
+        if crop_mode_active:
+
+            self._astrostack_crop_tip_label.setText(
+                "Drag on the image to select a crop region. Click Crop again to cancel."
+            )
+
+        else:
+
+            self._astrostack_crop_tip_label.clear()
+
+    def _toggle_astrostack_snr_panel(self) -> None:
+
+        self._astrostack_snr_panel_visible = not self._astrostack_snr_panel_visible
+
+        self._update_astrostack_snr_panel_toggle_button()
+
+        if self._current_astrostack_source_image is not None:
+
+            self._refresh_astrostack_image_view(reset_view=False)
+
+    def _update_astrostack_snr_panel_toggle_button(self) -> None:
+
+        if not hasattr(self, "_astrostack_snr_panel_toggle_button"):
+
+            return
+
+        visible = bool(getattr(self, "_astrostack_snr_panel_visible", True))
+
+        self._astrostack_snr_panel_toggle_button.setText("Hide Info" if visible else "Show Info")
+
+    def _estimate_astrostack_image_snr(self, data: np.ndarray) -> float:
+
+        signal, noise = self._estimate_astrostack_image_signal_noise(data)
+
+        return signal / noise
+
+    def _astrostack_measurement_bounds_for_data(self, selection: _HrRoiSelection) -> tuple[float, float, float, float]:
+        bounds = self._astrostack_roi_bounds(selection)
+        origin = self._astrostack_crop_origin()
+        if origin is None:
+            return bounds
+        return roi_bounds_to_cropped_data_space(bounds, origin)
+
+    def _astrostack_measure_regions_ready(self) -> bool:
+        signal_region = getattr(self, "_astrostack_signal_region", None)
+        background_region = getattr(self, "_astrostack_background_region", None)
+        return (
+            signal_region is not None
+            and background_region is not None
+            and self._astrostack_roi_selection_has_area(signal_region)
+            and self._astrostack_roi_selection_has_area(background_region)
+        )
+
+    def _estimate_astrostack_image_signal_noise(self, data: np.ndarray) -> tuple[float, float]:
+
+        array = np.asarray(data, dtype=np.float64)
+
+        if self._astrostack_measure_regions_ready():
+
+            signal_region = getattr(self, "_astrostack_signal_region")
+            background_region = getattr(self, "_astrostack_background_region")
+
+            return estimate_region_signal_noise(
+                array,
+                self._astrostack_measurement_bounds_for_data(signal_region),
+                self._astrostack_measurement_bounds_for_data(background_region),
+            )
+
+        return estimate_global_signal_noise(array)
+
+    def _estimate_astrostack_reference_fwhm_from_data(self, data: np.ndarray) -> float:
+
+        array = np.asarray(data, dtype=np.float64)
+
+        if array.size == 0:
+
+            return 3.0
+
+        if array.ndim == 3:
+
+            array = np.mean(array, axis=2)
+
+        height, width = array.shape
+
+        margin_y = max(1, height // 8)
+
+        margin_x = max(1, width // 8)
+
+        central = array[margin_y : max(margin_y + 1, height - margin_y), margin_x : max(margin_x + 1, width - margin_x)]
+
+        if central.size == 0:
+
+            return 3.0
+
+        peak_index = int(np.argmax(central))
+
+        peak_y, peak_x = np.unravel_index(peak_index, central.shape)
+
+        image_x = float(peak_x + margin_x)
+
+        image_y = float(peak_y + margin_y)
+
+        try:
+
+            from photometry_app.core.photometry import _estimate_star_fwhm
+
+            estimated_fwhm = _estimate_star_fwhm(array, image_x, image_y)
+
+            if estimated_fwhm is not None and float(estimated_fwhm) > 0.0:
+
+                return float(estimated_fwhm)
+
+        except Exception:
+
+            pass
+
+        return 3.0
+
+    def _refresh_astrostack_snr_curve_preview(self) -> None:
+
+        frame_paths = [path for path in getattr(self, "_astrostack_frame_paths", []) if path.exists()]
+
+        if not frame_paths:
+
+            self._astrostack_snr_frame_indices = ()
+
+            self._astrostack_snr_values = ()
+
+            self._astrostack_fwhm_values = ()
+
+            self._astrostack_signal_values = ()
+
+            self._astrostack_noise_values = ()
+
+            self._astrostack_snr_highlight_index = None
+
+            return
+
+        reference_crop_bounds = self._astrostack_alignment_crop_bounds()
+
+        try:
+
+            reference_data = self._crop_image_data_to_bounds(
+                np.asarray(read_image_data(frame_paths[0]), dtype=np.float32),
+                reference_crop_bounds,
+            )
+
+            reference_snr = self._estimate_astrostack_image_snr(reference_data)
+
+            reference_signal, reference_noise = self._estimate_astrostack_image_signal_noise(reference_data)
+
+            reference_fwhm = self._estimate_astrostack_reference_fwhm_from_data(reference_data)
+
+        except Exception:
+
+            reference_snr = 1.0
+
+            reference_signal, reference_noise = 1.0, 1.0
+
+            reference_fwhm = 3.0
+
+        if reference_snr <= 0.0:
+
+            reference_snr = 1.0
+
+        self._astrostack_reference_snr = reference_snr
+
+        self._astrostack_reference_signal = max(1e-6, reference_signal)
+
+        self._astrostack_reference_noise = max(1e-6, reference_noise)
+
+        self._astrostack_reference_fwhm = max(1e-6, reference_fwhm)
+
+        self._astrostack_snr_frame_indices = (1,)
+
+        self._astrostack_snr_values = (reference_snr,)
+
+        self._astrostack_fwhm_values = (reference_fwhm,)
+
+        self._astrostack_signal_values = (reference_signal,)
+
+        self._astrostack_noise_values = (reference_noise,)
+
+        self._astrostack_snr_highlight_index = 0
+
+        if hasattr(self, "_astrostack_image_view"):
+
+            self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+
+    def _ensure_astrostack_frame_exposure_seconds(self) -> tuple[float, ...]:
+        frame_paths = self._astrostack_existing_frame_paths()
+        if not frame_paths:
+            self._astrostack_frame_exposure_seconds = ()
+            return ()
+        exposure_seconds = getattr(self, "_astrostack_frame_exposure_seconds", ())
+        if len(exposure_seconds) == len(frame_paths):
+            return exposure_seconds
+        self._astrostack_frame_exposure_seconds = self._load_astrostack_frame_exposure_seconds(frame_paths)
+        return self._astrostack_frame_exposure_seconds
+
+    def _load_astrostack_frame_exposure_seconds(self, frame_paths: list[Path]) -> tuple[float, ...]:
+
+        if not frame_paths:
+
+            return ()
+
+        root_path = self._current_astrostack_root_path
+
+        object_folder = root_path.name if root_path is not None else ""
+
+        settings = self._ensure_settings()
+
+        exposure_seconds: list[float] = []
+
+        for path in frame_paths:
+
+            try:
+
+                scan_result = getattr(self, "_astrostack_frame_scan_results", {}).get(path)
+
+                if scan_result is None:
+
+                    scan_result = inspect_fits_file(path, object_folder, observation_timezone=settings.observation_timezone)
+
+                exposure_value = scan_result.metadata.exposure_seconds
+
+            except Exception:
+
+                exposure_value = None
+
+            if exposure_value is None or float(exposure_value) <= 0.0:
+
+                exposure_seconds.append(0.0)
+
+            else:
+
+                exposure_seconds.append(float(exposure_value))
+
+        return tuple(exposure_seconds)
+
+    def _astrostack_integration_seconds(self, stacked_frame_count: int) -> float:
+
+        if stacked_frame_count <= 0:
+
+            return 0.0
+
+        exposure_seconds = self._ensure_astrostack_frame_exposure_seconds()
+
+        if not exposure_seconds:
+
+            return 0.0
+
+        included = exposure_seconds[: min(stacked_frame_count, len(exposure_seconds))]
+
+        return float(sum(included))
+
+    def _format_astrostack_integration_time(self, total_seconds: float) -> str:
+
+        if total_seconds <= 0.0:
+
+            return "--"
+
+        total_minutes = int(round(total_seconds / 60.0))
+
+        hours = total_minutes // 60
+
+        minutes = total_minutes % 60
+
+        return f"{hours:02d}h{minutes:02d}m"
+
+    def _build_astrostack_snr_chart_overlay(
+        self,
+        *,
+        frame_indices: tuple[int, ...],
+        snr_values: tuple[float, ...],
+        highlight_index: int | None,
+        total_frame_count: int,
+    ) -> ImageChartOverlayPanel:
+
+        current_frame = 0
+
+        if highlight_index is not None and 0 <= highlight_index < len(frame_indices):
+
+            current_frame = int(frame_indices[highlight_index])
+
+        elif frame_indices:
+
+            current_frame = int(frame_indices[-1])
+
+        frame_text = f"{current_frame}/{max(0, total_frame_count)}"
+
+        integration_text = self._format_astrostack_integration_time(
+            self._astrostack_integration_seconds(current_frame)
+        )
+
+        return ImageChartOverlayPanel(
+            title="Stack SNR",
+            line_chart=ImageInfoLineChart(
+                x_label="Stacked frames",
+                y_label="SNR",
+                x_values=tuple(float(value) for value in frame_indices),
+                y_values=tuple(float(value) for value in snr_values),
+                highlight_index=highlight_index,
+            ),
+            integration_text=integration_text,
+            frame_text=frame_text,
+        )
+
+    def _current_astrostack_snr_chart_overlay(self) -> ImageChartOverlayPanel:
+
+        total_frame_count = len(getattr(self, "_astrostack_frame_paths", []))
+
+        if not self._astrostack_snr_frame_indices or not self._astrostack_snr_values:
+
+            return ImageChartOverlayPanel(
+                title="Stack SNR",
+                line_chart=ImageInfoLineChart("Stacked frames", "SNR", (), ()),
+                integration_text="--",
+                frame_text=f"0/{total_frame_count}",
+            )
+
+        return self._build_astrostack_snr_chart_overlay(
+            frame_indices=self._astrostack_snr_frame_indices,
+            snr_values=self._astrostack_snr_values,
+            highlight_index=self._astrostack_snr_highlight_index,
+            total_frame_count=total_frame_count,
+        )
+
+    def _handle_astrostack_crop_button_clicked(self) -> None:
+
+        if self._astrostack_roi_selections or self._astrostack_active_roi_selection:
+
+            self._clear_astrostack_roi_selection()
+
+            self._astrostack_crop_mode_active = False
+
+            self._sync_astrostack_crop_button()
+
+            return
+
+        self._astrostack_crop_mode_active = not self._astrostack_crop_mode_active
+
+        if not self._astrostack_crop_mode_active:
+
+            self._astrostack_roi_drag_origin = None
+
+            self._astrostack_active_roi_selection = None
+
+            self._refresh_astrostack_roi_draft_preview(update_controls=False)
+
+        self._sync_astrostack_crop_button()
 
     def _sync_astrostack_image_display_controls(self) -> None:
 
@@ -27481,7 +33197,7 @@ class MainWindow(QMainWindow):
 
         self._astrostack_image_view.reset_view()
 
-        self.statusBar().showMessage("Reset Astrostack image view.", 3000)
+        self.statusBar().showMessage("Reset Deep Stack image view.", 3000)
 
     def _reset_astrostack_image_display_controls(self) -> None:
 
@@ -27491,7 +33207,7 @@ class MainWindow(QMainWindow):
 
         self._sync_astrostack_image_display_controls()
 
-        self.statusBar().showMessage("Reset Astrostack image display controls.", 3000)
+        self.statusBar().showMessage("Reset Deep Stack image display controls.", 3000)
 
     def _open_astrostack_levels_dialog(self) -> None:
 
@@ -27507,7 +33223,7 @@ class MainWindow(QMainWindow):
 
         except Exception as exc:
 
-            QMessageBox.warning(self, "Curves unavailable", f"Could not prepare the Astrostack preview for curve adjustment.\n\n{exc}")
+            QMessageBox.warning(self, "Curves unavailable", f"Could not prepare the Deep Stack preview for curve adjustment.\n\n{exc}")
 
             return
 
@@ -27535,65 +33251,341 @@ class MainWindow(QMainWindow):
 
     def _current_astrostack_roi_mode(self) -> str:
 
-        roi_mode = self._astrostack_roi_mode_combo.currentData()
+        return "rectangle"
 
-        return str(roi_mode) if isinstance(roi_mode, str) and roi_mode else "rectangle"
+    def _handle_astrostack_image_pressed(self, image_x: float, image_y: float, button: object, _modifiers: object) -> None:
 
-    def _handle_astrostack_image_pressed(self, image_x: float, image_y: float, _button: object, modifiers: object) -> None:
-
-        if not bool(modifiers & Qt.KeyboardModifier.ShiftModifier):
+        if self._coerce_mouse_button(button) != Qt.MouseButton.LeftButton:
 
             return
 
-        roi_mode = self._current_astrostack_roi_mode()
+        if self._astrostack_crop_mode_active:
 
-        if roi_mode != "rectangle":
+            self._astrostack_roi_selections = []
+
+            self._astrostack_roi_drag_origin = (float(image_x), float(image_y))
+
+            self._astrostack_active_roi_selection = _HrRoiSelection(
+                "rectangle",
+                float(image_x),
+                float(image_y),
+                float(image_x),
+                float(image_y),
+                mode="include",
+            )
+
+            self._refresh_astrostack_roi_draft_preview(update_controls=False)
 
             return
 
-        self._astrostack_roi_selections = []
+        active_tool = str(getattr(self, "_astrostack_annotation_tool", "hand"))
 
-        self._astrostack_roi_drag_origin = (float(image_x), float(image_y))
+        if active_tool == "hand":
 
-        self._astrostack_active_roi_selection = _HrRoiSelection(
-            roi_mode,
-            float(image_x),
-            float(image_y),
-            float(image_x),
-            float(image_y),
-            mode="include",
-        )
+            return
 
-        self._refresh_astrostack_roi_draft_preview(update_controls=False)
+        if active_tool == "mouse":
+
+            selected_layer = self._astrostack_layer_by_id(self._selected_astrostack_layer_id)
+
+            target_layer = selected_layer
+
+            operation = self._astrostack_layer_handle_at(selected_layer, image_x, image_y) if selected_layer is not None else None
+
+            if operation is None:
+
+                target_layer = self._astrostack_layer_at(image_x, image_y)
+
+                if target_layer is not None:
+
+                    operation = self._astrostack_layer_handle_at(target_layer, image_x, image_y) or "move"
+
+            if target_layer is not None and operation is not None:
+
+                self._select_astrostack_layer(target_layer.layer_id, refresh=False)
+
+                self._astrostack_overlay_layer_drag = _AstrostackOverlayLayerDrag(
+                    layer_id=target_layer.layer_id,
+                    operation=operation,
+                    origin_x=float(image_x),
+                    origin_y=float(image_y),
+                    initial_layer=target_layer,
+                )
+
+                self._refresh_astrostack_image_view(reset_view=False)
+
+            return
+
+        if active_tool == "text":
+
+            self._pending_astrostack_text_layer_position = (float(image_x), float(image_y))
+
+            self._pending_astrostack_text_layer_dragged = False
+
+            return
+
+        if active_tool == "plot":
+
+            self._start_astrostack_drawn_layer("plot", image_x, image_y)
+
+            return
+
+        if active_tool in {"function_signal", "function_noise"}:
+
+            self._add_astrostack_function_layer_from_tool(image_x, image_y, active_tool)
+
+            return
+
+        if active_tool == "signal":
+
+            self._astrostack_measure_region_drag_origin = (float(image_x), float(image_y))
+
+            self._astrostack_active_measure_region = _HrRoiSelection(
+                "rectangle",
+                float(image_x),
+                float(image_y),
+                float(image_x),
+                float(image_y),
+                mode="signal",
+            )
+
+            self._refresh_astrostack_measure_region_preview(update_controls=False)
+
+            return
+
+        if active_tool == "background":
+
+            self._astrostack_measure_region_drag_origin = (float(image_x), float(image_y))
+
+            self._astrostack_active_measure_region = _HrRoiSelection(
+                "rectangle",
+                float(image_x),
+                float(image_y),
+                float(image_x),
+                float(image_y),
+                mode="background",
+            )
+
+            self._refresh_astrostack_measure_region_preview(update_controls=False)
+
+            return
+
+        shape = "rectangle" if active_tool == "rectangle" else "circle"
+
+        self._start_astrostack_drawn_layer(shape, image_x, image_y)
 
     def _handle_astrostack_image_moved(self, image_x: float, image_y: float, buttons: object, _modifiers: object) -> None:
 
-        if self._astrostack_roi_drag_origin is None or not (buttons & Qt.MouseButton.LeftButton):
+        if not bool(self._coerce_mouse_buttons(buttons) & Qt.MouseButton.LeftButton):
 
             return
 
-        roi_mode = self._current_astrostack_roi_mode()
+        if self._astrostack_crop_mode_active and self._astrostack_roi_drag_origin is not None:
 
-        if roi_mode != "rectangle":
+            origin_x, origin_y = self._astrostack_roi_drag_origin
+
+            self._astrostack_active_roi_selection = _HrRoiSelection(
+                "rectangle",
+                origin_x,
+                origin_y,
+                float(image_x),
+                float(image_y),
+                mode="include",
+            )
+
+            self._refresh_astrostack_roi_draft_preview(update_controls=False)
 
             return
 
-        origin_x, origin_y = self._astrostack_roi_drag_origin
+        if self._astrostack_measure_region_drag_origin is not None:
 
-        self._astrostack_active_roi_selection = _HrRoiSelection(
-            roi_mode,
-            origin_x,
-            origin_y,
-            float(image_x),
-            float(image_y),
-            mode="include",
-        )
+            origin_x, origin_y = self._astrostack_measure_region_drag_origin
 
-        self._refresh_astrostack_roi_draft_preview(update_controls=False)
+            active_region = self._astrostack_active_measure_region
+
+            mode = str(active_region.mode if active_region is not None else "signal")
+
+            self._astrostack_active_measure_region = _HrRoiSelection(
+                "rectangle",
+                origin_x,
+                origin_y,
+                float(image_x),
+                float(image_y),
+                mode=mode,
+            )
+
+            self._refresh_astrostack_measure_region_preview(update_controls=False)
+
+            return
+
+        drag = self._astrostack_overlay_layer_drag
+
+        if drag is None:
+
+            pending_text_position = self._pending_astrostack_text_layer_position
+
+            if pending_text_position is not None and math.hypot(float(image_x) - pending_text_position[0], float(image_y) - pending_text_position[1]) > 2.0:
+
+                self._pending_astrostack_text_layer_dragged = True
+
+            return
+
+        drag.drag_started = True
+
+        initial_layer = drag.initial_layer
+
+        delta_x = float(image_x) - float(drag.origin_x)
+
+        delta_y = float(image_y) - float(drag.origin_y)
+
+        operation = drag.operation
+
+        if operation == "move":
+
+            if initial_layer.shape in {"rectangle", "plot"}:
+
+                updated_layer = replace(
+                    initial_layer,
+                    x=float(initial_layer.x) + delta_x,
+                    y=float(initial_layer.y) + delta_y,
+                    x2=float(initial_layer.x2) + delta_x,
+                    y2=float(initial_layer.y2) + delta_y,
+                )
+
+            else:
+
+                updated_layer = replace(
+                    initial_layer,
+                    x=float(initial_layer.x) + delta_x,
+                    y=float(initial_layer.y) + delta_y,
+                )
+
+        elif operation in {"draw_circle", "resize_radius"}:
+
+            radius = max(2.0, math.hypot(float(image_x) - float(initial_layer.x), float(image_y) - float(initial_layer.y)))
+
+            updated_layer = replace(initial_layer, radius=radius)
+
+        elif operation == "draw_rectangle":
+
+            updated_layer = replace(initial_layer, x2=float(image_x), y2=float(image_y))
+
+        elif operation == "resize_nw":
+
+            updated_layer = replace(initial_layer, x=float(image_x), y=float(image_y))
+
+        elif operation == "resize_ne":
+
+            updated_layer = replace(initial_layer, x2=float(image_x), y=float(image_y))
+
+        elif operation == "resize_sw":
+
+            updated_layer = replace(initial_layer, x=float(image_x), y2=float(image_y))
+
+        elif operation == "resize_se":
+
+            updated_layer = replace(initial_layer, x2=float(image_x), y2=float(image_y))
+
+        else:
+
+            return
+
+        if updated_layer.shape in {"rectangle", "plot"}:
+
+            updated_layer = self._normalize_astrostack_rect_layer(updated_layer)
+
+        self._replace_astrostack_overlay_layer(updated_layer)
+
+        drag.initial_layer = updated_layer
+
+        drag.origin_x = float(image_x)
+
+        drag.origin_y = float(image_y)
+
+        self._sync_astrostack_layer_list_widget()
+
+        self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
 
     def _handle_astrostack_image_released(self, button: object, _modifiers: object) -> None:
 
-        if button != Qt.MouseButton.LeftButton or self._astrostack_roi_drag_origin is None:
+        if self._coerce_mouse_button(button) != Qt.MouseButton.LeftButton:
+
+            return
+
+        drag = self._astrostack_overlay_layer_drag
+
+        if drag is not None:
+
+            self._astrostack_overlay_layer_drag = None
+
+            if drag.created_layer and not drag.drag_started:
+
+                self._remove_astrostack_overlay_layer_by_id(drag.layer_id)
+
+                self._sync_astrostack_layer_list_widget()
+
+                self._refresh_astrostack_image_view(reset_view=False)
+
+                return
+
+            if drag.created_layer:
+
+                self.statusBar().showMessage("Added Deep Stack overlay layer.", 3500)
+
+            return
+
+        pending_text_position = self._pending_astrostack_text_layer_position
+
+        pending_text_dragged = self._pending_astrostack_text_layer_dragged
+
+        self._pending_astrostack_text_layer_position = None
+
+        self._pending_astrostack_text_layer_dragged = False
+
+        if pending_text_position is not None and not pending_text_dragged:
+
+            QTimer.singleShot(
+                0,
+                lambda image_x=pending_text_position[0], image_y=pending_text_position[1]: self._add_astrostack_text_layer_from_tool(image_x, image_y),
+            )
+
+            return
+
+        if self._astrostack_measure_region_drag_origin is not None:
+
+            self._astrostack_measure_region_drag_origin = None
+
+            active_region = self._astrostack_active_measure_region
+
+            if active_region is not None and self._astrostack_roi_selection_has_area(active_region):
+
+                committed_region = self._astrostack_measure_region_to_full_image(active_region)
+
+                if str(active_region.mode) == "background":
+
+                    self._astrostack_background_region = committed_region
+
+                else:
+
+                    self._astrostack_signal_region = committed_region
+
+            self._astrostack_active_measure_region = None
+
+            self._refresh_astrostack_snr_curve_preview()
+
+            self._refresh_astrostack_measure_region_preview(update_controls=True)
+
+            self._sync_astrostack_layer_list_widget()
+
+            self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+
+            region_label = "Background" if active_region is not None and str(active_region.mode) == "background" else "Signal"
+
+            self.statusBar().showMessage(f"Updated Deep Stack {region_label} measurement region.", 5000)
+
+            return
+
+        if self._astrostack_roi_drag_origin is None:
 
             return
 
@@ -27605,7 +33597,13 @@ class MainWindow(QMainWindow):
 
         self._astrostack_active_roi_selection = None
 
+        self._astrostack_crop_mode_active = False
+
         self._refresh_astrostack_roi_draft_preview(update_controls=True)
+
+        if self._astrostack_roi_selections:
+
+            self._refresh_astrostack_image_view(reset_view=True)
 
     def _clear_astrostack_roi_selection(self) -> None:
 
@@ -27615,7 +33613,13 @@ class MainWindow(QMainWindow):
 
         self._astrostack_roi_drag_origin = None
 
+        self._astrostack_crop_mode_active = False
+
+        self._clear_astrostack_cropped_display_cache()
+
         self._refresh_astrostack_roi_draft_preview(update_controls=True)
+
+        self._refresh_astrostack_image_view(reset_view=True)
 
     def _refresh_astrostack_roi_draft_preview(self, *, update_controls: bool = True) -> None:
 
@@ -27629,8 +33633,6 @@ class MainWindow(QMainWindow):
 
             self._sync_astrostack_controls()
 
-            self._update_astrostack_status_label()
-
     def _astrostack_roi_selection_has_area(self, selection: _HrRoiSelection) -> bool:
 
         if selection.shape == "circle":
@@ -27643,11 +33645,9 @@ class MainWindow(QMainWindow):
 
     def _current_astrostack_selection_overlays(self) -> list[SelectionOverlay]:
 
-        overlays = [self._astrostack_selection_overlay_for(selection) for selection in self._astrostack_roi_selections]
+        overlays = list(self._current_astrostack_measurement_selection_overlays())
 
-        if self._astrostack_active_roi_selection is not None:
-
-            overlays.append(self._astrostack_selection_overlay_for(self._astrostack_active_roi_selection, active=True))
+        overlays.extend(self._current_astrostack_crop_selection_overlays())
 
         return overlays
 
@@ -27662,32 +33662,6 @@ class MainWindow(QMainWindow):
             x1=selection.x1,
             y1=selection.y1,
             color=color,
-        )
-
-    def _update_astrostack_status_label(self) -> None:
-
-        if not hasattr(self, "_astrostack_status_label"):
-
-            return
-
-        if self._current_astrostack_root_path is None or not self._astrostack_frame_paths:
-
-            self._astrostack_status_label.setText(
-                "Open a folder of plate-solved frames. Use Shift-drag on the image to define an optional rectangular ROI; if no ROI is defined the full aligned frame is stacked."
-            )
-
-            return
-
-        roi_description = "full frame"
-
-        if self._astrostack_roi_selections:
-
-            selection = self._astrostack_roi_selections[-1]
-
-            roi_description = f"{selection.shape} ROI"
-
-        self._astrostack_status_label.setText(
-            f"Loaded {len(self._astrostack_frame_paths)} frame(s) from {self._current_astrostack_root_path}. Shift-drag to set an optional {roi_description} for the cumulative stack export."
         )
 
     def _create_transient_finder_panel(self) -> QWidget:
@@ -27745,7 +33719,7 @@ class MainWindow(QMainWindow):
         for column_index, column_width in enumerate((92, 118, 118, 70, 96, 190, 168, 168, 120, 130)):
             self._transient_results_table.setColumnWidth(column_index, column_width)
         self._transient_results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._transient_results_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._transient_results_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._transient_results_table.setSortingEnabled(True)
         self._transient_results_table.itemSelectionChanged.connect(self._handle_transient_result_selection_changed)
         self._transient_training_label_combo = QComboBox()
@@ -27767,6 +33741,10 @@ class MainWindow(QMainWindow):
         self._transient_train_model_button.clicked.connect(self._train_transient_candidate_model)
         self._transient_training_status_label = QLabel(self._candidate_training_store.training_summary(TRAINING_MODE_TRANSIENT))
         self._transient_training_status_label.setWordWrap(True)
+        self._transient_training_label_combo.hide()
+        self._transient_save_label_button.hide()
+        self._transient_quick_label_button.hide()
+        self._transient_training_status_label.hide()
         self._transient_steps_output = QPlainTextEdit()
         self._transient_steps_output.setReadOnly(True)
         self._transient_steps_output.setPlaceholderText("Transient Finder progress and summary notes will appear here.")
@@ -27789,7 +33767,11 @@ class MainWindow(QMainWindow):
         self._transient_image_reset_display_button = QPushButton("Reset")
         self._transient_image_reset_display_button.clicked.connect(self._reset_transient_image_display_controls)
         self._transient_center_candidate_button = QPushButton("Center Candidate")
-        self._transient_center_candidate_button.clicked.connect(self._center_selected_transient_candidate)
+        self._transient_center_candidate_button.setCheckable(True)
+        self._transient_center_candidate_button.setToolTip(
+            "When enabled, automatically center the image on the currently selected transient candidate."
+        )
+        self._transient_center_candidate_button.toggled.connect(self._handle_transient_center_candidate_toggled)
         self._transient_blink_button = QPushButton("Blink")
         self._transient_blink_button.setCheckable(True)
         self._transient_blink_button.toggled.connect(self._handle_transient_blink_toggled)
@@ -27802,34 +33784,47 @@ class MainWindow(QMainWindow):
         self._transient_blink_interval_combo.currentIndexChanged.connect(self._handle_transient_blink_interval_changed)
         self._transient_export_blink_button = QPushButton("Export Blink")
         self._transient_export_blink_button.clicked.connect(self._export_transient_blink_animation)
+        self._transient_display_section_label = self._create_differential_section_menu_button("Display")
+        self._transient_display_controls_group = self._create_display_menu_content(
+            self._transient_image_stretch_combo,
+            self._transient_adjust_levels_button,
+            self._transient_image_invert_checkbox,
+            trailing_widgets=(self._transient_image_reset_display_button,),
+        )
+        self._transient_display_section_menu = self._create_differential_section_menu(
+            self._transient_display_section_label,
+            self._transient_display_controls_group,
+        )
+        self._transient_info_panel_toggle_button = QPushButton()
+        self._transient_info_panel_toggle_button.clicked.connect(self._toggle_transient_info_panel)
+        self._update_transient_info_panel_toggle_button()
+        self._transient_info_panel_visible = True
         self._transient_image_view = AnnotatedImageView(self)
         self._transient_image_view.set_message("Open a transient folder to preview candidate source frames.")
 
         workflow_row = QHBoxLayout()
         workflow_row.setSpacing(8)
+        self._transient_header_layout = workflow_row
         workflow_row.addWidget(self._transient_search_button)
-        workflow_row.addWidget(QLabel("Frame"))
-        workflow_row.addWidget(self._transient_frame_input, stretch=1)
+        workflow_row.addWidget(self._transient_train_model_button)
         workflow_row.addWidget(QLabel("Min Frames"))
         workflow_row.addWidget(self._transient_min_frames_spin)
         workflow_row.addWidget(QLabel("Threshold"))
         workflow_row.addWidget(self._transient_detection_sigma_spin)
         workflow_row.addWidget(QLabel("ROI"))
         workflow_row.addWidget(self._transient_roi_margin_spin)
+        workflow_row.addStretch(1)
+        self._transient_frame_input.hide()
 
-        results_group = QGroupBox("Candidate Transients")
+        self._transient_results_group = QWidget()
+        self._transient_results_group.setObjectName("transientResultsCard")
+        self._transient_results_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._transient_results_group.setMinimumWidth(0)
         results_layout = QVBoxLayout()
-        training_row = QHBoxLayout()
-        training_row.setSpacing(6)
-        training_row.addWidget(QLabel("Training Label"))
-        training_row.addWidget(self._transient_training_label_combo)
-        training_row.addWidget(self._transient_save_label_button)
-        training_row.addWidget(self._transient_quick_label_button)
-        training_row.addWidget(self._transient_train_model_button)
-        training_row.addWidget(self._transient_training_status_label, stretch=1)
-        results_layout.addLayout(training_row)
+        results_layout.setContentsMargins(12, 10, 12, 12)
+        results_layout.setSpacing(8)
         results_layout.addWidget(self._transient_results_table)
-        results_group.setLayout(results_layout)
+        self._transient_results_group.setLayout(results_layout)
 
         self._transient_results_tabs = QTabWidget()
         self._transient_results_tabs.setDocumentMode(True)
@@ -27838,45 +33833,85 @@ class MainWindow(QMainWindow):
         self._transient_results_tabs.setCurrentIndex(0)
 
         self._transient_results_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._transient_results_splitter.setChildrenCollapsible(False)
-        self._transient_results_splitter.addWidget(results_group)
+        self._transient_results_splitter.setChildrenCollapsible(True)
+        self._transient_results_splitter.addWidget(self._transient_results_group)
         self._transient_results_splitter.addWidget(self._transient_results_tabs)
+        self._transient_results_tabs.setMinimumHeight(0)
         self._transient_results_splitter.setStretchFactor(0, 4)
         self._transient_results_splitter.setStretchFactor(1, 2)
         self._transient_results_splitter.setSizes([460, 240])
+        self._transient_results_splitter.splitterMoved.connect(self._handle_transient_splitter_sizes_changed)
 
-        image_group = QGroupBox("Transient Image View")
-        image_layout = QVBoxLayout()
+        self._transient_results_panel_restore_handle = QPushButton("▲  Work Log · Inspector")
+        self._transient_results_panel_restore_handle.setFlat(True)
+        self._transient_results_panel_restore_handle.setCursor(Qt.CursorShape.SizeVerCursor)
+        self._transient_results_panel_restore_handle.setToolTip(
+            "The lower details panel is hidden. Click here or drag the splitter handle up from the bottom edge to restore it."
+        )
+        self._transient_results_panel_restore_handle.clicked.connect(self._restore_transient_results_panel)
+        self._transient_results_panel_restore_handle.hide()
+
+        self._transient_left_panel = QWidget()
+        left_panel_layout = QVBoxLayout(self._transient_left_panel)
+        left_panel_layout.setContentsMargins(0, 0, 0, 0)
+        left_panel_layout.setSpacing(0)
+        left_panel_layout.addWidget(self._transient_results_splitter, stretch=1)
+        left_panel_layout.addWidget(self._transient_results_panel_restore_handle)
+
+        self._transient_image_group = QWidget()
+        self._transient_image_group.setObjectName("transientImageCard")
+        self._transient_image_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._transient_image_content = QWidget()
+        image_layout = QVBoxLayout(self._transient_image_content)
+        image_layout.setContentsMargins(12, 10, 12, 12)
+        image_layout.setSpacing(8)
         view_controls_layout = QHBoxLayout()
         view_controls_layout.setSpacing(6)
-        view_controls_layout.addWidget(QLabel("Stretch"))
-        view_controls_layout.addWidget(self._transient_image_stretch_combo)
-        view_controls_layout.addWidget(self._transient_adjust_levels_button)
-        view_controls_layout.addWidget(self._transient_image_invert_checkbox)
-        view_controls_layout.addWidget(self._transient_image_reset_display_button)
+        self._transient_image_controls_layout = view_controls_layout
+        view_controls_layout.addWidget(self._transient_display_section_label)
         view_controls_layout.addStretch(1)
         view_controls_layout.addWidget(self._transient_center_candidate_button)
         view_controls_layout.addWidget(self._transient_blink_interval_combo)
         view_controls_layout.addWidget(self._transient_blink_button)
         view_controls_layout.addWidget(self._transient_export_blink_button)
+        view_controls_layout.addWidget(self._transient_info_panel_toggle_button)
         image_layout.addLayout(view_controls_layout)
         image_layout.addWidget(self._transient_image_view, stretch=1)
-        image_group.setLayout(image_layout)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
-        splitter.addWidget(self._transient_results_splitter)
-        splitter.addWidget(image_group)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 4)
-        splitter.setSizes([720, 1000])
-        self._transient_main_splitter = splitter
+        self._transient_left_panel_restore_handle = QPushButton("▶  Candidate Transients")
+        self._transient_left_panel_restore_handle.setFlat(True)
+        self._transient_left_panel_restore_handle.setCursor(Qt.CursorShape.SizeHorCursor)
+        self._transient_left_panel_restore_handle.setToolTip(
+            "The results panel is hidden. Click here or drag the splitter handle to the right to restore Candidate Transients, Work Log, and Inspector."
+        )
+        self._transient_left_panel_restore_handle.clicked.connect(self._restore_transient_left_panel)
+        self._transient_left_panel_restore_handle.hide()
+
+        image_group_layout = QHBoxLayout()
+        image_group_layout.setContentsMargins(0, 0, 0, 0)
+        image_group_layout.setSpacing(0)
+        image_group_layout.addWidget(self._transient_left_panel_restore_handle)
+        image_group_layout.addWidget(self._transient_image_content, stretch=1)
+        self._transient_image_group.setLayout(image_group_layout)
+
+        self._transient_main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._transient_main_splitter.addWidget(self._transient_left_panel)
+        self._transient_main_splitter.addWidget(self._transient_image_group)
+        self._transient_main_splitter.setChildrenCollapsible(True)
+        self._transient_main_splitter.setHandleWidth(10)
+        self._transient_main_splitter.setStretchFactor(0, 3)
+        self._transient_main_splitter.setStretchFactor(1, 4)
+        self._transient_main_splitter.setSizes([720, 1000])
+        self._transient_main_splitter.splitterMoved.connect(self._handle_transient_splitter_sizes_changed)
+        self._transient_splitter_settings_sync_enabled = True
 
         layout.addLayout(workflow_row)
         layout.addWidget(self._transient_progress_bar)
-        layout.addWidget(splitter, stretch=1)
+        layout.addWidget(self._transient_main_splitter, stretch=1)
         self._sync_transient_image_display_controls()
         self._sync_transient_image_controls()
+        self._sync_transient_results_panel_restore_handle()
+        self._sync_transient_left_panel_restore_handle()
         panel.setLayout(layout)
         return panel
 
@@ -27904,7 +33939,7 @@ class MainWindow(QMainWindow):
 
         self._sky_view_magnitude_limit_spin.setDecimals(1)
 
-        self._sky_view_magnitude_limit_spin.setRange(-2.0, 12.0)
+        self._sky_view_magnitude_limit_spin.setRange(-2.0, 15.0)
 
         self._sky_view_magnitude_limit_spin.setSingleStep(0.5)
 
@@ -27939,7 +33974,7 @@ class MainWindow(QMainWindow):
         self._sky_view_milky_way_render_mode_combo.addItem("High Detail Milky Way (32k)", "advanced_high_detail")
         self._sky_view_milky_way_render_mode_combo.addItem("Fully Milky Way", "full")
         self._sky_view_milky_way_render_mode_combo.setCurrentIndex(
-            max(0, self._sky_view_milky_way_render_mode_combo.findData("advanced"))
+            max(0, self._sky_view_milky_way_render_mode_combo.findData("full"))
         )
         self._sky_view_milky_way_render_mode_combo.currentIndexChanged.connect(self._handle_sky_view_milky_way_render_mode_changed)
         self._sky_view_milky_way_resolution_combo = QComboBox()
@@ -27950,20 +33985,20 @@ class MainWindow(QMainWindow):
         self._sky_view_milky_way_resolution_combo.setCurrentIndex(max(0, self._sky_view_milky_way_resolution_combo.findData("high")))
         self._sky_view_milky_way_resolution_combo.currentIndexChanged.connect(self._handle_sky_view_milky_way_resolution_changed)
         self._sky_view_milky_way_opacity_slider = QSlider(Qt.Orientation.Horizontal)
-        self._sky_view_milky_way_opacity_slider.setRange(0, 65)
+        self._sky_view_milky_way_opacity_slider.setRange(0, 80)
         self._sky_view_milky_way_opacity_slider.setSingleStep(2)
         self._sky_view_milky_way_opacity_slider.setPageStep(5)
-        self._sky_view_milky_way_opacity_slider.setValue(48)
+        self._sky_view_milky_way_opacity_slider.setValue(65)
         self._sky_view_milky_way_opacity_slider.valueChanged.connect(self._handle_sky_view_milky_way_opacity_changed)
-        self._sky_view_milky_way_opacity_value_label = QLabel("48%")
+        self._sky_view_milky_way_opacity_value_label = QLabel("65%")
         self._sky_view_milky_way_opacity_value_label.setMinimumWidth(40)
         self._sky_view_milky_way_brightness_slider = QSlider(Qt.Orientation.Horizontal)
         self._sky_view_milky_way_brightness_slider.setRange(35, 180)
         self._sky_view_milky_way_brightness_slider.setSingleStep(5)
         self._sky_view_milky_way_brightness_slider.setPageStep(10)
-        self._sky_view_milky_way_brightness_slider.setValue(118)
+        self._sky_view_milky_way_brightness_slider.setValue(130)
         self._sky_view_milky_way_brightness_slider.valueChanged.connect(self._handle_sky_view_milky_way_brightness_changed)
-        self._sky_view_milky_way_brightness_value_label = QLabel("1.18x")
+        self._sky_view_milky_way_brightness_value_label = QLabel("1.30x")
         self._sky_view_milky_way_brightness_value_label.setMinimumWidth(44)
         self._sky_view_milky_way_tone_preset_combo = QComboBox()
         self._sky_view_milky_way_tone_preset_combo.addItem("Atlas", "atlas")
@@ -27976,36 +34011,78 @@ class MainWindow(QMainWindow):
         self._sky_view_milky_way_contrast_slider.setRange(60, 220)
         self._sky_view_milky_way_contrast_slider.setSingleStep(5)
         self._sky_view_milky_way_contrast_slider.setPageStep(10)
-        self._sky_view_milky_way_contrast_slider.setValue(134)
+        self._sky_view_milky_way_contrast_slider.setValue(135)
         self._sky_view_milky_way_contrast_slider.valueChanged.connect(self._handle_sky_view_milky_way_contrast_changed)
-        self._sky_view_milky_way_contrast_value_label = QLabel("1.34x")
+        self._sky_view_milky_way_contrast_value_label = QLabel("1.35x")
         self._sky_view_milky_way_contrast_value_label.setMinimumWidth(44)
         self._sky_view_milky_way_saturation_slider = QSlider(Qt.Orientation.Horizontal)
         self._sky_view_milky_way_saturation_slider.setRange(0, 240)
         self._sky_view_milky_way_saturation_slider.setSingleStep(5)
         self._sky_view_milky_way_saturation_slider.setPageStep(10)
-        self._sky_view_milky_way_saturation_slider.setValue(155)
+        self._sky_view_milky_way_saturation_slider.setValue(200)
         self._sky_view_milky_way_saturation_slider.valueChanged.connect(self._handle_sky_view_milky_way_saturation_changed)
-        self._sky_view_milky_way_saturation_value_label = QLabel("1.55x")
+        self._sky_view_milky_way_saturation_value_label = QLabel("2.00x")
         self._sky_view_milky_way_saturation_value_label.setMinimumWidth(44)
         self._sky_view_milky_way_black_point_slider = QSlider(Qt.Orientation.Horizontal)
         self._sky_view_milky_way_black_point_slider.setRange(0, 25)
         self._sky_view_milky_way_black_point_slider.setSingleStep(1)
         self._sky_view_milky_way_black_point_slider.setPageStep(2)
-        self._sky_view_milky_way_black_point_slider.setValue(3)
+        self._sky_view_milky_way_black_point_slider.setValue(0)
         self._sky_view_milky_way_black_point_slider.valueChanged.connect(self._handle_sky_view_milky_way_black_point_changed)
-        self._sky_view_milky_way_black_point_value_label = QLabel("0.03")
+        self._sky_view_milky_way_black_point_value_label = QLabel("0.00")
         self._sky_view_milky_way_black_point_value_label.setMinimumWidth(44)
         self._sky_view_milky_way_gamma_slider = QSlider(Qt.Orientation.Horizontal)
         self._sky_view_milky_way_gamma_slider.setRange(60, 180)
         self._sky_view_milky_way_gamma_slider.setSingleStep(5)
         self._sky_view_milky_way_gamma_slider.setPageStep(10)
-        self._sky_view_milky_way_gamma_slider.setValue(98)
+        self._sky_view_milky_way_gamma_slider.setValue(105)
         self._sky_view_milky_way_gamma_slider.valueChanged.connect(self._handle_sky_view_milky_way_gamma_changed)
-        self._sky_view_milky_way_gamma_value_label = QLabel("0.98")
+        self._sky_view_milky_way_gamma_value_label = QLabel("1.05x")
         self._sky_view_milky_way_gamma_value_label.setMinimumWidth(44)
         self._sky_view_milky_way_flip_checkbox = QCheckBox("Flip texture")
         self._sky_view_milky_way_flip_checkbox.toggled.connect(self._handle_sky_view_milky_way_flip_toggled)
+        self._sky_view_custom_overlay_enabled_checkbox = QCheckBox("Show custom sky overlays")
+        self._sky_view_custom_overlay_enabled_checkbox.setChecked(False)
+        self._sky_view_custom_overlay_enabled_checkbox.toggled.connect(self._handle_sky_view_custom_overlay_enabled_toggled)
+        self._sky_view_custom_overlay_edit_surveys_button = QPushButton("Edit Surveys")
+        self._sky_view_custom_overlay_edit_surveys_button.clicked.connect(self._open_sky_view_custom_overlay_surveys_dialog)
+        self._sky_view_custom_overlay_survey_combo = QComboBox()
+        self._sky_view_custom_overlay_survey_combo.setMinimumWidth(180)
+        self._sky_view_custom_overlay_survey_combo.currentIndexChanged.connect(
+            self._handle_sky_view_custom_overlay_survey_combo_changed
+        )
+        self._sky_view_custom_overlay_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._sky_view_custom_overlay_opacity_slider.setRange(0, 100)
+        self._sky_view_custom_overlay_opacity_slider.setSingleStep(2)
+        self._sky_view_custom_overlay_opacity_slider.setPageStep(5)
+        self._sky_view_custom_overlay_opacity_slider.setValue(85)
+        self._sky_view_custom_overlay_opacity_slider.valueChanged.connect(self._handle_sky_view_custom_overlay_opacity_changed)
+        self._sky_view_custom_overlay_opacity_value_label = QLabel("85%")
+        self._sky_view_custom_overlay_opacity_value_label.setMinimumWidth(40)
+        self._sky_view_custom_overlay_brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        self._sky_view_custom_overlay_brightness_slider.setRange(35, 200)
+        self._sky_view_custom_overlay_brightness_slider.setSingleStep(5)
+        self._sky_view_custom_overlay_brightness_slider.setPageStep(10)
+        self._sky_view_custom_overlay_brightness_slider.setValue(100)
+        self._sky_view_custom_overlay_brightness_slider.valueChanged.connect(self._handle_sky_view_custom_overlay_brightness_changed)
+        self._sky_view_custom_overlay_brightness_value_label = QLabel("1.00x")
+        self._sky_view_custom_overlay_brightness_value_label.setMinimumWidth(44)
+        self._sky_view_custom_overlay_saturation_slider = QSlider(Qt.Orientation.Horizontal)
+        self._sky_view_custom_overlay_saturation_slider.setRange(0, 240)
+        self._sky_view_custom_overlay_saturation_slider.setSingleStep(5)
+        self._sky_view_custom_overlay_saturation_slider.setPageStep(10)
+        self._sky_view_custom_overlay_saturation_slider.setValue(100)
+        self._sky_view_custom_overlay_saturation_slider.valueChanged.connect(self._handle_sky_view_custom_overlay_saturation_changed)
+        self._sky_view_custom_overlay_saturation_value_label = QLabel("1.00x")
+        self._sky_view_custom_overlay_saturation_value_label.setMinimumWidth(44)
+        self._sky_view_custom_overlay_feather_slider = QSlider(Qt.Orientation.Horizontal)
+        self._sky_view_custom_overlay_feather_slider.setRange(0, 100)
+        self._sky_view_custom_overlay_feather_slider.setSingleStep(2)
+        self._sky_view_custom_overlay_feather_slider.setPageStep(5)
+        self._sky_view_custom_overlay_feather_slider.setValue(0)
+        self._sky_view_custom_overlay_feather_slider.valueChanged.connect(self._handle_sky_view_custom_overlay_feather_changed)
+        self._sky_view_custom_overlay_feather_value_label = QLabel("0%")
+        self._sky_view_custom_overlay_feather_value_label.setMinimumWidth(40)
         self._sky_view_constellation_enabled_checkbox = QCheckBox("Constellations")
         self._sky_view_constellation_enabled_checkbox.setChecked(False)
         self._sky_view_constellation_enabled_checkbox.toggled.connect(self._handle_sky_view_constellation_enabled_toggled)
@@ -28447,6 +34524,59 @@ class MainWindow(QMainWindow):
 
         self._sky_view_options_menu.addAction(self._sky_view_options_menu_action)
 
+        custom_overlay_menu = QMenu(panel)
+        self._sky_view_custom_overlay_menu = custom_overlay_menu
+        self._sky_view_custom_overlay_menu.aboutToShow.connect(lambda: self._set_sky_view_popup_active(True))
+        self._sky_view_custom_overlay_menu.aboutToHide.connect(lambda: self._set_sky_view_popup_active(False))
+        custom_overlay_menu_widget = QWidget(custom_overlay_menu)
+        custom_overlay_menu_widget.setObjectName("skyViewPopupCard")
+        custom_overlay_menu_layout = QVBoxLayout()
+        custom_overlay_menu_layout.setContentsMargins(12, 10, 12, 10)
+        custom_overlay_menu_layout.setSpacing(8)
+        custom_overlay_header = QLabel("Custom Sky Map")
+        custom_overlay_header.setStyleSheet("font-weight: 600;")
+        custom_overlay_menu_layout.addWidget(custom_overlay_header)
+        custom_overlay_menu_layout.addWidget(self._sky_view_custom_overlay_enabled_checkbox)
+        custom_overlay_menu_layout.addWidget(self._sky_view_custom_overlay_edit_surveys_button)
+        custom_overlay_survey_row = QHBoxLayout()
+        custom_overlay_survey_row.setContentsMargins(0, 0, 0, 0)
+        custom_overlay_survey_row.setSpacing(8)
+        custom_overlay_survey_row.addWidget(QLabel("Survey"))
+        custom_overlay_survey_row.addWidget(self._sky_view_custom_overlay_survey_combo, 1)
+        custom_overlay_menu_layout.addLayout(custom_overlay_survey_row)
+        custom_overlay_opacity_row = QHBoxLayout()
+        custom_overlay_opacity_row.setContentsMargins(0, 0, 0, 0)
+        custom_overlay_opacity_row.setSpacing(8)
+        custom_overlay_opacity_row.addWidget(QLabel("Opacity"))
+        custom_overlay_opacity_row.addWidget(self._sky_view_custom_overlay_opacity_slider, 1)
+        custom_overlay_opacity_row.addWidget(self._sky_view_custom_overlay_opacity_value_label)
+        custom_overlay_menu_layout.addLayout(custom_overlay_opacity_row)
+        custom_overlay_brightness_row = QHBoxLayout()
+        custom_overlay_brightness_row.setContentsMargins(0, 0, 0, 0)
+        custom_overlay_brightness_row.setSpacing(8)
+        custom_overlay_brightness_row.addWidget(QLabel("Brightness"))
+        custom_overlay_brightness_row.addWidget(self._sky_view_custom_overlay_brightness_slider, 1)
+        custom_overlay_brightness_row.addWidget(self._sky_view_custom_overlay_brightness_value_label)
+        custom_overlay_menu_layout.addLayout(custom_overlay_brightness_row)
+        custom_overlay_saturation_row = QHBoxLayout()
+        custom_overlay_saturation_row.setContentsMargins(0, 0, 0, 0)
+        custom_overlay_saturation_row.setSpacing(8)
+        custom_overlay_saturation_row.addWidget(QLabel("Saturation"))
+        custom_overlay_saturation_row.addWidget(self._sky_view_custom_overlay_saturation_slider, 1)
+        custom_overlay_saturation_row.addWidget(self._sky_view_custom_overlay_saturation_value_label)
+        custom_overlay_menu_layout.addLayout(custom_overlay_saturation_row)
+        custom_overlay_feather_row = QHBoxLayout()
+        custom_overlay_feather_row.setContentsMargins(0, 0, 0, 0)
+        custom_overlay_feather_row.setSpacing(8)
+        custom_overlay_feather_row.addWidget(QLabel("Feather"))
+        custom_overlay_feather_row.addWidget(self._sky_view_custom_overlay_feather_slider, 1)
+        custom_overlay_feather_row.addWidget(self._sky_view_custom_overlay_feather_value_label)
+        custom_overlay_menu_layout.addLayout(custom_overlay_feather_row)
+        custom_overlay_menu_widget.setLayout(custom_overlay_menu_layout)
+        self._sky_view_custom_overlay_menu_action = QWidgetAction(self)
+        self._sky_view_custom_overlay_menu_action.setDefaultWidget(custom_overlay_menu_widget)
+        self._sky_view_custom_overlay_menu.addAction(self._sky_view_custom_overlay_menu_action)
+
         date_time_menu = QMenu(panel)
 
         self._sky_view_date_time_menu = date_time_menu
@@ -28680,6 +34810,16 @@ class MainWindow(QMainWindow):
         self._sky_view_ground_button.toggled.connect(self._handle_sky_view_ground_toggled)
         dock_layout.addWidget(self._sky_view_ground_button)
 
+        self._sky_view_custom_overlay_button = QToolButton(dock_widget)
+        self._sky_view_custom_overlay_button.setToolTip("Custom sky map overlays")
+        self._sky_view_custom_overlay_button.clicked.connect(self._show_sky_view_custom_overlay_popup)
+        dock_layout.addWidget(self._sky_view_custom_overlay_button)
+
+        self._sky_view_settings_button = QToolButton(dock_widget)
+        self._sky_view_settings_button.setToolTip("Sky Atlas settings")
+        self._sky_view_settings_button.clicked.connect(self._show_sky_atlas_settings_dialog)
+        dock_layout.addWidget(self._sky_view_settings_button)
+
         self._sky_view_options_button = QToolButton(dock_widget)
 
         self._sky_view_options_button.setToolTip("Sky View options")
@@ -28701,6 +34841,8 @@ class MainWindow(QMainWindow):
             self._sky_view_alt_az_grid_button,
             self._sky_view_constellation_button,
             self._sky_view_ground_button,
+            self._sky_view_custom_overlay_button,
+            self._sky_view_settings_button,
             self._sky_view_options_button,
             self._sky_view_full_screen_button,
         ):
@@ -28718,6 +34860,8 @@ class MainWindow(QMainWindow):
         self._sky_view_canvas.set_objects(self._sky_view_catalog_objects)
         self._sync_sky_view_moon_debug_controls_from_canvas()
         self._sync_sky_view_canvas_context()
+        self._apply_sky_view_custom_overlay_settings_from_disk()
+        self._apply_sky_atlas_display_settings_from_disk()
 
         self._sky_view_moon_debug_cycle_shortcut = QShortcut(QKeySequence("Ctrl+Shift+M"), panel)
         self._sky_view_moon_debug_cycle_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -29177,11 +35321,31 @@ class MainWindow(QMainWindow):
 
         return altitude_deg, azimuth_deg
 
-    def _ensure_sky_view_scientific_catalog_loaded(self) -> None:
+    def _sky_view_catalog_progress(self, message: str, percent: float | None) -> None:
 
-        if self._sky_view_scientific_catalog_loaded:
+        if hasattr(self, "_sky_view_status_label"):
 
-            return
+            self._sky_view_status_label.setText(str(message))
+
+        progress_dialog = getattr(self, "_sky_view_catalog_progress_dialog", None)
+
+        if progress_dialog is not None:
+
+            progress_dialog.setLabelText(str(message))
+
+            if percent is None:
+
+                progress_dialog.setRange(0, 0)
+
+            else:
+
+                progress_dialog.setRange(0, 100)
+
+                progress_dialog.setValue(max(0, min(100, int(round(float(percent))))))
+
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def _ensure_sky_view_scientific_catalog_loaded(self, *, use_wait_cursor: bool = True) -> None:
 
         if self._settings is None:
 
@@ -29189,35 +35353,98 @@ class MainWindow(QMainWindow):
 
             self._settings = AppSettings.from_root(root_path if root_path.exists() else Path.cwd())
 
-        self._sky_view_status_label.setText("Loading the cached Hipparcos sky catalog for Sky View...")
+        display_settings = SkyAtlasDisplaySettings.from_app_settings(self._settings)
+
+        needed_star_limit = max(9.5, float(display_settings.star_magnitude_limit))
+
+        loaded_star_limit = float(getattr(self, "_sky_view_loaded_star_magnitude_limit", 0.0) or 0.0)
+
+        loaded_catalogs = frozenset(getattr(self, "_sky_view_loaded_deep_sky_catalogs", frozenset()) or frozenset())
+
+        needed_catalogs = display_settings.enabled_deep_sky_catalogs()
+
+        catalogs_up_to_date = needed_catalogs.issubset(loaded_catalogs)
+
+        if (
+            self._sky_view_scientific_catalog_loaded
+            and loaded_star_limit + 1.0e-6 >= needed_star_limit
+            and catalogs_up_to_date
+        ):
+
+            return
+
+        self._sky_view_status_label.setText("Loading the cached Hipparcos sky catalog for Sky Atlas...")
 
         self._refresh_sky_view_overlay_geometry()
 
-        QApplication.processEvents()
+        # Avoid a nested paint while the canvas may still be mid-frame / mode-switch.
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        if use_wait_cursor:
+
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        progress_dialog = self._create_sky_view_loading_progress_dialog("Loading Sky Atlas catalogs...")
+
+        progress_dialog.show()
+
+        self._sky_view_catalog_progress_dialog = progress_dialog
+
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
         try:
 
-            self._sky_view_catalog_objects = load_sky_atlas_objects(self._settings.cache_dir, download_if_missing=True)
+            self._sky_view_catalog_objects = load_sky_atlas_objects(
+                application_install_path(),
+                download_if_missing=True,
+                maximum_scientific_magnitude=needed_star_limit,
+                enabled_deep_sky_catalogs=needed_catalogs,
+                progress_callback=self._sky_view_catalog_progress,
+            )
 
             self._sky_view_scientific_catalog_loaded = any(
                 item.catalog.casefold() == "hipparcos" for item in self._sky_view_catalog_objects
             )
 
+            self._sky_view_loaded_star_magnitude_limit = needed_star_limit
+
+            self._sky_view_loaded_deep_sky_catalogs = needed_catalogs
+
             self._sky_view_scientific_catalog_error = None
 
         except Exception as exc:
 
-            self._sky_view_catalog_objects = load_local_sky_atlas_objects()
+            # Keep Messier / packaged targets even when Hipparcos/Tycho download fails.
+            try:
+
+                self._sky_view_catalog_objects = load_sky_atlas_objects(
+                    None,
+                    enabled_deep_sky_catalogs=needed_catalogs,
+                )
+
+            except Exception:
+
+                self._sky_view_catalog_objects = load_local_sky_atlas_objects()
 
             self._sky_view_scientific_catalog_loaded = False
+
+            self._sky_view_loaded_star_magnitude_limit = 0.0
+
+            self._sky_view_loaded_deep_sky_catalogs = frozenset()
 
             self._sky_view_scientific_catalog_error = str(exc).strip() or exc.__class__.__name__
 
         finally:
 
-            QApplication.restoreOverrideCursor()
+            self._sky_view_catalog_progress_dialog = None
+
+            progress_dialog.close()
+
+            progress_dialog.deleteLater()
+
+            if use_wait_cursor:
+
+                QApplication.restoreOverrideCursor()
 
         self._sky_view_canvas.set_objects(self._sky_view_catalog_objects)
 
@@ -29226,6 +35453,92 @@ class MainWindow(QMainWindow):
         self._refresh_sky_view_search_results(select_first=False)
 
         self._refresh_sky_view_overlay_geometry()
+
+        self._sky_view_status_label.setText(self._sky_view_status_summary())
+
+    def _create_sky_view_loading_progress_dialog(self, message: str) -> QProgressDialog:
+
+        progress_dialog = QProgressDialog(message, "", 0, 0, self)
+
+        progress_dialog.setWindowTitle("Sky Atlas")
+
+        progress_dialog.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+
+        progress_dialog.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, False)
+
+        progress_dialog.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
+
+        progress_dialog.setCancelButton(None)
+
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+
+        progress_dialog.setMinimumDuration(0)
+
+        progress_dialog.setRange(0, 0)
+
+        progress_dialog.setAutoClose(False)
+
+        progress_dialog.setAutoReset(False)
+
+        return progress_dialog
+
+    def _prepare_sky_view_mode(self) -> None:
+
+        if not hasattr(self, "_sky_view_canvas"):
+
+            return
+
+        needs_catalog = not self._sky_view_scientific_catalog_loaded
+
+        progress_dialog: QProgressDialog | None = None
+
+        canvas = self._sky_view_canvas
+
+        updates_were_enabled = canvas.updatesEnabled()
+
+        canvas.setUpdatesEnabled(False)
+
+        if needs_catalog:
+
+            progress_dialog = self._create_sky_view_loading_progress_dialog("Loading Sky Atlas...")
+
+            progress_dialog.show()
+
+            QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+        try:
+
+            if progress_dialog is not None:
+
+                progress_dialog.setLabelText("Loading star catalog...")
+
+                QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+            self._ensure_sky_view_scientific_catalog_loaded(use_wait_cursor=False)
+
+            self._sync_sky_view_canvas_context()
+
+            if progress_dialog is not None:
+
+                progress_dialog.setLabelText("Preparing Milky Way textures...")
+
+                QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+            canvas.prepare_startup_milky_way_cache()
+
+        finally:
+
+            if progress_dialog is not None:
+
+                progress_dialog.close()
+
+                progress_dialog.deleteLater()
+
+            canvas.setUpdatesEnabled(updates_were_enabled)
+
+            if updates_were_enabled:
+
+                canvas.update()
 
     def _handle_sky_view_search_changed(self, _value: object) -> None:
 
@@ -29242,6 +35555,9 @@ class MainWindow(QMainWindow):
             query,
             limit=24,
             magnitude_limit=magnitude_limit,
+            deep_sky_magnitude_limit=float(
+                getattr(self._sky_view_canvas, "_object_magnitude_limit", max(16.0, magnitude_limit))
+            ),
         )
 
         special_results = self._sky_view_special_search_results(query, magnitude_limit=magnitude_limit)
@@ -29662,13 +35978,25 @@ class MainWindow(QMainWindow):
 
         render_mode = self._sky_view_milky_way_render_mode_combo.currentData()
 
-        self._sky_view_canvas.set_milky_way_render_mode(str(render_mode) if isinstance(render_mode, str) else "advanced")
+        self._sky_view_canvas.set_milky_way_render_mode(str(render_mode) if isinstance(render_mode, str) else "full")
 
         resolution_mode = self._sky_view_milky_way_resolution_combo.currentData()
 
         self._sky_view_canvas.set_milky_way_resolution_mode(str(resolution_mode) if isinstance(resolution_mode, str) else "high")
 
         self._sky_view_canvas.set_milky_way_flip_horizontal(self._sky_view_milky_way_flip_checkbox.isChecked())
+
+        self._sky_view_canvas.set_custom_sky_overlays_enabled(self._sky_view_custom_overlay_enabled_checkbox.isChecked())
+
+        self._sky_view_canvas.set_custom_sky_overlay_opacity(self._sky_view_custom_overlay_opacity_slider.value() / 100.0)
+
+        self._sky_view_canvas.set_custom_sky_overlay_brightness(self._sky_view_custom_overlay_brightness_slider.value() / 100.0)
+
+        self._sky_view_canvas.set_custom_sky_overlay_saturation(self._sky_view_custom_overlay_saturation_slider.value() / 100.0)
+
+        if hasattr(self, "_sky_view_custom_overlay_feather_slider"):
+
+            self._sky_view_canvas.set_custom_sky_overlay_feather(self._sky_view_custom_overlay_feather_slider.value() / 100.0)
 
         spike_style = self._sky_view_spike_style_combo.currentData()
 
@@ -29678,12 +36006,161 @@ class MainWindow(QMainWindow):
 
             self._apply_sky_view_moon_debug_controls_to_canvas()
 
+    def _show_sky_view_custom_overlay_popup(self) -> None:
+
+        self._refresh_sky_view_custom_overlay_survey_selector()
+
+        self._show_sky_view_popup_menu(self._sky_view_custom_overlay_button, self._sky_view_custom_overlay_menu)
+
     def _show_sky_view_options_popup(self) -> None:
 
         self._show_sky_view_popup_menu(self._sky_view_options_button, self._sky_view_options_menu)
 
 
         self._sync_sky_view_canvas_context()
+
+    def _show_sky_atlas_settings_dialog(self) -> None:
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        dialog = SkyAtlasSettingsDialog(settings, parent=self)
+
+        dialog.settingsChanged.connect(self._handle_sky_atlas_display_settings_preview)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+
+            self._apply_sky_atlas_display_settings_from_disk()
+
+            return
+
+        display_settings = dialog.current_settings()
+
+        self._persist_sky_atlas_display_settings(display_settings)
+
+        self._apply_sky_atlas_display_settings(display_settings, reload_catalogs=True)
+
+    def _handle_sky_atlas_display_settings_preview(self, display_settings: object) -> None:
+
+        if not isinstance(display_settings, SkyAtlasDisplaySettings):
+
+            return
+
+        self._apply_sky_atlas_display_settings(display_settings, reload_catalogs=False)
+
+    def _persist_sky_atlas_display_settings(self, display_settings: SkyAtlasDisplaySettings) -> None:
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        self._settings = replace(
+            settings,
+            sky_atlas_star_magnitude_limit=float(display_settings.star_magnitude_limit),
+            sky_atlas_star_brightness=float(display_settings.star_brightness),
+            sky_atlas_star_size=float(display_settings.star_size),
+            sky_atlas_star_magnitude_size_contrast=float(display_settings.star_magnitude_size_contrast),
+            sky_atlas_star_twinkle=float(display_settings.star_twinkle),
+            sky_atlas_show_messier=bool(display_settings.show_messier),
+            sky_atlas_show_ngc=bool(display_settings.show_ngc),
+            sky_atlas_show_ic=bool(display_settings.show_ic),
+            sky_atlas_show_vdb=bool(display_settings.show_vdb),
+            sky_atlas_show_ldn=bool(display_settings.show_ldn),
+            sky_atlas_show_lbn=bool(display_settings.show_lbn),
+            sky_atlas_object_magnitude_limit=float(display_settings.object_magnitude_limit),
+            sky_atlas_object_label_magnitude_limit=float(display_settings.object_label_magnitude_limit),
+        )
+
+        self._save_settings_snapshot()
+
+    def _apply_sky_atlas_display_settings_from_disk(self) -> None:
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        self._apply_sky_atlas_display_settings(
+            SkyAtlasDisplaySettings.from_app_settings(settings),
+            reload_catalogs=False,
+        )
+
+    def _apply_sky_atlas_display_settings(
+        self,
+        display_settings: SkyAtlasDisplaySettings,
+        *,
+        reload_catalogs: bool,
+    ) -> None:
+
+        if hasattr(self, "_sky_view_canvas") and self._sky_view_canvas is not None:
+
+            self._sky_view_canvas.apply_sky_atlas_display_settings(display_settings)
+
+        if not reload_catalogs or not hasattr(self, "_sky_view_canvas"):
+
+            return
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        progress_dialog = self._create_sky_view_loading_progress_dialog("Updating Sky Atlas catalogs...")
+
+        progress_dialog.show()
+
+        self._sky_view_catalog_progress_dialog = progress_dialog
+
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+        try:
+
+            self._sky_view_catalog_objects = load_sky_atlas_objects(
+                application_install_path(),
+                download_if_missing=True,
+                maximum_scientific_magnitude=max(
+                    9.5,
+                    float(display_settings.star_magnitude_limit),
+                ),
+                enabled_deep_sky_catalogs=display_settings.enabled_deep_sky_catalogs(),
+                progress_callback=self._sky_view_catalog_progress,
+            )
+
+            self._sky_view_scientific_catalog_loaded = any(
+                item.catalog.casefold() == "hipparcos" for item in self._sky_view_catalog_objects
+            )
+
+            self._sky_view_loaded_star_magnitude_limit = max(
+                9.5,
+                float(display_settings.star_magnitude_limit),
+            )
+
+            self._sky_view_loaded_deep_sky_catalogs = display_settings.enabled_deep_sky_catalogs()
+
+            self._sky_view_canvas.set_objects(self._sky_view_catalog_objects)
+
+            if hasattr(self, "_sky_view_magnitude_limit_spin"):
+
+                self._sky_view_magnitude_limit_spin.blockSignals(True)
+
+                self._sky_view_magnitude_limit_spin.setValue(float(display_settings.star_magnitude_limit))
+
+                self._sky_view_magnitude_limit_spin.blockSignals(False)
+
+            self._refresh_sky_view_search_results(select_first=False)
+
+            if hasattr(self, "_sky_view_status_label"):
+
+                self._sky_view_status_label.setText(self._sky_view_status_summary())
+
+        except Exception as exc:
+
+            self._sky_view_scientific_catalog_error = str(exc)
+
+            self.statusBar().showMessage(f"Sky Atlas catalog update failed: {exc}", 6000)
+
+        finally:
+
+            self._sky_view_catalog_progress_dialog = None
+
+            progress_dialog.close()
+
+            progress_dialog.deleteLater()
+
+            QApplication.restoreOverrideCursor()
 
     def _apply_sky_view_observing_site(
         self,
@@ -29951,6 +36428,10 @@ class MainWindow(QMainWindow):
 
         self._sky_view_ground_button.setIcon(self._create_sky_view_toolbar_icon("ground"))
 
+        self._sky_view_custom_overlay_button.setIcon(self._create_sky_view_toolbar_icon("mosaic"))
+
+        self._sky_view_settings_button.setIcon(self._create_sky_view_toolbar_icon("gear"))
+
         self._sky_view_options_button.setIcon(self._create_sky_view_toolbar_icon("options"))
 
         host_window = self.window()
@@ -30053,6 +36534,26 @@ class MainWindow(QMainWindow):
 
             painter.drawEllipse(QRectF(9.5, 15.0, 4.0, 4.0))
 
+        elif normalized_kind == "gear":
+
+            painter.drawEllipse(QRectF(8.2, 8.2, 7.6, 7.6))
+
+            painter.drawEllipse(QRectF(10.4, 10.4, 3.2, 3.2))
+
+            for angle_deg in (0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0):
+
+                angle_rad = math.radians(angle_deg)
+
+                inner_x = 12.0 + math.cos(angle_rad) * 4.6
+
+                inner_y = 12.0 + math.sin(angle_rad) * 4.6
+
+                outer_x = 12.0 + math.cos(angle_rad) * 8.2
+
+                outer_y = 12.0 + math.sin(angle_rad) * 8.2
+
+                painter.drawLine(QPointF(inner_x, inner_y), QPointF(outer_x, outer_y))
+
         elif normalized_kind == "ground":
 
             painter.drawArc(QRectF(4.0, 9.5, 16.0, 8.5), 0, 180 * 16)
@@ -30060,6 +36561,16 @@ class MainWindow(QMainWindow):
             painter.drawLine(QPointF(4.0, 14.0), QPointF(20.0, 14.0))
 
             painter.drawLine(QPointF(12.0, 7.0), QPointF(12.0, 11.0))
+
+        elif normalized_kind == "mosaic":
+
+            painter.drawRoundedRect(QRectF(4.0, 5.0, 7.0, 7.0), 1.2, 1.2)
+
+            painter.drawRoundedRect(QRectF(13.0, 5.0, 7.0, 7.0), 1.2, 1.2)
+
+            painter.drawRoundedRect(QRectF(4.0, 13.0, 7.0, 7.0), 1.2, 1.2)
+
+            painter.drawRoundedRect(QRectF(13.0, 13.0, 7.0, 7.0), 1.2, 1.2)
 
         elif normalized_kind == "equatorial-grid":
 
@@ -30227,6 +36738,364 @@ class MainWindow(QMainWindow):
 
         self._sky_view_canvas.set_show_ground(checked)
 
+    def _handle_sky_view_custom_overlay_enabled_toggled(self, checked: bool) -> None:
+
+        self._sky_view_canvas.set_custom_sky_overlays_enabled(checked)
+
+        self._persist_sky_view_custom_overlay_settings()
+
+    def _handle_sky_view_custom_overlay_opacity_changed(self, value: int) -> None:
+
+        self._sky_view_custom_overlay_opacity_value_label.setText(f"{int(value)}%")
+
+        self._sky_view_canvas.set_custom_sky_overlay_opacity(float(value) / 100.0)
+
+        self._persist_sky_view_custom_overlay_settings()
+
+    def _handle_sky_view_custom_overlay_brightness_changed(self, value: int) -> None:
+
+        self._sky_view_custom_overlay_brightness_value_label.setText(f"{float(value) / 100.0:.2f}x")
+
+        self._sky_view_canvas.set_custom_sky_overlay_brightness(float(value) / 100.0)
+
+        self._persist_sky_view_custom_overlay_settings()
+
+    def _handle_sky_view_custom_overlay_saturation_changed(self, value: int) -> None:
+
+        self._sky_view_custom_overlay_saturation_value_label.setText(f"{float(value) / 100.0:.2f}x")
+
+        self._sky_view_canvas.set_custom_sky_overlay_saturation(float(value) / 100.0)
+
+        self._persist_sky_view_custom_overlay_settings()
+
+    def _handle_sky_view_custom_overlay_feather_changed(self, value: int) -> None:
+
+        self._sky_view_custom_overlay_feather_value_label.setText(f"{int(value)}%")
+
+        self._sky_view_canvas.set_custom_sky_overlay_feather(float(value) / 100.0)
+
+        self._persist_sky_view_custom_overlay_settings()
+
+    def _persist_sky_view_custom_overlay_settings(self) -> None:
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        self._settings = replace(
+            settings,
+            sky_atlas_custom_overlays_enabled=self._sky_view_custom_overlay_enabled_checkbox.isChecked(),
+            sky_atlas_custom_overlay_opacity=self._sky_view_custom_overlay_opacity_slider.value() / 100.0,
+            sky_atlas_custom_overlay_brightness=self._sky_view_custom_overlay_brightness_slider.value() / 100.0,
+            sky_atlas_custom_overlay_saturation=self._sky_view_custom_overlay_saturation_slider.value() / 100.0,
+            sky_atlas_custom_overlay_feather=self._sky_view_custom_overlay_feather_slider.value() / 100.0,
+            sky_atlas_custom_overlay_surveys=list(settings.sky_atlas_custom_overlay_surveys or []),
+            sky_atlas_custom_overlay_active_survey_id=settings.sky_atlas_custom_overlay_active_survey_id,
+        )
+
+        self._save_settings_snapshot()
+
+    def _apply_sky_view_custom_overlay_settings_from_disk(self) -> None:
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        self._sky_view_custom_overlay_enabled_checkbox.blockSignals(True)
+
+        self._sky_view_custom_overlay_opacity_slider.blockSignals(True)
+
+        self._sky_view_custom_overlay_brightness_slider.blockSignals(True)
+
+        self._sky_view_custom_overlay_saturation_slider.blockSignals(True)
+
+        self._sky_view_custom_overlay_feather_slider.blockSignals(True)
+
+        self._sky_view_custom_overlay_enabled_checkbox.setChecked(bool(settings.sky_atlas_custom_overlays_enabled))
+
+        self._sky_view_custom_overlay_opacity_slider.setValue(int(round(max(0.0, min(1.0, float(settings.sky_atlas_custom_overlay_opacity))) * 100.0)))
+
+        self._sky_view_custom_overlay_brightness_slider.setValue(int(round(max(0.35, min(2.0, float(settings.sky_atlas_custom_overlay_brightness))) * 100.0)))
+
+        self._sky_view_custom_overlay_saturation_slider.setValue(int(round(max(0.0, min(2.4, float(settings.sky_atlas_custom_overlay_saturation))) * 100.0)))
+
+        self._sky_view_custom_overlay_feather_slider.setValue(int(round(max(0.0, min(1.0, float(settings.sky_atlas_custom_overlay_feather))) * 100.0)))
+
+        self._sky_view_custom_overlay_enabled_checkbox.blockSignals(False)
+
+        self._sky_view_custom_overlay_opacity_slider.blockSignals(False)
+
+        self._sky_view_custom_overlay_brightness_slider.blockSignals(False)
+
+        self._sky_view_custom_overlay_saturation_slider.blockSignals(False)
+
+        self._sky_view_custom_overlay_feather_slider.blockSignals(False)
+
+        self._sky_view_custom_overlay_opacity_value_label.setText(f"{self._sky_view_custom_overlay_opacity_slider.value()}%")
+
+        self._sky_view_custom_overlay_brightness_value_label.setText(
+            f"{self._sky_view_custom_overlay_brightness_slider.value() / 100.0:.2f}x"
+        )
+
+        self._sky_view_custom_overlay_saturation_value_label.setText(
+            f"{self._sky_view_custom_overlay_saturation_slider.value() / 100.0:.2f}x"
+        )
+
+        self._sky_view_custom_overlay_feather_value_label.setText(
+            f"{self._sky_view_custom_overlay_feather_slider.value()}%"
+        )
+
+        self._reload_sky_view_custom_overlays_on_canvas(sky_atlas_custom_overlays_for_active_survey(settings))
+
+        self._refresh_sky_view_custom_overlay_survey_selector()
+
+    def _reload_sky_view_custom_overlays_on_canvas(
+        self,
+        overlay_records: Sequence[SkyAtlasCustomOverlayRecord] | None,
+    ) -> int:
+
+        loaded_overlays: list[LoadedSkyAtlasCustomOverlay] = []
+
+        for record in overlay_records or []:
+
+            loaded_overlay = load_overlay_record(record)
+
+            if loaded_overlay is not None:
+
+                loaded_overlays.append(loaded_overlay)
+
+        self._sky_view_canvas.set_custom_sky_overlay_entries(loaded_overlays)
+
+        if overlay_records and not loaded_overlays:
+
+            self.statusBar().showMessage(
+                "Custom overlay saved, but it could not be loaded for display. Check the cached image and WCS files.",
+                8000,
+            )
+
+        return len(loaded_overlays)
+
+    def _survey_menu_label(self, survey: SkyAtlasCustomOverlaySurvey) -> str:
+        filter_name = str(survey.filter_name or "").strip()
+        if filter_name:
+            return f"{survey.name} ({filter_name})"
+        return survey.name
+
+    def _refresh_sky_view_custom_overlay_survey_selector(self) -> None:
+
+        if not hasattr(self, "_sky_view_custom_overlay_survey_combo"):
+
+            return
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        surveys = sky_atlas_custom_overlay_surveys_for_settings(settings)
+
+        active_survey_id = settings.sky_atlas_custom_overlay_active_survey_id
+
+        if surveys and active_survey_id not in {survey.survey_id for survey in surveys}:
+
+            active_survey_id = surveys[0].survey_id
+
+        combo = self._sky_view_custom_overlay_survey_combo
+
+        combo.blockSignals(True)
+
+        combo.clear()
+
+        if not surveys:
+
+            combo.addItem("No surveys yet", "")
+
+            combo.setEnabled(False)
+
+            combo.blockSignals(False)
+
+            return
+
+        combo.setEnabled(True)
+
+        active_index = 0
+
+        for index, survey in enumerate(surveys):
+
+            combo.addItem(self._survey_menu_label(survey), survey.survey_id)
+
+            if survey.survey_id == active_survey_id:
+
+                active_index = index
+
+        combo.setCurrentIndex(active_index)
+
+        combo.blockSignals(False)
+
+    def _handle_sky_view_custom_overlay_survey_combo_changed(self, index: int) -> None:
+
+        if index < 0:
+
+            return
+
+        combo = self._sky_view_custom_overlay_survey_combo
+
+        survey_id = combo.itemData(index)
+
+        if not survey_id:
+
+            return
+
+        self._select_sky_view_custom_overlay_survey(str(survey_id))
+
+    def _select_sky_view_custom_overlay_survey(self, survey_id: str) -> None:
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        surveys = sky_atlas_custom_overlay_surveys_for_settings(settings)
+
+        if not any(survey.survey_id == survey_id for survey in surveys):
+
+            return
+
+        self._settings = replace(
+            settings,
+            sky_atlas_custom_overlay_active_survey_id=survey_id,
+            sky_atlas_custom_overlays_enabled=True,
+        )
+
+        self._save_settings_snapshot()
+
+        self._sky_view_custom_overlay_enabled_checkbox.blockSignals(True)
+
+        self._sky_view_custom_overlay_enabled_checkbox.setChecked(True)
+
+        self._sky_view_custom_overlay_enabled_checkbox.blockSignals(False)
+
+        self._sky_view_canvas.set_custom_sky_overlays_enabled(True)
+
+        loaded_count = self._reload_sky_view_custom_overlays_on_canvas(
+            sky_atlas_custom_overlays_for_active_survey(self._settings)
+        )
+
+        self._refresh_sky_view_custom_overlay_survey_selector()
+
+        survey_name = next(
+            (self._survey_menu_label(survey) for survey in surveys if survey.survey_id == survey_id),
+            "survey",
+        )
+
+        if loaded_count > 0:
+
+            self.statusBar().showMessage(f"Showing custom sky map survey {survey_name}.", 5000)
+
+        else:
+
+            self.statusBar().showMessage(
+                f"Selected survey {survey_name}, but its images could not be loaded.",
+                6000,
+            )
+
+    def _open_sky_view_custom_overlay_surveys_dialog(self) -> None:
+
+        existing_dialog = getattr(self, "_sky_atlas_custom_overlay_surveys_dialog", None)
+
+        if existing_dialog is not None and existing_dialog.isVisible():
+
+            existing_dialog.raise_()
+
+            existing_dialog.activateWindow()
+
+            return
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        dialog = SkyAtlasCustomOverlaySurveysDialog(settings, parent=self)
+
+        dialog.finished.connect(
+            lambda result, dialog_ref=dialog: self._handle_sky_view_custom_overlay_surveys_dialog_finished(
+                dialog_ref,
+                result,
+            )
+        )
+
+        dialog.destroyed.connect(
+            lambda _obj=None, dialog_ref=dialog: self._forget_sky_view_custom_overlay_surveys_dialog(dialog_ref)
+        )
+
+        self._sky_atlas_custom_overlay_surveys_dialog = dialog
+
+        dialog.show()
+
+    def _handle_sky_view_custom_overlay_surveys_dialog_finished(
+        self,
+        dialog: SkyAtlasCustomOverlaySurveysDialog,
+        result: int,
+    ) -> None:
+
+        if result != int(QDialog.DialogCode.Accepted):
+
+            return
+
+        settings = self._ensure_sky_view_settings_loaded()
+
+        previous_survey_ids = {
+            survey.survey_id for survey in sky_atlas_custom_overlay_surveys_for_settings(settings)
+        }
+
+        from photometry_app.core.sky_atlas_survey_storage import sync_surveys_to_disk
+
+        updated_surveys = sync_surveys_to_disk(
+            dialog.surveys,
+            previous_survey_ids=previous_survey_ids,
+        )
+
+        active_survey_id = settings.sky_atlas_custom_overlay_active_survey_id
+
+        survey_ids = {survey.survey_id for survey in updated_surveys}
+
+        if active_survey_id not in survey_ids:
+
+            active_survey_id = updated_surveys[0].survey_id if updated_surveys else None
+
+        self._settings = replace(
+            settings,
+            sky_atlas_custom_overlay_surveys=updated_surveys or None,
+            sky_atlas_custom_overlay_active_survey_id=active_survey_id,
+            sky_atlas_custom_overlays=None,
+            sky_atlas_custom_overlays_enabled=bool(updated_surveys) or settings.sky_atlas_custom_overlays_enabled,
+        )
+
+        self._save_settings_snapshot()
+
+        if updated_surveys:
+
+            self._sky_view_custom_overlay_enabled_checkbox.blockSignals(True)
+
+            self._sky_view_custom_overlay_enabled_checkbox.setChecked(True)
+
+            self._sky_view_custom_overlay_enabled_checkbox.blockSignals(False)
+
+            self._sky_view_canvas.set_custom_sky_overlays_enabled(True)
+
+        loaded_count = self._reload_sky_view_custom_overlays_on_canvas(
+            sky_atlas_custom_overlays_for_active_survey(self._settings)
+        )
+
+        self._refresh_sky_view_custom_overlay_survey_selector()
+
+        if updated_surveys and loaded_count > 0:
+
+            self.statusBar().showMessage("Custom sky map surveys updated.", 5000)
+
+        elif updated_surveys:
+
+            self.statusBar().showMessage("Custom sky map surveys saved.", 5000)
+
+    def _forget_sky_view_custom_overlay_surveys_dialog(
+        self,
+        dialog: SkyAtlasCustomOverlaySurveysDialog,
+    ) -> None:
+
+        existing_dialog = getattr(self, "_sky_atlas_custom_overlay_surveys_dialog", None)
+
+        if existing_dialog is dialog:
+
+            self._sky_atlas_custom_overlay_surveys_dialog = None
+
     def _handle_sky_view_equatorial_grid_toggled(self, checked: bool) -> None:
 
         self._sky_view_canvas.set_show_equatorial_grid(checked)
@@ -30317,7 +37186,7 @@ class MainWindow(QMainWindow):
 
         render_mode = self._sky_view_milky_way_render_mode_combo.currentData()
 
-        self._sky_view_canvas.set_milky_way_render_mode(str(render_mode) if isinstance(render_mode, str) else "advanced")
+        self._sky_view_canvas.set_milky_way_render_mode(str(render_mode) if isinstance(render_mode, str) else "full")
 
     def _handle_sky_view_milky_way_opacity_changed(self, value: int) -> None:
 
@@ -30713,6 +37582,75 @@ class MainWindow(QMainWindow):
             self._sky_explorer_display_controls_group,
         )
 
+        self._sky_explorer_survey_stretch_combo = QComboBox()
+        self._sky_explorer_survey_stretch_combo.addItem("Auto Stretch", "stf")
+        self._sky_explorer_survey_stretch_combo.addItem("None", "linear")
+        self._sky_explorer_survey_stretch_combo.addItem("Asinh", "asinh")
+        self._sky_explorer_survey_stretch_combo.addItem("Sqrt", "sqrt")
+        self._sky_explorer_survey_stretch_combo.addItem("Log", "log")
+        self._sky_explorer_survey_stretch_combo.setCurrentIndex(
+            max(0, self._sky_explorer_survey_stretch_combo.findData("stf"))
+        )
+        self._sky_explorer_survey_stretch_combo.currentIndexChanged.connect(
+            self._handle_sky_explorer_survey_display_controls_changed
+        )
+        self._sky_explorer_survey_adjust_levels_button = QPushButton("Curves")
+        self._sky_explorer_survey_adjust_levels_button.setToolTip(
+            "Open Curves for the survey comparison image."
+        )
+        self._sky_explorer_survey_adjust_levels_button.clicked.connect(
+            self._open_sky_explorer_survey_levels_dialog
+        )
+        self._sky_explorer_survey_invert_checkbox = QCheckBox("Invert")
+        self._sky_explorer_survey_invert_checkbox.toggled.connect(
+            self._handle_sky_explorer_survey_display_controls_changed
+        )
+        self._sky_explorer_survey_reset_display_button = QPushButton("Reset")
+        self._sky_explorer_survey_reset_display_button.clicked.connect(
+            self._reset_sky_explorer_survey_display_controls
+        )
+        self._sky_explorer_survey_display_controls = self._create_display_menu_content(
+            self._sky_explorer_survey_stretch_combo,
+            self._sky_explorer_survey_adjust_levels_button,
+            self._sky_explorer_survey_invert_checkbox,
+            trailing_widgets=(self._sky_explorer_survey_reset_display_button,),
+        )
+
+        self._sky_explorer_surveys_button = QToolButton(self)
+        self._sky_explorer_surveys_button.setText("Surveys")
+        self._sky_explorer_surveys_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._sky_explorer_surveys_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._sky_explorer_surveys_button.setToolTip(
+            "Compare the current view with a WCS-aligned reference survey."
+        )
+        self._sky_explorer_surveys_menu = QMenu(self._sky_explorer_surveys_button)
+        self._sky_explorer_survey_action_group = QActionGroup(self._sky_explorer_surveys_menu)
+        self._sky_explorer_survey_action_group.setExclusive(True)
+        self._sky_explorer_survey_actions: dict[str | None, QAction] = {}
+        no_survey_action = self._sky_explorer_surveys_menu.addAction("None")
+        no_survey_action.setCheckable(True)
+        no_survey_action.setChecked(True)
+        no_survey_action.triggered.connect(
+            lambda checked=False: self._select_sky_explorer_survey(None) if checked else None
+        )
+        self._sky_explorer_survey_action_group.addAction(no_survey_action)
+        self._sky_explorer_survey_actions[None] = no_survey_action
+        for survey_key, survey_title in _SKY_EXPLORER_SURVEY_OPTIONS:
+            survey_action = self._sky_explorer_surveys_menu.addAction(survey_title)
+            survey_action.setCheckable(True)
+            survey_action.triggered.connect(
+                lambda checked=False, key=survey_key: self._select_sky_explorer_survey(key) if checked else None
+            )
+            self._sky_explorer_survey_action_group.addAction(survey_action)
+            self._sky_explorer_survey_actions[survey_key] = survey_action
+        self._sky_explorer_surveys_menu.addSeparator()
+        self._sky_explorer_survey_display_action = QWidgetAction(self._sky_explorer_surveys_menu)
+        self._sky_explorer_survey_display_action.setDefaultWidget(
+            self._sky_explorer_survey_display_controls
+        )
+        self._sky_explorer_surveys_menu.addAction(self._sky_explorer_survey_display_action)
+        self._sky_explorer_surveys_button.setMenu(self._sky_explorer_surveys_menu)
+
         self._sky_explorer_center_object_button = QPushButton("Center Object")
 
         self._sky_explorer_center_object_button.setCheckable(True)
@@ -30893,9 +37831,24 @@ class MainWindow(QMainWindow):
         self._sky_explorer_annotation_properties_group.setLayout(properties_group_layout)
         self._sync_sky_explorer_annotation_property_controls()
 
-        self._sky_explorer_export_image_button = QPushButton("Export")
-
-        self._sky_explorer_export_image_button.clicked.connect(self._export_sky_explorer_image_view)
+        self._sky_explorer_export_image_button = QToolButton(self)
+        self._sky_explorer_export_image_button.setText("Export")
+        self._sky_explorer_export_image_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._sky_explorer_export_image_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._sky_explorer_export_image_button.setAutoRaise(False)
+        self._sky_explorer_export_image_button.setToolTip(
+            "Export the current Sky Explorer view as a still image or a survey comparison animation."
+        )
+        self._sky_explorer_export_menu = QMenu(self._sky_explorer_export_image_button)
+        self._sky_explorer_export_image_action = QAction("Image...", self._sky_explorer_export_menu)
+        self._sky_explorer_export_image_action.triggered.connect(self._export_sky_explorer_image_view)
+        self._sky_explorer_export_animation_action = QAction("Animation...", self._sky_explorer_export_menu)
+        self._sky_explorer_export_animation_action.triggered.connect(
+            self._export_sky_explorer_comparison_animation
+        )
+        self._sky_explorer_export_menu.addAction(self._sky_explorer_export_image_action)
+        self._sky_explorer_export_menu.addAction(self._sky_explorer_export_animation_action)
+        self._sky_explorer_export_image_button.setMenu(self._sky_explorer_export_menu)
 
         self._set_sky_explorer_header_button_widths()
 
@@ -30912,6 +37865,24 @@ class MainWindow(QMainWindow):
         self._sky_explorer_image_view.imageOverlayClicked.connect(self._handle_sky_explorer_image_overlay_clicked)
 
         self._sky_explorer_image_view.imageContextRequested.connect(self._handle_sky_explorer_image_context_requested)
+
+        self._sky_explorer_survey_refresh_timer = QTimer(self)
+        self._sky_explorer_survey_refresh_timer.setSingleShot(True)
+        self._sky_explorer_survey_refresh_timer.setInterval(450)
+        self._sky_explorer_survey_refresh_timer.timeout.connect(
+            self._request_current_sky_explorer_survey_viewport
+        )
+        self._sky_explorer_survey_refine_timer = QTimer(self)
+        self._sky_explorer_survey_refine_timer.setSingleShot(True)
+        self._sky_explorer_survey_refine_timer.setInterval(300)
+        self._sky_explorer_survey_refine_timer.timeout.connect(
+            lambda: self._request_current_sky_explorer_survey_viewport(
+                force_detail=_SKY_EXPLORER_SURVEY_DETAIL_REFINE,
+            )
+        )
+        self._sky_explorer_image_view.viewportChanged.connect(
+            self._handle_sky_explorer_survey_viewport_changed
+        )
 
 
 
@@ -31045,13 +38016,15 @@ class MainWindow(QMainWindow):
 
         image_controls_layout.addStretch(1)
 
+        image_controls_layout.addWidget(self._sky_explorer_display_section_label)
+
+        image_controls_layout.addWidget(self._sky_explorer_surveys_button)
+
         image_controls_layout.addWidget(self._sky_explorer_center_object_button)
 
         image_controls_layout.addWidget(self._sky_explorer_show_auto_annotations_button)
 
         image_controls_layout.addWidget(self._sky_explorer_mag_limit_button)
-
-        image_controls_layout.addWidget(self._sky_explorer_display_section_label)
 
         image_controls_layout.addWidget(self._sky_explorer_export_image_button)
         self._sky_explorer_image_controls_layout = image_controls_layout
@@ -31125,6 +38098,164 @@ class MainWindow(QMainWindow):
 
         return panel
 
+    def _create_distance_map_panel(self) -> QWidget:
+        panel = DistanceMapPanel(self)
+        panel.open_image_requested.connect(self._browse_for_distance_map_source_image)
+        panel.apply_limits_requested.connect(self._start_distance_map_build)
+        panel.cluster_settings_changed.connect(self._apply_distance_map_cluster_settings)
+        panel.display_options_changed.connect(self._apply_distance_map_display_options)
+        self._distance_map_panel_widget = panel
+        self._distance_map_panel_widget.set_cluster_settings(self._current_distance_map_cluster_settings())
+        self._distance_map_panel_widget.set_display_options(self._current_distance_map_display_options())
+        return panel
+
+    def _create_astro_tools_panel(self) -> QWidget:
+        panel = AstroToolsPanel(self)
+        self._astro_tools_panel_widget = panel
+        return panel
+
+    def _current_distance_map_cluster_settings(self) -> DistanceMapClusterSettings:
+        settings = self._ensure_settings()
+        return coerce_distance_map_cluster_settings(
+            preset=settings.distance_map_cluster_preset,
+            method=settings.distance_map_cluster_method,
+            strictness=settings.distance_map_cluster_strictness,
+            parallax_mode=settings.distance_map_cluster_parallax_mode,
+            refine_magnitude_consistency=settings.distance_map_cluster_refine_magnitude_consistency,
+            auto_filter=settings.distance_map_cluster_auto_filter,
+            mark_on_image=settings.distance_map_cluster_mark_on_image,
+        )
+
+    def _current_distance_map_display_options(self) -> DistanceMapDisplayOptions:
+        settings = self._ensure_settings()
+        return coerce_distance_map_display_options(
+            model_cluster_depth=settings.distance_map_model_cluster_depth,
+            show_parallax_uncertainty=settings.distance_map_show_parallax_uncertainty,
+            use_external_cluster_catalog=settings.distance_map_use_external_cluster_catalog,
+        )
+
+    def _apply_distance_map_display_options(self, display_options: object) -> None:
+        if not isinstance(display_options, DistanceMapDisplayOptions):
+            return
+        normalized_options = display_options.normalized()
+        settings = self._ensure_settings()
+        settings.distance_map_model_cluster_depth = normalized_options.model_cluster_depth
+        settings.distance_map_show_parallax_uncertainty = normalized_options.show_parallax_uncertainty
+        settings.distance_map_use_external_cluster_catalog = normalized_options.use_external_cluster_catalog
+        self._save_settings_snapshot()
+
+    def _apply_distance_map_cluster_settings(self, cluster_settings: object) -> None:
+        if not isinstance(cluster_settings, DistanceMapClusterSettings):
+            return
+        normalized_settings = cluster_settings.normalized()
+        settings = self._ensure_settings()
+        settings.distance_map_cluster_preset = normalized_settings.preset
+        settings.distance_map_cluster_method = normalized_settings.method
+        settings.distance_map_cluster_strictness = normalized_settings.strictness
+        settings.distance_map_cluster_parallax_mode = normalized_settings.parallax_mode
+        settings.distance_map_cluster_refine_magnitude_consistency = normalized_settings.refine_magnitude_consistency
+        settings.distance_map_cluster_auto_filter = normalized_settings.auto_filter
+        settings.distance_map_cluster_mark_on_image = normalized_settings.mark_on_image
+        self._save_settings_snapshot()
+
+    def _browse_for_distance_map_source_image(self) -> None:
+        start_path = self._root_path_input.text()
+        if self._current_distance_map_source_image is not None and self._current_distance_map_source_image.exists():
+            start_path = str(self._current_distance_map_source_image)
+        selected, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select source image for Distance Map",
+            start_path,
+            "Supported Image Files (*.xisf *.fits *.fit *.tif *.tiff *.png *.jpg *.jpeg)",
+        )
+        if selected:
+            self._set_distance_map_source_image_path(Path(selected).expanduser())
+
+    def _set_distance_map_source_image_path(self, source_image: Path) -> None:
+        if not source_image.exists():
+            QMessageBox.warning(self, "Image not found", f"Could not find the selected image:\n{source_image}")
+            return
+        if not is_supported_image_path(source_image):
+            QMessageBox.warning(self, "Unsupported image", f"This file type is not supported for Distance Map:\n{source_image}")
+            return
+        settings = self._ensure_settings()
+        if self._current_app_mode() != AppMode.DISTANCE_MAP:
+            settings.app_mode = AppMode.DISTANCE_MAP
+            self._sync_app_mode_controls()
+            self._apply_app_mode(AppMode.DISTANCE_MAP)
+            self._save_settings_snapshot()
+        self._current_distance_map_source_image = source_image
+        self._distance_map_panel_widget.prepare_for_new_image(source_image)
+        self._distance_map_panel_widget.set_limits(
+            max_magnitude=settings.distance_map_max_magnitude,
+            max_distance_pc=settings.distance_map_max_distance_pc,
+            max_star_count=settings.distance_map_max_stars,
+            min_parallax_snr=settings.distance_map_min_parallax_snr,
+        )
+        self._distance_map_panel_widget.set_display_options(self._current_distance_map_display_options())
+        self._distance_map_panel_widget.append_log(f"Loaded Distance Map source image: {source_image}")
+        self.statusBar().showMessage(f"Loaded {source_image.name} for Distance Map.", 5000)
+        self._start_distance_map_build()
+
+    def _start_distance_map_build(self) -> None:
+        source_path = self._current_distance_map_source_image
+        if source_path is None or not source_path.exists():
+            QMessageBox.information(self, "No source image", "Choose a valid source image first.")
+            return
+        if self._distance_map_worker is not None and self._distance_map_worker.isRunning():
+            self.statusBar().showMessage("Distance Map is already running.", 5000)
+            return
+        settings = self._ensure_settings()
+        settings.distance_map_max_magnitude = self._distance_map_panel_widget.max_magnitude()
+        settings.distance_map_max_distance_pc = self._distance_map_panel_widget.max_distance_pc()
+        settings.distance_map_max_stars = self._distance_map_panel_widget.max_star_count()
+        settings.distance_map_min_parallax_snr = self._distance_map_panel_widget.min_parallax_snr()
+        self._save_settings_snapshot()
+        self._distance_map_panel_widget.set_busy(True)
+        self._distance_map_panel_widget.append_log(
+            "Started Distance Map build with "
+            f"G <= {settings.distance_map_max_magnitude:.1f}, "
+            f"distance <= {settings.distance_map_max_distance_pc:.1f} pc, "
+            f"max stars {settings.distance_map_max_stars}, "
+            f"min parallax SNR {settings.distance_map_min_parallax_snr:.1f}."
+        )
+        self._distance_map_worker = DistanceMapWorker(
+            source_path=source_path,
+            settings=settings,
+            max_magnitude=settings.distance_map_max_magnitude,
+            max_distance_pc=settings.distance_map_max_distance_pc,
+            max_star_count=settings.distance_map_max_stars,
+            parent=self,
+        )
+        self._distance_map_worker.progress_updated.connect(self._handle_distance_map_progress)
+        self._distance_map_worker.map_completed.connect(self._handle_distance_map_completed)
+        self._distance_map_worker.map_failed.connect(self._handle_distance_map_failed)
+        self._distance_map_worker.start()
+
+    def _handle_distance_map_progress(self, message: str) -> None:
+        if message:
+            self._distance_map_panel_widget.append_log(message)
+            self.statusBar().showMessage(message, 5000)
+
+    def _handle_distance_map_completed(self, result: object) -> None:
+        self._distance_map_worker = None
+        self._distance_map_panel_widget.set_busy(False)
+        if not isinstance(result, DistanceMapResult):
+            self._handle_distance_map_failed("Distance Map returned an unexpected result.")
+            return
+        self._distance_map_panel_widget.show_result(result)
+        self.statusBar().showMessage(
+            f"Distance Map drew {len(result.stars)} star(s) from {result.queried_star_count} Gaia source(s).",
+            7000,
+        )
+
+    def _handle_distance_map_failed(self, message: str) -> None:
+        self._distance_map_worker = None
+        self._distance_map_panel_widget.set_busy(False)
+        self._distance_map_panel_widget.append_log(f"Distance Map failed: {message}")
+        self.statusBar().showMessage(f"Distance Map failed: {message}", 7000)
+        QMessageBox.warning(self, "Distance Map failed", message)
+
     def _handle_sky_explorer_primary_action(self) -> None:
 
         source_path = Path(self._sky_explorer_image_input.text()).expanduser() if self._sky_explorer_image_input.text().strip() else None
@@ -31176,6 +38307,8 @@ class MainWindow(QMainWindow):
             self._save_settings_snapshot()
 
         self._sky_explorer_image_input.setText(str(source_image))
+
+        self._clear_sky_explorer_survey_comparison(reset_selection=True)
 
         self._current_sky_explorer_source_image = source_image
 
@@ -31468,7 +38601,7 @@ class MainWindow(QMainWindow):
 
         self._set_sky_explorer_busy(True)
 
-        self._pending_sky_explorer_mag_limit_query_signature = self._current_sky_explorer_gaia_query_signature()
+        self._pending_sky_explorer_mag_limit_query_signature = self._current_sky_explorer_mag_limit_query_signature()
 
         self._sky_explorer_mag_limit_worker = SkyExplorerWorker(
 
@@ -31481,6 +38614,8 @@ class MainWindow(QMainWindow):
             gaia_object_limit=0,
 
             include_dense_galaxy_catalog=False,
+
+            ignore_gaia_hard_cap=True,
 
             parent=self,
 
@@ -31532,7 +38667,19 @@ class MainWindow(QMainWindow):
 
         else:
 
-            summary_text = "Mag Limit did not find Gaia stars with usable magnitudes for this field."
+            gaia_summary = next((summary for summary in result.layer_summaries if summary.layer_key == "gaia_stars"), None)
+
+            if (
+                gaia_summary is not None
+                and int(getattr(gaia_summary, "returned_count", 0) or 0) > 0
+                and int(getattr(gaia_summary, "displayed_count", 0) or 0) == 0
+            ):
+
+                summary_text = "Mag Limit found Gaia stars in the field cone, but none fall inside the solved image footprint."
+
+            else:
+
+                summary_text = "Mag Limit did not find Gaia stars with usable magnitudes for this field."
 
         self._sky_explorer_status_label.setText(summary_text)
 
@@ -31853,6 +39000,8 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_show_auto_annotations_button.setStyleSheet(secondary_style)
 
+        self._sky_explorer_surveys_button.setStyleSheet(secondary_tool_style)
+
         self._sky_explorer_annotation_opacity_button.setStyleSheet(
             secondary_tool_style
             + "QToolButton#skyExplorerOpacityButton { padding-right: 16px; }"
@@ -32022,6 +39171,8 @@ class MainWindow(QMainWindow):
 
         mag_limit_width = self.fontMetrics().horizontalAdvance("Mag Limit") + button_padding_px
 
+        surveys_width = self.fontMetrics().horizontalAdvance("Surveys") + button_padding_px + 12
+
         auto_width = self.fontMetrics().horizontalAdvance("Auto") + button_padding_px
 
         tool_button_size = 34
@@ -32040,7 +39191,7 @@ class MainWindow(QMainWindow):
 
         text_style_width = self.fontMetrics().horizontalAdvance("Bold Italic") + button_padding_px + 18
 
-        header_control_height = 46
+        header_control_height = _MODE_TOOLBAR_BUTTON_HEIGHT
 
         self._sky_explorer_primary_button.setFixedWidth(primary_width)
 
@@ -32051,6 +39202,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_filter_button.setFixedWidth(filter_width)
 
         self._sky_explorer_mag_limit_button.setFixedWidth(mag_limit_width)
+
+        self._sky_explorer_surveys_button.setFixedWidth(surveys_width)
 
         self._sky_explorer_show_auto_annotations_button.setFixedWidth(auto_width)
 
@@ -32067,6 +39220,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_show_auto_annotations_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_mag_limit_button.setFixedHeight(header_control_height)
+
+        self._sky_explorer_surveys_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_display_section_label.setFixedHeight(header_control_height)
 
@@ -33246,6 +40401,20 @@ class MainWindow(QMainWindow):
 
         visible_objects.extend(self._sky_explorer_mag_limit_table_objects())
 
+        visible_identities = {self._sky_explorer_object_identity(sky_object) for sky_object in visible_objects}
+
+        for sky_object in self._sky_explorer_detected_table_objects():
+
+            identity = self._sky_explorer_object_identity(sky_object)
+
+            if identity in visible_identities:
+
+                continue
+
+            visible_objects.append(sky_object)
+
+            visible_identities.add(identity)
+
         return tuple(visible_objects)
 
     def _sky_explorer_result_objects_after_view_filters(self, result: SkyExplorerResult) -> tuple[SkyExplorerObject, ...]:
@@ -34079,6 +41248,8 @@ class MainWindow(QMainWindow):
 
         has_selection = self._selected_sky_explorer_object() is not None
 
+        has_survey = bool(self._sky_explorer_active_survey_key)
+
         self._sky_explorer_image_stretch_combo.setEnabled(has_image)
 
         self._sky_explorer_adjust_levels_button.setEnabled(has_image)
@@ -34088,6 +41259,10 @@ class MainWindow(QMainWindow):
         self._sky_explorer_image_reset_display_button.setEnabled(has_image)
 
         self._sky_explorer_mag_limit_button.setEnabled(has_image)
+
+        self._sky_explorer_surveys_button.setEnabled(has_image)
+
+        self._sky_explorer_survey_display_controls.setEnabled(has_image and has_survey)
 
         self._sky_explorer_center_object_button.setEnabled(has_image and has_selection)
 
@@ -34126,6 +41301,12 @@ class MainWindow(QMainWindow):
             self._sky_explorer_manual_annotation_drag = None
 
         self._sky_explorer_export_image_button.setEnabled(has_image)
+
+        if hasattr(self, "_sky_explorer_export_animation_action"):
+
+            self._sky_explorer_export_animation_action.setEnabled(
+                self._sky_explorer_can_export_comparison_animation()
+            )
 
     def _sync_sky_explorer_header_splitter_from_main(self) -> None:
 
@@ -34345,6 +41526,32 @@ class MainWindow(QMainWindow):
 
         return image_path.with_name(f"{image_path.stem}_sky_explorer.png")
 
+    def _sky_explorer_default_comparison_animation_export_path(self) -> Path:
+
+        image_path = getattr(self, "_current_sky_explorer_source_image", None)
+
+        if image_path is None:
+
+            return Path.cwd() / "sky_explorer_comparison.gif"
+
+        return image_path.with_name(f"{image_path.stem}_sky_explorer_comparison.gif")
+
+    def _sky_explorer_can_export_comparison_animation(self) -> bool:
+
+        image_path = getattr(self, "_current_sky_explorer_source_image", None)
+
+        if image_path is None or not image_path.exists():
+
+            return False
+
+        if not self._sky_explorer_active_survey_key:
+
+            return False
+
+        image_view = self._sky_explorer_image_view
+
+        return bool(image_view._comparison_is_active() and image_view._comparison_has_survey_raster())
+
     def _export_sky_explorer_image_view(self) -> None:
 
         image_path = getattr(self, "_current_sky_explorer_source_image", None)
@@ -34396,6 +41603,269 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved Sky Explorer image to {output_path}.", 5000)
 
         self._append_sky_explorer_workflow_note(f"Saved Sky Explorer image to {output_path}.")
+
+    def _export_sky_explorer_comparison_animation(self) -> None:
+
+        if not self._sky_explorer_can_export_comparison_animation():
+
+            QMessageBox.information(
+
+                self,
+
+                "Comparison animation unavailable",
+
+                "Open a Sky Explorer image, choose a survey, and wait for the comparison view to finish loading "
+
+                "before exporting an animation.",
+
+            )
+
+            return
+
+        options_dialog = SkyExplorerComparisonAnimationExportDialog(parent=self)
+
+        if options_dialog.exec() != int(QDialog.DialogCode.Accepted):
+
+            return
+
+        animation_options = options_dialog.selected_options()
+
+        default_path = self._sky_explorer_default_comparison_animation_export_path()
+
+        default_path.parent.mkdir(parents=True, exist_ok=True)
+
+        selected_path, selected_filter = QFileDialog.getSaveFileName(
+
+            self,
+
+            "Save Sky Explorer Comparison Animation",
+
+            str(default_path),
+
+            "Animated GIF Files (*.gif);;MP4 Video Files (*.mp4)",
+
+        )
+
+        if not selected_path:
+
+            return
+
+        output_path, export_format = self._resolve_blink_export_target(selected_path, selected_filter)
+
+        if export_format == "mp4":
+
+            mp4_available, mp4_message = mp4_export_dependencies_available()
+
+            if not mp4_available:
+
+                QMessageBox.warning(
+
+                    self,
+
+                    "MP4 export unavailable",
+
+                    mp4_export_unavailable_message(mp4_message),
+
+                )
+
+                return
+
+        self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
+
+        QApplication.processEvents()
+
+        frame_count, _planned_frame_duration_ms = resolve_sky_explorer_comparison_animation_timing(
+            animation_options.duration_seconds,
+            fps=animation_options.frame_rate_fps,
+            ping_pong=animation_options.ping_pong,
+            divider_travel_pixels=self._sky_explorer_image_view.comparison_divider_travel_pixels(),
+            smooth_motion=animation_options.smooth_motion,
+            gif_mode=export_format == "gif",
+        )
+
+        split_fractions = sky_explorer_comparison_split_fractions(
+
+            frame_count=frame_count,
+
+            ping_pong=animation_options.ping_pong,
+
+        )
+
+        progress_dialog = QProgressDialog(
+
+            "Capturing comparison frames...",
+
+            "Cancel",
+
+            0,
+
+            len(split_fractions),
+
+            self,
+
+        )
+
+        progress_dialog.setWindowTitle("Export Comparison Animation")
+
+        progress_dialog.setMinimumDuration(0)
+
+        progress_dialog.setAutoClose(False)
+
+        progress_dialog.setAutoReset(False)
+
+        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+
+        progress_dialog.setValue(0)
+
+        progress_dialog.show()
+
+        try:
+
+            self._append_sky_explorer_workflow_note(f"Exporting Sky Explorer comparison animation to {output_path}.")
+
+            frames = self._capture_sky_explorer_comparison_animation_frames(
+
+                split_fractions,
+
+                progress_dialog=progress_dialog,
+
+            )
+
+            if progress_dialog.wasCanceled():
+
+                raise _SkyExplorerComparisonExportCanceled()
+
+            progress_dialog.setLabelText(
+
+                "Encoding MP4 video..." if export_format == "mp4" else "Encoding animated GIF..."
+
+            )
+
+            QApplication.processEvents()
+
+            if export_format == "mp4":
+
+                export_qimages_to_mp4_for_total_duration(
+
+                    frames,
+
+                    output_path,
+
+                    total_duration_seconds=animation_options.duration_seconds,
+
+                    scale_percent=animation_options.output_scale_percent,
+
+                )
+
+            else:
+
+                export_qimages_to_gif_for_total_duration(
+
+                    frames,
+
+                    output_path,
+
+                    total_duration_seconds=animation_options.duration_seconds,
+
+                    loop_count=0 if animation_options.loop_forever else None,
+
+                    scale_percent=animation_options.output_scale_percent,
+
+                )
+
+        except _SkyExplorerComparisonExportCanceled:
+
+            self._append_sky_explorer_workflow_note("Sky Explorer comparison animation export canceled.")
+
+            self.statusBar().showMessage("Sky Explorer comparison animation export canceled.", 5000)
+
+            return
+
+        except Exception as exc:
+
+            self._append_sky_explorer_workflow_note(
+
+                f"Sky Explorer comparison animation export failed: {exc}"
+
+            )
+
+            QMessageBox.warning(self, "Comparison animation export failed", str(exc))
+
+            return
+
+        finally:
+
+            progress_dialog.close()
+
+            progress_dialog.deleteLater()
+
+        self.statusBar().showMessage(
+
+            f"Saved Sky Explorer comparison animation to {output_path.name}.",
+
+            5000,
+
+        )
+
+        self._append_sky_explorer_workflow_note(
+
+            f"Saved Sky Explorer comparison animation to {output_path}."
+
+        )
+
+    def _capture_sky_explorer_comparison_animation_frames(
+
+        self,
+
+        split_fractions: Sequence[float],
+
+        *,
+
+        progress_dialog: QProgressDialog,
+
+    ) -> list[QImage]:
+
+        image_view = self._sky_explorer_image_view
+
+        original_fraction = image_view.comparison_split_fraction()
+
+        was_loading = image_view._comparison_loading
+
+        loading_message = image_view.comparison_loading_message()
+
+        frames: list[QImage] = []
+
+        try:
+
+            image_view.set_comparison_loading(False)
+
+            for index, fraction in enumerate(split_fractions):
+
+                if progress_dialog.wasCanceled():
+
+                    raise _SkyExplorerComparisonExportCanceled()
+
+                frames.append(
+
+                    image_view.capture_view_image_at_comparison_split(float(fraction))
+
+                )
+
+                progress_dialog.setValue(index + 1)
+
+                QApplication.processEvents()
+
+        finally:
+
+            image_view.set_comparison_split_fraction(original_fraction)
+
+            if was_loading:
+
+                image_view.set_comparison_loading(True)
+
+                image_view.set_comparison_loading_message(loading_message)
+
+        return frames
 
     def _sky_explorer_definition_for_object(
 
@@ -34472,6 +41942,1440 @@ class MainWindow(QMainWindow):
     def _handle_sky_explorer_image_display_controls_changed(self) -> None:
 
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
+
+    def _current_sky_explorer_survey_render_settings(self) -> AnnotatedImageRenderSettings:
+
+        stretch_mode = self._sky_explorer_survey_stretch_combo.currentData()
+
+        black_point, midtone_point, white_point = self._sky_explorer_survey_levels
+
+        return AnnotatedImageRenderSettings(
+
+            stretch_mode=str(stretch_mode) if isinstance(stretch_mode, str) and stretch_mode else "stf",
+
+            black_point=black_point,
+
+            midtone_point=midtone_point,
+
+            white_point=white_point,
+
+            curve_points=self._sky_explorer_survey_curve_points,
+
+            inverted=self._sky_explorer_survey_invert_checkbox.isChecked(),
+
+        )
+
+    def _handle_sky_explorer_survey_display_controls_changed(self) -> None:
+
+        self._apply_sky_explorer_survey_comparison()
+
+    def _reset_sky_explorer_survey_display_controls(self) -> None:
+
+        self._sky_explorer_survey_stretch_combo.blockSignals(True)
+
+        self._sky_explorer_survey_invert_checkbox.blockSignals(True)
+
+        self._sky_explorer_survey_stretch_combo.setCurrentIndex(
+
+            max(0, self._sky_explorer_survey_stretch_combo.findData("stf"))
+
+        )
+
+        self._sky_explorer_survey_invert_checkbox.setChecked(False)
+
+        self._sky_explorer_survey_stretch_combo.blockSignals(False)
+
+        self._sky_explorer_survey_invert_checkbox.blockSignals(False)
+
+        self._sky_explorer_survey_levels = (0.0, 0.5, 1.0)
+
+        self._sky_explorer_survey_curve_points = ()
+
+        self._apply_sky_explorer_survey_comparison()
+
+    def _open_sky_explorer_survey_levels_dialog(self) -> None:
+
+        display = self._sky_explorer_survey_display
+
+        if display is None:
+
+            QMessageBox.information(
+
+                self,
+
+                "Survey unavailable",
+
+                "Choose a survey and wait for its image to load before adjusting curves.",
+
+            )
+
+            return
+
+        dialog = CurvesDialog(
+
+            display=display,
+
+            initial_settings=self._current_sky_explorer_survey_render_settings(),
+
+            parent=self,
+
+        )
+
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+
+            return
+
+        selected_settings = dialog.selected_settings()
+
+        self._sky_explorer_survey_levels = (
+
+            float(selected_settings.black_point),
+
+            float(selected_settings.midtone_point),
+
+            float(selected_settings.white_point),
+
+        )
+
+        self._sky_explorer_survey_curve_points = selected_settings.curve_points
+
+        self._apply_sky_explorer_survey_comparison()
+
+    def _build_sky_explorer_survey_display(self, result: object) -> AnnotatedImageDisplay:
+
+        image_data = np.asarray(getattr(result, "image_data"))
+
+        color_data: np.ndarray | None = None
+
+        if image_data.ndim == 3:
+
+            if image_data.shape[-1] in {3, 4}:
+
+                color_data = np.asarray(image_data[..., :3], dtype=float)
+
+            elif image_data.shape[0] in {3, 4}:
+
+                color_data = np.moveaxis(np.asarray(image_data[:3], dtype=float), 0, -1)
+
+            else:
+
+                raise ValueError("Survey image has an unsupported channel layout.")
+
+            grayscale_data = np.asarray(np.mean(color_data, axis=-1), dtype=float)
+
+        elif image_data.ndim == 2:
+
+            grayscale_data = np.asarray(image_data, dtype=float)
+
+        else:
+
+            raise ValueError("Survey image is not a usable two-dimensional frame.")
+
+        display_path = getattr(result, "cache_path", None)
+
+        if not isinstance(display_path, Path):
+
+            display_path = self._current_sky_explorer_source_image or Path.cwd() / "sky-explorer-survey.fits"
+
+        return build_annotated_image_display_from_array(
+
+            grayscale_data,
+
+            image_path=display_path,
+
+            color_data=color_data,
+
+            recommended_stretch_mode="stf",
+
+        )
+
+    def _apply_sky_explorer_survey_comparison(self) -> None:
+
+        if not self._sky_explorer_active_survey_key:
+
+            self._sky_explorer_image_view.clear_comparison()
+
+            return
+
+        result = self._sky_explorer_survey_result
+
+        display = self._sky_explorer_survey_display
+
+        if result is None or display is None:
+
+            self._sky_explorer_image_view.set_comparison_split_enabled(True)
+
+            return
+
+        target_rect_value = getattr(result, "target_rect", None)
+
+        if isinstance(target_rect_value, QRectF):
+
+            target_rect = QRectF(target_rect_value)
+
+        else:
+
+            try:
+
+                target_x, target_y, target_width, target_height = target_rect_value
+
+                target_rect = QRectF(
+
+                    float(target_x),
+
+                    float(target_y),
+
+                    float(target_width),
+
+                    float(target_height),
+
+                )
+
+            except (TypeError, ValueError):
+
+                self._sky_explorer_image_view.clear_comparison_survey_content()
+
+                self._sky_explorer_image_view.set_comparison_split_enabled(True)
+
+                return
+
+        self._sky_explorer_image_view.set_comparison_content(
+
+            display,
+
+            target_rect=target_rect,
+
+            render_settings=self._current_sky_explorer_survey_render_settings(),
+
+        )
+
+        self._sky_explorer_image_view.set_comparison_loading(False)
+
+        if hasattr(self, "_sky_explorer_export_animation_action"):
+
+            self._sky_explorer_export_animation_action.setEnabled(
+                self._sky_explorer_can_export_comparison_animation()
+            )
+
+    def _set_sky_explorer_survey_action_checked(self, survey_key: str | None) -> None:
+
+        for action_key, action in self._sky_explorer_survey_actions.items():
+
+            action.blockSignals(True)
+
+            action.setChecked(action_key == survey_key)
+
+            action.blockSignals(False)
+
+    def _clear_sky_explorer_survey_comparison(self, *, reset_selection: bool) -> None:
+
+        if hasattr(self, "_sky_explorer_survey_refresh_timer"):
+
+            self._sky_explorer_survey_refresh_timer.stop()
+
+        if hasattr(self, "_sky_explorer_survey_refine_timer"):
+
+            self._sky_explorer_survey_refine_timer.stop()
+
+        self._sky_explorer_survey_request_generation += 1
+
+        self._pending_sky_explorer_survey_request = None
+
+        self._sky_explorer_survey_result = None
+
+        self._sky_explorer_survey_result_context = None
+
+        self._sky_explorer_survey_last_error = None
+
+        self._sky_explorer_survey_display = None
+
+        self._sky_explorer_image_view.clear_comparison()
+
+        if reset_selection:
+
+            self._sky_explorer_active_survey_key = None
+
+            if hasattr(self, "_sky_explorer_survey_actions"):
+
+                self._set_sky_explorer_survey_action_checked(None)
+
+            if hasattr(self, "_sky_explorer_surveys_button"):
+
+                self._sky_explorer_surveys_button.setToolTip(
+
+                    "Compare the current view with a WCS-aligned reference survey."
+
+                )
+
+        if hasattr(self, "_sky_explorer_survey_display_controls"):
+
+            self._sky_explorer_survey_display_controls.setEnabled(
+
+                bool(self._current_sky_explorer_source_image and self._sky_explorer_active_survey_key)
+
+            )
+
+    def _select_sky_explorer_survey(self, survey_key: str | None) -> None:
+
+        normalized_key = None if survey_key is None else str(survey_key).strip().lower()
+
+        valid_keys = {key for key, _title in _SKY_EXPLORER_SURVEY_OPTIONS}
+
+        if normalized_key is not None and normalized_key not in valid_keys:
+
+            return
+
+        if normalized_key is None:
+
+            had_survey = self._sky_explorer_active_survey_key is not None
+
+            self._clear_sky_explorer_survey_comparison(reset_selection=True)
+
+            self._sync_sky_explorer_image_controls()
+
+            if had_survey:
+
+                self.statusBar().showMessage("Survey comparison closed.", 3000)
+
+            return
+
+        source_path = self._current_sky_explorer_source_image
+
+        if source_path is None or not source_path.exists():
+
+            self._clear_sky_explorer_survey_comparison(reset_selection=True)
+
+            self._sync_sky_explorer_image_controls()
+
+            QMessageBox.information(self, "No source image", "Open a source image before choosing a survey.")
+
+            return
+
+        if self._sky_explorer_image_wcs() is None:
+
+            self._clear_sky_explorer_survey_comparison(reset_selection=True)
+
+            self._sync_sky_explorer_image_controls()
+
+            QMessageBox.information(
+
+                self,
+
+                "Survey comparison unavailable",
+
+                "The source image needs a usable celestial WCS before a survey can be aligned to it. "
+
+                "Run Explore first if the image needs to be plate-solved.",
+
+            )
+
+            return
+
+        self._clear_sky_explorer_survey_comparison(reset_selection=False)
+
+        self._sky_explorer_active_survey_key = normalized_key
+
+        self._set_sky_explorer_survey_action_checked(normalized_key)
+
+        self._sync_sky_explorer_image_controls()
+
+        title = dict(_SKY_EXPLORER_SURVEY_OPTIONS).get(normalized_key, normalized_key)
+
+        self._sky_explorer_surveys_button.setToolTip(
+
+            f"Comparing the source image with {title}. Drag the vertical divider to inspect either image."
+
+        )
+
+        self._append_sky_explorer_workflow_note(f"Requested {title} survey comparison for the current view.")
+
+        self._sky_explorer_image_view.set_comparison_split_enabled(True)
+
+        self._sky_explorer_image_view.set_comparison_loading(True)
+
+        self._sky_explorer_survey_refresh_timer.start(0)
+
+    def _handle_sky_explorer_survey_viewport_changed(self) -> None:
+
+        if not self._sky_explorer_active_survey_key:
+
+            return
+
+        self._sky_explorer_survey_refresh_timer.start()
+
+    @staticmethod
+
+    def _sky_explorer_source_rect_contains(
+
+        outer: tuple[float, float, float, float],
+
+        inner: tuple[float, float, float, float],
+
+        *,
+
+        tolerance: float = 1.0,
+
+    ) -> bool:
+
+        outer_x, outer_y, outer_w, outer_h = outer
+
+        inner_x, inner_y, inner_w, inner_h = inner
+
+        return (
+
+            inner_x >= outer_x - tolerance
+
+            and inner_y >= outer_y - tolerance
+
+            and inner_x + inner_w <= outer_x + outer_w + tolerance
+
+            and inner_y + inner_h <= outer_y + outer_h + tolerance
+
+        )
+
+    def _sky_explorer_survey_cached_target_rect(
+
+        self,
+
+    ) -> tuple[float, float, float, float] | None:
+
+        return self._sky_explorer_survey_result_target_rect(self._sky_explorer_survey_result)
+
+    @staticmethod
+
+    def _sky_explorer_survey_result_target_rect(
+
+        result: object | None,
+
+    ) -> tuple[float, float, float, float] | None:
+
+        if result is None:
+
+            return None
+
+        target_rect_value = getattr(result, "target_rect", None)
+
+        if isinstance(target_rect_value, QRectF):
+
+            rect = QRectF(target_rect_value).normalized()
+
+            return (rect.x(), rect.y(), rect.width(), rect.height())
+
+        try:
+
+            target_x, target_y, target_width, target_height = target_rect_value
+
+        except (TypeError, ValueError):
+
+            return None
+
+        return (float(target_x), float(target_y), float(target_width), float(target_height))
+
+    def _sky_explorer_survey_visible_bounds(self) -> tuple[float, float, float, float] | None:
+
+        visible_rect = self._sky_explorer_image_view.visible_image_rect(margin_fraction=0.0)
+
+        if visible_rect.isEmpty():
+
+            return None
+
+        return (
+
+            float(visible_rect.left()),
+
+            float(visible_rect.top()),
+
+            float(visible_rect.width()),
+
+            float(visible_rect.height()),
+
+        )
+
+    def _sky_explorer_survey_visible_in_cached_target(self) -> bool:
+
+        cached_target = self._sky_explorer_survey_cached_target_rect()
+
+        visible_bounds = self._sky_explorer_survey_visible_bounds()
+
+        if cached_target is None or visible_bounds is None:
+
+            return False
+
+        return self._sky_explorer_source_rect_contains(cached_target, visible_bounds)
+
+    @staticmethod
+
+    def _sky_explorer_survey_signature_from_context(
+
+        context: tuple[object, ...] | None,
+
+    ) -> tuple[object, ...] | None:
+
+        if context is None or len(context) < 4:
+
+            return None
+
+        if context[-1] in (_SKY_EXPLORER_SURVEY_DETAIL_PREVIEW, _SKY_EXPLORER_SURVEY_DETAIL_REFINE):
+
+            return tuple(context[1:-1])
+
+        return tuple(context[1:])
+
+    @staticmethod
+
+    def _sky_explorer_survey_fetch_bounds_from_signature(
+
+        signature: tuple[object, ...],
+
+    ) -> tuple[float, float, float, float] | None:
+
+        if len(signature) < 10:
+
+            return None
+
+        try:
+
+            x0 = int(signature[6])
+
+            y0 = int(signature[7])
+
+            x1 = int(signature[8])
+
+            y1 = int(signature[9])
+
+        except (TypeError, ValueError):
+
+            return None
+
+        if x1 <= x0 or y1 <= y0:
+
+            return None
+
+        return (float(x0), float(y0), float(x1 - x0), float(y1 - y0))
+
+    def _sky_explorer_survey_context_covers_visible_viewport(
+
+        self,
+
+        context: tuple[object, ...] | None,
+
+    ) -> bool:
+
+        signature = self._sky_explorer_survey_signature_from_context(context)
+
+        visible_bounds = self._sky_explorer_survey_visible_bounds()
+
+        if signature is None or visible_bounds is None:
+
+            return False
+
+        fetch_bounds = self._sky_explorer_survey_fetch_bounds_from_signature(signature)
+
+        if fetch_bounds is None:
+
+            return False
+
+        return self._sky_explorer_source_rect_contains(fetch_bounds, visible_bounds)
+
+    def _sky_explorer_active_survey_title(self) -> str:
+
+        return dict(_SKY_EXPLORER_SURVEY_OPTIONS).get(
+
+            self._sky_explorer_active_survey_key or "",
+
+            "Survey",
+
+        )
+
+    def _sky_explorer_survey_request_context(
+
+        self,
+
+        signature: tuple[object, ...],
+
+        detail_tier: str,
+
+    ) -> tuple[object, ...]:
+
+        return (self._sky_explorer_survey_request_generation, *signature, detail_tier)
+
+    @staticmethod
+
+    def _sky_explorer_survey_detail_tier_from_context(context: tuple[object, ...] | None) -> str:
+
+        if (
+
+            context is not None
+
+            and len(context) > 0
+
+            and context[-1] in (_SKY_EXPLORER_SURVEY_DETAIL_PREVIEW, _SKY_EXPLORER_SURVEY_DETAIL_REFINE)
+
+        ):
+
+            return str(context[-1])
+
+        return _SKY_EXPLORER_SURVEY_DETAIL_REFINE
+
+    def _sky_explorer_survey_loading_message_for_detail(self, detail_tier: str) -> str:
+
+        title = self._sky_explorer_active_survey_title()
+
+        if detail_tier == _SKY_EXPLORER_SURVEY_DETAIL_PREVIEW:
+
+            return f"Loading {title} preview…"
+
+        if detail_tier == _SKY_EXPLORER_SURVEY_DETAIL_REFINE:
+
+            return f"Refining {title} detail…"
+
+        return f"Loading {title}…"
+
+    def _sky_explorer_survey_set_loading_detail(self, detail_tier: str) -> None:
+
+        self._sky_explorer_image_view.set_comparison_split_enabled(True)
+
+        self._sky_explorer_image_view.set_comparison_loading(True)
+
+        self._sky_explorer_image_view.set_comparison_loading_message(
+
+            self._sky_explorer_survey_loading_message_for_detail(detail_tier)
+
+        )
+
+    @staticmethod
+
+    def _sky_explorer_survey_specs_are_distinct(
+
+        preview_spec: tuple[object, ...],
+
+        refine_spec: tuple[object, ...],
+
+    ) -> bool:
+
+        _preview_wcs, preview_width, preview_height, _preview_target, preview_signature = preview_spec
+
+        _refine_wcs, refine_width, refine_height, _refine_target, refine_signature = refine_spec
+
+        return (
+
+            int(preview_width),
+
+            int(preview_height),
+
+            int(preview_signature[10]),
+
+        ) != (
+
+            int(refine_width),
+
+            int(refine_height),
+
+            int(refine_signature[10]),
+
+        )
+
+    def _sky_explorer_survey_viewport_needs_refresh(
+
+        self,
+
+        signature: tuple[object, ...],
+
+    ) -> bool:
+
+        result = self._sky_explorer_survey_result
+
+        cached_context = self._sky_explorer_survey_result_context
+
+        if result is None or cached_context is None:
+
+            return True
+
+        refine_context = self._sky_explorer_survey_request_context(
+
+            signature,
+
+            _SKY_EXPLORER_SURVEY_DETAIL_REFINE,
+
+        )
+
+        if cached_context == refine_context:
+
+            return False
+
+        if len(signature) < 11 or len(cached_context) < 12:
+
+            return True
+
+        new_sampling_step = int(signature[10])
+
+        cached_sampling_step = int(cached_context[11])
+
+        if new_sampling_step < cached_sampling_step:
+
+            return True
+
+        if new_sampling_step == cached_sampling_step and self._sky_explorer_survey_visible_in_cached_target():
+
+            return False
+
+        return True
+
+    def _sky_explorer_display_image_size(self) -> tuple[int, int] | None:
+
+        qimage = getattr(self._sky_explorer_image_view, "_qimage", None)
+
+        if qimage is None or qimage.isNull():
+
+            return None
+
+        return int(qimage.width()), int(qimage.height())
+
+    def _sky_explorer_wcs_reference_size(self, wcs: WCS) -> tuple[int, int] | None:
+
+        result = self._sky_explorer_overlay_reference_result()
+
+        if result is not None:
+
+            solved_field = result.solved_field
+
+            if solved_field.width > 0 and solved_field.height > 0:
+
+                return int(solved_field.width), int(solved_field.height)
+
+        if wcs.array_shape is not None:
+
+            height, width = wcs.array_shape
+
+            if width and height:
+
+                return int(width), int(height)
+
+        if wcs.pixel_shape is not None:
+
+            width, height = wcs.pixel_shape
+
+            if width and height:
+
+                return int(width), int(height)
+
+        return None
+
+    def _sky_explorer_wcs_for_display_coordinates(self, wcs: WCS) -> WCS:
+
+        display_size = self._sky_explorer_display_image_size()
+
+        reference_size = self._sky_explorer_wcs_reference_size(wcs)
+
+        if display_size is None or reference_size is None:
+
+            return wcs
+
+        display_width, display_height = display_size
+
+        reference_width, reference_height = reference_size
+
+        scale_x = display_width / float(reference_width)
+
+        scale_y = display_height / float(reference_height)
+
+        if math.isclose(scale_x, 1.0, rel_tol=0.0, abs_tol=1.0e-9) and math.isclose(
+
+            scale_y, 1.0, rel_tol=0.0, abs_tol=1.0e-9
+
+        ):
+
+            return wcs
+
+        aligned = wcs.deepcopy()
+
+        aligned.wcs.crpix = np.array(
+
+            [float(aligned.wcs.crpix[0]) * scale_x, float(aligned.wcs.crpix[1]) * scale_y],
+
+            dtype=float,
+
+        )
+
+        aligned.wcs.cdelt = np.array(
+
+            [float(aligned.wcs.cdelt[0]) / scale_x, float(aligned.wcs.cdelt[1]) / scale_y],
+
+            dtype=float,
+
+        )
+
+        try:
+
+            aligned.array_shape = (display_height, display_width)
+
+        except Exception:
+
+            pass
+
+        return aligned
+
+    def _sky_explorer_survey_viewport_wcs(
+
+        self,
+
+        *,
+
+        max_output_size: int | None = None,
+
+    ) -> tuple[WCS, int, int, tuple[float, float, float, float], tuple[object, ...]] | None:
+
+        source_wcs = self._sky_explorer_image_wcs()
+
+        if source_wcs is None:
+
+            return None
+
+        source_wcs = self._sky_explorer_wcs_for_display_coordinates(source_wcs)
+
+        visible_rect = self._sky_explorer_image_view.visible_image_rect(margin_fraction=0.0)
+
+        if visible_rect.isEmpty():
+
+            return None
+
+        fetch_margin_fraction = max(0.0, float(_SKY_EXPLORER_SURVEY_FETCH_MARGIN_FRACTION))
+
+        margin_x = visible_rect.width() * fetch_margin_fraction
+
+        margin_y = visible_rect.height() * fetch_margin_fraction
+
+        fetch_rect = visible_rect.adjusted(-margin_x, -margin_y, margin_x, margin_y)
+
+        display_size = self._sky_explorer_display_image_size()
+
+        image_width = display_size[0] if display_size is not None else None
+
+        image_height = display_size[1] if display_size is not None else None
+
+        x0 = max(0, int(math.floor(fetch_rect.left())))
+
+        y0 = max(0, int(math.floor(fetch_rect.top())))
+
+        x1 = max(x0 + 1, int(math.ceil(fetch_rect.right())))
+
+        y1 = max(y0 + 1, int(math.ceil(fetch_rect.bottom())))
+
+        if image_width is not None:
+
+            x1 = min(x1, image_width)
+
+        if image_height is not None:
+
+            y1 = min(y1, image_height)
+
+        if x1 <= x0 or y1 <= y0:
+
+            return None
+
+        source_width = x1 - x0
+
+        source_height = y1 - y0
+
+        target_width = max(256, min(2048, int(round(self._sky_explorer_image_view.width() * 1.25))))
+
+        target_height = max(256, min(2048, int(round(self._sky_explorer_image_view.height() * 1.25))))
+
+        if max_output_size is not None:
+
+            preview_cap = max(128, int(max_output_size))
+
+            target_width = min(target_width, preview_cap)
+
+            target_height = min(target_height, preview_cap)
+
+        sampling_step = max(
+
+            1,
+
+            int(math.ceil(source_width / max(1, target_width))),
+
+            int(math.ceil(source_height / max(1, target_height))),
+
+        )
+
+        with warnings.catch_warnings():
+
+            warnings.filterwarnings(
+
+                "ignore",
+
+                message="cdelt will be ignored since cd is present",
+
+                category=RuntimeWarning,
+
+            )
+
+            viewport_wcs = scale_wcs_for_pixel_sampling(
+
+                source_wcs.slice(
+
+                    (
+
+                        slice(y0, y1, sampling_step),
+
+                        slice(x0, x1, sampling_step),
+
+                    ),
+
+                    numpy_order=True,
+
+                ),
+
+                sampling_step,
+
+            )
+
+            output_width = max(1, int(math.ceil(source_width / sampling_step)))
+
+            output_height = max(1, int(math.ceil(source_height / sampling_step)))
+
+            try:
+
+                viewport_wcs.array_shape = (output_height, output_width)
+
+            except Exception:
+
+                pass
+
+            target_rect = survey_target_rect_in_source_pixels(
+
+                source_wcs,
+
+                viewport_wcs,
+
+                output_width=output_width,
+
+                output_height=output_height,
+
+            )
+
+        signature = (
+
+            str((self._current_sky_explorer_source_image or Path()).resolve()),
+
+            self._sky_explorer_active_survey_key,
+
+            round(float(visible_rect.left()), 3),
+
+            round(float(visible_rect.top()), 3),
+
+            round(float(visible_rect.width()), 3),
+
+            round(float(visible_rect.height()), 3),
+
+            x0,
+
+            y0,
+
+            x1,
+
+            y1,
+
+            sampling_step,
+
+            output_width,
+
+            output_height,
+
+            round(target_rect[0], 4),
+
+            round(target_rect[1], 4),
+
+            round(target_rect[2], 4),
+
+            round(target_rect[3], 4),
+
+        )
+
+        return viewport_wcs, output_width, output_height, target_rect, signature
+
+    def _sky_explorer_survey_viewport_specs(
+
+        self,
+
+    ) -> tuple[
+
+        tuple[WCS, int, int, tuple[float, float, float, float], tuple[object, ...]],
+
+        tuple[WCS, int, int, tuple[float, float, float, float], tuple[object, ...]],
+
+    ] | None:
+
+        preview_spec = self._sky_explorer_survey_viewport_wcs(
+
+            max_output_size=_SKY_EXPLORER_SURVEY_PREVIEW_MAX_OUTPUT,
+
+        )
+
+        refine_spec = self._sky_explorer_survey_viewport_wcs(max_output_size=None)
+
+        if preview_spec is None or refine_spec is None:
+
+            return None
+
+        return preview_spec, refine_spec
+
+    def _sky_explorer_survey_build_request(
+
+        self,
+
+        viewport_spec: tuple[WCS, int, int, tuple[float, float, float, float], tuple[object, ...]],
+
+    ) -> SurveyImageRequest:
+
+        viewport_wcs, width, height, target_rect, _signature = viewport_spec
+
+        settings = self._ensure_settings()
+
+        return SurveyImageRequest(
+
+            survey_key=str(self._sky_explorer_active_survey_key),
+
+            wcs=viewport_wcs,
+
+            width=width,
+
+            height=height,
+
+            target_rect=target_rect,
+
+            cache_dir=settings.cache_dir,
+
+        )
+
+    def _sky_explorer_survey_start_request(
+
+        self,
+
+        viewport_spec: tuple[WCS, int, int, tuple[float, float, float, float], tuple[object, ...]],
+
+        *,
+
+        detail_tier: str,
+
+    ) -> None:
+
+        if not self._sky_explorer_active_survey_key:
+
+            return
+
+        _viewport_wcs, _width, _height, _target_rect, signature = viewport_spec
+
+        context = self._sky_explorer_survey_request_context(signature, detail_tier)
+
+        request = self._sky_explorer_survey_build_request(viewport_spec)
+
+        worker = self._sky_explorer_survey_worker
+
+        if worker is not None and worker.isRunning():
+
+            if context != self._sky_explorer_survey_worker_context:
+
+                self._pending_sky_explorer_survey_request = (request, context)
+
+            return
+
+        self._pending_sky_explorer_survey_request = None
+
+        self._start_sky_explorer_survey_request(request, context, detail_tier=detail_tier)
+
+    def _request_current_sky_explorer_survey_viewport(
+
+        self,
+
+        *,
+
+        force_detail: str | None = None,
+
+    ) -> None:
+
+        survey_key = self._sky_explorer_active_survey_key
+
+        if not survey_key:
+
+            return
+
+        try:
+
+            viewport_specs = self._sky_explorer_survey_viewport_specs()
+
+        except Exception as exc:
+
+            self._handle_sky_explorer_survey_result_error(
+
+                f"Could not derive the current viewport WCS: {exc}"
+
+            )
+
+            return
+
+        if viewport_specs is None:
+
+            return
+
+        preview_spec, refine_spec = viewport_specs
+
+        _preview_wcs, _preview_width, _preview_height, _preview_target, preview_signature = preview_spec
+
+        _refine_wcs, _refine_width, _refine_height, _refine_target, refine_signature = refine_spec
+
+        if hasattr(self, "_sky_explorer_survey_refine_timer"):
+
+            self._sky_explorer_survey_refine_timer.stop()
+
+        refine_context = self._sky_explorer_survey_request_context(
+
+            refine_signature,
+
+            _SKY_EXPLORER_SURVEY_DETAIL_REFINE,
+
+        )
+
+        if refine_context == self._sky_explorer_survey_result_context:
+
+            self._sky_explorer_image_view.set_comparison_loading(False)
+
+            return
+
+        if force_detail != _SKY_EXPLORER_SURVEY_DETAIL_REFINE and not self._sky_explorer_survey_viewport_needs_refresh(
+
+            refine_signature
+
+        ):
+
+            self._sky_explorer_image_view.set_comparison_loading(False)
+
+            return
+
+        if force_detail != _SKY_EXPLORER_SURVEY_DETAIL_REFINE and not self._sky_explorer_survey_visible_in_cached_target():
+
+            self._sky_explorer_image_view.clear_comparison_survey_content()
+
+        preview_is_distinct = self._sky_explorer_survey_specs_are_distinct(preview_spec, refine_spec)
+
+        if force_detail == _SKY_EXPLORER_SURVEY_DETAIL_REFINE:
+
+            self._sky_explorer_survey_set_loading_detail(_SKY_EXPLORER_SURVEY_DETAIL_REFINE)
+
+            self._sky_explorer_survey_start_request(refine_spec, detail_tier=_SKY_EXPLORER_SURVEY_DETAIL_REFINE)
+
+            return
+
+        if force_detail == _SKY_EXPLORER_SURVEY_DETAIL_PREVIEW:
+
+            self._sky_explorer_survey_set_loading_detail(_SKY_EXPLORER_SURVEY_DETAIL_PREVIEW)
+
+            self._sky_explorer_survey_start_request(preview_spec, detail_tier=_SKY_EXPLORER_SURVEY_DETAIL_PREVIEW)
+
+            return
+
+        if preview_is_distinct:
+
+            self._sky_explorer_survey_set_loading_detail(_SKY_EXPLORER_SURVEY_DETAIL_PREVIEW)
+
+            self._sky_explorer_survey_start_request(preview_spec, detail_tier=_SKY_EXPLORER_SURVEY_DETAIL_PREVIEW)
+
+            return
+
+        self._sky_explorer_survey_set_loading_detail(_SKY_EXPLORER_SURVEY_DETAIL_REFINE)
+
+        self._sky_explorer_survey_start_request(refine_spec, detail_tier=_SKY_EXPLORER_SURVEY_DETAIL_REFINE)
+
+    def _start_sky_explorer_survey_request(
+
+        self,
+
+        request: SurveyImageRequest,
+
+        context: tuple[object, ...],
+
+        *,
+
+        detail_tier: str,
+
+    ) -> None:
+
+        if not self._sky_explorer_active_survey_key:
+
+            return
+
+        self._sky_explorer_survey_set_loading_detail(detail_tier)
+
+        worker = SkyExplorerSurveyWorker(
+
+            request=request,
+
+            fetcher=fetch_survey_image,
+
+            parent=self,
+
+        )
+
+        self._sky_explorer_survey_worker = worker
+
+        self._sky_explorer_survey_worker_context = context
+
+        worker.progress_updated.connect(self._handle_sky_explorer_survey_progress)
+
+        worker.survey_completed.connect(self._handle_sky_explorer_survey_completed)
+
+        worker.survey_failed.connect(self._handle_sky_explorer_survey_failed)
+
+        worker.finished.connect(worker.deleteLater)
+
+        worker.start()
+
+    def _sky_explorer_survey_context_is_current(self, context: tuple[object, ...] | None) -> bool:
+
+        return (
+
+            context is not None
+
+            and len(context) >= 3
+
+            and context[0] == self._sky_explorer_survey_request_generation
+
+            and context[2] == self._sky_explorer_active_survey_key
+
+            and context[1] == str((self._current_sky_explorer_source_image or Path()).resolve())
+
+        )
+
+    def _handle_sky_explorer_survey_progress(self, message: str) -> None:
+
+        if not self._sky_explorer_survey_context_is_current(self._sky_explorer_survey_worker_context):
+
+            return
+
+        progress_message = str(message).strip()
+
+        if not progress_message:
+
+            return
+
+        worker_context = self._sky_explorer_survey_worker_context
+
+        detail_tier = self._sky_explorer_survey_detail_tier_from_context(worker_context)
+
+        title = self._sky_explorer_active_survey_title()
+
+        if detail_tier == _SKY_EXPLORER_SURVEY_DETAIL_PREVIEW:
+
+            status_message = f"{title} preview: {progress_message}"
+
+        else:
+
+            status_message = f"{title} detail: {progress_message}"
+
+        self.statusBar().showMessage(status_message, 4000)
+
+        self._sky_explorer_image_view.set_comparison_loading_message(status_message)
+
+    def _handle_sky_explorer_survey_completed(self, result: object) -> None:
+
+        context = self._sky_explorer_survey_worker_context
+
+        detail_tier = self._sky_explorer_survey_detail_tier_from_context(context)
+
+        self._sky_explorer_survey_worker = None
+
+        self._sky_explorer_survey_worker_context = None
+
+        if self._sky_explorer_survey_context_is_current(context):
+
+            if not self._sky_explorer_survey_context_covers_visible_viewport(context):
+
+                self._sky_explorer_survey_result = None
+
+                self._sky_explorer_survey_result_context = None
+
+                self._sky_explorer_survey_display = None
+
+                self._sky_explorer_image_view.clear_comparison_survey_content()
+
+                self._sky_explorer_survey_set_loading_detail(detail_tier)
+
+                if self._pending_sky_explorer_survey_request is None:
+
+                    self._sky_explorer_survey_refresh_timer.start(0)
+
+            else:
+
+                try:
+
+                    display = self._build_sky_explorer_survey_display(result)
+
+                except Exception as exc:
+
+                    self._handle_sky_explorer_survey_result_error(str(exc))
+
+                else:
+
+                    self._sky_explorer_survey_result = result
+
+                    self._sky_explorer_survey_result_context = context
+
+                    self._sky_explorer_survey_display = display
+
+                    self._sky_explorer_survey_last_error = None
+
+                    self._apply_sky_explorer_survey_comparison()
+
+                    title = self._sky_explorer_active_survey_title()
+
+                    source_label = "cache" if bool(getattr(result, "from_cache", False)) else "CDS"
+
+                    if detail_tier == _SKY_EXPLORER_SURVEY_DETAIL_PREVIEW:
+
+                        try:
+
+                            viewport_specs = self._sky_explorer_survey_viewport_specs()
+
+                        except Exception:
+
+                            viewport_specs = None
+
+                        if viewport_specs is not None and self._sky_explorer_survey_specs_are_distinct(
+
+                            *viewport_specs
+
+                        ):
+
+                            self.statusBar().showMessage(
+
+                                f"{title} preview loaded from {source_label}. Refining detail…",
+
+                                5000,
+
+                            )
+
+                            self._sky_explorer_image_view.set_comparison_loading_message(
+
+                                self._sky_explorer_survey_loading_message_for_detail(
+
+                                    _SKY_EXPLORER_SURVEY_DETAIL_REFINE
+
+                                )
+
+                            )
+
+                            self._sky_explorer_survey_refine_timer.start()
+
+                            self._start_pending_sky_explorer_survey_request()
+
+                            return
+
+                    self._sky_explorer_image_view.set_comparison_loading(False)
+
+                    self.statusBar().showMessage(
+
+                        f"{title} comparison updated from {source_label}. Drag the divider to compare images.",
+
+                        5000,
+
+                    )
+
+        self._start_pending_sky_explorer_survey_request()
+
+    def _handle_sky_explorer_survey_failed(self, message: str) -> None:
+
+        context = self._sky_explorer_survey_worker_context
+
+        detail_tier = self._sky_explorer_survey_detail_tier_from_context(context)
+
+        self._sky_explorer_survey_worker = None
+
+        self._sky_explorer_survey_worker_context = None
+
+        if self._sky_explorer_survey_context_is_current(context):
+
+            if detail_tier == _SKY_EXPLORER_SURVEY_DETAIL_PREVIEW:
+
+                self.statusBar().showMessage(
+
+                    f"{self._sky_explorer_active_survey_title()} preview unavailable; loading full detail…",
+
+                    5000,
+
+                )
+
+                self._request_current_sky_explorer_survey_viewport(
+
+                    force_detail=_SKY_EXPLORER_SURVEY_DETAIL_REFINE,
+
+                )
+
+            else:
+
+                self._handle_sky_explorer_survey_result_error(message)
+
+        self._start_pending_sky_explorer_survey_request()
+
+    def _handle_sky_explorer_survey_result_error(self, message: str) -> None:
+
+        title = dict(_SKY_EXPLORER_SURVEY_OPTIONS).get(
+
+            self._sky_explorer_active_survey_key or "",
+
+            "Survey",
+
+        )
+
+        summary = str(message).strip() or "The survey service did not return an image."
+
+        self.statusBar().showMessage(f"{title} comparison could not be updated: {summary}", 8000)
+
+        error_key = f"{title}: {summary}"
+
+        if error_key != self._sky_explorer_survey_last_error:
+
+            self._sky_explorer_survey_last_error = error_key
+
+            self._append_sky_explorer_workflow_note(f"{title} survey comparison: {summary}")
+
+        self._sky_explorer_image_view.set_comparison_loading(False)
+
+        if self._sky_explorer_active_survey_key:
+
+            self._sky_explorer_image_view.set_comparison_split_enabled(True)
+
+    def _start_pending_sky_explorer_survey_request(self) -> None:
+
+        pending = self._pending_sky_explorer_survey_request
+
+        self._pending_sky_explorer_survey_request = None
+
+        if pending is None:
+
+            return
+
+        request, context = pending
+
+        if not self._sky_explorer_survey_context_is_current(context):
+
+            return
+
+        if context == self._sky_explorer_survey_result_context:
+
+            return
+
+        detail_tier = self._sky_explorer_survey_detail_tier_from_context(context)
+
+        self._start_sky_explorer_survey_request(
+
+            cast(SurveyImageRequest, request),
+
+            context,
+
+            detail_tier=detail_tier,
+
+        )
 
     def _set_sky_explorer_annotation_tool(self, tool: str, *, refresh: bool = True) -> None:
 
@@ -36370,7 +45274,7 @@ class MainWindow(QMainWindow):
 
     def _sky_explorer_hover_coordinate_formatter(self) -> Callable[[float, float], str | None] | None:
 
-        wcs = self._sky_explorer_overlay_projection_wcs()
+        wcs = self._sky_explorer_image_wcs()
 
         if wcs is None:
 
@@ -36394,9 +45298,37 @@ class MainWindow(QMainWindow):
 
         return formatter
 
+    def _sky_explorer_image_wcs(self) -> WCS | None:
+
+        overlay_wcs = self._sky_explorer_overlay_projection_wcs()
+
+        if overlay_wcs is not None:
+
+            return overlay_wcs
+
+        source_path = self._current_sky_explorer_source_image
+
+        if source_path is None or not source_path.exists():
+
+            return None
+
+        try:
+
+            wcs = celestial_wcs(read_header(source_path))
+
+        except Exception:
+
+            return None
+
+        if not getattr(wcs, "has_celestial", False):
+
+            return None
+
+        return wcs
+
     def _sky_explorer_world_coordinates_for_image_point(self, image_x: float, image_y: float) -> tuple[float, float] | None:
 
-        wcs = self._sky_explorer_overlay_projection_wcs()
+        wcs = self._sky_explorer_image_wcs()
 
         if wcs is None:
 
@@ -36428,15 +45360,23 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self)
 
+        world_coordinates = self._sky_explorer_world_coordinates_for_image_point(image_x, image_y)
+
         search_action = menu.addAction("Search")
 
-        search_action.setEnabled(self._sky_explorer_world_coordinates_for_image_point(image_x, image_y) is not None)
+        search_action.setEnabled(world_coordinates is not None)
+
+        detect_action = menu.addAction("Detect")
+
+        detect_action.setEnabled(world_coordinates is not None)
 
         edit_annotation_action = None
 
         delete_annotation_action = None
 
         clear_annotations_action = None
+
+        clear_detections_action = None
 
         target_annotation = self._sky_explorer_manual_annotation_at(image_x, image_y)
 
@@ -36456,11 +45396,21 @@ class MainWindow(QMainWindow):
 
                 clear_annotations_action = menu.addAction("Clear Manual Annotations")
 
+        if self._sky_explorer_detected_objects_for_current_image() or self._sky_explorer_detected_object_identities_for_current_image():
+
+            menu.addSeparator()
+
+            clear_detections_action = menu.addAction("Clear Detections")
+
         selected_action = menu.exec(global_position)
 
         if selected_action is search_action:
 
             self._open_simbad_coordinate_search_for_sky_explorer_image_point(image_x, image_y)
+
+        elif selected_action is detect_action:
+
+            self._detect_sky_explorer_targets_at_image_point(image_x, image_y)
 
         elif selected_action is edit_annotation_action and target_annotation is not None:
 
@@ -36473,6 +45423,10 @@ class MainWindow(QMainWindow):
         elif selected_action is clear_annotations_action:
 
             self._clear_sky_explorer_manual_annotations()
+
+        elif selected_action is clear_detections_action:
+
+            self._clear_sky_explorer_detected_targets()
 
     def _handle_image_context_requested(self, image_x: float, image_y: float, global_position: QPoint, _modifiers: object) -> None:
 
@@ -36539,6 +45493,504 @@ class MainWindow(QMainWindow):
         )
 
         self._open_external_target_url(url, f"Opened SIMBAD coordinate search at {coord_text}.")
+
+    def _sky_explorer_detected_objects_for_current_image(self) -> list[SkyExplorerObject]:
+
+        image_key = self._sky_explorer_current_manual_annotation_key()
+
+        if image_key is None:
+
+            return []
+
+        return self._sky_explorer_detected_objects_by_image.setdefault(image_key, [])
+
+    def _sky_explorer_detected_object_identities_for_current_image(self) -> set[tuple[str, str, str]]:
+
+        image_key = self._sky_explorer_current_manual_annotation_key()
+
+        if image_key is None:
+
+            return set()
+
+        return self._sky_explorer_detected_object_identities_by_image.setdefault(image_key, set())
+
+    def _sky_explorer_detected_table_objects(self) -> tuple[SkyExplorerObject, ...]:
+
+        return tuple(self._sky_explorer_detected_objects_for_current_image())
+
+    def _sky_explorer_is_detected_object(self, sky_object: SkyExplorerObject) -> bool:
+
+        return self._sky_explorer_object_identity(sky_object) in self._sky_explorer_detected_object_identities_for_current_image()
+
+    def _sky_explorer_layer_key_for_object_type_key(self, type_key: str) -> str:
+
+        definition = _SKY_EXPLORER_OBJECT_TYPE_DEFINITION_BY_KEY.get(type_key)
+
+        if definition is None:
+
+            for mode in ("scientific", "advanced", "simple"):
+
+                for candidate in sky_explorer_object_type_definitions_for_mode(mode):
+
+                    if candidate.key == type_key:
+
+                        definition = candidate
+
+                        break
+
+                if definition is not None:
+
+                    break
+
+        if definition is not None and definition.query_layers:
+
+            return definition.query_layers[0]
+
+        if type_key == "variable_star":
+
+            return "variable_stars"
+
+        if type_key == "exoplanet_host":
+
+            return "exoplanets"
+
+        if type_key == "asteroid_comet":
+
+            return "solar_system"
+
+        if type_key == "star":
+
+            return "gaia_stars"
+
+        if type_key == "general_object":
+
+            return "general_objects"
+
+        return "deep_sky"
+
+    def _sky_explorer_pixel_coordinates_for_world(self, ra_deg: float, dec_deg: float) -> tuple[float, float] | None:
+
+        wcs = self._sky_explorer_image_wcs()
+
+        if wcs is None:
+
+            return None
+
+        try:
+
+            pixel_x, pixel_y = wcs.world_to_pixel_values(float(ra_deg), float(dec_deg))
+
+            x_value = float(pixel_x)
+
+            y_value = float(pixel_y)
+
+        except Exception:
+
+            return None
+
+        if not math.isfinite(x_value) or not math.isfinite(y_value):
+
+            return None
+
+        return x_value, y_value
+
+    def _sky_explorer_sky_object_from_catalog_target(
+
+        self,
+
+        target: CatalogTargetAtCoordinate,
+
+        *,
+
+        click_ra_deg: float,
+
+        click_dec_deg: float,
+
+    ) -> SkyExplorerObject | None:
+
+        pixel_position = self._sky_explorer_pixel_coordinates_for_world(target.ra_deg, target.dec_deg)
+
+        if pixel_position is None:
+
+            return None
+
+        pixel_x, pixel_y = pixel_position
+
+        object_type = str(target.object_type or "Object").strip() or "Object"
+
+        type_key = sky_explorer_object_type_key_for_catalog_type(object_type)
+
+        layer_key = self._sky_explorer_layer_key_for_object_type_key(type_key)
+
+        main_id = str(target.main_id or object_type).strip() or "Object"
+
+        click_coord = SkyCoord(float(click_ra_deg) * u.deg, float(click_dec_deg) * u.deg, frame="icrs")
+
+        object_coord = SkyCoord(float(target.ra_deg) * u.deg, float(target.dec_deg) * u.deg, frame="icrs")
+
+        angular_distance_arcmin = float(click_coord.separation(object_coord).arcmin)
+
+        preferred_name = main_id
+
+        return SkyExplorerObject(
+
+            layer_key=layer_key,
+
+            catalog="simbad",
+
+            source_id=f"detect:{preferred_name}",
+
+            name=preferred_name,
+
+            object_type=object_type,
+
+            ra_deg=float(target.ra_deg),
+
+            dec_deg=float(target.dec_deg),
+
+            pixel_x=float(pixel_x),
+
+            pixel_y=float(pixel_y),
+
+            magnitude=target.visual_magnitude,
+
+            angular_distance_arcmin=angular_distance_arcmin,
+
+            short_label=_short_label_for_name(preferred_name, fallback=preferred_name),
+
+            metadata={
+
+                "main_id": main_id,
+
+                "catalog_type": object_type,
+
+                "object_type": object_type,
+
+                "sky_explorer_detected": True,
+
+            },
+
+        )
+
+    def _sky_explorer_local_detected_objects_near_coordinate(
+
+        self,
+
+        ra_deg: float,
+
+        dec_deg: float,
+
+        *,
+
+        radius_arcsec: float,
+
+    ) -> list[SkyExplorerObject]:
+
+        result = self._current_sky_explorer_result
+
+        if result is None:
+
+            return []
+
+        click_coord = SkyCoord(float(ra_deg) * u.deg, float(dec_deg) * u.deg, frame="icrs")
+
+        targets: list[SkyExplorerObject] = []
+
+        for sky_object in result.objects:
+
+            object_coord = SkyCoord(float(sky_object.ra_deg) * u.deg, float(sky_object.dec_deg) * u.deg, frame="icrs")
+
+            separation_arcsec = float(click_coord.separation(object_coord).arcsec)
+
+            if separation_arcsec > float(radius_arcsec):
+
+                continue
+
+            metadata = dict(sky_object.metadata if isinstance(sky_object.metadata, dict) else {})
+
+            metadata["sky_explorer_detected"] = True
+
+            targets.append(replace(sky_object, metadata=metadata))
+
+        targets.sort(key=lambda item: item.angular_distance_arcmin if math.isfinite(float(item.angular_distance_arcmin)) else float("inf"))
+
+        return targets
+
+    def _sky_explorer_detected_object_dedup_key(self, sky_object: SkyExplorerObject) -> str:
+
+        label = str(sky_object.short_label or sky_object.name or sky_object.source_id).casefold()
+
+        return f"{label}:{sky_object.ra_deg:.6f}:{sky_object.dec_deg:.6f}"
+
+    def _merge_sky_explorer_detected_objects(
+
+        self,
+
+        *object_groups: Sequence[SkyExplorerObject],
+
+    ) -> list[SkyExplorerObject]:
+
+        merged: dict[str, SkyExplorerObject] = {}
+
+        for objects in object_groups:
+
+            for sky_object in objects:
+
+                dedup_key = self._sky_explorer_detected_object_dedup_key(sky_object)
+
+                existing = merged.get(dedup_key)
+
+                if existing is None:
+
+                    merged[dedup_key] = sky_object
+
+                    continue
+
+                existing_distance = float(existing.angular_distance_arcmin) if math.isfinite(float(existing.angular_distance_arcmin)) else float("inf")
+
+                candidate_distance = float(sky_object.angular_distance_arcmin) if math.isfinite(float(sky_object.angular_distance_arcmin)) else float("inf")
+
+                if candidate_distance < existing_distance:
+
+                    merged[dedup_key] = sky_object
+
+        return sorted(
+
+            merged.values(),
+
+            key=lambda item: item.angular_distance_arcmin if math.isfinite(float(item.angular_distance_arcmin)) else float("inf"),
+
+        )
+
+    def _register_sky_explorer_detected_objects(self, objects: Sequence[SkyExplorerObject]) -> None:
+
+        if not objects:
+
+            return
+
+        image_key = self._sky_explorer_current_manual_annotation_key()
+
+        if image_key is None:
+
+            return
+
+        stored_objects = self._sky_explorer_detected_objects_for_current_image()
+
+        explore_identities = {
+
+            self._sky_explorer_object_identity(sky_object)
+
+            for sky_object in (self._current_sky_explorer_result.objects if self._current_sky_explorer_result is not None else ())
+
+        }
+
+        new_table_objects: list[SkyExplorerObject] = []
+
+        detected_identities = self._sky_explorer_detected_object_identities_for_current_image()
+
+        for sky_object in objects:
+
+            identity = self._sky_explorer_object_identity(sky_object)
+
+            detected_identities.add(identity)
+
+            if identity in explore_identities:
+
+                continue
+
+            new_table_objects.append(sky_object)
+
+        self._sky_explorer_detected_object_identities_by_image[image_key] = detected_identities
+
+        self._sky_explorer_detected_objects_by_image[image_key] = self._merge_sky_explorer_detected_objects(
+
+            stored_objects,
+
+            new_table_objects,
+
+        )
+
+    def _detect_sky_explorer_targets_at_image_point(self, image_x: float, image_y: float) -> None:
+
+        coordinates = self._sky_explorer_world_coordinates_for_image_point(image_x, image_y)
+
+        if coordinates is None:
+
+            QMessageBox.information(self, "No sky coordinates", "This image does not have usable WCS coordinates at the clicked position.")
+
+            return
+
+        image_key = self._sky_explorer_current_manual_annotation_key()
+
+        if image_key is None:
+
+            return
+
+        ra_deg, dec_deg = coordinates
+
+        radius_arcsec = self._sky_explorer_manual_search_radius_arcsec()
+
+        local_objects = self._sky_explorer_local_detected_objects_near_coordinate(
+
+            ra_deg,
+
+            dec_deg,
+
+            radius_arcsec=radius_arcsec,
+
+        )
+
+        if local_objects:
+
+            self._register_sky_explorer_detected_objects(local_objects)
+
+            self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
+
+        worker = self._sky_explorer_detect_worker
+
+        if worker is not None and worker.isRunning():
+
+            self.statusBar().showMessage("Sky Explorer detection already in progress.", 4000)
+
+            return
+
+        self.statusBar().showMessage("Detecting objects at the clicked position...", 0)
+
+        self._append_sky_explorer_workflow_note(
+
+            f"Detecting Sky Explorer objects near RA {ra_deg:.6f}, Dec {dec_deg:.6f} within {radius_arcsec:g} arcsec."
+
+        )
+
+        self._sky_explorer_detect_worker = SkyExplorerDetectWorker(
+
+            image_key,
+
+            ra_deg,
+
+            dec_deg,
+
+            radius_arcsec=radius_arcsec,
+
+            parent=self,
+
+        )
+
+        self._sky_explorer_detect_worker.detect_completed.connect(self._handle_sky_explorer_detect_completed)
+
+        self._sky_explorer_detect_worker.detect_failed.connect(self._handle_sky_explorer_detect_failed)
+
+        self._sky_explorer_detect_worker.finished.connect(self._clear_sky_explorer_detect_worker)
+
+        self._sky_explorer_detect_worker.start()
+
+    def _clear_sky_explorer_detect_worker(self) -> None:
+
+        sender = self.sender()
+
+        if sender is self._sky_explorer_detect_worker:
+
+            self._sky_explorer_detect_worker = None
+
+    def _handle_sky_explorer_detect_completed(self, result: SkyExplorerDetectResult) -> None:
+
+        if str(result.image_key) != str(self._sky_explorer_current_manual_annotation_key() or ""):
+
+            return
+
+        catalog_objects = [
+
+            converted_object
+
+            for target in result.targets
+
+            if (
+
+                converted_object := self._sky_explorer_sky_object_from_catalog_target(
+
+                    target,
+
+                    click_ra_deg=result.click_ra_deg,
+
+                    click_dec_deg=result.click_dec_deg,
+
+                )
+
+            )
+
+            is not None
+
+        ]
+
+        self._register_sky_explorer_detected_objects(catalog_objects)
+
+        self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
+
+        detected_count = len(self._sky_explorer_detected_object_identities_for_current_image())
+
+        if detected_count:
+
+            labels = ", ".join(
+
+                sky_object.short_label or sky_object.name
+
+                for sky_object in self._sky_explorer_detected_table_objects()[:3]
+
+            )
+
+            if not labels:
+
+                labels = ", ".join(
+
+                    sky_object.short_label or sky_object.name
+
+                    for sky_object in catalog_objects[:3]
+
+                )
+
+            extra_count = max(0, detected_count - 3)
+
+            if extra_count:
+
+                labels = f"{labels} (+{extra_count} more)" if labels else f"{detected_count} object(s)"
+
+            message = f"Detected {detected_count} object(s): {labels}." if labels else f"Detected {detected_count} object(s)."
+
+        else:
+
+            message = "No catalog objects were found near the clicked position."
+
+        self.statusBar().showMessage(message, 7000)
+
+        self._append_sky_explorer_workflow_note(message)
+
+    def _handle_sky_explorer_detect_failed(self, image_key: str, message: str) -> None:
+
+        if str(image_key) != str(self._sky_explorer_current_manual_annotation_key() or ""):
+
+            return
+
+        self.statusBar().showMessage(f"Sky Explorer detection failed: {message}", 7000)
+
+        self._append_sky_explorer_workflow_note(f"Sky Explorer detection failed: {message}")
+
+        QMessageBox.warning(self, "Detection failed", message)
+
+    def _clear_sky_explorer_detected_targets(self) -> None:
+
+        image_key = self._sky_explorer_current_manual_annotation_key()
+
+        if image_key is None:
+
+            return
+
+        self._sky_explorer_detected_objects_by_image[image_key] = []
+
+        self._sky_explorer_detected_object_identities_by_image[image_key] = set()
+
+        self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
+
+        self.statusBar().showMessage("Cleared Sky Explorer detections for the current image.", 4000)
 
     def _open_sky_explorer_object_details(self, sky_object: SkyExplorerObject) -> None:
 
@@ -36754,6 +46206,22 @@ class MainWindow(QMainWindow):
 
             int(getattr(settings, "sky_explorer_mag_limit_examples_per_bin", 1)),
 
+            str(settings.sky_explorer_mag_limit_marker_color).strip().lower(),
+
+            str(settings.sky_explorer_mag_limit_marker_stroke_color).strip().lower(),
+
+            round(float(settings.sky_explorer_mag_limit_marker_stroke_width), 3),
+
+            round(float(settings.sky_explorer_mag_limit_target_size), 3),
+
+            str(settings.sky_explorer_mag_limit_text_color).strip().lower(),
+
+            str(settings.sky_explorer_mag_limit_text_stroke_color).strip().lower(),
+
+            round(float(settings.sky_explorer_mag_limit_text_stroke_width), 3),
+
+            round(float(settings.sky_explorer_mag_limit_text_size), 3),
+
             tuple(sorted(self._sky_explorer_object_type_color_overrides.items())),
 
             tuple(sorted(self._sky_explorer_object_group_color_overrides.items())),
@@ -36764,31 +46232,73 @@ class MainWindow(QMainWindow):
 
             self._current_custom_theme_colors().get("accent", "#3d8bfd"),
 
+            tuple(sorted(self._sky_explorer_detected_object_identities_for_current_image())),
+
+            len(self._sky_explorer_detected_table_objects()),
+
         )
 
     def _build_sky_explorer_automatic_image_overlays(self) -> list[ImageOverlay]:
 
         result = self._current_sky_explorer_result
 
-        if result is None:
-
-            return self._sky_explorer_mag_limit_image_overlays(self._sky_explorer_mag_limit_source_objects())
-
         visible_object_types = set(self._selected_sky_explorer_object_type_keys())
 
         selected_object = self._selected_sky_explorer_object()
 
-        visible_objects = [
-            sky_object
-            for sky_object in result.objects
-            if visible_object_types.intersection(sky_explorer_object_type_keys_for_object(sky_object))
-        ]
+        visible_objects: list[SkyExplorerObject] = []
 
-        visible_objects = [
-            sky_object for sky_object in visible_objects if self._should_annotate_sky_explorer_object(sky_object)
-        ]
+        if result is not None:
 
-        label_object_keys = self._sky_explorer_overlay_labeled_object_keys(visible_objects)
+            visible_objects = [
+                sky_object
+                for sky_object in result.objects
+                if visible_object_types.intersection(sky_explorer_object_type_keys_for_object(sky_object))
+            ]
+
+            visible_objects = [
+                sky_object for sky_object in visible_objects if self._should_annotate_sky_explorer_object(sky_object)
+            ]
+
+        detected_objects = self._sky_explorer_detected_table_objects()
+
+        detected_identities = self._sky_explorer_detected_object_identities_for_current_image()
+
+        annotate_objects = list(visible_objects)
+
+        seen_identities = {self._sky_explorer_object_identity(sky_object) for sky_object in annotate_objects}
+
+        for sky_object in detected_objects:
+
+            identity = self._sky_explorer_object_identity(sky_object)
+
+            if identity in seen_identities:
+
+                continue
+
+            annotate_objects.append(sky_object)
+
+            seen_identities.add(identity)
+
+        if result is not None:
+
+            for sky_object in result.objects:
+
+                identity = self._sky_explorer_object_identity(sky_object)
+
+                if identity not in detected_identities or identity in seen_identities:
+
+                    continue
+
+                annotate_objects.append(sky_object)
+
+                seen_identities.add(identity)
+
+        if not annotate_objects:
+
+            return self._sky_explorer_mag_limit_image_overlays(self._sky_explorer_mag_limit_source_objects())
+
+        label_object_keys = self._sky_explorer_overlay_labeled_object_keys(annotate_objects)
 
         selected_accent_color = self._current_custom_theme_colors().get("accent", "#3d8bfd")
 
@@ -36800,7 +46310,7 @@ class MainWindow(QMainWindow):
 
         overlays: list[ImageOverlay] = []
 
-        for sky_object in visible_objects:
+        for sky_object in annotate_objects:
 
             definition = self._sky_explorer_definition_for_object(sky_object, preferred_keys=visible_object_types)
 
@@ -36865,7 +46375,11 @@ class MainWindow(QMainWindow):
 
                     marker_style=marker_style,
 
-                    show_label=is_selected or self._sky_explorer_object_identity(sky_object) in label_object_keys,
+                    show_label=(
+                        self._sky_explorer_is_detected_object(sky_object)
+                        or is_selected
+                        or self._sky_explorer_object_identity(sky_object) in label_object_keys
+                    ),
 
                     pen_width=overlay_pen_width,
 
@@ -36916,16 +46430,24 @@ class MainWindow(QMainWindow):
 
         mag_limit_result = self._sky_explorer_mag_limit_result
 
+        current_mag_limit_signature = self._current_sky_explorer_mag_limit_query_signature()
+
         if (
             self._sky_explorer_result_matches_current_source(mag_limit_result)
             and self._sky_explorer_has_mag_limit_gaia_objects(mag_limit_result.objects)
             and self._sky_explorer_result_has_full_mag_limit_gaia_coverage(mag_limit_result)
-            and self._sky_explorer_gaia_query_signature_matches(self._sky_explorer_mag_limit_query_signature, current_signature)
+            and self._sky_explorer_gaia_query_signature_matches(self._sky_explorer_mag_limit_query_signature, current_mag_limit_signature)
         ):
 
             return tuple(mag_limit_result.objects)
 
         return ()
+
+    def _current_sky_explorer_mag_limit_query_signature(self) -> tuple[float,]:
+
+        settings = self._ensure_settings()
+
+        return (round(float(getattr(settings, "sky_explorer_gaia_max_magnitude", 17.0)), 6),)
 
     def _current_sky_explorer_gaia_query_signature(self) -> tuple[float, bool, int | None]:
 
@@ -37065,6 +46587,28 @@ class MainWindow(QMainWindow):
 
         return "star"
 
+    def _sky_explorer_mag_limit_overlay_style(self) -> tuple[float, float, str, str, float, str, str, float]:
+
+        settings = self._ensure_settings()
+
+        target_size = float(settings.sky_explorer_mag_limit_target_size)
+
+        text_size = float(settings.sky_explorer_mag_limit_text_size)
+
+        fill_color = str(settings.sky_explorer_mag_limit_marker_color).strip().lower() or "#3d8bfd"
+
+        stroke_color = str(settings.sky_explorer_mag_limit_marker_stroke_color).strip().lower() or "#111827"
+
+        stroke_width = float(settings.sky_explorer_mag_limit_marker_stroke_width)
+
+        text_color = str(settings.sky_explorer_mag_limit_text_color).strip().lower() or "#111827"
+
+        text_stroke_color = str(settings.sky_explorer_mag_limit_text_stroke_color).strip().lower() or "#ffffff"
+
+        text_stroke_width = float(settings.sky_explorer_mag_limit_text_stroke_width)
+
+        return target_size, text_size, fill_color, stroke_color, stroke_width, text_color, text_stroke_color, text_stroke_width
+
     def _sky_explorer_mag_limit_image_overlays(self, objects: Sequence[SkyExplorerObject]) -> list[ImageOverlay]:
 
         if not self._sky_explorer_mag_limit_button.isChecked():
@@ -37079,19 +46623,22 @@ class MainWindow(QMainWindow):
 
         style_key = self._sky_explorer_mag_limit_style_key()
 
-        definition = _SKY_EXPLORER_OBJECT_TYPE_DEFINITION_BY_KEY.get(style_key)
-
-        stroke_color, fill_color = self._sky_explorer_object_type_colors_for_key(style_key, definition=definition)
-
-        text_color = self._sky_explorer_object_type_text_color_for_key(style_key, stroke_color=stroke_color, fill_color=fill_color)
+        (
+            target_size,
+            text_size,
+            fill_color,
+            stroke_color,
+            stroke_width,
+            text_color,
+            text_stroke_color,
+            text_stroke_width,
+        ) = self._sky_explorer_mag_limit_overlay_style()
 
         text_font = self._sky_explorer_object_type_font_for_key(style_key)
 
         fill_opacity = self._sky_explorer_overlay_fill_opacity()
 
         stroke_opacity = self._sky_explorer_overlay_stroke_opacity()
-
-        overlay_wcs = self._sky_explorer_overlay_projection_wcs()
 
         selected_object = self._selected_sky_explorer_object()
 
@@ -37119,21 +46666,15 @@ class MainWindow(QMainWindow):
 
             )
 
-            marker_style, aperture_radius, ellipse_minor_radius, rotation_degrees = self._sky_explorer_overlay_geometry_for_object(
+            marker_style = "circle"
 
-                sky_object,
+            aperture_radius = max(2.0, float(target_size))
 
-                wcs=overlay_wcs,
+            ellipse_minor_radius = None
 
-            )
+            rotation_degrees = 0.0
 
-            overlay_text_size = self._sky_explorer_overlay_text_size_for_radius(
-
-                aperture_radius,
-
-                base_size=self._sky_explorer_overlay_base_text_size(text_font),
-
-            )
+            overlay_text_size = max(7.0, float(text_size))
 
             overlay_text_font = self._sky_explorer_overlay_font_with_size(
 
@@ -37143,13 +46684,7 @@ class MainWindow(QMainWindow):
 
             )
 
-            overlay_pen_width = self._sky_explorer_overlay_pen_width_for_radius(
-
-                aperture_radius,
-
-                is_selected=is_selected,
-
-            )
+            overlay_pen_width = max(0.0, float(stroke_width))
 
             overlays.append(
 
@@ -37185,6 +46720,10 @@ class MainWindow(QMainWindow):
 
                     text_size=None if overlay_text_font is not None else overlay_text_size,
 
+                    text_outline_color=text_stroke_color if text_stroke_width > 0.0 else None,
+
+                    text_outline_width=text_stroke_width if text_stroke_width > 0.0 else 0.0,
+
                     fill_color=fill_color,
 
                     fill_opacity=fill_opacity,
@@ -37193,9 +46732,9 @@ class MainWindow(QMainWindow):
 
                     accent_color=selected_accent_color if is_selected else None,
 
-                    outline_color="#111827",
+                    outline_color=None,
 
-                    outline_width=self._sky_explorer_overlay_outline_width_for_pen_width(overlay_pen_width),
+                    outline_width=0.0,
 
                     ellipse_minor_radius=ellipse_minor_radius,
 
@@ -37985,6 +47524,12 @@ class MainWindow(QMainWindow):
 
 
 
+        self._check_for_updates_action = QAction("Check for Updates", self)
+
+        self._check_for_updates_action.triggered.connect(self._check_for_updates)
+
+
+
         self._export_report_action = QAction("Export Report", self)
 
         self._export_report_action.triggered.connect(self._export_report)
@@ -38014,6 +47559,16 @@ class MainWindow(QMainWindow):
 
 
         mode_menu = self.menuBar().addMenu("Mode")
+
+        self._mode_menu = mode_menu
+
+        self._choose_mode_action = QAction("Choose Mode...", self)
+
+        self._choose_mode_action.triggered.connect(self._open_mode_launcher_screen)
+
+        mode_menu.addAction(self._choose_mode_action)
+
+        mode_menu.addSeparator()
 
         self._app_mode_action_group = QActionGroup(self)
 
@@ -38045,7 +47600,7 @@ class MainWindow(QMainWindow):
 
         )
 
-        self._app_mode_astrostack_action = QAction("(alpha) Astrostack", self)
+        self._app_mode_astrostack_action = QAction("Deep Stack", self)
 
         self._app_mode_astrostack_action.setCheckable(True)
 
@@ -38061,7 +47616,7 @@ class MainWindow(QMainWindow):
 
         )
 
-        self._app_mode_sky_view_action = QAction("Sky View", self)
+        self._app_mode_sky_view_action = QAction("Sky Atlas", self)
 
         self._app_mode_sky_view_action.setCheckable(True)
 
@@ -38081,6 +47636,26 @@ class MainWindow(QMainWindow):
 
         )
 
+        self._app_mode_distance_map_action = QAction("Distance Map", self)
+
+        self._app_mode_distance_map_action.setCheckable(True)
+
+        self._app_mode_distance_map_action.triggered.connect(
+
+            lambda _checked: self._handle_app_mode_changed(AppMode.DISTANCE_MAP)
+
+        )
+
+        self._app_mode_astro_tools_action = QAction("Observation Deck", self)
+
+        self._app_mode_astro_tools_action.setCheckable(True)
+
+        self._app_mode_astro_tools_action.triggered.connect(
+
+            lambda _checked: self._handle_app_mode_changed(AppMode.ASTRO_TOOLS)
+
+        )
+
         self._app_mode_action_group.addAction(self._app_mode_differential_action)
 
         self._app_mode_action_group.addAction(self._app_mode_asteroid_action)
@@ -38093,7 +47668,11 @@ class MainWindow(QMainWindow):
 
         self._app_mode_action_group.addAction(self._app_mode_sky_explorer_action)
 
+        self._app_mode_action_group.addAction(self._app_mode_distance_map_action)
+
         self._app_mode_action_group.addAction(self._app_mode_astrostack_action)
+
+        self._app_mode_action_group.addAction(self._app_mode_astro_tools_action)
 
         mode_menu.addAction(self._app_mode_differential_action)
 
@@ -38107,7 +47686,11 @@ class MainWindow(QMainWindow):
 
         mode_menu.addAction(self._app_mode_sky_explorer_action)
 
+        mode_menu.addAction(self._app_mode_distance_map_action)
+
         mode_menu.addAction(self._app_mode_astrostack_action)
+
+        mode_menu.addAction(self._app_mode_astro_tools_action)
 
 
 
@@ -38430,10 +48013,287 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             f"About {APP_DISPLAY_NAME}",
+            f"Version {APP_VERSION}\n\n"
             "Developed by Ogetay.\n"
             "For more info, please visit: ogetay.com/citizen-astronomy-cast\n\n"
             "Alpha-reviewer build only. Do not distribute.",
         )
+
+    def _check_for_updates(self) -> None:
+
+        if self._update_check_worker is not None or self._update_download_worker is not None:
+
+            self.statusBar().showMessage("An update operation is already running.", 5000)
+
+            return
+
+        self._check_for_updates_action.setEnabled(False)
+
+        worker = UpdateCheckWorker(parent=self)
+
+        self._update_check_worker = worker
+
+        worker.progress_updated.connect(self._handle_update_check_progress)
+
+        worker.update_check_completed.connect(self._handle_update_check_completed)
+
+        worker.update_check_failed.connect(self._handle_update_check_failed)
+
+        worker.finished.connect(worker.deleteLater)
+
+        worker.start()
+
+
+
+    def _handle_update_check_progress(self, message: str) -> None:
+
+        self.statusBar().showMessage(message)
+
+
+
+    def _handle_update_check_completed(self, result: object) -> None:
+
+        self._update_check_worker = None
+
+        self._check_for_updates_action.setEnabled(True)
+
+        available_update = getattr(result, "available_update", None)
+
+        if available_update is None:
+
+            current_version = str(getattr(result, "current_version", APP_VERSION))
+
+            QMessageBox.information(
+
+                self,
+
+                "No Updates Available",
+
+                f"Citizen Astronomy {current_version} is up to date on the alpha channel.",
+
+            )
+
+            self.statusBar().showMessage("Citizen Astronomy is up to date.", 5000)
+
+            return
+
+        version = str(getattr(available_update, "version", "new"))
+
+        notes = str(getattr(available_update, "notes", "")).strip()
+
+        installer_size = int(getattr(available_update, "installer_size", 0) or 0)
+
+        size_text = f"\nDownload size: {installer_size / (1024 * 1024):.1f} MiB" if installer_size > 0 else ""
+
+        notes_text = f"\n\n{notes}" if notes else ""
+
+        choice = QMessageBox.question(
+
+            self,
+
+            "Update Available",
+
+            f"Citizen Astronomy {version} is available.{size_text}{notes_text}\n\nDownload this update now?",
+
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+
+            QMessageBox.StandardButton.Yes,
+
+        )
+
+        if choice == QMessageBox.StandardButton.Yes:
+
+            self._start_update_download(available_update)
+
+
+
+    def _handle_update_check_failed(self, message: str) -> None:
+
+        self._update_check_worker = None
+
+        self._check_for_updates_action.setEnabled(True)
+
+        self.statusBar().showMessage("Update check failed.", 5000)
+
+        QMessageBox.warning(self, "Update Check Failed", message)
+
+
+
+    def _start_update_download(self, available_update: object) -> None:
+
+        if self._update_download_worker is not None:
+
+            return
+
+        self._check_for_updates_action.setEnabled(False)
+
+        version = str(getattr(available_update, "version", "update"))
+
+        progress_dialog = QProgressDialog(f"Downloading Citizen Astronomy {version}...", "Cancel", 0, 100, self)
+
+        progress_dialog.setWindowTitle("Downloading Update")
+
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+
+        progress_dialog.setAutoClose(False)
+
+        progress_dialog.setAutoReset(False)
+
+        progress_dialog.setValue(0)
+
+        self._update_download_progress_dialog = progress_dialog
+
+        worker = UpdateDownloadWorker(available_update, parent=self)
+
+        self._update_download_worker = worker
+
+        progress_dialog.canceled.connect(worker.request_cancel)
+
+        worker.progress_updated.connect(self._handle_update_download_progress)
+
+        worker.update_download_completed.connect(self._handle_update_download_completed)
+
+        worker.update_download_failed.connect(self._handle_update_download_failed)
+
+        worker.finished.connect(worker.deleteLater)
+
+        progress_dialog.show()
+
+        worker.start()
+
+
+
+    def _handle_update_download_progress(self, downloaded_bytes: int, total_bytes: int) -> None:
+
+        progress_dialog = self._update_download_progress_dialog
+
+        if progress_dialog is None or not qt_object_is_valid(progress_dialog):
+
+            return
+
+        if total_bytes > 0:
+
+            percent = max(0, min(100, int(round(downloaded_bytes * 100.0 / total_bytes))))
+
+            progress_dialog.setRange(0, 100)
+
+            progress_dialog.setValue(percent)
+
+            progress_dialog.setLabelText(
+
+                f"Downloading update... {downloaded_bytes / (1024 * 1024):.1f} / "
+
+                f"{total_bytes / (1024 * 1024):.1f} MiB"
+
+            )
+
+        else:
+
+            progress_dialog.setRange(0, 0)
+
+            progress_dialog.setLabelText(f"Downloading update... {downloaded_bytes / (1024 * 1024):.1f} MiB")
+
+
+
+    def _handle_update_download_completed(self, installer_path: object) -> None:
+
+        self._update_download_worker = None
+
+        self._check_for_updates_action.setEnabled(True)
+
+        self._close_update_download_progress_dialog()
+
+        resolved_path = Path(installer_path)
+
+        choice = QMessageBox.question(
+
+            self,
+
+            "Update Ready",
+
+            "The update was downloaded and verified. Install it now?\n\n"
+
+            "Citizen Astronomy will close, update in place, and restart.",
+
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+
+            QMessageBox.StandardButton.Yes,
+
+        )
+
+        if choice == QMessageBox.StandardButton.Yes:
+
+            self._launch_update_installer(resolved_path)
+
+
+
+    def _handle_update_download_failed(self, message: str) -> None:
+
+        self._update_download_worker = None
+
+        self._check_for_updates_action.setEnabled(True)
+
+        self._close_update_download_progress_dialog()
+
+        if "cancel" in message.lower():
+
+            self.statusBar().showMessage("Update download canceled.", 5000)
+
+            return
+
+        self.statusBar().showMessage("Update download failed.", 5000)
+
+        QMessageBox.warning(self, "Update Download Failed", message)
+
+
+
+    def _close_update_download_progress_dialog(self) -> None:
+
+        progress_dialog = self._update_download_progress_dialog
+
+        self._update_download_progress_dialog = None
+
+        if progress_dialog is not None and qt_object_is_valid(progress_dialog):
+
+            progress_dialog.close()
+
+            progress_dialog.deleteLater()
+
+
+
+    def _launch_update_installer(self, installer_path: Path) -> None:
+
+        if not installer_path.is_file():
+
+            QMessageBox.warning(self, "Update Installer Missing", f"The verified installer no longer exists:\n{installer_path}")
+
+            return
+
+        arguments = [
+
+            "/SILENT",
+
+            "/SUPPRESSMSGBOXES",
+
+            "/NORESTART",
+
+            "/CLOSEAPPLICATIONS",
+
+            "/UPDATE=1",
+
+        ]
+
+        start_result = QProcess.startDetached(str(installer_path), arguments)
+
+        started = bool(start_result[0]) if isinstance(start_result, tuple) else bool(start_result)
+
+        if not started:
+
+            QMessageBox.warning(self, "Update Could Not Start", "Windows could not start the downloaded update installer.")
+
+            return
+
+        QApplication.quit()
 
     def _populate_light_curve_settings_menu(self) -> None:
 
@@ -39424,7 +49284,7 @@ class MainWindow(QMainWindow):
 
                         minimum_first=220,
 
-                        minimum_second=120,
+                        minimum_second=0,
 
                     )
 
@@ -39444,9 +49304,9 @@ class MainWindow(QMainWindow):
 
                         fallback_sizes=[720, 1000],
 
-                        minimum_first=420,
+                        minimum_first=0,
 
-                        minimum_second=520,
+                        minimum_second=320,
 
                     )
 
@@ -39460,6 +49320,120 @@ class MainWindow(QMainWindow):
 
             self._asteroid_splitter_settings_sync_enabled = True
 
+        self._sync_asteroid_results_panel_restore_handle()
+
+        self._sync_asteroid_left_panel_restore_handle()
+
+    def _restore_asteroid_left_panel(self) -> None:
+
+        if not hasattr(self, "_asteroid_main_splitter"):
+
+            return
+
+        sizes = [max(0, int(size)) for size in self._asteroid_main_splitter.sizes()]
+
+        total = sum(sizes)
+
+        if total <= 0:
+
+            total = max(self._asteroid_main_splitter.width(), 1)
+
+        restore_sizes = getattr(self, "_asteroid_left_panel_restore_sizes", None)
+
+        if restore_sizes and len(restore_sizes) == 2 and int(restore_sizes[0]) > 0:
+
+            self._asteroid_main_splitter.setSizes(
+
+                self._normalized_splitter_sizes(
+
+                    restore_sizes,
+
+                    fallback_sizes=[720, 1000],
+
+                    minimum_first=0,
+
+                    minimum_second=320,
+
+                )
+
+            )
+
+        else:
+
+            left_size = max(420, int(round(total * 0.42)))
+
+            self._asteroid_main_splitter.setSizes([left_size, max(1, total - left_size)])
+
+        self._sync_asteroid_left_panel_restore_handle()
+
+    def _restore_asteroid_results_panel(self) -> None:
+
+        if not hasattr(self, "_asteroid_results_splitter"):
+
+            return
+
+        self._asteroid_results_tabs.setVisible(True)
+
+        sizes = [max(0, int(size)) for size in self._asteroid_results_splitter.sizes()]
+
+        total = sum(sizes)
+
+        if total <= 0:
+
+            total = max(self._asteroid_results_splitter.height(), 1)
+
+        restore_sizes = getattr(self, "_asteroid_results_panel_restore_sizes", None)
+
+        if restore_sizes and len(restore_sizes) == 2 and int(restore_sizes[1]) > 0:
+
+            self._asteroid_results_splitter.setSizes(
+
+                self._normalized_splitter_sizes(
+
+                    restore_sizes,
+
+                    fallback_sizes=[460, 240],
+
+                    minimum_first=120,
+
+                    minimum_second=0,
+
+                )
+
+            )
+
+        else:
+
+            bottom_size = max(120, int(round(total * 0.35)))
+
+            self._asteroid_results_splitter.setSizes([max(1, total - bottom_size), bottom_size])
+
+        self._sync_asteroid_results_panel_restore_handle()
+
+    def _sync_asteroid_results_panel_restore_handle(self) -> None:
+
+        if not hasattr(self, "_asteroid_results_panel_restore_handle") or not hasattr(self, "_asteroid_results_splitter"):
+
+            return
+
+        sizes = [max(0, int(size)) for size in self._asteroid_results_splitter.sizes()]
+
+        collapsed = len(sizes) == 2 and sizes[1] <= 4
+
+        self._asteroid_results_panel_restore_handle.setVisible(collapsed)
+
+    def _sync_asteroid_left_panel_restore_handle(self) -> None:
+
+        if not hasattr(self, "_asteroid_left_panel_restore_handle") or not hasattr(self, "_asteroid_main_splitter"):
+
+            return
+
+        sizes = [max(0, int(size)) for size in self._asteroid_main_splitter.sizes()]
+
+        collapsed = len(sizes) == 2 and sizes[0] <= 4
+
+        self._asteroid_left_panel_restore_handle.setVisible(collapsed)
+
     def _handle_asteroid_splitter_sizes_changed(self, _position: int, _index: int) -> None:
 
         if not self._asteroid_splitter_settings_sync_enabled:
@@ -39472,15 +49446,139 @@ class MainWindow(QMainWindow):
 
         results_sizes = [int(size) for size in self._asteroid_results_splitter.sizes()]
 
-        if len(main_sizes) != 2 or len(results_sizes) != 2 or any(size <= 0 for size in main_sizes + results_sizes):
+        if len(main_sizes) != 2 or len(results_sizes) != 2:
 
             return
+
+        if main_sizes[1] <= 0:
+
+            return
+
+        if results_sizes[0] <= 0:
+
+            return
+
+        if main_sizes[0] > 0:
+
+            self._asteroid_left_panel_restore_sizes = main_sizes
+
+        if results_sizes[1] > 0:
+
+            self._asteroid_results_panel_restore_sizes = results_sizes
 
         settings.asteroid_main_splitter_sizes = main_sizes
 
         settings.asteroid_results_splitter_sizes = results_sizes
 
         self._save_settings_snapshot()
+
+        self._sync_asteroid_results_panel_restore_handle()
+
+        self._sync_asteroid_left_panel_restore_handle()
+
+    def _restore_transient_left_panel(self) -> None:
+
+        if not hasattr(self, "_transient_main_splitter"):
+
+            return
+
+        sizes = [max(0, int(size)) for size in self._transient_main_splitter.sizes()]
+
+        total = sum(sizes)
+
+        if total <= 0:
+
+            total = max(self._transient_main_splitter.width(), 1)
+
+        restore_sizes = getattr(self, "_transient_left_panel_restore_sizes", None)
+
+        if restore_sizes and len(restore_sizes) == 2 and int(restore_sizes[0]) > 0:
+
+            self._transient_main_splitter.setSizes(list(restore_sizes))
+
+        else:
+
+            left_size = max(420, int(round(total * 0.42)))
+
+            self._transient_main_splitter.setSizes([left_size, max(1, total - left_size)])
+
+        self._sync_transient_left_panel_restore_handle()
+
+    def _restore_transient_results_panel(self) -> None:
+
+        if not hasattr(self, "_transient_results_splitter"):
+
+            return
+
+        self._transient_results_tabs.setVisible(True)
+
+        sizes = [max(0, int(size)) for size in self._transient_results_splitter.sizes()]
+
+        total = sum(sizes)
+
+        if total <= 0:
+
+            total = max(self._transient_results_splitter.height(), 1)
+
+        restore_sizes = getattr(self, "_transient_results_panel_restore_sizes", None)
+
+        if restore_sizes and len(restore_sizes) == 2 and int(restore_sizes[1]) > 0:
+
+            self._transient_results_splitter.setSizes(list(restore_sizes))
+
+        else:
+
+            bottom_size = max(120, int(round(total * 0.35)))
+
+            self._transient_results_splitter.setSizes([max(1, total - bottom_size), bottom_size])
+
+        self._sync_transient_results_panel_restore_handle()
+
+    def _sync_transient_results_panel_restore_handle(self) -> None:
+
+        if not hasattr(self, "_transient_results_panel_restore_handle") or not hasattr(self, "_transient_results_splitter"):
+
+            return
+
+        sizes = [max(0, int(size)) for size in self._transient_results_splitter.sizes()]
+
+        collapsed = len(sizes) == 2 and sizes[1] <= 4
+
+        self._transient_results_panel_restore_handle.setVisible(collapsed)
+
+    def _sync_transient_left_panel_restore_handle(self) -> None:
+
+        if not hasattr(self, "_transient_left_panel_restore_handle") or not hasattr(self, "_transient_main_splitter"):
+
+            return
+
+        sizes = [max(0, int(size)) for size in self._transient_main_splitter.sizes()]
+
+        collapsed = len(sizes) == 2 and sizes[0] <= 4
+
+        self._transient_left_panel_restore_handle.setVisible(collapsed)
+
+    def _handle_transient_splitter_sizes_changed(self, _position: int, _index: int) -> None:
+
+        if not getattr(self, "_transient_splitter_settings_sync_enabled", False):
+
+            return
+
+        main_sizes = [int(size) for size in self._transient_main_splitter.sizes()]
+
+        results_sizes = [int(size) for size in self._transient_results_splitter.sizes()]
+
+        if len(main_sizes) == 2 and main_sizes[0] > 0:
+
+            self._transient_left_panel_restore_sizes = main_sizes
+
+        if len(results_sizes) == 2 and results_sizes[1] > 0:
+
+            self._transient_results_panel_restore_sizes = results_sizes
+
+        self._sync_transient_results_panel_restore_handle()
+
+        self._sync_transient_left_panel_restore_handle()
 
     def _choose_hr_motion_vector_color(self) -> None:
 
@@ -39744,27 +49842,46 @@ class MainWindow(QMainWindow):
             self._sync_transient_image_controls()
             self._sync_transient_training_controls(None)
             return
+        focus_candidate = self._transient_center_candidate_button.isChecked()
         self._start_transient_image_preload(self._transient_candidate_frame_paths(candidate))
         self._transient_details_output.setPlainText(self._format_transient_candidate_details(candidate))
         if candidate.detections:
             current_paths = {detection.source_path.resolve() for detection in candidate.detections if detection.source_path.exists()}
             if self._current_transient_source_image is None or self._current_transient_source_image.resolve() not in current_paths:
-                self._set_current_transient_image_path(candidate.detections[0].source_path, reset_view=True, focus_candidate=True)
+                self._set_current_transient_image_path(candidate.detections[0].source_path, reset_view=False, focus_candidate=focus_candidate)
             else:
-                self._refresh_transient_image_view(reset_view=False, focus_candidate=False)
+                self._refresh_transient_image_view(reset_view=False, focus_candidate=focus_candidate)
         self._sync_transient_image_controls()
         self._sync_transient_training_controls(candidate)
 
     def _selected_transient_candidate(self) -> TransientCandidate | None:
-        selected_items = self._transient_results_table.selectedItems()
-        if not selected_items:
-            return None
-        row_index = selected_items[0].row()
-        item = self._transient_results_table.item(row_index, 0)
-        if item is None:
-            return None
-        candidate = item.data(_TRANSIENT_CANDIDATE_ROLE)
-        return candidate if isinstance(candidate, TransientCandidate) else None
+        selected_candidates = self._selected_transient_candidates()
+        return selected_candidates[0] if selected_candidates else None
+
+    def _selected_transient_candidates(self) -> list[TransientCandidate]:
+        selection_model = self._transient_results_table.selectionModel()
+        if selection_model is None:
+            return []
+        selected_rows = {index.row() for index in selection_model.selectedRows()}
+        if not selected_rows:
+            return []
+        ordered_rows: list[int] = []
+        current_row = self._transient_results_table.currentRow()
+        if current_row in selected_rows:
+            ordered_rows.append(current_row)
+        ordered_rows.extend(sorted(row for row in selected_rows if row != current_row))
+        candidates: list[TransientCandidate] = []
+        seen_candidate_ids: set[str] = set()
+        for row_index in ordered_rows:
+            item = self._transient_results_table.item(row_index, 0)
+            candidate = item.data(_TRANSIENT_CANDIDATE_ROLE) if item is not None else None
+            if not isinstance(candidate, TransientCandidate):
+                continue
+            if candidate.candidate_id in seen_candidate_ids:
+                continue
+            seen_candidate_ids.add(candidate.candidate_id)
+            candidates.append(candidate)
+        return candidates
 
     def _format_transient_candidate_details(self, candidate: TransientCandidate) -> str:
         lines = [
@@ -39927,10 +50044,18 @@ class MainWindow(QMainWindow):
         self._transient_results_table.setItem(row_index, _TRANSIENT_SCORE_COLUMN, _SourceResultsTableItem(score_text, score_sort))
 
     def _selected_transient_row_index(self) -> int | None:
-        selected_items = self._transient_results_table.selectedItems()
-        if not selected_items:
+        current_row = self._transient_results_table.currentRow()
+        if current_row >= 0:
+            current_item = self._transient_results_table.item(current_row, 0)
+            if current_item is not None and current_item.isSelected():
+                return current_row
+        selection_model = self._transient_results_table.selectionModel()
+        if selection_model is None:
             return None
-        return selected_items[0].row()
+        selected_rows = selection_model.selectedRows()
+        if not selected_rows:
+            return None
+        return selected_rows[0].row()
 
     def _transient_row_index_for_candidate_id(self, candidate_id: str) -> int | None:
         for row_index in range(self._transient_results_table.rowCount()):
@@ -40064,9 +50189,11 @@ class MainWindow(QMainWindow):
         candidate = self._selected_transient_candidate()
         frame_count = len(self._transient_candidate_frame_paths(candidate)) if candidate is not None else 0
         self._transient_image_stretch_combo.setEnabled(has_image)
+        self._transient_display_section_label.setEnabled(has_image)
         self._transient_adjust_levels_button.setEnabled(has_image)
         self._transient_image_invert_checkbox.setEnabled(has_image)
         self._transient_image_reset_display_button.setEnabled(has_image)
+        self._transient_info_panel_toggle_button.setEnabled(has_image)
         self._transient_center_candidate_button.setEnabled(candidate is not None and has_image)
         self._transient_blink_button.setEnabled(candidate is not None and frame_count > 1)
         self._transient_blink_interval_combo.setEnabled(candidate is not None and frame_count > 1)
@@ -40149,36 +50276,99 @@ class MainWindow(QMainWindow):
             reset_view=reset_view,
             safe_margin_fraction=self._transient_roi_margin_fraction(),
             render_settings=self._current_transient_image_render_settings(),
+            info_panel=(
+                self._current_transient_image_info_panel()
+                if getattr(self, "_transient_info_panel_visible", True)
+                else None
+            ),
         )
         if focus_candidate:
             focus_coordinates = self._selected_transient_focus_coordinates()
             if focus_coordinates is not None:
-                self._transient_image_view.focus_on(*focus_coordinates, minimum_zoom_scale=3.0)
+                self._transient_image_view.focus_on(*focus_coordinates)
+
+    def _current_transient_image_info_panel(self) -> ImageInfoPanel | None:
+
+        image_path = self._current_transient_source_image
+
+        if image_path is None:
+
+            return None
+
+        candidate = self._selected_transient_candidate()
+
+        status_text = (
+
+            self._format_transient_candidate_details(candidate)
+
+            if candidate is not None
+
+            else f"Reviewing {image_path.name}"
+
+        )
+
+        return self._build_image_info_panel(image_path, None, [], status_text)
+
+    def _toggle_transient_info_panel(self) -> None:
+
+        self._transient_info_panel_visible = not self._transient_info_panel_visible
+
+        self._update_transient_info_panel_toggle_button()
+
+        if self._current_transient_source_image is not None:
+
+            self._refresh_transient_image_view(
+
+                reset_view=False,
+
+                focus_candidate=self._transient_center_candidate_button.isChecked(),
+
+            )
+
+    def _update_transient_info_panel_toggle_button(self) -> None:
+
+        if not hasattr(self, "_transient_info_panel_toggle_button"):
+
+            return
+
+        self._transient_info_panel_toggle_button.setText(
+
+            "Hide Info" if getattr(self, "_transient_info_panel_visible", True) else "Show Info"
+
+        )
 
     def _current_transient_image_overlays(self) -> list[ImageOverlay]:
-        candidate = self._selected_transient_candidate()
+        selected_candidates = self._selected_transient_candidates()
         image_path = self._current_transient_source_image
-        if candidate is None or image_path is None:
+        if not selected_candidates or image_path is None:
             return []
-        marker_color = self._asteroid_overlay_display_color("#f59e0b") if hasattr(self, "_asteroid_overlay_display_color") else "#f59e0b"
-        accent_color = self._asteroid_overlay_display_color("#fde68a") if hasattr(self, "_asteroid_overlay_display_color") else "#fde68a"
+        primary_candidate_id = selected_candidates[0].candidate_id
+        primary_marker_color = self._asteroid_overlay_display_color("#f59e0b") if hasattr(self, "_asteroid_overlay_display_color") else "#f59e0b"
+        primary_accent_color = self._asteroid_overlay_display_color("#fde68a") if hasattr(self, "_asteroid_overlay_display_color") else "#fde68a"
+        secondary_marker_color = self._asteroid_overlay_display_color("#38bdf8") if hasattr(self, "_asteroid_overlay_display_color") else "#38bdf8"
+        secondary_accent_color = self._asteroid_overlay_display_color("#bae6fd") if hasattr(self, "_asteroid_overlay_display_color") else "#bae6fd"
         overlays: list[ImageOverlay] = []
-        for detection_index, detection in enumerate(candidate.detections, start=1):
-            if not detection.source_path.exists() or detection.source_path.resolve() != image_path.resolve():
+        for candidate in selected_candidates:
+            overlay_position = self._transient_overlay_position_for_image(candidate, image_path)
+            if overlay_position is None:
                 continue
+            x_value, y_value = overlay_position
+            is_primary = candidate.candidate_id == primary_candidate_id
+            marker_color = primary_marker_color if is_primary else secondary_marker_color
+            accent_color = primary_accent_color if is_primary else secondary_accent_color
             overlays.append(
                 ImageOverlay(
-                    source_id=f"transient:{candidate.candidate_id}:{detection_index}",
+                    source_id=f"transient:{candidate.candidate_id}",
                     name=candidate.candidate_id,
-                    x=float(detection.x),
-                    y=float(detection.y),
+                    x=x_value,
+                    y=y_value,
                     aperture_radius=10.0,
                     annulus_inner_radius=10.0,
                     annulus_outer_radius=10.0,
                     color=marker_color,
                     show_annulus=False,
                     marker_style="cross",
-                    pen_width=3.0,
+                    pen_width=3.0 if is_primary else 2.5,
                     text_color=accent_color,
                     accent_color=accent_color,
                     outline_color="#111827",
@@ -40202,17 +50392,71 @@ class MainWindow(QMainWindow):
         image_path = self._current_transient_source_image
         if candidate is None or image_path is None:
             return None
+        return self._transient_detection_for_image(candidate, image_path)
+
+    def _transient_detection_for_image(
+        self,
+        candidate: TransientCandidate,
+        image_path: Path,
+    ) -> TransientSourceDetection | None:
         for detection in candidate.detections:
             if detection.source_path.exists() and detection.source_path.resolve() == image_path.resolve():
                 return detection
+        return None
+
+    def _transient_overlay_position_for_image(
+        self,
+        candidate: TransientCandidate,
+        image_path: Path,
+    ) -> tuple[float, float] | None:
+        detection = self._transient_detection_for_image(candidate, image_path)
+        if detection is not None:
+            return float(detection.x), float(detection.y)
+        frame_result = self._transient_frame_result_for_image(image_path)
+        if frame_result is None or frame_result.wcs_path is None:
+            return None
+        try:
+            wcs = WCS(read_header(frame_result.wcs_path))
+            x_value, y_value = wcs.world_to_pixel_values(float(candidate.ra_deg), float(candidate.dec_deg))
+        except Exception:
+            return None
+        if not (np.isfinite(x_value) and np.isfinite(y_value)):
+            return None
+        width = frame_result.solved_field.width if frame_result.solved_field is not None else frame_result.metadata.width
+        height = frame_result.solved_field.height if frame_result.solved_field is not None else frame_result.metadata.height
+        if width is not None and height is not None:
+            if float(x_value) < 0.0 or float(y_value) < 0.0 or float(x_value) > float(width - 1) or float(y_value) > float(height - 1):
+                return None
+        return float(x_value), float(y_value)
+
+    def _transient_frame_result_for_image(self, image_path: Path) -> TransientFrameResult | None:
+        result = self._current_transient_search_result
+        if result is None:
+            return None
+        try:
+            image_resolved = image_path.resolve()
+        except Exception:
+            return None
+        for frame_result in result.frame_results:
+            try:
+                if frame_result.source_path.resolve() == image_resolved:
+                    return frame_result
+            except Exception:
+                continue
         return None
 
     def _center_selected_transient_candidate(self) -> None:
         focus_coordinates = self._selected_transient_focus_coordinates()
         if focus_coordinates is None:
             return
-        self._transient_image_view.focus_on(*focus_coordinates, minimum_zoom_scale=3.0)
+        self._transient_image_view.focus_on(*focus_coordinates)
         self.statusBar().showMessage("Centered the selected transient candidate in the image view.", 3000)
+
+    def _handle_transient_center_candidate_toggled(self, checked: bool) -> None:
+        if checked:
+            focus_coordinates = self._selected_transient_focus_coordinates()
+            if focus_coordinates is not None:
+                self._transient_image_view.focus_on(*focus_coordinates)
 
     def _transient_candidate_frame_paths(self, candidate: TransientCandidate | None) -> list[Path]:
         if candidate is None:
@@ -41139,6 +51383,75 @@ class MainWindow(QMainWindow):
 
         return button
 
+    def _create_differential_gear_icon(self, *, color_hex: str = "#f8fafc") -> QIcon:
+
+        icon_extent = 24
+
+        pixmap = QPixmap(icon_extent, icon_extent)
+
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        color = QColor(color_hex)
+
+        painter.setPen(QPen(color, 1.5))
+
+        painter.setBrush(color)
+
+        gear_path = QPainterPath()
+
+        center = icon_extent / 2.0
+
+        tooth_count = 8
+
+        outer_radius = 6.8
+
+        inner_radius = 5.4
+
+        for point_index in range(tooth_count * 4):
+
+            angle = (-math.pi / 2.0) + (point_index * math.pi / (tooth_count * 2.0))
+
+            phase = point_index % 4
+
+            radius = outer_radius if phase in {0, 1} else inner_radius
+
+            point = QPointF(
+                center + math.cos(angle) * radius,
+                center + math.sin(angle) * radius,
+            )
+
+            if point_index == 0:
+
+                gear_path.moveTo(point)
+
+            else:
+
+                gear_path.lineTo(point)
+
+        gear_path.closeSubpath()
+
+        painter.drawPath(gear_path)
+
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        painter.setBrush(Qt.GlobalColor.transparent)
+
+        hole_diameter = 5.8
+
+        hole_offset = center - (hole_diameter / 2.0)
+
+        painter.drawEllipse(QRectF(hole_offset, hole_offset, hole_diameter, hole_diameter))
+
+        painter.end()
+
+        return QIcon(pixmap)
+
     def _create_display_menu_content(
 
         self,
@@ -41737,6 +52050,8 @@ class MainWindow(QMainWindow):
 
             self._sync_interface_tips()
 
+            self._sync_mode_launcher_visibility()
+
             if self._current_asteroid_source_image is not None:
 
                 self._refresh_asteroid_image_view(reset_view=False)
@@ -41779,6 +52094,14 @@ class MainWindow(QMainWindow):
 
             return AppMode.SKY_EXPLORER
 
+        if current_widget is self._distance_map_panel:
+
+            return AppMode.DISTANCE_MAP
+
+        if current_widget is self._astro_tools_panel:
+
+            return AppMode.ASTRO_TOOLS
+
         return AppMode.DIFFERENTIAL_PHOTOMETRY
 
     def _sync_app_mode_controls(self) -> None:
@@ -41799,6 +52122,10 @@ class MainWindow(QMainWindow):
 
         self._app_mode_sky_explorer_action.blockSignals(True)
 
+        self._app_mode_distance_map_action.blockSignals(True)
+
+        self._app_mode_astro_tools_action.blockSignals(True)
+
         self._app_mode_differential_action.setChecked(mode == AppMode.DIFFERENTIAL_PHOTOMETRY)
 
         self._app_mode_hr_action.setChecked(mode == AppMode.HR_DIAGRAM)
@@ -41813,6 +52140,10 @@ class MainWindow(QMainWindow):
 
         self._app_mode_sky_explorer_action.setChecked(mode == AppMode.SKY_EXPLORER)
 
+        self._app_mode_distance_map_action.setChecked(mode == AppMode.DISTANCE_MAP)
+
+        self._app_mode_astro_tools_action.setChecked(mode == AppMode.ASTRO_TOOLS)
+
         self._app_mode_differential_action.blockSignals(False)
 
         self._app_mode_hr_action.blockSignals(False)
@@ -41826,6 +52157,10 @@ class MainWindow(QMainWindow):
         self._app_mode_sky_view_action.blockSignals(False)
 
         self._app_mode_sky_explorer_action.blockSignals(False)
+
+        self._app_mode_distance_map_action.blockSignals(False)
+
+        self._app_mode_astro_tools_action.blockSignals(False)
 
         if self._settings is not None:
 
@@ -41895,6 +52230,14 @@ class MainWindow(QMainWindow):
 
             self._file_menu.addAction(self._open_file_action)
 
+        elif current_mode == AppMode.DISTANCE_MAP:
+
+            self._file_menu.addAction(self._open_file_action)
+
+        elif current_mode == AppMode.ASTRO_TOOLS:
+
+            self._file_menu.addAction(self._open_folder_action)
+
         else:
 
             self._file_menu.addAction(self._open_file_action)
@@ -41903,7 +52246,17 @@ class MainWindow(QMainWindow):
 
         self._file_menu.addAction(self._clear_cache_action)
 
-        if current_mode in {AppMode.TRANSIENT_FINDER, AppMode.SKY_VIEW, AppMode.SKY_EXPLORER}:
+        self._file_menu.addSeparator()
+
+        self._file_menu.addAction(self._check_for_updates_action)
+
+        if current_mode in {
+            AppMode.TRANSIENT_FINDER,
+            AppMode.SKY_VIEW,
+            AppMode.SKY_EXPLORER,
+            AppMode.DISTANCE_MAP,
+            AppMode.ASTRO_TOOLS,
+        }:
 
             return
 
@@ -41927,9 +52280,33 @@ class MainWindow(QMainWindow):
 
         return True if settings is None else bool(getattr(settings, "interface_tips_enabled", True))
 
+    def _launcher_is_visible(self) -> bool:
+
+        if not hasattr(self, "_central_shell") or not hasattr(self, "_mode_launcher"):
+
+            return False
+
+        return self._central_shell.currentWidget() is self._mode_launcher
+
     def _sync_interface_tips(self) -> None:
 
         if not hasattr(self, "_interface_tip_label") or not hasattr(self, "_interface_tip_timer"):
+
+            return
+
+        if self._launcher_is_visible():
+
+            self._interface_tip_timer.stop()
+
+            self._interface_tip_label.clear()
+
+            self._interface_tip_label.setVisible(False)
+
+            status_bar = self.statusBar()
+
+            if status_bar is not None:
+
+                status_bar.clearMessage()
 
             return
 
@@ -42027,7 +52404,7 @@ class MainWindow(QMainWindow):
 
             active_widget = self._astrostack_panel
 
-            status_message = "Astrostack mode active."
+            status_message = "Deep Stack mode active."
 
         elif mode == AppMode.TRANSIENT_FINDER:
 
@@ -42039,13 +52416,25 @@ class MainWindow(QMainWindow):
 
             active_widget = self._sky_view_panel
 
-            status_message = "Sky View mode active."
+            status_message = "Sky Atlas mode active."
 
         elif mode == AppMode.SKY_EXPLORER:
 
             active_widget = self._sky_explorer_panel
 
             status_message = "Sky Explorer mode active."
+
+        elif mode == AppMode.DISTANCE_MAP:
+
+            active_widget = self._distance_map_panel
+
+            status_message = "Distance Map mode active."
+
+        elif mode == AppMode.ASTRO_TOOLS:
+
+            active_widget = self._astro_tools_panel
+
+            status_message = "Observation Deck mode active."
 
         else:
 
@@ -42077,19 +52466,38 @@ class MainWindow(QMainWindow):
 
             self._schedule_sky_explorer_header_splitter_sync()
 
+        elif mode == AppMode.DISTANCE_MAP:
+
+            status_bar.showMessage(status_message, 3000)
+
+            if hasattr(self, "_distance_map_panel_widget"):
+
+                settings = self._ensure_settings()
+
+                self._distance_map_panel_widget.set_limits(
+
+                    max_magnitude=settings.distance_map_max_magnitude,
+
+                    max_distance_pc=settings.distance_map_max_distance_pc,
+
+                    max_star_count=settings.distance_map_max_stars,
+
+                    min_parallax_snr=settings.distance_map_min_parallax_snr,
+
+                )
+
         elif mode == AppMode.SKY_VIEW:
 
             status_bar.clearMessage()
 
-            self._ensure_sky_view_scientific_catalog_loaded()
-
-            self._sync_sky_view_canvas_context()
-
-            self._ensure_sky_view_full_window_presentation()
+            self._prepare_sky_view_mode()
 
             self._sync_sky_view_toolbar_icons()
 
             self._refresh_sky_view_overlay_geometry()
+
+            # Defer maximize until after loading so the GL widget is not resized mid-paint.
+            QTimer.singleShot(0, self._ensure_sky_view_full_window_presentation)
 
         else:
 
@@ -42119,7 +52527,7 @@ class MainWindow(QMainWindow):
 
         elif mode == AppMode.ASTROSTACK:
 
-            mode_title = "Astrostack"
+            mode_title = "Deep Stack"
 
         elif mode == AppMode.TRANSIENT_FINDER:
 
@@ -42127,11 +52535,19 @@ class MainWindow(QMainWindow):
 
         elif mode == AppMode.SKY_VIEW:
 
-            mode_title = "Sky View"
+            mode_title = "Sky Atlas"
 
         elif mode == AppMode.SKY_EXPLORER:
 
             mode_title = "Sky Explorer"
+
+        elif mode == AppMode.DISTANCE_MAP:
+
+            mode_title = "Distance Map"
+
+        elif mode == AppMode.ASTRO_TOOLS:
+
+            mode_title = "Observation Deck"
 
         else:
 
@@ -42189,6 +52605,12 @@ class MainWindow(QMainWindow):
 
             return
 
+        if self._current_app_mode() == AppMode.DISTANCE_MAP:
+
+            self._browse_for_distance_map_source_image()
+
+            return
+
         self._browse_for_hr_source_image()
 
     def _handle_open_folder_action(self) -> None:
@@ -42211,7 +52633,23 @@ class MainWindow(QMainWindow):
 
             return
 
+        if self._current_app_mode() == AppMode.ASTRO_TOOLS:
+
+            self._browse_for_astro_tools_folder()
+
+            return
+
         self._browse_for_root()
+
+    def _browse_for_astro_tools_folder(self) -> None:
+
+        panel = getattr(self, "_astro_tools_panel_widget", None)
+
+        if panel is None:
+
+            return
+
+        panel.observation_map_tool.browse_for_folder()
 
     def _handle_hr_max_sources_changed(self, value: int) -> None:
 
@@ -42233,7 +52671,7 @@ class MainWindow(QMainWindow):
             else (self._root_path_input.text() or str(Path.cwd()))
         )
 
-        selected = QFileDialog.getExistingDirectory(self, "Select Astrostack image folder", start_path)
+        selected = QFileDialog.getExistingDirectory(self, "Select Deep Stack image folder", start_path)
 
         if not selected:
 
@@ -42242,30 +52680,31 @@ class MainWindow(QMainWindow):
         self._set_astrostack_folder_path(Path(selected).expanduser())
 
     def _discover_astrostack_frame_paths(self, root_path: Path) -> list[Path]:
-
         candidate_paths = [path for path in root_path.iterdir() if path.is_file() and is_supported_image_path(path)]
+        self._astrostack_frame_scan_results = {}
+        return sorted(candidate_paths, key=lambda path: path.name.lower())
 
-        if not candidate_paths:
+    def _create_astrostack_loading_progress_dialog(self, maximum: int) -> QProgressDialog:
 
-            return []
+        progress_dialog = QProgressDialog("Loading Deep Stack folder...", "Cancel", 0, max(1, maximum), self)
 
-        settings = self._ensure_settings()
+        progress_dialog.setWindowTitle("Deep Stack")
 
-        sequence_entries: list[tuple[datetime, str, Path]] = []
+        progress_dialog.setMinimumDuration(0)
 
-        fallback_time = datetime.max.replace(tzinfo=UTC)
+        progress_dialog.setAutoClose(False)
 
-        for path in candidate_paths:
+        progress_dialog.setAutoReset(False)
 
-            scan_result = inspect_fits_file(path, root_path.name, observation_timezone=settings.observation_timezone)
+        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
 
-            timestamp = scan_result.metadata.date_obs or fallback_time
+        progress_dialog.setValue(0)
 
-            sequence_entries.append((timestamp, path.name.lower(), path))
+        progress_dialog.show()
 
-        sequence_entries.sort(key=lambda entry: (entry[0], entry[1]))
+        QApplication.processEvents()
 
-        return [entry[2] for entry in sequence_entries]
+        return progress_dialog
 
     def _set_astrostack_folder_path(self, root_path: Path) -> None:
 
@@ -42277,7 +52716,7 @@ class MainWindow(QMainWindow):
 
             self._load_settings_for_root(root_path, preserve_app_mode=True)
 
-        frame_paths = self._discover_astrostack_frame_paths(root_path)
+        frame_paths = self._discover_astrostack_frame_paths(root_path) if root_path.exists() else []
 
         self._astrostack_frame_paths = frame_paths
 
@@ -42289,74 +52728,222 @@ class MainWindow(QMainWindow):
 
         self._astrostack_roi_drag_origin = None
 
-        self._astrostack_source_input.setText(str(root_path))
+        self._clear_astrostack_measurement_regions()
 
-        self._astrostack_source_input.setToolTip(str(root_path))
+        self._astrostack_crop_mode_active = False
+
+        self._clear_astrostack_cropped_display_cache()
 
         self._astrostack_frame_count_label.setText(f"Frames: {len(frame_paths)}")
 
-        if not frame_paths:
+        self._astrostack_frame_exposure_seconds = ()
+
+        self._astrostack_overlay_layers = []
+
+        self._selected_astrostack_layer_id = None
+
+        progress_dialog: QProgressDialog | None = None
+
+        try:
+
+            if frame_paths:
+
+                progress_dialog = self._create_astrostack_loading_progress_dialog(1)
+
+                progress_dialog.setLabelText(f"Loading preview image: {frame_paths[0].name}")
+
+                QApplication.processEvents()
+
+                self._refresh_astrostack_snr_curve_preview()
+
+                self._refresh_astrostack_image_view(reset_view=True, ensure_default_plot=True)
+
+                progress_dialog.setValue(1)
+
+                QApplication.processEvents()
+
+                self._sync_astrostack_controls()
+
+                self.statusBar().showMessage("Deep Stack image folder opened.", 3000)
+
+                return
+
+            self._refresh_astrostack_snr_curve_preview()
 
             self._astrostack_image_view.set_message("No supported images were found in the selected folder.")
 
-            self._update_astrostack_status_label()
-
             self._sync_astrostack_controls()
 
-            return
+        except _AsteroidBlinkExportCanceled:
 
-        self._refresh_astrostack_image_view(reset_view=True)
+            self.statusBar().showMessage("Deep Stack folder load canceled.", 5000)
 
-        self._update_astrostack_status_label()
+        finally:
 
-        self._sync_astrostack_controls()
+            if progress_dialog is not None:
 
-        self.statusBar().showMessage("Astrostack image folder opened.", 3000)
+                progress_dialog.close()
 
-    def _refresh_astrostack_image_view(self, *, reset_view: bool) -> None:
+                progress_dialog.deleteLater()
+
+    def _clear_astrostack_cropped_display_cache(self) -> None:
+        self._astrostack_cropped_display_cache.clear()
+
+    def _astrostack_cropped_preview_cache_key(
+        self, image_path: Path, crop_bounds: tuple[int, int, int, int]
+    ) -> tuple[object, ...]:
+        return (
+            self._image_display_cache_key(image_path),
+            crop_bounds,
+            self._current_astrostack_image_render_settings(),
+        )
+
+    def _cached_astrostack_cropped_preview_display(
+        self, image_path: Path, crop_bounds: tuple[int, int, int, int]
+    ) -> AnnotatedImageDisplay:
+        cache_key = self._astrostack_cropped_preview_cache_key(image_path, crop_bounds)
+        cached = self._astrostack_cropped_display_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        cropped_data = self._crop_image_data_to_bounds(
+            np.asarray(read_image_data(image_path), dtype=np.float32),
+            crop_bounds,
+        )
+        display_plane, color_data = self._astrostack_display_components_from_data(cropped_data)
+        render_settings = self._current_astrostack_image_render_settings()
+        display = build_annotated_image_display_from_array(
+            display_plane,
+            image_path=image_path,
+            color_data=color_data,
+            recommended_stretch_mode=str(render_settings.stretch_mode or "stf"),
+        )
+        self._astrostack_cropped_display_cache[cache_key] = display
+        while len(self._astrostack_cropped_display_cache) > 4:
+            oldest_key = next(iter(self._astrostack_cropped_display_cache))
+            self._astrostack_cropped_display_cache.pop(oldest_key, None)
+        return display
+
+    def _astrostack_preview_display(self, image_path: Path) -> AnnotatedImageDisplay:
+
+        crop_bounds = self._astrostack_alignment_crop_bounds()
+
+        if crop_bounds is None or self._astrostack_active_roi_selection is not None:
+
+            return self._cached_annotated_image_display(image_path)
+
+        return self._cached_astrostack_cropped_preview_display(image_path, crop_bounds)
+
+    def _astrostack_preview_selection_overlays(self) -> list[SelectionOverlay]:
+
+        overlays = list(self._current_astrostack_measurement_selection_overlays())
+
+        if self._astrostack_alignment_crop_bounds() is not None and self._astrostack_active_roi_selection is None:
+
+            return overlays
+
+        overlays.extend(self._current_astrostack_crop_selection_overlays())
+
+        return overlays
+
+    def _refresh_astrostack_image_view(
+        self,
+        *,
+        reset_view: bool,
+        ensure_default_plot: bool = False,
+        overlays_only: bool = False,
+    ) -> None:
 
         image_path = self._current_astrostack_source_image
 
         if image_path is None or not image_path.exists():
 
-            self._astrostack_image_view.set_message("Open an Astrostack folder to inspect the reference frame and define an optional rectangular ROI with Shift-drag.")
+            self._astrostack_image_view.set_message("Open a Deep Stack folder to inspect the reference frame and define an optional crop with the Crop tool.")
 
             self._sync_astrostack_controls()
+
+            return
+
+        if overlays_only and hasattr(self, "_astrostack_image_view") and self._astrostack_image_view._qimage is not None:
+
+            self._astrostack_image_view.invalidate_static_overlay_cache()
+
+            self._astrostack_image_view.set_overlays(
+                self._astrostack_layer_overlays(),
+                selection_overlays=self._astrostack_preview_selection_overlays(),
+            )
 
             return
 
         try:
 
-            display = self._cached_annotated_image_display(image_path)
+            display = self._astrostack_preview_display(image_path)
 
         except Exception:
 
-            self._astrostack_image_view.set_message("Could not render the selected Astrostack reference image.")
+            self._astrostack_image_view.set_message("Could not render the selected Deep Stack reference image.")
 
             self._sync_astrostack_controls()
 
             return
 
+        image_width, image_height = self._astrostack_plot_image_dimensions(image_path)
+
+        self._maybe_repair_undersized_astrostack_stack_plots(image_width, image_height)
+
+        if ensure_default_plot and image_width > 0 and image_height > 0:
+
+            self._ensure_default_astrostack_plot_layer(image_width, image_height)
+
+            self._sync_astrostack_stack_plot_layer_bounds(image_width, image_height)
+
+            self._sync_astrostack_layer_list_widget()
+
+        direct_edit_enabled, direct_edit_draw_enabled, direct_edit_select_enabled, gesture_roi_enabled = (
+            self._astrostack_view_interaction_flags()
+        )
+
         self._astrostack_image_view.set_content(
             display,
-            overlays=[],
+            overlays=self._astrostack_layer_overlays(),
             grid_overlays=[],
             editor_enabled=False,
             reset_view=reset_view,
             render_settings=self._current_astrostack_image_render_settings(),
-            selection_overlays=self._current_astrostack_selection_overlays(),
-            gesture_roi_enabled=True,
+            selection_overlays=self._astrostack_preview_selection_overlays(),
+            gesture_roi_enabled=gesture_roi_enabled,
+            gesture_roi_shift_required=False,
+            chart_overlay_panel=None,
+            direct_edit_enabled=direct_edit_enabled,
+            direct_edit_draw_enabled=direct_edit_draw_enabled,
+            direct_edit_select_enabled=direct_edit_select_enabled,
         )
+
+        self._sync_astrostack_image_gesture_mode()
 
         self._sync_astrostack_controls()
 
-    def _default_astrostack_export_path(self) -> Path:
+    def _default_astrostack_export_path(self, export_format: str = "gif") -> Path:
+
+        normalized_format = str(export_format or "gif").strip().lower()
+        suffix = ".mp4" if normalized_format == "mp4" else ".gif"
 
         if self._current_astrostack_root_path is not None and self._current_astrostack_root_path.exists():
 
-            return self._current_astrostack_root_path / f"{self._current_astrostack_root_path.name}_astrostack.gif"
+            return self._current_astrostack_root_path / f"{self._current_astrostack_root_path.name}_astrostack{suffix}"
 
-        return Path.cwd() / "astrostack.gif"
+        return Path.cwd() / f"astrostack{suffix}"
+
+    @staticmethod
+    def _astrostack_export_format_label(export_format: str) -> str:
+        normalized_format = str(export_format or "gif").strip().lower()
+        return "MP4" if normalized_format == "mp4" else "GIF"
+
+    @staticmethod
+    def _astrostack_export_save_filter(export_format: str) -> str:
+        normalized_format = str(export_format or "gif").strip().lower()
+        if normalized_format == "mp4":
+            return "MP4 Video (*.mp4)"
+        return "Animated GIF (*.gif)"
 
     def _astrostack_active_roi_selection_for_crop(self) -> _HrRoiSelection | None:
 
@@ -42413,12 +53000,12 @@ class MainWindow(QMainWindow):
 
             self,
 
-            "Astrostack Alignment",
+            "Deep Stack Alignment",
 
             "Is this an already aligned dataset?\n\n"
             "Yes: skip alignment and build the cumulative stack from the aligned frames directly.\n"
             "No: align the frames first, then build the cumulative stack.\n"
-            "Cancel: stop Astrostack export.",
+            "Cancel: stop Deep Stack export.",
 
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
 
@@ -42463,7 +53050,7 @@ class MainWindow(QMainWindow):
 
             return QImage(rendered_array.data, width, height, rendered_array.strides[0], QImage.Format.Format_RGB888).copy()
 
-        raise ValueError("Rendered Astrostack frame must be grayscale or RGB.")
+        raise ValueError("Rendered Deep Stack frame must be grayscale or RGB.")
 
     def _astrostack_crop_data_to_roi(self, image_data: np.ndarray) -> np.ndarray:
 
@@ -42551,7 +53138,7 @@ class MainWindow(QMainWindow):
 
             return luminance.astype(np.float32), np.asarray(color_data, dtype=np.float32)
 
-        raise ValueError("Astrostack currently supports grayscale or simple RGB/RGBA images only.")
+        raise ValueError("Deep Stack currently supports grayscale or simple RGB/RGBA images only.")
 
     def _export_astrostack_animation(self) -> None:
 
@@ -42561,7 +53148,7 @@ class MainWindow(QMainWindow):
 
         if root_path is None or not root_path.exists() or not frame_paths:
 
-            QMessageBox.information(self, "Astrostack unavailable", "Open a folder with supported images before exporting an Astrostack animation.")
+            QMessageBox.information(self, "Deep Stack unavailable", "Open a folder with supported images before exporting a Deep Stack animation.")
 
             return
 
@@ -42571,20 +53158,36 @@ class MainWindow(QMainWindow):
 
             return
 
-        gif_options = self._prompt_astrostack_gif_export_options(frame_count=len(frame_paths))
+        export_options = self._prompt_astrostack_gif_export_options(frame_count=len(frame_paths))
 
-        if gif_options is None:
+        if export_options is None:
 
             return
 
-        default_path = self._default_astrostack_export_path()
+        export_format = str(export_options.export_format or "gif").strip().lower()
+        if export_format not in {"gif", "mp4"}:
+            export_format = "gif"
+
+        if export_format == "mp4":
+            mp4_available, mp4_message = mp4_export_dependencies_available()
+            if not mp4_available:
+                QMessageBox.warning(
+                    self,
+                    "MP4 export unavailable",
+                    mp4_export_unavailable_message(mp4_message),
+                )
+                return
+
+        save_filter = self._astrostack_export_save_filter(export_format)
+
+        default_path = self._default_astrostack_export_path(export_format)
 
         selected_path, _selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Export Astrostack Animation",
+            "Export Deep Stack Animation",
             str(default_path),
-            "Animated GIF Files (*.gif)",
-            "Animated GIF Files (*.gif)",
+            save_filter,
+            save_filter,
         )
 
         if not selected_path:
@@ -42593,13 +53196,15 @@ class MainWindow(QMainWindow):
 
         output_path = Path(selected_path)
 
-        if output_path.suffix.lower() != ".gif":
+        expected_suffix = ".mp4" if export_format == "mp4" else ".gif"
 
-            output_path = output_path.with_suffix(".gif")
+        if output_path.suffix.lower() != expected_suffix:
 
-        progress_dialog = QProgressDialog("Preparing Astrostack frames...", "Cancel", 0, max(1, len(frame_paths) * 2), self)
+            output_path = output_path.with_suffix(expected_suffix)
 
-        progress_dialog.setWindowTitle("Astrostack")
+        progress_dialog = QProgressDialog("Preparing Deep Stack frames...", "Cancel", 0, max(1, len(frame_paths) * 2), self)
+
+        progress_dialog.setWindowTitle("Deep Stack")
 
         progress_dialog.setMinimumDuration(0)
 
@@ -42615,7 +53220,23 @@ class MainWindow(QMainWindow):
 
         temp_dir = Path(tempfile.mkdtemp(prefix="astrostack_export_", dir=str(root_path)))
 
+        export_preview_mode = bool(getattr(self, "_astrostack_plot_metrics_preview_mode", True))
+
         try:
+
+            self._astrostack_plot_metrics_preview_mode = False
+
+            self._astrostack_snr_frame_indices = ()
+
+            self._astrostack_snr_values = ()
+
+            self._astrostack_fwhm_values = ()
+
+            self._astrostack_signal_values = ()
+
+            self._astrostack_noise_values = ()
+
+            self._astrostack_snr_highlight_index = None
 
             aligned_dir = temp_dir / "aligned"
 
@@ -42668,13 +53289,34 @@ class MainWindow(QMainWindow):
 
                 aligned_frame_outputs = list(alignment_result.aligned_frames)
 
-            cumulative_sum: np.ndarray | None = None
+            total_stack_frames = len(aligned_frame_outputs)
 
-            exported_frames: list[QImage] = []
+            export_frame_indices = resolve_astrostack_stack_export_frame_indices(
+                total_stack_frames,
+                fast_mode=export_options.fast_mode,
+            )
+
+            export_frame_set = set(export_frame_indices)
+
+            export_frame_position = 0
+
+            running_mean: np.ndarray | None = None
+
+            measured_snr_values: list[float] = []
+
+            measured_fwhm_values: list[float] = []
+
+            measured_signal_values: list[float] = []
+
+            measured_noise_values: list[float] = []
+
+            measured_frame_indices: list[int] = []
 
             render_settings = self._current_astrostack_image_render_settings()
 
             render_source_path = self._current_astrostack_source_image or frame_paths[0]
+
+            subsampling_active = len(export_frame_indices) < total_stack_frames
 
             read_worker_count = max(
                 1,
@@ -42727,50 +53369,124 @@ class MainWindow(QMainWindow):
 
                     prefetched_frame_iterable = _iter_prefetched_aligned_frames()
 
-                for frame_index, frame_data in enumerate(prefetched_frame_iterable, start=1):
-
-                    if progress_dialog.wasCanceled():
-
-                        raise _AsteroidBlinkExportCanceled()
-
-                    progress_dialog.setLabelText(
-                        f"Building cumulative Astrostack {frame_index}/{len(aligned_frame_outputs)}..."
+                export_writer: StreamingGifWriter | StreamingMp4Writer
+                if export_format == "mp4":
+                    export_writer = StreamingMp4Writer(
+                        output_path,
+                        frame_duration_ms=export_options.frame_duration_ms,
+                        scale_percent=export_options.scale_percent,
+                    )
+                else:
+                    export_writer = StreamingGifWriter(
+                        output_path,
+                        frame_duration_ms=export_options.frame_duration_ms,
+                        loop_count=export_options.loop_count,
+                        scale_percent=export_options.scale_percent,
                     )
 
-                    if cumulative_sum is None:
+                with export_writer as animation_writer:
 
-                        cumulative_sum = np.asarray(frame_data, dtype=np.float64)
+                    for frame_index, frame_data in enumerate(prefetched_frame_iterable, start=1):
 
-                    else:
+                        if progress_dialog.wasCanceled():
 
-                        cumulative_sum += np.asarray(frame_data, dtype=np.float64)
+                            raise _AsteroidBlinkExportCanceled()
 
-                    stacked_data = np.asarray(cumulative_sum / float(frame_index), dtype=np.float32)
+                        progress_label = (
+                            f"Accumulating Deep Stack {frame_index}/{total_stack_frames} "
+                            f"(exporting {export_frame_position + 1}/{len(export_frame_indices)} {self._astrostack_export_format_label(export_format)} frames)..."
+                            if subsampling_active
+                            else f"Building cumulative Deep Stack {frame_index}/{total_stack_frames}..."
+                        )
 
-                    display_plane, color_data = self._astrostack_display_components_from_data(stacked_data)
+                        progress_dialog.setLabelText(progress_label)
 
-                    display = build_annotated_image_display_from_array(
-                        display_plane,
-                        image_path=render_source_path,
-                        color_data=color_data,
-                        recommended_stretch_mode=str(render_settings.stretch_mode or "stf"),
-                    )
+                        frame_array = np.asarray(frame_data, dtype=np.float32)
 
-                    rendered_frame = render_annotated_image(display, render_settings)
+                        if running_mean is None:
 
-                    QApplication.processEvents()
+                            running_mean = np.array(frame_array, dtype=np.float32, copy=True)
 
-                    exported_frames.append(self._qimage_from_rendered_image_data(rendered_frame))
+                        else:
 
-                    progress_dialog.setValue(len(frame_paths) + frame_index)
+                            running_mean += (frame_array - running_mean) / float(frame_index)
 
-                export_qimages_to_gif(
-                    exported_frames,
-                    output_path,
-                    frame_duration_ms=gif_options.frame_duration_ms,
-                    loop_count=gif_options.loop_count,
-                    scale_percent=gif_options.scale_percent,
-                )
+                        stacked_data = running_mean
+
+                        progress_dialog.setValue(len(frame_paths) + frame_index)
+
+                        if frame_index not in export_frame_set:
+
+                            continue
+
+                        export_frame_position += 1
+
+                        measured_signal, measured_noise = self._estimate_astrostack_image_signal_noise(stacked_data)
+
+                        measured_snr = measured_signal / measured_noise
+
+                        measured_fwhm = self._estimate_astrostack_reference_fwhm_from_data(stacked_data)
+
+                        measured_snr_values.append(measured_snr)
+
+                        measured_fwhm_values.append(measured_fwhm)
+
+                        measured_signal_values.append(measured_signal)
+
+                        measured_noise_values.append(measured_noise)
+
+                        measured_frame_indices.append(frame_index)
+
+                        self._astrostack_snr_frame_indices = tuple(measured_frame_indices)
+
+                        self._astrostack_snr_values = tuple(measured_snr_values)
+
+                        self._astrostack_fwhm_values = tuple(measured_fwhm_values)
+
+                        self._astrostack_signal_values = tuple(measured_signal_values)
+
+                        self._astrostack_noise_values = tuple(measured_noise_values)
+
+                        self._astrostack_snr_highlight_index = len(measured_frame_indices) - 1
+
+                        self._astrostack_function_metric_overrides = {
+                            "signal": float(measured_signal),
+                            "noise": float(measured_noise),
+                        }
+
+                        export_layer_overlays = self._astrostack_layer_overlays(
+                            function_metric_values=self._astrostack_function_metric_overrides,
+                            include_measurement_regions=True,
+                        )
+
+                        display_plane, color_data = self._astrostack_display_components_from_data(stacked_data)
+
+                        display = build_annotated_image_display_from_array(
+                            display_plane,
+                            image_path=render_source_path,
+                            color_data=color_data,
+                            recommended_stretch_mode=str(render_settings.stretch_mode or "stf"),
+                        )
+
+                        rendered_frame = render_annotated_image(display, render_settings)
+
+                        QApplication.processEvents()
+
+                        base_frame = self._qimage_from_rendered_image_data(rendered_frame)
+
+                        animation_writer.append_qimage(
+                            self._astrostack_image_view.composite_astrostack_export_frame(
+                                base_frame,
+                                overlays=export_layer_overlays,
+                                chart_overlay_panel=None,
+                            )
+                        )
+
+                        self._astrostack_function_metric_overrides = None
+
+                    if animation_writer.frame_count <= 0:
+
+                        raise ValueError(f"Deep Stack export produced no {self._astrostack_export_format_label(export_format)} frames.")
 
             finally:
 
@@ -42778,13 +53494,13 @@ class MainWindow(QMainWindow):
 
         except _AsteroidBlinkExportCanceled:
 
-            self.statusBar().showMessage("Astrostack export canceled.", 5000)
+            self.statusBar().showMessage("Deep Stack export canceled.", 5000)
 
             return
 
         except Exception as exc:
 
-            QMessageBox.warning(self, "Astrostack export failed", str(exc))
+            QMessageBox.warning(self, "Deep Stack export failed", str(exc))
 
             return
 
@@ -42796,7 +53512,30 @@ class MainWindow(QMainWindow):
 
             progress_dialog.deleteLater()
 
-        self.statusBar().showMessage(f"Exported Astrostack animation to {output_path.name}.", 5000)
+            self._astrostack_plot_metrics_preview_mode = export_preview_mode
+
+            self._astrostack_function_metric_overrides = None
+
+            self._refresh_astrostack_snr_curve_preview()
+
+            if self._current_astrostack_source_image is not None:
+
+                self._refresh_astrostack_image_view(reset_view=False)
+
+        export_gif_frame_count = len(
+            resolve_astrostack_stack_export_frame_indices(len(frame_paths), fast_mode=export_options.fast_mode)
+        )
+        format_label = self._astrostack_export_format_label(export_format)
+
+        self.statusBar().showMessage(
+            (
+                f"Exported Deep Stack animation ({export_gif_frame_count} {format_label} frames"
+                f" from {len(frame_paths)} stacks) to {output_path.name}."
+                if export_gif_frame_count < len(frame_paths)
+                else f"Exported Deep Stack {format_label} animation to {output_path.name}."
+            ),
+            5000,
+        )
 
     def _handle_hr_prepare_button_clicked(self) -> None:
 
@@ -44345,8 +55084,6 @@ class MainWindow(QMainWindow):
         self._asteroid_trajectory_button.setEnabled(not is_busy and self._selected_asteroid_detection() is not None)
 
         self._asteroid_3d_button.setEnabled(not is_busy and self._selected_asteroid_detection() is not None)
-
-        self._asteroid_plan_button.setEnabled(not is_busy)
 
         self._asteroid_image_stretch_combo.setEnabled(not is_busy)
 
@@ -46319,16 +57056,6 @@ class MainWindow(QMainWindow):
         self._asteroid_discover_button.setEnabled(not is_busy and can_discover)
 
         self._asteroid_discover_button.setToolTip(guidance)
-
-        if hasattr(self, "_asteroid_discovery_test_button"):
-
-            self._asteroid_discovery_test_button.setEnabled(not is_busy and can_discover)
-
-            self._asteroid_discovery_test_button.setToolTip(
-                guidance
-                if not can_discover
-                else "Run a residual-search debug export for the current solved group and save the background model, per-frame residuals, and a residual stack."
-            )
 
     def _build_asteroid_discovery_test_output_directory(self, reference_path: Path) -> Path:
 
@@ -48609,8 +59336,6 @@ class MainWindow(QMainWindow):
 
         self._asteroid_3d_button.setEnabled(has_known_selection)
 
-        self._asteroid_plan_button.setEnabled(not self._asteroid_task_running())
-
         self._sync_asteroid_export_controls()
 
         self._update_asteroid_synthetic_tracking_button_state()
@@ -48842,6 +59567,8 @@ class MainWindow(QMainWindow):
     def _update_asteroid_info_panel_toggle_button(self) -> None:
 
         self._asteroid_info_panel_toggle_button.setText("Hide Info" if self._asteroid_info_panel_visible else "Show Info")
+
+        self._sync_asteroid_toolbar_button_widths()
 
     def _capture_asteroid_blink_frames(self, progress_dialog: QProgressDialog | None = None) -> list[QImage]:
 
@@ -50118,6 +60845,8 @@ class MainWindow(QMainWindow):
 
         if self._current_asteroid_source_image is None or not self._current_asteroid_source_image.exists():
 
+            self._asteroid_image_view.set_hover_text_formatter(None)
+
             self._asteroid_image_view.set_message("Open a source image to preview predicted asteroid/comet positions.")
 
             return
@@ -50129,6 +60858,8 @@ class MainWindow(QMainWindow):
             display = self._asteroid_display_for_image(self._current_asteroid_source_image)
 
         except Exception:
+
+            self._asteroid_image_view.set_hover_text_formatter(None)
 
             self._asteroid_image_view.set_message("Could not render the selected asteroid/comet source image preview.")
 
@@ -50160,6 +60891,10 @@ class MainWindow(QMainWindow):
 
             ),
 
+        )
+
+        self._asteroid_image_view.set_hover_text_formatter(
+            self._image_hover_coordinate_formatter(self._current_asteroid_source_image)
         )
 
         if focus_selected:
@@ -53084,6 +63819,28 @@ class MainWindow(QMainWindow):
 
         self._hr_prepare_button.setMinimumWidth(minimum_width)
 
+    def _sync_hr_update_button_width(self) -> None:
+
+        if not hasattr(self, "_hr_update_button"):
+
+            return
+
+        button_padding_px = 28
+
+        metrics = self._hr_update_button.fontMetrics()
+
+        minimum_width = max(
+
+            metrics.horizontalAdvance("Update"),
+
+            metrics.horizontalAdvance("Reset"),
+
+        ) + button_padding_px
+
+        self._hr_update_button.setFixedWidth(minimum_width)
+
+        self._hr_update_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
     def _append_hr_workflow_note(self, message: str) -> None:
 
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -53970,6 +64727,8 @@ class MainWindow(QMainWindow):
         reset_action = self._hr_update_button_shows_reset_action()
 
         self._hr_update_button.setText("Reset" if reset_action else "Update")
+
+        self._sync_hr_update_button_width()
 
         if self._hr_prepare_worker is not None and self._hr_prepare_worker.isRunning():
 
@@ -57907,6 +68666,8 @@ class MainWindow(QMainWindow):
 
         self._apply_inline_progress_bar_style()
 
+        self._sync_mode_launcher_accent()
+
     def _handle_theme_changed(self, theme: str) -> None:
 
         root_path = Path(self._root_path_input.text()).expanduser()
@@ -57940,6 +68701,30 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_transient_blink_timer"):
 
             self._transient_blink_timer.stop()
+
+        if hasattr(self, "_sky_explorer_survey_refresh_timer"):
+
+            self._sky_explorer_survey_refresh_timer.stop()
+
+        if hasattr(self, "_sky_explorer_survey_refine_timer"):
+
+            self._sky_explorer_survey_refine_timer.stop()
+
+        if self._update_check_worker is not None:
+
+            self._update_check_worker.wait(4500)
+
+        if self._update_download_worker is not None:
+
+            self._update_download_worker.request_cancel()
+
+            self._update_download_worker.wait(4500)
+
+        self._close_update_download_progress_dialog()
+
+        if self._sky_explorer_survey_worker is not None:
+
+            self._sky_explorer_survey_worker.wait(4500)
 
         if self._calculate_period_worker is not None:
 
@@ -59691,6 +70476,8 @@ class MainWindow(QMainWindow):
 
         button.setToolTip(active_tooltip)
 
+        button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
     def _apply_generate_button_attention_style(self) -> None:
 
         if hasattr(self, "_process_button"):
@@ -59811,6 +70598,168 @@ class MainWindow(QMainWindow):
 
         self._apply_asteroid_mode_chrome()
 
+        self._apply_transient_mode_chrome()
+
+        self._apply_astrostack_mode_chrome()
+
+        self._apply_distance_map_mode_chrome()
+
+    def _apply_distance_map_mode_chrome(self) -> None:
+        panel = getattr(self, "_distance_map_panel_widget", None)
+        if panel is None:
+            return
+
+        colors = self._resolved_theme_editor_colors()
+        accent = QColor(colors.get("accent", "#3d8bfd"))
+        accent_name = accent.name().lower()
+        accent_border = accent.darker(120).name().lower()
+        accent_soft = accent.lighter(130).name().lower()
+        accent_deep = accent.darker(118).name().lower()
+        accent_text = self._contrast_text_color(accent_name)
+        panel_bg = colors.get("panel_bg", "#2b2b2b")
+        card_bg = QColor(panel_bg).lighter(106).name().lower()
+        card_bg_hover = QColor(card_bg).lighter(106).name().lower()
+        card_bg_pressed = QColor(card_bg).darker(104).name().lower()
+        card_border = QColor(panel_bg).lighter(122).name().lower()
+        muted_border = QColor(colors.get("gridline", colors.get("menu_bg", "#555555"))).name().lower()
+        disabled_bg = QColor(panel_bg).darker(108).name().lower()
+        disabled_border = QColor(muted_border).darker(120).name().lower()
+        muted_text = colors.get("text", "#f5f5f5")
+        disabled_text = colors.get("placeholder", "#9aa0aa")
+
+        primary_style = (
+            "QPushButton {"
+            f"background-color: {accent_name};"
+            f"color: {accent_text};"
+            f"border: 1px solid {accent_deep};"
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+            "font-weight: 700;"
+            "padding: 6px 14px;"
+            "}"
+            f"QPushButton:hover {{ background-color: {accent_soft}; color: {self._contrast_text_color(accent_soft)}; border: 2px solid {accent_soft}; }}"
+            f"QPushButton:pressed {{ background-color: {accent_deep}; color: {self._contrast_text_color(accent_deep)}; border-color: {accent_deep}; }}"
+            "QPushButton:disabled {"
+            f"background-color: {disabled_bg};"
+            f"color: {disabled_text};"
+            f"border: 1px solid {disabled_border};"
+            "}"
+        )
+        secondary_style = (
+            "QPushButton {"
+            f"background-color: {card_bg};"
+            f"color: {muted_text};"
+            f"border: 1px solid {card_border};"
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+            "font-weight: 600;"
+            "padding: 6px 14px;"
+            "}"
+            f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+            f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+            "QPushButton:disabled {"
+            f"background-color: {disabled_bg};"
+            f"color: {disabled_text};"
+            f"border: 1px solid {disabled_border};"
+            "}"
+        )
+        accent_outline_style = (
+            "QPushButton {"
+            f"background-color: {card_bg};"
+            f"color: {muted_text};"
+            f"border: 1px solid {accent_border};"
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+            "font-weight: 600;"
+            "padding: 6px 14px;"
+            "}"
+            f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+            f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+            "QPushButton:disabled {"
+            f"background-color: {disabled_bg};"
+            f"color: {disabled_text};"
+            f"border: 1px solid {disabled_border};"
+            "}"
+        )
+        camera_style = (
+            "QPushButton {"
+            f"background-color: {card_bg};"
+            f"color: {muted_text};"
+            f"border: 1px solid {card_border};"
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+            "font-weight: 600;"
+            "padding: 4px 10px;"
+            "}"
+            f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+            f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+            "}"
+        )
+
+        panel._open_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+        panel._open_button.setStyleSheet(primary_style)
+        for button in (panel._find_cluster_button, panel._cluster_advanced_button, panel._apply_limits_button):
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+            button.setStyleSheet(accent_outline_style)
+        tomography_style = (
+            accent_outline_style
+            + f"QPushButton:checked {{ background-color: {accent_name}; color: {accent_text}; border: 1px solid {accent_deep}; }}"
+            + f"QPushButton:checked:hover {{ background-color: {accent_soft}; color: {self._contrast_text_color(accent_soft)}; border: 2px solid {accent_soft}; }}"
+            + f"QPushButton:checked:pressed {{ background-color: {accent_deep}; color: {self._contrast_text_color(accent_deep)}; border-color: {accent_deep}; }}"
+        )
+        panel._tomography_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+        panel._tomography_button.setStyleSheet(tomography_style)
+        panel._reset_view_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+        panel._reset_view_button.setStyleSheet(camera_style)
+        panel._save_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+        panel._save_button.setStyleSheet(camera_style)
+
+        content_card_style = (
+            "QGroupBox {"
+            f"background-color: {card_bg};"
+            f"border: 1px solid {card_border};"
+            "border-radius: 10px;"
+            "margin-top: 12px;"
+            "padding-top: 8px;"
+            "font-weight: 600;"
+            "}"
+            "QGroupBox::title {"
+            "subcontrol-origin: margin;"
+            "left: 10px;"
+            "padding: 0px 4px;"
+            f"color: {muted_text};"
+            "}"
+        )
+        toolbar_input_style = (
+            "QGroupBox {"
+            f"background-color: {QColor(panel_bg).darker(104).name().lower()};"
+            f"border: 1px solid {muted_border};"
+            "border-radius: 10px;"
+            "margin-top: 12px;"
+            "padding-top: 8px;"
+            "font-weight: 600;"
+            "}"
+            "QGroupBox::title {"
+            "subcontrol-origin: margin;"
+            "left: 10px;"
+            "padding: 0px 4px;"
+            f"color: {muted_text};"
+            "}"
+        )
+        splitter_style = (
+            "QSplitter::handle {"
+            f"background-color: {QColor(panel_bg).lighter(114).name().lower()};"
+            "border-radius: 4px;"
+            "}"
+            "QSplitter::handle:vertical { margin: 4px 14px; }"
+            "QSplitter::handle:horizontal { margin: 14px 4px; }"
+        )
+        for group in (
+            panel._map_group,
+            panel._field_image_group,
+            panel._results_group,
+        ):
+            group.setStyleSheet(content_card_style)
+        panel._log_group.setStyleSheet(toolbar_input_style)
+        panel._main_splitter.setStyleSheet(splitter_style)
+        panel._right_splitter.setStyleSheet(splitter_style)
+
     def _sync_hr_plot_toolbar_buttons(self) -> None:
 
         if not hasattr(self, "_hr_plot_reset_button") or not hasattr(self, "_hr_export_button"):
@@ -59887,6 +70836,8 @@ class MainWindow(QMainWindow):
 
             self._hr_plot_reset_button,
 
+            self._hr_update_button,
+
         ]
 
         accent_outline_buttons = [self._hr_find_motion_group_button, self._hr_motion_group_advanced_button]
@@ -59907,7 +70858,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {accent_deep};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "font-weight: 700;"
 
@@ -59931,7 +70882,7 @@ class MainWindow(QMainWindow):
 
             )
 
-        self._hr_prepare_button.setMinimumHeight(30)
+        self._hr_prepare_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
         if hasattr(self, "_hr_view_mode_group"):
 
@@ -59973,7 +70924,7 @@ class MainWindow(QMainWindow):
 
         for button in catalog_buttons:
 
-            button.setMinimumHeight(26)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -59985,7 +70936,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {card_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "padding: 4px 8px;"
 
@@ -60011,7 +70962,7 @@ class MainWindow(QMainWindow):
 
         for button in section_menu_buttons:
 
-            button.setMinimumHeight(26)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -60023,7 +70974,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {card_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "padding: 4px 10px;"
 
@@ -60051,7 +71002,7 @@ class MainWindow(QMainWindow):
 
         for button in accent_outline_buttons:
 
-            button.setMinimumHeight(28)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -60063,7 +71014,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {accent_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "font-weight: 600;"
 
@@ -60089,7 +71040,7 @@ class MainWindow(QMainWindow):
 
         for button in accent_outline_toggle_buttons:
 
-            button.setMinimumHeight(28)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -60101,7 +71052,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {accent_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "font-weight: 600;"
 
@@ -60137,7 +71088,7 @@ class MainWindow(QMainWindow):
 
         for button in supporting_buttons:
 
-            button.setMinimumHeight(26)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -60149,7 +71100,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {card_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "padding: 4px 8px;"
 
@@ -60193,7 +71144,7 @@ class MainWindow(QMainWindow):
 
             f"border: 1px solid {card_border};"
 
-            "border-radius: 8px;"
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
             "font-weight: 600;"
 
@@ -60224,6 +71175,8 @@ class MainWindow(QMainWindow):
         self._hr_plot_reset_button.setMinimumHeight(plot_button_height)
 
         self._hr_export_button.setMinimumHeight(plot_button_height)
+
+        self._sync_hr_update_button_width()
 
         toolbar_input_style = (
 
@@ -60591,6 +71544,10 @@ class MainWindow(QMainWindow):
 
             self._measurement_reset_button,
 
+            self._fit_guess_period_button,
+
+            self._fold_plot_button,
+
             self._light_curve_filter_button,
 
             self._reset_plot_button,
@@ -60609,9 +71566,56 @@ class MainWindow(QMainWindow):
 
             self._image_reset_display_button,
 
+            self._image_center_object_button,
+
             self._open_workspace_menu_button,
 
         ]
+
+        self._results_filter_button.setIcon(
+            self._create_differential_gear_icon(color_hex=muted_text)
+        )
+
+        self._results_filter_button.setFixedSize(
+            _MODE_TOOLBAR_BUTTON_HEIGHT,
+            _MODE_TOOLBAR_BUTTON_HEIGHT,
+        )
+
+        self._results_filter_button.setIconSize(QSize(20, 20))
+
+        self._results_filter_button.setStyleSheet(
+
+            "QPushButton {"
+
+            f"background-color: {card_bg};"
+
+            f"color: {muted_text};"
+
+            f"border: 1px solid {card_border};"
+
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+            "padding: 0px;"
+
+            "font-weight: 600;"
+
+            "}"
+
+            f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+
+            f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+
+            "QPushButton:disabled {"
+
+            f"background-color: {disabled_bg};"
+
+            f"color: {disabled_text};"
+
+            f"border-color: {disabled_border};"
+
+            "}"
+
+        )
 
 
 
@@ -60627,7 +71631,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {accent_deep};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "font-weight: 700;"
 
@@ -60641,13 +71645,13 @@ class MainWindow(QMainWindow):
 
             )
 
-        self._process_button.setMinimumHeight(30)
+        self._process_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
 
 
         for button in catalog_buttons:
 
-            button.setMinimumHeight(26)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -60657,9 +71661,9 @@ class MainWindow(QMainWindow):
 
                 f"color: {muted_text};"
 
-                f"border: 1px solid {card_border};"
+                f"border: 1px solid {accent_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "padding: 4px 8px;"
 
@@ -60687,7 +71691,7 @@ class MainWindow(QMainWindow):
 
         for button in workflow_buttons:
 
-            button.setMinimumHeight(28)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -60699,7 +71703,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {card_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "font-weight: 600;"
 
@@ -60727,7 +71731,7 @@ class MainWindow(QMainWindow):
 
         for button in accent_outline_buttons:
 
-            button.setMinimumHeight(28)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -60739,7 +71743,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {accent_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "font-weight: 600;"
 
@@ -60767,7 +71771,7 @@ class MainWindow(QMainWindow):
 
         for button in section_menu_buttons:
 
-            button.setMinimumHeight(28)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -60777,9 +71781,9 @@ class MainWindow(QMainWindow):
 
                 f"color: {muted_text};"
 
-                f"border: 1px solid {card_border};"
+                f"border: 1px solid {accent_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "font-weight: 600;"
 
@@ -60809,7 +71813,7 @@ class MainWindow(QMainWindow):
 
         for button in supporting_buttons:
 
-            button.setMinimumHeight(26)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -60821,7 +71825,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {card_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "padding: 4px 8px;"
 
@@ -61111,21 +72115,29 @@ class MainWindow(QMainWindow):
 
 
 
-        emphasized_buttons = [self._asteroid_trajectory_button, self._asteroid_3d_button]
+        functional_action_buttons = [
+
+            self._asteroid_discover_button,
+
+            self._asteroid_3d_button,
+
+            self._asteroid_synthetic_track_button,
+
+            self._asteroid_trajectory_button,
+
+        ]
 
         workflow_buttons = [
 
             self._asteroid_estimate_visible_limit_button,
 
-            self._asteroid_align_button,
-
             self._asteroid_recover_button,
 
-            self._asteroid_discover_button,
-
-            self._asteroid_discovery_test_button,
-
         ]
+
+        accent_outline_buttons = [self._asteroid_align_button]
+
+        section_menu_buttons = [self._asteroid_display_section_label] if hasattr(self, "_asteroid_display_section_label") else []
 
         supporting_buttons = [
 
@@ -61134,8 +72146,6 @@ class MainWindow(QMainWindow):
             self._asteroid_center_object_button,
 
             self._asteroid_track_object_button,
-
-            self._asteroid_synthetic_track_button,
 
             self._asteroid_info_panel_toggle_button,
 
@@ -61157,33 +72167,99 @@ class MainWindow(QMainWindow):
 
                 "QPushButton {"
 
-                f"background-color: {card_bg};"
+                f"background-color: {accent.name().lower()};"
 
-                f"color: {muted_text};"
+                f"color: {accent_text};"
 
-                f"border: 1px solid {accent_border};"
+                f"border: 1px solid {accent_deep};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
-                "font-weight: 600;"
+                "font-weight: 700;"
 
                 "padding: 6px 14px;"
 
                 "}"
 
-                f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+                f"QPushButton:hover {{ background-color: {accent_soft}; color: {self._contrast_text_color(accent_soft)}; border: 2px solid {accent_soft}; }}"
 
-                f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+                f"QPushButton:pressed {{ background-color: {accent_deep}; color: {self._contrast_text_color(accent_deep)}; border-color: {accent_deep}; }}"
+
+                "QPushButton:disabled {"
+
+                f"background-color: {disabled_bg};"
+
+                f"color: {disabled_text};"
+
+                f"border: 1px solid {disabled_border};"
+
+                "}"
 
             )
 
-        self._asteroid_detect_button.setMinimumHeight(30)
+        self._asteroid_detect_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
 
 
-        for button in emphasized_buttons:
+        for button in functional_action_buttons:
 
-            button.setMinimumHeight(28)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+            button.setStyleSheet(
+
+                "QPushButton {"
+
+                f"background-color: transparent;"
+
+                f"color: {muted_text};"
+
+                "border: 0px;"
+
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+                "font-weight: 600;"
+
+                "padding: 5px 10px;"
+
+                "}"
+
+                f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; }}"
+
+                f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; }}"
+
+                "QPushButton:disabled {"
+
+                f"background-color: transparent;"
+
+                f"color: {disabled_text};"
+
+                "}"
+
+            )
+
+
+
+        if hasattr(self, "_asteroid_functional_actions_group"):
+
+            self._asteroid_functional_actions_group.setStyleSheet(
+
+                f"QWidget#asteroidFunctionalActionsGroup {{"
+
+                f"background-color: {card_bg};"
+
+                f"border: 1px solid {accent_border};"
+
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+                "}"
+
+            )
+
+
+
+        for button in accent_outline_buttons:
+
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -61195,11 +72271,11 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {accent_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "font-weight: 600;"
 
-                "padding: 5px 10px;"
+                "padding: 6px 14px;"
 
                 "}"
 
@@ -61223,7 +72299,7 @@ class MainWindow(QMainWindow):
 
         for button in workflow_buttons:
 
-            button.setMinimumHeight(30)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -61235,7 +72311,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {card_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "font-weight: 600;"
 
@@ -61263,7 +72339,7 @@ class MainWindow(QMainWindow):
 
         for button in supporting_buttons:
 
-            button.setMinimumHeight(26)
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
             button.setStyleSheet(
 
@@ -61275,7 +72351,7 @@ class MainWindow(QMainWindow):
 
                 f"border: 1px solid {card_border};"
 
-                "border-radius: 8px;"
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
                 "padding: 4px 8px;"
 
@@ -61309,8 +72385,47 @@ class MainWindow(QMainWindow):
 
             )
 
-        if not getattr(self, "_asteroid_generate_button_needs_attention", False):
-            self._asteroid_detect_button.setStyleSheet(self._asteroid_target_marker_button.styleSheet())
+        for button in section_menu_buttons:
+
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+            button.setStyleSheet(
+
+                "QPushButton {"
+
+                f"background-color: {card_bg};"
+
+                f"color: {muted_text};"
+
+                f"border: 1px solid {card_border};"
+
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+                "font-weight: 600;"
+
+                "padding: 5px 10px;"
+
+                "}"
+
+                f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+
+                "QPushButton::menu-indicator { subcontrol-position: right center; width: 10px; }"
+
+                f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+
+                "QPushButton:disabled {"
+
+                f"background-color: {disabled_bg};"
+
+                f"color: {disabled_text};"
+
+                f"border: 1px solid {disabled_border};"
+
+                "}"
+
+            )
+
+        self._sync_asteroid_toolbar_button_widths()
 
         toolbar_input_style = (
 
@@ -61448,6 +72563,82 @@ class MainWindow(QMainWindow):
 
             self._asteroid_header_card.setStyleSheet(header_card_style)
 
+        if hasattr(self, "_asteroid_workflow_separator"):
+
+            self._asteroid_workflow_separator.setStyleSheet(
+
+                f"background-color: {card_border};"
+
+                "border: 0px;"
+
+                "margin-top: 6px;"
+
+                "margin-bottom: 6px;"
+
+            )
+
+        if hasattr(self, "_asteroid_results_panel_restore_handle"):
+
+            self._asteroid_results_panel_restore_handle.setStyleSheet(
+
+                "QPushButton {"
+
+                f"color: {muted_text};"
+
+                f"background-color: {QColor(card_bg).lighter(104).name().lower()};"
+
+                f"border: 1px dashed {card_border};"
+
+                "border-radius: 6px;"
+
+                "padding: 4px 10px;"
+
+                "font-weight: 600;"
+
+                "text-align: center;"
+
+                "}"
+
+                f"QPushButton:hover {{ background-color: {card_bg_hover}; border-color: {accent_soft}; color: {muted_text}; }}"
+
+                f"QPushButton:pressed {{ background-color: {card_bg_pressed}; border-color: {accent_border}; color: {muted_text}; }}"
+
+            )
+
+        if hasattr(self, "_asteroid_left_panel_restore_handle"):
+
+            self._asteroid_left_panel_restore_handle.setStyleSheet(
+
+                "QPushButton {"
+
+                f"color: {muted_text};"
+
+                f"background-color: {QColor(card_bg).lighter(104).name().lower()};"
+
+                f"border: 1px dashed {card_border};"
+
+                "border-top: 0px;"
+
+                "border-bottom: 0px;"
+
+                "border-left: 0px;"
+
+                "border-radius: 0px;"
+
+                "padding: 8px 6px;"
+
+                "font-weight: 600;"
+
+                "text-align: left;"
+
+                "}"
+
+                f"QPushButton:hover {{ background-color: {card_bg_hover}; border-color: {accent_soft}; color: {muted_text}; }}"
+
+                f"QPushButton:pressed {{ background-color: {card_bg_pressed}; border-color: {accent_border}; color: {muted_text}; }}"
+
+            )
+
         if hasattr(self, "_asteroid_results_group"):
 
             self._asteroid_results_group.setStyleSheet(content_card_style)
@@ -61487,6 +72678,695 @@ class MainWindow(QMainWindow):
                 hover_bg=accent.lighter(105).name().lower(),
 
             )
+
+    def _sync_asteroid_toolbar_button_widths(self) -> None:
+
+        if not hasattr(self, "_asteroid_detect_button"):
+
+            return
+
+        button_padding_px = 28
+
+        metrics = self.fontMetrics()
+
+        def width_for_labels(*labels: str) -> int:
+
+            return max(metrics.horizontalAdvance(label) for label in labels) + button_padding_px
+
+        workflow_row_width = width_for_labels("Open", "Generate", "Apply", "Align", "Discover")
+
+        self._asteroid_detect_button.setFixedWidth(workflow_row_width)
+
+        self._asteroid_align_button.setFixedWidth(workflow_row_width)
+
+        self._asteroid_discover_button.setFixedWidth(workflow_row_width)
+
+        self._asteroid_trajectory_button.setFixedWidth(width_for_labels("Plots"))
+
+        self._asteroid_3d_button.setFixedWidth(width_for_labels("Trajectory View"))
+
+        self._asteroid_synthetic_track_button.setFixedWidth(width_for_labels("Synthetic Track"))
+
+        self._asteroid_display_section_label.setFixedWidth(width_for_labels("Display"))
+
+        self._asteroid_target_marker_button.setFixedWidth(width_for_labels("Target Marker"))
+
+        self._asteroid_center_object_button.setFixedWidth(width_for_labels("Center Object"))
+
+        self._asteroid_track_object_button.setFixedWidth(width_for_labels("Track Object"))
+
+        self._asteroid_blink_button.setFixedWidth(width_for_labels("Blink"))
+
+        self._asteroid_export_button.setFixedWidth(metrics.horizontalAdvance("Export") + button_padding_px + 12)
+
+        self._asteroid_info_panel_toggle_button.setFixedWidth(width_for_labels("Show Info", "Hide Info"))
+
+        self._asteroid_adjust_levels_button.setFixedWidth(width_for_labels("Curves"))
+
+        self._asteroid_image_reset_view_button.setFixedWidth(width_for_labels("Reset View"))
+
+        self._asteroid_image_reset_display_button.setFixedWidth(width_for_labels("Reset Display"))
+
+    def _apply_transient_mode_chrome(self) -> None:
+
+        if not hasattr(self, "_transient_search_button"):
+
+            return
+
+        colors = self._resolved_theme_editor_colors()
+
+        accent = QColor(colors.get("accent", "#3d8bfd"))
+
+        accent_name = accent.name().lower()
+
+        accent_border = accent.darker(120).name().lower()
+
+        accent_soft = accent.lighter(130).name().lower()
+
+        accent_deep = accent.darker(118).name().lower()
+
+        accent_text = self._contrast_text_color(accent_name)
+
+        panel_bg = colors.get("panel_bg", "#2b2b2b")
+
+        card_bg = QColor(panel_bg).lighter(106).name().lower()
+
+        card_bg_hover = QColor(card_bg).lighter(106).name().lower()
+
+        card_bg_pressed = QColor(card_bg).darker(104).name().lower()
+
+        card_border = QColor(panel_bg).lighter(122).name().lower()
+
+        disabled_bg = QColor(panel_bg).darker(108).name().lower()
+
+        disabled_border = QColor(colors.get("gridline", colors.get("menu_bg", "#555555"))).darker(120).name().lower()
+
+        muted_text = colors.get("text", "#f5f5f5")
+
+        disabled_text = colors.get("placeholder", "#9aa0aa")
+
+        muted_bg = QColor(panel_bg).lighter(110).name().lower()
+
+        hover_bg = accent.lighter(105).name().lower()
+
+        secondary_style = (
+
+            "QPushButton {"
+
+            f"background-color: {card_bg};"
+
+            f"color: {muted_text};"
+
+            f"border: 1px solid {card_border};"
+
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+            "font-weight: 600;"
+
+            "padding: 4px 10px;"
+
+            "}"
+
+            f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+
+            f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+
+            "QPushButton:checked {"
+
+            f"background-color: {accent_name};"
+
+            f"color: {accent_text};"
+
+            f"border: 1px solid {accent_border};"
+
+            "}"
+
+            "QPushButton:disabled {"
+
+            f"background-color: {disabled_bg};"
+
+            f"color: {disabled_text};"
+
+            f"border: 1px solid {disabled_border};"
+
+            "}"
+
+        )
+
+        section_menu_style = (
+
+            "QPushButton {"
+
+            f"background-color: {card_bg};"
+
+            f"color: {muted_text};"
+
+            f"border: 1px solid {card_border};"
+
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+            "font-weight: 600;"
+
+            "padding: 4px 8px;"
+
+            "}"
+
+            f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+
+            f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+
+            f"QPushButton::menu-indicator {{ image: none; width: 0px; }}"
+
+        )
+
+        if not getattr(self, "_transient_primary_button_needs_attention", False):
+
+            self._transient_search_button.setStyleSheet(
+
+                "QPushButton {"
+
+                f"background-color: {accent_name};"
+
+                f"color: {accent_text};"
+
+                f"border: 1px solid {accent_deep};"
+
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+                "font-weight: 700;"
+
+                "padding: 6px 14px;"
+
+                "}"
+
+                f"QPushButton:hover {{ background-color: {accent_soft}; color: {self._contrast_text_color(accent_soft)}; border: 2px solid {accent_soft}; }}"
+
+                f"QPushButton:pressed {{ background-color: {accent_deep}; color: {self._contrast_text_color(accent_deep)}; border-color: {accent_deep}; }}"
+
+                "QPushButton:disabled {"
+
+                f"background-color: {disabled_bg};"
+
+                f"color: {disabled_text};"
+
+                f"border: 1px solid {disabled_border};"
+
+                "}"
+
+            )
+
+        self._transient_search_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+        for button in (self._transient_train_model_button,):
+
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+            button.setStyleSheet(
+
+                "QPushButton {"
+
+                f"background-color: {card_bg};"
+
+                f"color: {muted_text};"
+
+                f"border: 1px solid {accent_border};"
+
+                f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+                "font-weight: 600;"
+
+                "padding: 5px 10px;"
+
+                "}"
+
+                f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+
+                f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+
+                "QPushButton:disabled {"
+
+                f"background-color: {disabled_bg};"
+
+                f"color: {disabled_text};"
+
+                f"border: 1px solid {disabled_border};"
+
+                "}"
+
+            )
+
+        if hasattr(self, "_transient_display_section_label"):
+
+            self._transient_display_section_label.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+            self._transient_display_section_label.setStyleSheet(section_menu_style)
+
+        for button in (
+
+            self._transient_center_candidate_button,
+
+            self._transient_blink_button,
+
+            self._transient_export_blink_button,
+
+            self._transient_info_panel_toggle_button,
+
+        ):
+
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+            button.setStyleSheet(secondary_style)
+
+        card_root_style = (
+
+            f"background-color: {card_bg};"
+
+            f"border: 1px solid {card_border};"
+
+            "border-radius: 12px;"
+
+        )
+
+        content_card_style = (
+
+            "QWidget#transientResultsCard, QWidget#transientImageCard {"
+
+            f"{card_root_style}"
+
+            "}"
+
+        )
+
+        splitter_style = (
+
+            "QSplitter::handle {"
+
+            f"background-color: {QColor(panel_bg).lighter(114).name().lower()};"
+
+            "border-radius: 4px;"
+
+            "}"
+
+            "QSplitter::handle:vertical { margin: 4px 14px; }"
+
+            "QSplitter::handle:horizontal { margin: 14px 4px; }"
+
+        )
+
+        main_splitter_style = (
+
+            "QSplitter::handle {"
+
+            f"background-color: {QColor(panel_bg).lighter(114).name().lower()};"
+
+            "border-radius: 4px;"
+
+            "}"
+
+            "QSplitter::handle:vertical { margin: 4px 0px; }"
+
+            "QSplitter::handle:horizontal { margin: 0px 4px; }"
+
+        )
+
+        if hasattr(self, "_transient_results_group"):
+
+            self._transient_results_group.setStyleSheet(content_card_style)
+
+        if hasattr(self, "_transient_image_group"):
+
+            self._transient_image_group.setStyleSheet(content_card_style)
+
+        if hasattr(self, "_transient_results_splitter"):
+
+            self._transient_results_splitter.setStyleSheet(splitter_style)
+
+        if hasattr(self, "_transient_main_splitter"):
+
+            self._transient_main_splitter.setStyleSheet(main_splitter_style)
+
+        if hasattr(self, "_transient_results_panel_restore_handle"):
+
+            self._transient_results_panel_restore_handle.setStyleSheet(
+
+                "QPushButton {"
+
+                f"color: {muted_text};"
+
+                f"background-color: {QColor(card_bg).lighter(104).name().lower()};"
+
+                f"border: 1px dashed {card_border};"
+
+                "border-radius: 6px;"
+
+                "padding: 4px 10px;"
+
+                "font-weight: 600;"
+
+                "text-align: center;"
+
+                "}"
+
+                f"QPushButton:hover {{ background-color: {card_bg_hover}; border-color: {accent_soft}; color: {muted_text}; }}"
+
+                f"QPushButton:pressed {{ background-color: {card_bg_pressed}; border-color: {accent_border}; color: {muted_text}; }}"
+
+            )
+
+        if hasattr(self, "_transient_left_panel_restore_handle"):
+
+            self._transient_left_panel_restore_handle.setStyleSheet(
+
+                "QPushButton {"
+
+                f"color: {muted_text};"
+
+                f"background-color: {QColor(card_bg).lighter(104).name().lower()};"
+
+                f"border: 1px dashed {card_border};"
+
+                "border-top: 0px;"
+
+                "border-bottom: 0px;"
+
+                "border-left: 0px;"
+
+                "border-radius: 0px;"
+
+                "padding: 8px 6px;"
+
+                "font-weight: 600;"
+
+                "text-align: left;"
+
+                "}"
+
+                f"QPushButton:hover {{ background-color: {card_bg_hover}; border-color: {accent_soft}; color: {muted_text}; }}"
+
+                f"QPushButton:pressed {{ background-color: {card_bg_pressed}; border-color: {accent_border}; color: {muted_text}; }}"
+
+            )
+
+        if hasattr(self, "_transient_results_tabs"):
+
+            self._apply_tab_widget_chrome(
+
+                self._transient_results_tabs,
+
+                panel_bg=panel_bg,
+
+                muted_bg=muted_bg,
+
+                muted_border=disabled_border,
+
+                muted_text=muted_text,
+
+                accent_border=accent_border,
+
+                accent_text=accent_text,
+
+                hover_bg=hover_bg,
+
+            )
+
+        button_padding_px = 28
+
+        metrics = self.fontMetrics()
+
+        workflow_row_width = max(
+
+            metrics.horizontalAdvance("Open"),
+
+            metrics.horizontalAdvance("Search"),
+
+        ) + button_padding_px
+
+        self._transient_search_button.setFixedWidth(workflow_row_width)
+
+        self._transient_train_model_button.setFixedWidth(metrics.horizontalAdvance("Train Model") + button_padding_px)
+
+        self._transient_display_section_label.setFixedWidth(metrics.horizontalAdvance("Display") + 40)
+
+        self._transient_center_candidate_button.setFixedWidth(metrics.horizontalAdvance("Center Candidate") + button_padding_px)
+
+        self._transient_blink_button.setFixedWidth(metrics.horizontalAdvance("Blink") + button_padding_px)
+
+        self._transient_export_blink_button.setFixedWidth(metrics.horizontalAdvance("Export Blink") + button_padding_px)
+
+        self._transient_info_panel_toggle_button.setFixedWidth(
+
+            max(metrics.horizontalAdvance("Show Info"), metrics.horizontalAdvance("Hide Info")) + button_padding_px
+
+        )
+
+    def _apply_astrostack_mode_chrome(self) -> None:
+
+        if not hasattr(self, "_astrostack_open_button"):
+
+            return
+
+        colors = self._resolved_theme_editor_colors()
+
+        accent = QColor(colors.get("accent", "#3d8bfd"))
+
+        accent_name = accent.name().lower()
+
+        accent_border = accent.darker(120).name().lower()
+
+        accent_soft = accent.lighter(130).name().lower()
+
+        accent_text = self._contrast_text_color(accent_name)
+
+        panel_bg = colors.get("panel_bg", "#2b2b2b")
+
+        card_bg = QColor(panel_bg).lighter(106).name().lower()
+
+        card_bg_hover = QColor(card_bg).lighter(106).name().lower()
+
+        card_bg_pressed = QColor(card_bg).darker(104).name().lower()
+
+        card_border = QColor(panel_bg).lighter(122).name().lower()
+
+        disabled_bg = QColor(panel_bg).darker(108).name().lower()
+
+        disabled_border = QColor(colors.get("gridline", colors.get("menu_bg", "#555555"))).darker(120).name().lower()
+
+        muted_text = colors.get("text", "#f5f5f5")
+
+        disabled_text = colors.get("placeholder", "#9aa0aa")
+
+        primary_style = (
+
+            "QPushButton {"
+
+            f"background-color: {accent_name};"
+
+            f"color: {accent_text};"
+
+            f"border: 1px solid {accent_border};"
+
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+            "font-weight: 600;"
+
+            "padding: 4px 10px;"
+
+            "}"
+
+            f"QPushButton:hover {{ background-color: {accent_soft}; color: {self._contrast_text_color(accent_soft)}; border-color: {accent_soft}; }}"
+
+            f"QPushButton:pressed {{ background-color: {accent.darker(118).name().lower()}; color: {self._contrast_text_color(accent.darker(118).name().lower())}; border-color: {accent_border}; }}"
+
+            "QPushButton:disabled {"
+
+            f"background-color: {disabled_bg};"
+
+            f"color: {disabled_text};"
+
+            f"border: 1px solid {disabled_border};"
+
+            "}"
+
+        )
+
+        secondary_style = (
+
+            "QPushButton {"
+
+            f"background-color: {card_bg};"
+
+            f"color: {muted_text};"
+
+            f"border: 1px solid {card_border};"
+
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+            "font-weight: 600;"
+
+            "padding: 4px 10px;"
+
+            "}"
+
+            f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+
+            f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+
+            "QPushButton:disabled {"
+
+            f"background-color: {disabled_bg};"
+
+            f"color: {disabled_text};"
+
+            f"border: 1px solid {disabled_border};"
+
+            "}"
+
+        )
+
+        crop_active_style = (
+
+            "QPushButton {"
+
+            f"background-color: {card_bg};"
+
+            f"color: {muted_text};"
+
+            f"border: 2px solid {accent_name};"
+
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+            "font-weight: 600;"
+
+            "padding: 4px 10px;"
+
+            "}"
+
+            f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+
+            f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+
+            "QPushButton:disabled {"
+
+            f"background-color: {disabled_bg};"
+
+            f"color: {disabled_text};"
+
+            f"border: 1px solid {disabled_border};"
+
+            "}"
+
+        )
+
+        self._astrostack_toolbar_secondary_style = secondary_style
+
+        self._astrostack_toolbar_crop_active_style = crop_active_style
+
+        self._astrostack_open_button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+        self._astrostack_open_button.setStyleSheet(primary_style)
+
+        for button in (
+
+            self._astrostack_stack_button,
+
+            self._astrostack_crop_button,
+
+            self._astrostack_snr_panel_toggle_button,
+
+            self._astrostack_adjust_levels_button,
+
+            self._astrostack_image_reset_view_button,
+
+            self._astrostack_image_reset_display_button,
+
+        ):
+
+            button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+            button.setStyleSheet(secondary_style)
+
+        self._astrostack_display_section_label.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+        self._astrostack_display_section_label.setStyleSheet(
+
+            "QPushButton {"
+
+            f"background-color: {card_bg};"
+
+            f"color: {muted_text};"
+
+            f"border: 1px solid {card_border};"
+
+            f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
+
+            "font-weight: 600;"
+
+            "padding: 5px 10px;"
+
+            "}"
+
+            f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
+
+            f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+
+            "QPushButton:disabled {"
+
+            f"background-color: {disabled_bg};"
+
+            f"color: {disabled_text};"
+
+            f"border: 1px solid {disabled_border};"
+
+            "}"
+
+        )
+
+        self._sync_astrostack_crop_button()
+
+        if hasattr(self, "_astrostack_annotation_tools_group") or hasattr(self, "_astrostack_annotation_mouse_button"):
+
+            self._sync_astrostack_annotation_tool_icons()
+
+            self._sync_astrostack_annotation_tool_button_styles()
+
+            group_background = card_bg
+
+            group_border = card_border
+
+            group_style = (
+                "QWidget#astrostackAnnotationToolsGroup, QWidget#astrostackAnnotationPropertiesGroup, "
+                "QWidget#astrostackPlotPropertiesGroup, QWidget#astrostackLayersGroup {"
+                f"background-color: {group_background};"
+                f"border: 1px solid {group_border};"
+                "border-radius: 7px;"
+                "}"
+            )
+
+            tools_group = getattr(self, "_astrostack_annotation_tools_group", None)
+
+            properties_group = getattr(self, "_astrostack_annotation_properties_group", None)
+
+            plot_properties_group = getattr(self, "_astrostack_plot_properties_group", None)
+
+            layers_group = getattr(self, "_astrostack_layers_group", None)
+
+            if tools_group is not None:
+
+                tools_group.setStyleSheet(group_style)
+
+            if properties_group is not None:
+
+                properties_group.setStyleSheet(group_style)
+
+            if plot_properties_group is not None:
+
+                plot_properties_group.setStyleSheet(group_style)
+
+            if layers_group is not None:
+
+                layers_group.setStyleSheet(group_style)
+
+            self._sync_astrostack_plot_property_section_styles()
 
     def _select_scanned_object_by_name(self, object_name: str | None) -> bool:
 
@@ -70307,7 +82187,7 @@ class MainWindow(QMainWindow):
 
             self.statusBar().showMessage(
 
-                "Enable 'Multiple Target Selection' in Settings > Advanced to run Find Better Fit on more than one selected source at a time."
+                "Enable 'Multiple Target Selection' in Settings > General > Advanced to run Find Better Fit on more than one selected source at a time."
 
             )
 

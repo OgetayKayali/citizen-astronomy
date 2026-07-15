@@ -5,3 +5,50 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# All temporary build/smoke/test outputs
+_tmp_*/
+_tmp_*
+.tmp_*
+
+# Photometry measurement and catalog caches
+.photometry-cache/
+
+# Demo/sample FITS data
+Files/
+
+# Large runtime assets (bundled by PyInstaller at build time)
+assets/milky_way_tiles/
+assets/milky_way_tiles_lzw/
+assets/moon_tiles/
+assets/moon_tiles_synthetic/
+assets/spice/kernels/
+
+# Rendered milky way tile trees (built from source data, very large)
+textures/milky_way_tiles_*/
+
+# Large source textures (too big for GitHub, obtain separately)
+textures/milkyway_2020_32k.exr
+textures/milkyway_2020_4k.exr
+textures/moon_lroc_color_16bit_srgb_8k.tif
+textures/moon_ldem_16.tif
+
+# Sky survey overlay cache
+survey/
+
+# Packaging build outputs
+packaging/dist/
+
+# Benchmark result outputs (very large JSON files)
+benchmark_results/
+benchmark_results_*/
+
+# Export outputs
+Exports/
+
+# Sky atlas large catalog data
+sky-atlas/
+
+# Git status dump (created during this session)
+_git_status.txt
+_git_status_dirs.txt

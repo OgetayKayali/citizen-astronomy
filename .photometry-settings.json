@@ -1,0 +1,64 @@
+{
+  "astrometry_api_key": "",
+  "cache_dir": ".photometry-cache",
+  "assume_aligned_images": false,
+  "nearby_reference_count": 3,
+  "photometry_aperture_mode": "fwhm_scaled",
+  "aperture_radius_pixels": 5.0,
+  "annulus_inner_radius_pixels": 8.0,
+  "annulus_outer_radius_pixels": 12.0,
+  "aperture_radius_fwhm_scale": 1.6,
+  "annulus_inner_radius_fwhm_scale": 3.0,
+  "annulus_outer_radius_fwhm_scale": 4.5,
+  "variable_star_limit_mode": "percent",
+  "variable_star_limit_value": 10,
+  "variable_star_designation_filters": [
+    "named",
+    "asassn",
+    "atlas",
+    "ztf"
+  ],
+  "photometry_parallel_workers": 24,
+  "hr_max_sources": 5000,
+  "frame_edge_margin_percent": 7.0,
+  "saturation_filter_enabled": true,
+  "preview_variable_star_max_count": 0,
+  "preview_variable_star_max_magnitude": 12.0,
+  "app_mode": "hr_diagram",
+  "theme": "dark",
+  "custom_theme_colors": {
+    "window_bg": "#2b2d31",
+    "panel_bg": "#1f2125",
+    "text": "#f0f2f5",
+    "menu_bg": "#2b2d31",
+    "menu_text": "#f0f2f5",
+    "accent": "#fd9217",
+    "plot_bg": "#181a1f",
+    "plot_axis": "#e9791e",
+    "plot_points": "#2f81f7",
+    "plot_fit": "#ff9f1c"
+  },
+  "selected_catalog_source_ids": {},
+  "variable_star_selection_percent": 10,
+  "manual_photometry_configs": {},
+  "aperture_presets": [],
+  "literature_period_cache": {
+    "Demo": {
+      "vsx|vsx-1": {
+        "period_days": 0.5,
+        "eclipse_duration_hours": 1.5,
+        "source": "VSX"
+      }
+    }
+  },
+  "calculated_period_cache": {
+    "Demo": {
+      "vsx-1|R": {
+        "period_hours": 12.0,
+        "periodic_harmonics": null,
+        "method": "harmonic_fit",
+        "eclipse_duration_hours": 1.5
+      }
+    }
+  }
+}

@@ -1,0 +1,138 @@
+[
+  {
+    "name": "M3",
+    "names": ["M3", "NGC 5272", "Messier 3"],
+    "ra_deg": 205.548,
+    "dec_deg": 28.377,
+    "distance_pc": 10400,
+    "radius_pc": 90
+  },
+  {
+    "name": "M4",
+    "names": ["M4", "NGC 6121", "Messier 4"],
+    "ra_deg": 245.897,
+    "dec_deg": -26.526,
+    "distance_pc": 2200,
+    "radius_pc": 35
+  },
+  {
+    "name": "M5",
+    "names": ["M5", "NGC 5904", "Messier 5"],
+    "ra_deg": 229.638,
+    "dec_deg": 2.081,
+    "distance_pc": 7500,
+    "radius_pc": 80
+  },
+  {
+    "name": "M10",
+    "names": ["M10", "NGC 6254", "Messier 10"],
+    "ra_deg": 254.288,
+    "dec_deg": -4.100,
+    "distance_pc": 4400,
+    "radius_pc": 45
+  },
+  {
+    "name": "M12",
+    "names": ["M12", "NGC 6218", "Messier 12"],
+    "ra_deg": 251.810,
+    "dec_deg": -1.949,
+    "distance_pc": 4900,
+    "radius_pc": 50
+  },
+  {
+    "name": "M13",
+    "names": ["M13", "NGC 6205", "Messier 13"],
+    "ra_deg": 250.421,
+    "dec_deg": 36.460,
+    "distance_pc": 7100,
+    "radius_pc": 85
+  },
+  {
+    "name": "M14",
+    "names": ["M14", "NGC 6401", "Messier 14"],
+    "ra_deg": 264.763,
+    "dec_deg": -3.246,
+    "distance_pc": 9200,
+    "radius_pc": 70
+  },
+  {
+    "name": "M15",
+    "names": ["M15", "NGC 7078", "Messier 15"],
+    "ra_deg": 322.493,
+    "dec_deg": 12.167,
+    "distance_pc": 10400,
+    "radius_pc": 88
+  },
+  {
+    "name": "M19",
+    "names": ["M19", "NGC 6273", "Messier 19"],
+    "ra_deg": 255.653,
+    "dec_deg": -26.268,
+    "distance_pc": 8700,
+    "radius_pc": 65
+  },
+  {
+    "name": "M22",
+    "names": ["M22", "NGC 6656", "Messier 22"],
+    "ra_deg": 279.100,
+    "dec_deg": -23.904,
+    "distance_pc": 3200,
+    "radius_pc": 50
+  },
+  {
+    "name": "M28",
+    "names": ["M28", "NGC 6626", "Messier 28"],
+    "ra_deg": 276.133,
+    "dec_deg": -24.870,
+    "distance_pc": 5500,
+    "radius_pc": 55
+  },
+  {
+    "name": "M53",
+    "names": ["M53", "NGC 5024", "Messier 53"],
+    "ra_deg": 196.636,
+    "dec_deg": 13.613,
+    "distance_pc": 17800,
+    "radius_pc": 95
+  },
+  {
+    "name": "M62",
+    "names": ["M62", "NGC 6266", "Messier 62"],
+    "ra_deg": 255.303,
+    "dec_deg": -30.113,
+    "distance_pc": 6700,
+    "radius_pc": 60
+  },
+  {
+    "name": "M79",
+    "names": ["M79", "NGC 1904", "Messier 79"],
+    "ra_deg": 81.046,
+    "dec_deg": -24.524,
+    "distance_pc": 4100,
+    "radius_pc": 45
+  },
+  {
+    "name": "M92",
+    "names": ["M92", "NGC 6341", "Messier 92"],
+    "ra_deg": 259.281,
+    "dec_deg": 43.136,
+    "distance_pc": 8400,
+    "radius_pc": 75
+  },
+  {
+    "name": "47 Tuc",
+    "names": ["47 Tuc", "47 Tucanae", "NGC 104"],
+    "ra_deg": 6.024,
+    "dec_deg": -72.081,
+    "distance_pc": 4400,
+    "radius_pc": 60
+  },
+  {
+    "name": "Omega Cen",
+    "names": ["Omega Cen", "NGC 5139", "Omega Centauri"],
+    "ra_deg": 201.697,
+    "dec_deg": -47.480,
+    "distance_pc": 5200,
+    "radius_pc": 90
+  }
+]

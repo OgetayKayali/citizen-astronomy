@@ -1,0 +1,3983 @@
+{
+  "photometry_app/__init__.py": {
+    "classes": [],
+    "functions": [],
+    "imports": []
+  },
+  "photometry_app/app_metadata.py": {
+    "classes": [],
+    "functions": [
+      "application_root_path",
+      "application_icon_path"
+    ],
+    "imports": [
+      "__future__",
+      "pathlib",
+      "sys"
+    ]
+  },
+  "photometry_app/main.py": {
+    "classes": [],
+    "functions": [
+      "_startup_log_path",
+      "_write_startup_crash_log",
+      "_set_windows_app_user_model_id",
+      "_configure_qt_application_attributes",
+      "_parse_cli_args",
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "json",
+      "os",
+      "pathlib",
+      "photometry_app.app_metadata",
+      "sys",
+      "traceback"
+    ]
+  },
+  "photometry_app/core/__init__.py": {
+    "classes": [],
+    "functions": [],
+    "imports": []
+  },
+  "photometry_app/core/alignment.py": {
+    "classes": [
+      "_AlignmentStar",
+      "AlignedFrameOutput",
+      "SequenceAlignmentResult"
+    ],
+    "functions": [
+      "align_wcs_image_sequence",
+      "_validated_celestial_wcs",
+      "_align_one_frame",
+      "_resolve_alignment_worker_count",
+      "_sequence_supports_fast_affine_alignment",
+      "_copy_reference_data",
+      "_validated_reference_crop_bounds",
+      "_cropped_reference_wcs",
+      "_reproject_image_data",
+      "_fast_affine_pixel_transform",
+      "_affine_transform_image_data",
+      "_affine_transform_plane",
+      "_refine_alignment_with_star_residual",
+      "_estimate_star_residual_shift",
+      "_alignment_detection_plane",
+      "_extract_alignment_stars",
+      "_centroid_peak",
+      "_max_star_residual_shift",
+      "_shift_image_data",
+      "_normalize_image_axes",
+      "_reproject_plane",
+      "_aligned_output_header",
+      "_apply_aligned_time_keywords",
+      "_normalized_utc_time_text",
+      "_mjd_from_time_text",
+      "_emit_progress"
+    ],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "astropy.io.fits",
+      "astropy.wcs",
+      "collections.abc",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.image_io",
+      "photometry_app.core.wcs",
+      "re"
+    ]
+  },
+  "photometry_app/core/animation_export.py": {
+    "classes": [],
+    "functions": [
+      "_qimage_to_gif_frame",
+      "_scaled_qimage",
+      "_qimage_to_rgb_array",
+      "_mp4_compatible_qimage",
+      "export_qimages_to_gif",
+      "export_qimages_to_mp4"
+    ],
+    "imports": [
+      "PIL",
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "__future__",
+      "io",
+      "numpy",
+      "pathlib",
+      "typing"
+    ]
+  },
+  "photometry_app/core/array_backend.py": {
+    "classes": [
+      "SyntheticTrackingArrayBackend"
+    ],
+    "functions": [
+      "create_array_backend",
+      "cupy_available",
+      "_cupy_runtime_status",
+      "resolve_full_frame_backend"
+    ],
+    "imports": [
+      "__future__",
+      "dataclasses",
+      "functools",
+      "numpy",
+      "typing"
+    ]
+  },
+  "photometry_app/core/benchmarking.py": {
+    "classes": [
+      "BenchmarkSectionSample",
+      "BenchmarkFrameRecord",
+      "BenchmarkEvent",
+      "_ActiveSection",
+      "BenchmarkRecorder",
+      "_NoOpBenchmarkRecorder"
+    ],
+    "functions": [
+      "_env_flag_enabled",
+      "get_benchmark_recorder",
+      "reset_global_benchmark_recorder",
+      "collect_environment_metadata",
+      "_summarize_seconds",
+      "_percentile",
+      "_json_safe_dict",
+      "_json_safe"
+    ],
+    "imports": [
+      "__future__",
+      "dataclasses",
+      "datetime",
+      "gc",
+      "math",
+      "os",
+      "pathlib",
+      "platform",
+      "threading",
+      "time",
+      "typing"
+    ]
+  },
+  "photometry_app/core/calibration.py": {
+    "classes": [
+      "CalibrationPipelineRequest",
+      "CalibrationPipelineResult"
+    ],
+    "functions": [
+      "calibrate_image_sequence",
+      "_collect_image_paths",
+      "_is_under_any",
+      "_build_master",
+      "_read_float32_image_data",
+      "_normalized_flat_master",
+      "_calibrate_one_frame",
+      "_broadcast_master",
+      "_write_master",
+      "_load_cached_master",
+      "_master_exposure_seconds",
+      "_image_exposure_seconds",
+      "_header_exposure_seconds",
+      "_coerce_exposure_seconds",
+      "_dark_exposure_scale",
+      "_raw_dark_exposure_scale",
+      "_dark_scale_is_significant",
+      "_target_requires_dark_scaling",
+      "_any_frame_requires_dark_scaling",
+      "_resolve_calibration_parallel_worker_count",
+      "_emit"
+    ],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "collections.abc",
+      "concurrent.futures",
+      "dataclasses",
+      "gc",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.alignment",
+      "photometry_app.core.image_io",
+      "re"
+    ]
+  },
+  "photometry_app/core/candidate_training.py": {
+    "classes": [
+      "CandidateLabelRecord",
+      "CandidatePrediction",
+      "CandidateTrainingResult",
+      "CandidateTrainingStore"
+    ],
+    "functions": [
+      "default_training_database_path",
+      "transient_candidate_training_key",
+      "transient_candidate_training_features",
+      "transient_candidate_training_payload",
+      "moving_object_candidate_training_key",
+      "moving_object_candidate_training_features",
+      "moving_object_candidate_training_payload",
+      "differential_source_training_key",
+      "differential_source_training_features",
+      "differential_source_training_payload",
+      "_digest_key",
+      "_example_id",
+      "_normalize_text",
+      "_numeric_features",
+      "_feature_vector",
+      "_parse_binning_value",
+      "_safe_ratio",
+      "_nanmedian",
+      "_nanmin",
+      "_nanmax",
+      "_nanstd",
+      "math_is_finite",
+      "_json_dumps",
+      "_utc_now",
+      "_datetime_to_text",
+      "_datetime_from_text"
+    ],
+    "imports": [
+      "__future__",
+      "collections",
+      "collections.abc",
+      "contextlib",
+      "dataclasses",
+      "datetime",
+      "hashlib",
+      "json",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.discovery",
+      "photometry_app.core.models",
+      "photometry_app.core.settings",
+      "photometry_app.core.transient",
+      "pickle",
+      "sqlite3",
+      "typing"
+    ]
+  },
+  "photometry_app/core/catalog_filters.py": {
+    "classes": [],
+    "functions": [
+      "classify_variable_star_designation",
+      "filter_variable_stars",
+      "format_designation_family_labels"
+    ],
+    "imports": [
+      "__future__",
+      "photometry_app.core.models"
+    ]
+  },
+  "photometry_app/core/catalogs.py": {
+    "classes": [
+      "LiteraturePeriodResult",
+      "CatalogTargetDetails",
+      "CatalogService"
+    ],
+    "functions": [
+      "summarize_catalog_service_error",
+      "_needs_variable_catalog_refresh",
+      "_filter_catalog_stars_by_maximum_magnitude",
+      "_catalog_star_to_payload",
+      "_catalog_star_from_payload",
+      "fetch_catalog_literature_period_result",
+      "fetch_catalog_target_details",
+      "_fetch_vsx_literature_period_result",
+      "_row_text_value",
+      "_row_float_value",
+      "_preferred_catalog_identifier",
+      "_preferred_gaia_display_name",
+      "_split_catalog_identifiers",
+      "_clean_catalog_identifier",
+      "_catalog_identifier_is_generic",
+      "_catalog_identifier_priority",
+      "_extract_vsx_detail_value",
+      "_parse_period_days",
+      "_parse_vsx_duration_hours",
+      "_parse_unitized_duration",
+      "_row_value",
+      "_as_float"
+    ],
+    "imports": [
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "astroquery.ipac.nexsci.nasa_exoplanet_archive",
+      "astroquery.simbad",
+      "astroquery.vizier",
+      "dataclasses",
+      "html",
+      "json",
+      "pathlib",
+      "photometry_app.core.models",
+      "re",
+      "requests",
+      "typing"
+    ]
+  },
+  "photometry_app/core/discovery.py": {
+    "classes": [
+      "DiscoveryCancelledError",
+      "MovingObjectCandidateDetection",
+      "MovingObjectCandidate",
+      "MovingObjectDiscoveryResult",
+      "RecoveredKnownMovingObject",
+      "MissedKnownMovingObject",
+      "MovingObjectRecoveryResult",
+      "DiscoveryResidualSnapshot",
+      "DiscoveryBatchDiagnostics",
+      "DiscoverySearchDiagnostics",
+      "_ResidualDetection",
+      "_PreparedSearchFrame",
+      "_PreparedResidualSearchContext",
+      "_SyntheticSweepSettings",
+      "_DiscoveryMotionRangeEstimate",
+      "_BinnedFrameWcs"
+    ],
+    "functions": [
+      "candidate_discovery_method_label",
+      "discover_temp_cache_root",
+      "cleanup_stale_discovery_temp_cache",
+      "_create_discovery_temp_cache_dir",
+      "_cleanup_discovery_temp_cache_dir",
+      "discover_unmatched_moving_candidates",
+      "export_discovery_residual_debug_outputs",
+      "_build_discovery_result_snapshot",
+      "recover_known_moving_objects",
+      "_prediction_magnitude_values",
+      "_format_predicted_magnitude",
+      "_detection_within_estimated_limit",
+      "_discovery_methods_summary",
+      "_discovery_methods_summary_with_linearity_screen",
+      "_discovery_synthetic_sweep_summary",
+      "_summarize_discovery_results",
+      "_search_moving_candidates",
+      "_prepare_residual_search_context",
+      "_write_discovery_residual_debug_artifacts",
+      "_write_discovery_debug_fits",
+      "_discover_candidates_with_synthetic_sweep",
+      "_evaluate_synthetic_sweep_vector",
+      "_build_synthetic_sweep_candidate",
+      "_synthetic_sweep_angle_values",
+      "_main_belt_sweep_angle_values",
+      "_circular_mean_angle_deg",
+      "_circular_angular_distance_deg",
+      "_normalize_angle_deg",
+      "_normalize_synthetic_sweep_direction_focus_mode",
+      "_synthetic_sweep_velocity_vectors",
+      "_combine_synthetic_sweep_frames",
+      "_write_synthetic_sweep_stack",
+      "_synthetic_sweep_settings_for_batch",
+      "_safe_filename_token",
+      "_float_filename_token",
+      "_shift_sampling_grids",
+      "_shift_image_with_zero_fill",
+      "_bilinear_shift_sample",
+      "_world_coordinates_for_detection",
+      "_detect_synthetic_sweep_stack_peaks",
+      "_resolved_search_workers",
+      "_resolved_synthetic_sweep_workers",
+      "_iter_completed_futures",
+      "_prepare_frames_for_search",
+      "_prepare_single_frame_for_search",
+      "_scan_frames_for_residual_detections",
+      "_scan_single_frame_for_residuals",
+      "_assign_sky_coordinates_to_detections",
+      "_renumber_residual_detections",
+      "_frame_midpoint_time",
+      "_normalize_discovery_motion_prior_bias",
+      "_discovery_motion_prior_arcsec_per_hour_range",
+      "_estimate_discovery_motion_range",
+      "_apply_motion_range_to_synthetic_sweep_settings",
+      "_collapse_image_plane",
+      "_normalize_discovery_binning_factor",
+      "_bin_image_plane",
+      "_source_to_binned_pixel_coordinate",
+      "_binned_to_source_pixel_coordinate",
+      "_write_discovery_cached_frame",
+      "_clean_image_plane",
+      "_reference_pixel_scale_arcsec",
+      "_known_positions_by_frame",
+      "_detect_residual_sources",
+      "_detect_point_residual_sources",
+      "_detect_streak_residual_sources",
+      "_connected_positive_components",
+      "_merge_residual_detections",
+      "_link_moving_candidates",
+      "_match_tracklet",
+      "_seed_tracklet_motion_model",
+      "_fit_tracklet_motion_model",
+      "_rematch_tracklet_detections",
+      "_build_candidate",
+      "_associate_candidates_with_known_detections",
+      "_known_prediction_paths_by_detection",
+      "_known_detection_association_radius_px",
+      "_candidate_known_detection_sky_offset_arcsec",
+      "_normalize_residual_snr_bounds",
+      "_normalize_discovery_min_candidate_frames",
+      "_normalize_discovery_detection_sigma",
+      "_normalize_discovery_detection_fwhm",
+      "_normalize_discovery_max_residuals_per_frame",
+      "_normalize_discovery_edge_margin_px",
+      "_normalize_discovery_min_seed_displacement_px",
+      "_normalize_discovery_detector_mode",
+      "_normalize_discovery_streak_min_area_px",
+      "_normalize_discovery_streak_min_elongation",
+      "_discovery_frame_batches",
+      "_remap_candidate_frame_indices",
+      "_compact_remap_candidate_frame_indices",
+      "_rank_and_number_candidates",
+      "_split_discovery_candidates_by_linearity",
+      "_normalize_discovery_candidate_deflection_thresholds",
+      "_normalize_discovery_synthetic_sweep_settings",
+      "_candidate_rank",
+      "_candidate_sort_key",
+      "_candidates_are_near_duplicates",
+      "_coerce_float",
+      "_emit_progress",
+      "_raise_if_cancelled"
+    ],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "astropy.stats",
+      "astropy.wcs.utils",
+      "collections.abc",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "functools",
+      "math",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.alignment",
+      "photometry_app.core.image_io",
+      "photometry_app.core.models",
+      "photometry_app.core.solar_system",
+      "photometry_app.core.synthetic_tracking",
+      "photutils.detection",
+      "shutil"
+    ]
+  },
+  "photometry_app/core/discovery_benchmark.py": {
+    "classes": [
+      "DiscoveryFrameGroup",
+      "BenchmarkProgressEvent",
+      "DiscoveryBenchmarkReport",
+      "DiscoveryBenchmarkStageTiming",
+      "KnownObjectBenchmarkDiagnostic",
+      "_TimedProgressRecorder"
+    ],
+    "functions": [
+      "scan_discovery_folder",
+      "group_discovery_scan_results",
+      "select_discovery_group",
+      "resolve_group_reference_path",
+      "format_profile_stats",
+      "run_discovery_benchmark",
+      "_build_stage_timings",
+      "_build_known_object_diagnostics",
+      "_frame_context_from_search_diagnostics",
+      "_matched_residual_frame_indices",
+      "_detection_display_name",
+      "_scan_result_sort_key",
+      "_exposure_label",
+      "_exposure_matches"
+    ],
+    "imports": [
+      "__future__",
+      "cProfile",
+      "dataclasses",
+      "datetime",
+      "io",
+      "pathlib",
+      "photometry_app.core.discovery",
+      "photometry_app.core.models",
+      "photometry_app.core.scanner",
+      "photometry_app.core.settings",
+      "photometry_app.core.solar_system",
+      "pstats",
+      "time"
+    ]
+  },
+  "photometry_app/core/error_calculations.py": {
+    "classes": [],
+    "functions": [
+      "compute_flux_error",
+      "flux_error_to_mag_error",
+      "compute_ensemble_mag_error",
+      "compute_differential_mag_error",
+      "compute_empirical_scatter",
+      "compute_scintillation_error",
+      "compute_total_mag_error",
+      "_as_float_array",
+      "_return_like_input"
+    ],
+    "imports": [
+      "__future__",
+      "math",
+      "numpy"
+    ]
+  },
+  "photometry_app/core/exporters.py": {
+    "classes": [
+      "AnimatedLightCurveExportCanceled",
+      "ScienceExportMetadata",
+      "AavsoExtendedObservation",
+      "_ExportMeasurementIndex",
+      "_LightCurveAnimationPlan"
+    ],
+    "functions": [
+      "_aavso_software_header",
+      "export_processing_report",
+      "preview_aavso_extended_export",
+      "measurement_airmass",
+      "export_light_curve_plots",
+      "export_annotated_images",
+      "export_light_curve_plot",
+      "export_annotated_image_plot",
+      "_write_measurements_csv",
+      "_write_light_curves_csv",
+      "_write_summary_json",
+      "_science_observation_rows",
+      "_split_science_observation_rows",
+      "_science_measurement_role",
+      "_science_measurement_value",
+      "_science_comparison_method",
+      "_science_calibration_context",
+      "measurement_check_diagnostics",
+      "_julian_date_utc",
+      "_write_science_observations_csv",
+      "_write_science_observations_json",
+      "_write_reference_manifest_csv",
+      "_write_reduction_manifest_json",
+      "_write_provenance_manifest_json",
+      "_build_aavso_extended_observations",
+      "_write_aavso_extended_file",
+      "_write_aavso_preflight_json",
+      "_aavso_extended_observation",
+      "_write_science_export_readme",
+      "_aavso_zero_point_mag",
+      "_resolved_export_calibration",
+      "_check_diagnostics_for_measurement",
+      "_check_residual_rms_by_series",
+      "_series_filter_key",
+      "_check_reference_magnitude",
+      "_aavso_reference_magnitude",
+      "_aavso_check_measurement",
+      "_aavso_filter_code",
+      "_aavso_notes",
+      "_aavso_julian_date",
+      "_aavso_number",
+      "_aavso_free_text",
+      "_aavso_note_text",
+      "_aavso_header_text",
+      "_aavso_airmass",
+      "_aavso_observation_timestamp",
+      "_header_airmass",
+      "_header_exposure_seconds",
+      "_computed_airmass",
+      "_computed_airmass_cached",
+      "_computed_airmass_uncached",
+      "_aavso_text",
+      "_plot_file_name",
+      "_annotated_image_file_name",
+      "_comparison_measurements_for_export",
+      "_build_export_measurement_index",
+      "_measurement_frame_filter_key",
+      "_safe_suffix",
+      "export_light_curve_animated_gif",
+      "_resolved_light_curve_animation_limits",
+      "_build_light_curve_animation_frames",
+      "_light_curve_animation_plan",
+      "_raise_if_light_curve_animation_canceled",
+      "_render_light_curve_payload_frame"
+    ],
+    "imports": [
+      "PySide6.QtGui",
+      "__future__",
+      "astropy.coordinates",
+      "astropy.time",
+      "astropy.units",
+      "astropy.utils",
+      "collections.abc",
+      "csv",
+      "dataclasses",
+      "datetime",
+      "functools",
+      "importlib.metadata",
+      "io",
+      "json",
+      "math",
+      "matplotlib.figure",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.animation_export",
+      "photometry_app.core.image_io"
+    ]
+  },
+  "photometry_app/core/hr_diagram.py": {
+    "classes": [
+      "HrMeasurementRow",
+      "HrWorkingTable",
+      "_DetectedSource",
+      "_MatchedDetectedSource",
+      "_MeasuredHrRow",
+      "_PlaneMeasurement"
+    ],
+    "functions": [
+      "measure_hr_sources",
+      "_measure_plane",
+      "hr_working_table_payload",
+      "_extract_named_planes",
+      "_centroid_plane_from_named_planes",
+      "_coerce_bp_rp",
+      "_detect_hr_image_sources",
+      "_match_detected_sources_to_gaia",
+      "_coerce_parallax_mas",
+      "_coerce_parallax_error_mas",
+      "_coerce_pm_ra_mas_per_year",
+      "_coerce_pm_dec_mas_per_year",
+      "_measure_hr_rows",
+      "_measure_single_hr_row",
+      "_resolve_hr_parallel_worker_count",
+      "_apply_photometric_calibration",
+      "_row_is_usable_for_zero_point",
+      "_absolute_magnitude_from_parallax",
+      "_display_color_hex",
+      "_stellar_color_hex_from_bp_rp",
+      "_instrumental_display_color_hex",
+      "_boost_rgb_saturation",
+      "_rgb_hex",
+      "_finite_float"
+    ],
+    "imports": [
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "astropy.stats",
+      "astropy.wcs",
+      "astropy.wcs.utils",
+      "concurrent.futures",
+      "dataclasses",
+      "math",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.image_io",
+      "photometry_app.core.models",
+      "photometry_app.core.photometry",
+      "photometry_app.core.settings",
+      "photutils.aperture",
+      "photutils.detection",
+      "typing"
+    ]
+  },
+  "photometry_app/core/hr_motion_groups.py": {
+    "classes": [
+      "HrMotionGroupSettings",
+      "HrCommonMotionGroupResult"
+    ],
+    "functions": [
+      "normalize_hr_motion_group_preset",
+      "normalize_hr_motion_group_requested_method",
+      "normalize_hr_motion_group_parallax_mode",
+      "hr_motion_group_preset_label",
+      "hr_motion_group_preset_description",
+      "hr_motion_group_method_label",
+      "hr_motion_group_parallax_mode_label",
+      "find_common_motion_group",
+      "_resolved_clustering_method",
+      "_cluster_labels",
+      "_feature_vector",
+      "_finite_value",
+      "_robust_normalize",
+      "_kth_neighbor_distances",
+      "_dbscan_labels",
+      "_refine_members_by_hr_consistency",
+      "_hr_refinement_magnitude"
+    ],
+    "imports": [
+      "__future__",
+      "dataclasses",
+      "math",
+      "numpy",
+      "photometry_app.core.hr_diagram",
+      "typing"
+    ]
+  },
+  "photometry_app/core/image_io.py": {
+    "classes": [],
+    "functions": [
+      "is_supported_image_path",
+      "read_header",
+      "read_header_and_shape",
+      "read_image_data",
+      "read_photometry_image_data",
+      "photometry_xisf_scale_factor",
+      "write_fits_copy",
+      "_read_standard_image_header_and_shape",
+      "_read_standard_image",
+      "_read_xisf_header",
+      "_read_xisf_metadata",
+      "_read_xisf_image",
+      "_open_xisf",
+      "_sanitize_header_for_fits",
+      "_apply_xisf_astrometric_solution",
+      "_apply_xisf_observation_times",
+      "_header_timestamp_needs_timezone",
+      "_has_explicit_timezone",
+      "_xisf_property_value",
+      "_projection_code_from_xisf",
+      "_collapse_multichannel_image_for_plate_solve",
+      "_coerce_fits_keyword_value"
+    ],
+    "imports": [
+      "PIL",
+      "__future__",
+      "astropy.io",
+      "astropy.io.fits",
+      "numpy",
+      "pathlib",
+      "re"
+    ]
+  },
+  "photometry_app/core/matching.py": {
+    "classes": [],
+    "functions": [
+      "measurement_has_usable_value",
+      "select_reference_stars",
+      "apply_differential_photometry",
+      "apply_measurement_quality_analysis",
+      "_nearest_reference_measurements",
+      "_reference_candidate_sort_key",
+      "minimum_or_default",
+      "maximum_or_default",
+      "_sky_distance_squared",
+      "_reference_flux_error",
+      "_weighted_reference_flux",
+      "_fractional_reference_scatter",
+      "_differential_magnitude_error",
+      "_instrumental_magnitude_error",
+      "_calibrated_magnitude_context",
+      "build_light_curve_series",
+      "build_light_curve_series_for_target",
+      "_build_light_curve_series_from_rows",
+      "_measurement_key",
+      "_series_analysis_value",
+      "_robust_scale",
+      "_hampel_score",
+      "_has_hard_quality_flag",
+      "_soft_flag_count",
+      "_measurement_quality_weight",
+      "_deduplicate_strings",
+      "_compute_variability_metrics",
+      "_candidate_score_from_metrics",
+      "_point_analysis_value",
+      "_point_analysis_error",
+      "_reduced_chi_square",
+      "_von_neumann_ratio",
+      "_stetson_indices"
+    ],
+    "imports": [
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "collections",
+      "dataclasses",
+      "math",
+      "numpy",
+      "photometry_app.core.error_calculations",
+      "photometry_app.core.models",
+      "statistics"
+    ]
+  },
+  "photometry_app/core/milky_way_assets.py": {
+    "classes": [
+      "MilkyWayManifestValidationError",
+      "MilkyWayManifestLevel",
+      "MilkyWayAlphaMaskMetadata",
+      "MilkyWayTileSignalMetadata",
+      "MilkyWayTileManifest",
+      "MilkyWayGlobalAsset",
+      "MilkyWayTilePyramidAsset",
+      "MilkyWayAssetInfo",
+      "MilkyWayAssetResolver"
+    ],
+    "functions": [
+      "clamp_dec_deg",
+      "normalize_ra_deg",
+      "milky_way_u_from_ra_deg",
+      "milky_way_v_from_dec_deg",
+      "milky_way_ra_deg_from_u",
+      "milky_way_dec_deg_from_v",
+      "milky_way_uv_from_radec",
+      "tile_grid_dimensions",
+      "tile_pixel_bounds",
+      "tile_uv_bounds",
+      "tile_radec_bounds",
+      "resolve_manifest_tile_path",
+      "tile_xy_from_uv",
+      "expand_tile_selection",
+      "tiles_from_radec_bounds",
+      "select_milky_way_level",
+      "select_milky_way_level_with_hysteresis",
+      "load_milky_way_manifest",
+      "parse_milky_way_manifest",
+      "_parse_alpha_mask_metadata",
+      "_infer_manifest_file_extension",
+      "_normalize_manifest_file_extension",
+      "_infer_manifest_tile_format",
+      "_infer_manifest_compression",
+      "_infer_manifest_codec",
+      "_level_screen_ratio",
+      "_normalize_resolution_mode",
+      "_ra_intervals",
+      "_ra_span_degrees",
+      "_resolve_optional_path",
+      "_require_positive_int",
+      "_require_unit_float",
+      "_parse_content_region",
+      "_sorted_allowed_levels",
+      "_tile_x_ranges_from_u_values",
+      "_tile_index_from_u",
+      "_validate_manifest_tile_files",
+      "_validate_two_to_one"
+    ],
+    "imports": [
+      "__future__",
+      "dataclasses",
+      "json",
+      "math",
+      "os",
+      "pathlib",
+      "typing"
+    ]
+  },
+  "photometry_app/core/milky_way_mask.py": {
+    "classes": [
+      "MilkyWayMaskParameters",
+      "MilkyWayTileSignalStats"
+    ],
+    "functions": [
+      "milky_way_alpha_mask_from_rgb",
+      "apply_milky_way_alpha_mask",
+      "milky_way_alpha_tile_stats",
+      "milky_way_mask_manifest_payload",
+      "_resolved_blur_radius_px",
+      "_box_blur_luminance",
+      "_box_blur_axis",
+      "_smoothstep"
+    ],
+    "imports": [
+      "__future__",
+      "dataclasses",
+      "numpy"
+    ]
+  },
+  "photometry_app/core/milky_way_tile_format_benchmark.py": {
+    "classes": [
+      "MilkyWayTileSampleRegion",
+      "MilkyWayTileSample",
+      "MilkyWayTileFormatVariant",
+      "MilkyWayVariantTileAsset"
+    ],
+    "functions": [
+      "supported_qimage_formats",
+      "default_format_variants",
+      "available_format_variants",
+      "select_representative_tile_samples",
+      "image_dimensions",
+      "materialize_variant_assets",
+      "write_variant_asset",
+      "read_pil_rgb_array",
+      "qimage_rgb_array",
+      "verify_lossless_pixel_equality",
+      "orientation_tag_value",
+      "benchmark_decode_variants",
+      "measure_read_decode_convert",
+      "benchmark_prepared_tile_variants",
+      "image_approx_bytes",
+      "qimage_format_name",
+      "aggregate_measurements",
+      "summarize_numeric_series",
+      "summarize_variant_assets",
+      "full_tree_bytes_by_level",
+      "estimate_projected_full_tree_sizes",
+      "build_summary_tsv_rows",
+      "write_benchmark_report",
+      "_sample_evenly",
+      "_group_assets_by_variant",
+      "json_ready_sample",
+      "json_ready_asset"
+    ],
+    "imports": [
+      "PIL",
+      "PySide6.QtGui",
+      "__future__",
+      "dataclasses",
+      "json",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.milky_way_assets",
+      "photometry_app.ui.sky_view_milky_way_gl",
+      "shutil",
+      "statistics",
+      "time",
+      "typing"
+    ]
+  },
+  "photometry_app/core/milky_way_tile_generator.py": {
+    "classes": [
+      "LoadedMilkyWaySource",
+      "MilkyWayTileGenerationSummary",
+      "MilkyWayTileOutputFormat"
+    ],
+    "functions": [
+      "supported_tile_output_formats",
+      "default_tile_output_format_name",
+      "resolve_tile_output_format",
+      "default_level_widths",
+      "load_milky_way_source_image",
+      "generate_milky_way_tile_pyramid",
+      "_build_padded_tile_image",
+      "_array_to_image",
+      "_array_image_mode",
+      "_json_dumps",
+      "_load_exr_source",
+      "_load_openexr_pixels",
+      "_load_standard_source",
+      "_resample_filter",
+      "_tone_map_float_source"
+    ],
+    "imports": [
+      "__future__",
+      "dataclasses",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.milky_way_assets",
+      "photometry_app.core.milky_way_mask",
+      "typing"
+    ]
+  },
+  "photometry_app/core/models.py": {
+    "classes": [
+      "WcsStatus",
+      "VariableStarLimitMode",
+      "VariableStarDesignationFamily",
+      "PhotometryApertureMode",
+      "ObjectPhotometryMode",
+      "AppMode",
+      "RecenterMode",
+      "ManualSourceRole",
+      "ObservationMetadata",
+      "FileScanResult",
+      "ObjectScanSummary",
+      "ScanReport",
+      "SolvedField",
+      "PlateSolveResult",
+      "CatalogStar",
+      "FieldCatalog",
+      "PhotometryMeasurement",
+      "ScienceObservation",
+      "ManualSourceConfig",
+      "ManualPhotometryConfig",
+      "AperturePreset",
+      "LightCurvePoint",
+      "LightCurveSeries",
+      "ProcessingReport",
+      "VariableSelectionPreview",
+      "RunHistoryEntry"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "dataclasses",
+      "datetime",
+      "enum",
+      "pathlib",
+      "typing"
+    ]
+  },
+  "photometry_app/core/photometry.py": {
+    "classes": [
+      "ApertureProfile",
+      "PhotometryFrameContext"
+    ],
+    "functions": [
+      "resolve_aperture_profile",
+      "measure_targets",
+      "_valid_fwhm_value",
+      "_adaptive_aperture_radii",
+      "measure_manual_sources",
+      "_estimate_frame_fwhm",
+      "_estimate_star_fwhm",
+      "_coerce_pixel_coordinates",
+      "_estimate_flux_error",
+      "_coerce_stat_value",
+      "_resolve_saturation_threshold",
+      "_measure_source_saturation",
+      "_saturation_flag",
+      "_is_near_saturated",
+      "_near_saturation_flag",
+      "_inside_image",
+      "_usable_image_margin",
+      "_usable_area_flag",
+      "_resolve_catalog_source_position",
+      "_resolve_manual_source_position",
+      "_centroid_source",
+      "_flagged_measurement",
+      "_flagged_manual_measurement",
+      "_build_measurement",
+      "_build_manual_measurement"
+    ],
+    "imports": [
+      "__future__",
+      "astropy.stats",
+      "astropy.wcs",
+      "dataclasses",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.image_io",
+      "photometry_app.core.models",
+      "photometry_app.core.settings",
+      "photutils.aperture"
+    ]
+  },
+  "photometry_app/core/pipeline.py": {
+    "classes": [
+      "_PendingAstrometrySolve",
+      "_PendingPhotometryTask",
+      "_ComputedPhotometryTask",
+      "PhotometryPipeline"
+    ],
+    "functions": [
+      "science_export_metadata_from_settings",
+      "_read_header",
+      "_aligned_frame_reuse_key",
+      "_deduplicate",
+      "_stable_file_key",
+      "_emit_progress",
+      "_resolve_photometry_parallel_workers",
+      "_select_aavso_recommended_variable_stars",
+      "_select_brightest_variable_stars",
+      "_selected_variable_star_count",
+      "_selection_label",
+      "_limit_preview_variable_stars",
+      "_merge_catalog_entries",
+      "_preview_limit_note",
+      "_catalog_source_key",
+      "_measurement_cache_key",
+      "_measurement_cache_inputs",
+      "_measurement_cache_key_from_inputs",
+      "_coerce_cache_id_list",
+      "_describe_measurement_cache_miss",
+      "_photometry_settings_signature",
+      "_processing_report_cache_inputs",
+      "_processing_report_cache_key_from_inputs",
+      "_serialize_processing_report_cache_value",
+      "_deserialize_processing_report_cache_value",
+      "_measurement_to_payload",
+      "_measurement_from_payload",
+      "_manual_catalog_entries",
+      "_manual_config_ready_for_processing",
+      "_manual_config_ready_for_auto_append"
+    ],
+    "imports": [
+      "__future__",
+      "astropy.io.fits",
+      "collections.abc",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "enum",
+      "hashlib",
+      "json",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.catalog_filters",
+      "photometry_app.core.catalogs",
+      "photometry_app.core.exporters",
+      "photometry_app.core.image_io",
+      "photometry_app.core.matching",
+      "photometry_app.core.models",
+      "photometry_app.core.photometry",
+      "photometry_app.core.scanner"
+    ]
+  },
+  "photometry_app/core/plotting.py": {
+    "classes": [
+      "LightCurveFitConfig",
+      "AnnotatedImageDisplay",
+      "AnnotatedImageRenderSettings",
+      "LightCurveRenderPoint",
+      "LightCurvePlotPayload",
+      "FitPeriodInferenceResult"
+    ],
+    "functions": [
+      "resolve_light_curve_theme_colors",
+      "light_curve_axis_label",
+      "_is_magnitude_axis",
+      "estimate_period_hours",
+      "infer_fit_period_result",
+      "infer_fit_period_hours",
+      "period_result_hits_search_edge",
+      "plot_light_curve",
+      "plot_light_curve_payload",
+      "_apply_light_curve_grid",
+      "_resolved_light_curve_export_colors",
+      "build_light_curve_plot_payload",
+      "_time_axis_value",
+      "_phase_axis_value",
+      "_phase_anchor_jd",
+      "_estimate_period_hours_gls",
+      "_period_search_bounds_days",
+      "_period_is_at_search_edge_days",
+      "_estimate_period_hours_bls",
+      "_estimate_period_duration_hours_bls",
+      "_scan_periodic_fit_period_days",
+      "_apply_period_convention_days",
+      "_max_periodic_harmonics",
+      "_score_period_candidate_days",
+      "_has_single_eclipse_feature_per_half_cycle",
+      "_refine_period_candidate_days",
+      "_best_period_from_candidates",
+      "_timed_series_points",
+      "_light_curve_point_value",
+      "_light_curve_point_error",
+      "_light_curve_point_fit_weight",
+      "_plot_series_markers",
+      "_plot_fit_curve",
+      "_apply_light_curve_export_theme",
+      "_blend_hex",
+      "_hex_to_rgb",
+      "_rgb_to_hex",
+      "_build_fit_curve",
+      "_fit_curve_x_grid",
+      "_fit_curve_is_reasonable",
+      "light_curve_y_limits",
+      "_set_light_curve_y_limits",
+      "_polynomial_fit_curve",
+      "_periodic_fit_curve",
+      "_spline_fit_curve",
+      "_auto_fit_curve",
+      "_normalized_fit_weights",
+      "_promote_gls_subharmonic_frequency",
+      "_supports_periodic_auto_fit",
+      "_robust_polynomial_coefficients",
+      "_robust_weighted_linear_fit",
+      "_robust_weighted_ridge_fit",
+      "_cubic_spline_design_matrix",
+      "_robust_residual_weights",
+      "_weighted_bic",
+      "plot_annotated_image",
+      "build_annotated_image_display",
+      "build_annotated_image_display_from_array",
+      "build_placeholder_annotated_image_display",
+      "_recommended_stretch_mode_for_image",
+      "render_image_path_for_display",
+      "render_annotated_image",
+      "_normalized_preview_data",
+      "_native_preview_data",
+      "_resolved_image_level_points",
+      "_using_default_image_levels",
+      "_resolved_image_curve_points",
+      "_using_default_image_curve",
+      "_apply_image_curve_points",
+      "_apply_image_level_points",
+      "_sampled_finite_pixels",
+      "_annotated_image_display_limits_from_pixels",
+      "_annotated_image_display_limits",
+      "_normalize_image_plane",
+      "_stretched_image_data",
+      "_stf_stretched_image_data",
+      "_adaptive_display_function_parameters",
+      "_apply_display_function",
+      "_midtones_balance_for_target",
+      "_midtones_transfer_function",
+      "_auto_stretch_source_normalized_data",
+      "_normalized_preview_rgb_data",
+      "_native_preview_rgb_data",
+      "_native_preview_range",
+      "_collapse_multichannel_image_for_display",
+      "_coerce_multichannel_image_for_display",
+      "_draw_source_overlay",
+      "_image_title"
+    ],
+    "imports": [
+      "__future__",
+      "astropy.stats",
+      "astropy.time",
+      "astropy.timeseries",
+      "astropy.visualization",
+      "dataclasses",
+      "matplotlib",
+      "matplotlib.patches",
+      "matplotlib.ticker",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.image_io",
+      "photometry_app.core.models",
+      "photometry_app.core.settings"
+    ]
+  },
+  "photometry_app/core/qt_image_format_smoke.py": {
+    "classes": [],
+    "functions": [
+      "image_to_rgb_array",
+      "build_qt_image_format_smoke_result",
+      "run_qt_image_format_smoke"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "__future__",
+      "base64",
+      "json",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.qt_image_formats"
+    ]
+  },
+  "photometry_app/core/qt_image_formats.py": {
+    "classes": [
+      "QtImageFormatSupport"
+    ],
+    "functions": [
+      "_normalize_supported_formats",
+      "_dedupe_strings",
+      "_imageformats_plugin_directories",
+      "_imageformats_plugins",
+      "query_qt_image_format_support",
+      "format_qt_image_format_support_for_log",
+      "qt_image_decode_failure_reason"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "__future__",
+      "dataclasses",
+      "pathlib",
+      "typing"
+    ]
+  },
+  "photometry_app/core/scanner.py": {
+    "classes": [],
+    "functions": [
+      "scan_fits_tree",
+      "_discover_candidate_paths",
+      "_discover_from_collection_root",
+      "inspect_fits_file",
+      "_scan_sort_key",
+      "_parse_date_obs",
+      "parse_observation_timestamp",
+      "_as_clean_string",
+      "_as_int",
+      "_as_float",
+      "_extract_binning_from_header",
+      "_parse_filename_metadata",
+      "_date_obs_has_explicit_timezone",
+      "date_obs_has_explicit_timezone",
+      "_normalize_observation_time"
+    ],
+    "imports": [
+      "__future__",
+      "collections",
+      "datetime",
+      "pathlib",
+      "photometry_app.core.image_io",
+      "photometry_app.core.models",
+      "photometry_app.core.wcs",
+      "re"
+    ]
+  },
+  "photometry_app/core/settings.py": {
+    "classes": [
+      "ObservingSitePreset",
+      "AppSettings"
+    ],
+    "functions": [
+      "resolve_shared_parallel_workers",
+      "resolve_astrostack_parallel_workers",
+      "default_sky_explorer_enabled_layers",
+      "valid_theme_names",
+      "load_last_theme",
+      "save_last_theme",
+      "_load_app_state",
+      "_app_state_path",
+      "default_settings_config_path",
+      "load_settings_config_override",
+      "save_settings_config_override",
+      "_settings_config_path",
+      "_relative_or_absolute",
+      "_settings_root",
+      "_settings_from_payload",
+      "_settings_payload",
+      "_coerce_limit_mode",
+      "_coerce_hr_motion_group_settings",
+      "_coerce_splitter_sizes",
+      "_coerce_column_widths",
+      "_coerce_sky_explorer_object_type_column_widths",
+      "_coerce_sky_explorer_results_column_widths",
+      "_normalize_hex_color",
+      "_coerce_image_stretch_mode",
+      "_coerce_hr_marker_size_mode",
+      "_coerce_synthetic_tracking_combine_mode",
+      "_coerce_synthetic_tracking_integration_mode",
+      "_coerce_synthetic_tracking_weight_mode",
+      "_coerce_synthetic_tracking_rejection_mode",
+      "_coerce_synthetic_tracking_backend_preference",
+      "_synthetic_tracking_legacy_combine_mode",
+      "_coerce_asteroid_track_object_position_mode",
+      "_coerce_discovery_synthetic_sweep_direction_focus",
+      "_coerce_metadata_text",
+      "_coerce_hex_color",
+      "_coerce_sky_explorer_simbad_search_radius_arcsec",
+      "_coerce_sky_explorer_gaia_max_magnitude",
+      "_coerce_sky_explorer_annotated_galaxy_max_magnitude",
+      "_coerce_sky_explorer_gaia_hard_cap_rows",
+      "_coerce_sky_explorer_mag_limit_examples_per_bin",
+      "_coerce_sky_explorer_opacity",
+      "_coerce_sky_explorer_object_group_color_overrides",
+      "_coerce_sky_explorer_enabled_layers",
+      "_coerce_sky_explorer_object_type_color_overrides",
+      "_sky_explorer_object_type_color_overrides_to_payload",
+      "_coerce_sky_explorer_object_type_text_color_overrides",
+      "_coerce_sky_explorer_marker_color_relation",
+      "_coerce_sky_explorer_text_color_relation",
+      "_coerce_sky_explorer_object_type_font_overrides",
+      "_coerce_time_standard",
+      "_coerce_timezone_name",
+      "_coerce_optional_float",
+      "_coerce_observing_site_presets",
+      "_serialize_observing_site_presets",
+      "_coerce_designation_filters",
+      "_coerce_selected_catalog_source_ids",
+      "_selected_catalog_source_ids_to_payload",
+      "_coerce_period_cache",
+      "_period_cache_to_payload",
+      "default_custom_theme_colors",
+      "_coerce_custom_theme_colors",
+      "setup_pixel_scale_arcsec_per_pixel",
+      "_coerce_manual_configs",
+      "_manual_config_from_payload",
+      "_manual_configs_to_payload",
+      "_coerce_image_display_curve_points",
+      "_coerce_aperture_presets",
+      "_aperture_presets_to_payload"
+    ],
+    "imports": [
+      "__future__",
+      "dataclasses",
+      "json",
+      "os",
+      "pathlib",
+      "photometry_app.core.models"
+    ]
+  },
+  "photometry_app/core/sky_atlas.py": {
+    "classes": [
+      "SkyAtlasObject"
+    ],
+    "functions": [
+      "load_local_sky_atlas_objects",
+      "load_sky_atlas_objects",
+      "load_scientific_sky_atlas_star_objects",
+      "_load_packaged_named_sky_atlas_objects",
+      "search_sky_atlas_objects",
+      "_scientific_catalog_cache_path",
+      "_best_available_scientific_catalog_cache",
+      "_load_cached_scientific_star_objects",
+      "_store_cached_scientific_star_objects",
+      "_download_hipparcos_star_objects",
+      "_merge_packaged_targets_with_scientific_stars",
+      "_angular_separation_deg",
+      "_load_packaged_star_name_aliases",
+      "_resolve_sky_atlas_name_and_aliases",
+      "_split_leading_catalog_designation",
+      "_canonical_identifier",
+      "_is_actual_name_candidate",
+      "_actual_name_sort_key",
+      "_identifier_sort_key",
+      "_deduplicated_names",
+      "_extract_hip_identifier",
+      "_normalized_signed_catalog_identifier",
+      "_color_from_bv_index",
+      "_optional_int",
+      "_optional_float",
+      "_magnitude_sort_key",
+      "_normalized_ra_deg"
+    ],
+    "imports": [
+      "__future__",
+      "astroquery.vizier",
+      "dataclasses",
+      "functools",
+      "importlib",
+      "json",
+      "math",
+      "pathlib",
+      "re",
+      "typing"
+    ]
+  },
+  "photometry_app/core/sky_explorer.py": {
+    "classes": [
+      "SkyExplorerObjectTypeDefinition",
+      "SkyExplorerCorner",
+      "SkyExplorerFieldFootprint",
+      "SkyExplorerObject",
+      "SkyExplorerLayerSummary",
+      "SkyExplorerResult"
+    ],
+    "functions": [
+      "_sky_explorer_rgb_to_hex",
+      "_sky_explorer_object_type_colors",
+      "_sky_explorer_hex_to_rgb",
+      "sky_explorer_object_type_colors_for_group_hue",
+      "sky_explorer_object_type_group_definitions",
+      "_sky_explorer_selection_key",
+      "_sky_explorer_group_title",
+      "_sky_explorer_object_type_group",
+      "_simple_object_type_definition",
+      "_advanced_object_type_definition",
+      "_detailed_object_type_definition",
+      "sky_explorer_query_layers_for_object_types",
+      "sky_explorer_object_type_definitions_for_mode",
+      "sky_explorer_object_type_key_for_object",
+      "sky_explorer_object_type_keys_for_object",
+      "_append_sky_explorer_object_type_key",
+      "_canonical_sky_explorer_object_type_code",
+      "_sky_explorer_primary_object_type_key_for_object",
+      "_sky_explorer_type_matches",
+      "explore_sky_image",
+      "_filter_sky_explorer_objects_by_magnitude",
+      "_sky_explorer_numeric_magnitude",
+      "_sky_explorer_summaries_for_filtered_objects",
+      "_normalize_layers",
+      "_resolve_source_field",
+      "_build_field_footprint",
+      "_catalog_star_objects",
+      "_catalog_star_object_from_star",
+      "_query_simbad_objects",
+      "_query_simbad_region_rows",
+      "_simbad_layer_criteria",
+      "_simbad_query_regions",
+      "_simbad_wide_field_query_regions",
+      "_simbad_query_offsets",
+      "_simbad_row_signature",
+      "_simbad_row_text_value",
+      "_simbad_row_float_value",
+      "_matched_simbad_row_column_name",
+      "_sky_explorer_object_matches_stellar_magnitude_limit",
+      "_query_ngc2000_objects",
+      "_query_sharpless_objects",
+      "_query_barnard_objects",
+      "_query_vdb_objects",
+      "_query_hyperleda_galaxy_objects",
+      "_sky_explorer_object_from_ngc2000_row",
+      "_sky_explorer_object_from_sharpless_row",
+      "_sky_explorer_object_from_barnard_row",
+      "_sky_explorer_object_from_vdb_row",
+      "_sky_explorer_object_from_hyperleda_row",
+      "_sky_explorer_object_from_simbad_row",
+      "_solar_system_object_from_result",
+      "_simbad_object_type_for_row",
+      "_looks_like_galaxy_identifier_text",
+      "_pixel_position_for_coordinates",
+      "_preferred_simbad_name",
+      "_preferred_simbad_designation_prefixes",
+      "_preferred_simbad_star_name",
+      "_is_star_like_simbad_object_type",
+      "_is_structural_simbad_galaxy_system_type",
+      "_identifier_candidates",
+      "_normalize_identifier",
+      "_simbad_layer_for_row",
+      "_looks_like_named_member_star",
+      "_sky_object_identity_key",
+      "_sky_object_position_key",
+      "_sky_object_designation_key",
+      "_sky_object_designation_keys",
+      "_append_unique_deep_sky_objects",
+      "_enrich_duplicate_deep_sky_object_geometry",
+      "_sky_object_with_supplemental_geometry",
+      "_preferred_duplicate_deep_sky_name",
+      "_preferred_duplicate_deep_sky_object_type",
+      "_ngc_ic_designation_priority",
+      "_hyperleda_object_has_named_alias",
+      "_metadata_positive_float",
+      "_positive_float",
+      "_finite_float",
+      "_catalog_designation_key",
+      "_catalog_designation_key_from_text",
+      "_display_name_from_designation_key",
+      "_catalog_named_alias_key",
+      "_display_name_from_named_alias_key",
+      "_ngc2000_type_label",
+      "_ngc2000_object_name",
+      "_short_label_for_name",
+      "_summary_text",
+      "_sky_explorer_object_sort_key",
+      "_row_text",
+      "_row_float",
+      "_row_float_any",
+      "_catalog_geometry_metadata",
+      "_sky_explorer_angular_size_arcmin_from_row",
+      "_hyperleda_source_id",
+      "_hyperleda_preferred_name",
+      "_hyperleda_has_named_alias",
+      "_hyperleda_alias_candidates",
+      "_hyperleda_geometry_metadata_from_row",
+      "_hyperleda_major_axis_arcmin_from_row",
+      "_row_coordinates_deg",
+      "np_is_finite"
+    ],
+    "imports": [
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "astropy.table",
+      "astropy.wcs",
+      "astropy.wcs.utils",
+      "astroquery.simbad",
+      "astroquery.vizier",
+      "collections.abc",
+      "colorsys",
+      "dataclasses",
+      "datetime",
+      "hashlib",
+      "math",
+      "pathlib",
+      "photometry_app.core.catalogs",
+      "photometry_app.core.image_io",
+      "photometry_app.core.models",
+      "photometry_app.core.scanner",
+      "photometry_app.core.settings"
+    ]
+  },
+  "photometry_app/core/snr_binning.py": {
+    "classes": [
+      "SnrBinningSettings",
+      "SnrBinningSeriesResult",
+      "SnrBinningSourceResult",
+      "SnrBinningTask"
+    ],
+    "functions": [
+      "process_snr_binning_task",
+      "summarize_snr_binning_result",
+      "_bin_measurement_series",
+      "_target_frames_per_bin",
+      "_median_cadence_seconds",
+      "_build_measurement_bins",
+      "_aggregate_measurement_bin",
+      "_weighted_flux_bin",
+      "_direct_magnitude_fallback_bin",
+      "_weighted_mean_and_error",
+      "_weighted_scalar",
+      "_fractional_scatter",
+      "_sigma_clip_measurements",
+      "_average_observation_time",
+      "_bin_duration_seconds",
+      "_estimate_snr_improvement",
+      "_derived_quality_weight",
+      "_classify_variability_type"
+    ],
+    "imports": [
+      "__future__",
+      "dataclasses",
+      "datetime",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.matching",
+      "photometry_app.core.models",
+      "statistics"
+    ]
+  },
+  "photometry_app/core/solar_system.py": {
+    "classes": [
+      "_SmallBodyPredictionCacheMiss",
+      "SolarSystemPrediction",
+      "SolarSystemDetection",
+      "SolarSystemFrameMeasurement",
+      "SolarSystemSearchResult",
+      "SolarSystemStateVectorSample",
+      "SolarSystemMagnitudeSample",
+      "HeliocentricReferenceBody",
+      "KnownObjectComparisonTrack",
+      "KnownObjectHeliocentricContext",
+      "SolarSystemDetectionResult",
+      "SolarSystemVisibilityEstimateResult",
+      "SolarSystemVisibilityEstimateStar",
+      "_ProjectedCatalogStar",
+      "_VisibleLimitEstimateOptions",
+      "SolarSystemQueryService",
+      "SkybotQueryService",
+      "_VisibleLimitBinProbeResult"
+    ],
+    "functions": [
+      "detect_known_solar_system_objects",
+      "_detection_observation_time_candidates",
+      "_as_utc_datetime",
+      "_select_best_detection_time_result",
+      "_detection_result_quality_key",
+      "_median_match_offset",
+      "search_nearby_known_solar_system_objects",
+      "lookup_known_solar_system_object",
+      "search_known_solar_system_objects",
+      "search_known_solar_system_objects_globally",
+      "search_bright_solar_system_objects_globally",
+      "_small_body_search_candidate_budget",
+      "_query_known_small_body_predictions",
+      "_resolve_small_body_parallel_workers",
+      "_bright_object_planner_database_path",
+      "_normalized_observatory_code",
+      "_ensure_bright_object_planner_database",
+      "_store_bright_object_planner_snapshot",
+      "_load_bright_object_planner_snapshot",
+      "_prediction_matches_requested_types",
+      "_global_bright_skybot_tile_centers",
+      "_query_global_bright_skybot_tile_predictions",
+      "_build_search_result_from_prediction",
+      "estimate_visible_magnitude_limit",
+      "_resolve_source_field",
+      "_resolved_wcs_for_field",
+      "_predictions_from_skybot_table",
+      "_supplement_interstellar_predictions",
+      "_matching_prediction_index",
+      "_prediction_needs_interstellar_refresh",
+      "_merge_authoritative_prediction",
+      "_query_known_interstellar_prediction",
+      "_cached_known_interstellar_prediction",
+      "_query_known_small_body_prediction",
+      "_search_known_small_body_candidates",
+      "_preferred_small_body_search_identifier",
+      "_cached_small_body_search_candidates",
+      "_resolve_known_small_body_prediction",
+      "_cached_known_small_body_prediction_hit",
+      "_cached_known_small_body_prediction",
+      "_clear_cached_known_small_body_prediction",
+      "_small_body_lookup_candidates",
+      "_miriade_known_interstellar_prediction",
+      "_horizons_known_interstellar_prediction",
+      "_prediction_identity_key",
+      "_skybot_cone_search_table",
+      "_skybot_query_payload",
+      "_skybot_server_url",
+      "_parse_skybot_votable",
+      "_extract_votable_document_bytes",
+      "_build_detection_from_prediction",
+      "_build_unmeasured_detection_from_prediction",
+      "_measure_local_match",
+      "_estimate_local_match_fwhm",
+      "_visible_limit_estimate_options",
+      "_project_catalog_stars_into_image",
+      "_probe_visible_limit_bins",
+      "_confidence_score",
+      "_detection_status",
+      "_detection_summary_text",
+      "_observer_location",
+      "_altitude_deg",
+      "predict_detection_coordinates",
+      "_build_known_object_comparison_track",
+      "build_multi_known_object_heliocentric_context",
+      "build_known_object_heliocentric_context",
+      "_query_known_object_heliocentric_samples",
+      "_query_known_object_magnitude_samples",
+      "_known_object_horizons_candidates",
+      "_query_horizons_vector_samples",
+      "_query_horizons_ephemeris_magnitude_samples",
+      "_query_major_planet_heliocentric_paths",
+      "load_cached_major_planet_heliocentric_paths",
+      "_major_planet_cache_directory",
+      "_major_planet_query_times_payload",
+      "_major_planet_cache_path",
+      "_serialize_state_vector_sample",
+      "_deserialize_state_vector_sample",
+      "_serialize_reference_body",
+      "_deserialize_reference_body",
+      "_load_cached_major_planet_heliocentric_paths",
+      "_store_cached_major_planet_heliocentric_paths",
+      "_query_horizons_vector_samples_chunk",
+      "_query_horizons_ephemeris_magnitude_samples_chunk",
+      "_chunked_datetimes",
+      "_estimate_orbital_period_days",
+      "_summarize_horizons_error",
+      "_unique_utc_datetimes",
+      "_linspace_datetimes",
+      "_measure_detection_in_frame_data",
+      "measure_detections_in_frame",
+      "measure_detection_in_frame",
+      "parse_observation_time",
+      "_collapsed_image_plane",
+      "_pixel_scale_arcsec_per_pixel",
+      "_motion_rate_arcsec_per_hour",
+      "_classify_prediction",
+      "_row_designation_text",
+      "_prediction_display_name",
+      "_row_text",
+      "_row_float",
+      "_required_row_float"
+    ],
+    "imports": [
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "astropy.table",
+      "astropy.time",
+      "astropy.utils",
+      "astropy.utils.exceptions",
+      "astropy.wcs",
+      "astropy.wcs.utils",
+      "collections.abc",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "functools",
+      "hashlib",
+      "io",
+      "json",
+      "math",
+      "numpy",
+      "os"
+    ]
+  },
+  "photometry_app/core/synthetic_tracking.py": {
+    "classes": [
+      "SyntheticTrackingFrameWeightMetrics",
+      "SyntheticTrackingFrameContribution",
+      "SyntheticTrackingFrameTarget",
+      "SyntheticTrackingResult",
+      "_PreparedSyntheticTrackingFrame",
+      "_PreparedFullFrameSyntheticTrackingFrame"
+    ],
+    "functions": [
+      "_resolve_synthetic_tracking_worker_count",
+      "_prepare_synthetic_tracking_frame",
+      "_prepare_full_frame_synthetic_tracking_frame",
+      "build_synthetic_tracked_stack",
+      "build_synthetic_tracked_cumulative_stacks",
+      "build_synthetic_tracked_full_frame_stack",
+      "_collapsed_image_plane",
+      "_clean_image_data",
+      "_sample_centered_patch",
+      "_shift_image_with_zero_fill",
+      "_shift_image_with_zero_fill_array_backend",
+      "_bilinear_sample",
+      "_bilinear_shift_sample",
+      "_bilinear_shift_sample_array_backend",
+      "_global_peak_coordinates",
+      "measure_synthetic_tracking_peak",
+      "format_synthetic_tracking_summary",
+      "_infer_synthetic_tracking_motion",
+      "_combine_stack_patches",
+      "_ensure_sigma_clipped_stack_fits_memory",
+      "_accumulate_average_stack_frame",
+      "_accumulate_extrema_stack_frame",
+      "_finalize_average_stack",
+      "_resolve_synthetic_tracking_stack_modes",
+      "_legacy_synthetic_tracking_stack_modes",
+      "_estimate_synthetic_tracking_frame_weight_metrics",
+      "_estimate_full_frame_weight_metrics_array_backend",
+      "_synthetic_tracking_frame_weight_value",
+      "_synthetic_tracking_frame_weights",
+      "_apply_synthetic_tracking_rejection",
+      "_reduce_stack_cube",
+      "_emit_progress",
+      "_accumulate_average_stack_frame_array_backend",
+      "_accumulate_extrema_stack_frame_array_backend",
+      "_finalize_average_stack_array_backend",
+      "_materialize_backend_array",
+      "_array_backend_scalar_to_float",
+      "_array_backend_has_any_true",
+      "_warm_up_full_frame_gpu_backend",
+      "_summarize_backend_error",
+      "_format_optional_float"
+    ],
+    "imports": [
+      "__future__",
+      "astropy.stats",
+      "collections.abc",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.array_backend",
+      "photometry_app.core.image_io",
+      "photometry_app.core.solar_system"
+    ]
+  },
+  "photometry_app/core/transient.py": {
+    "classes": [
+      "TransientFrameResult",
+      "TransientSourceDetection",
+      "TransientCandidate",
+      "TransientSearchResult",
+      "_DetectionGroup",
+      "_FrameMeasurementContext",
+      "_CandidateFrameSignal"
+    ],
+    "functions": [
+      "search_transients_in_folder",
+      "_resolve_frame_wcs",
+      "_query_gaia_veto_stars",
+      "_combined_solved_field",
+      "_mean_solved_field_center",
+      "_detect_uncataloged_sources",
+      "_load_frame_measurement_contexts",
+      "_build_candidates",
+      "_group_detections",
+      "_group_detections_incremental",
+      "_build_candidate_list",
+      "_measure_candidate_frame_signals",
+      "_measure_aperture_signal",
+      "_candidate_variability_metrics",
+      "_build_result",
+      "_format_report_text",
+      "_catalog_coordinates",
+      "_nearest_catalog_match",
+      "_mean_sky_position",
+      "_as_mono_image",
+      "_finite_table_value",
+      "_file_sort_key",
+      "_detection_sort_key",
+      "_signal_sort_key",
+      "_coerce_utc",
+      "_raise_if_cancelled",
+      "_emit"
+    ],
+    "imports": [
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "astropy.stats",
+      "astropy.wcs",
+      "collections.abc",
+      "dataclasses",
+      "datetime",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.catalogs",
+      "photometry_app.core.image_io",
+      "photometry_app.core.models",
+      "photometry_app.core.scanner",
+      "photometry_app.core.settings",
+      "photometry_app.core.wcs",
+      "photutils.detection"
+    ]
+  },
+  "photometry_app/core/wcs.py": {
+    "classes": [
+      "AstrometrySolveHints",
+      "AstrometryNetClient",
+      "_PreparedPlateSolveInput"
+    ],
+    "functions": [
+      "validate_wcs",
+      "extract_solved_field",
+      "_prepare_plate_solve_input",
+      "_estimate_radius_deg",
+      "is_pixinsight_staralignment_output",
+      "infer_astrometry_solve_hints",
+      "_recommended_downsample_factor",
+      "_wcs_parity",
+      "celestial_wcs",
+      "_normalize_celestial_wcs_header",
+      "_has_minimum_astrometric_solution",
+      "_hash_file",
+      "_load_cached_solution",
+      "_validated_cached_solution",
+      "_store_cached_solution"
+    ],
+    "imports": [
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "astropy.io",
+      "astropy.io.fits",
+      "astropy.wcs",
+      "astropy.wcs.utils",
+      "dataclasses",
+      "hashlib",
+      "json",
+      "pathlib",
+      "photometry_app.core.image_io",
+      "photometry_app.core.models",
+      "requests",
+      "time"
+    ]
+  },
+  "photometry_app/ui/__init__.py": {
+    "classes": [],
+    "functions": [],
+    "imports": []
+  },
+  "photometry_app/ui/constellation_overlay.py": {
+    "classes": [
+      "ConstellationLineSegment",
+      "ConstellationLabel",
+      "ConstellationOverlaySettings",
+      "ConstellationOverlayMetrics",
+      "ConstellationOverlayData",
+      "_ProjectedConstellationLabel",
+      "_ProjectedConstellationGeometry",
+      "ConstellationDataLoader",
+      "ConstellationLineRenderer",
+      "ConstellationLabelRenderer",
+      "ConstellationOverlay"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "__future__",
+      "collections",
+      "dataclasses",
+      "json",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.benchmarking",
+      "time",
+      "typing"
+    ]
+  },
+  "photometry_app/ui/curves_widget.py": {
+    "classes": [
+      "HistogramCurvesWidget"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "numpy"
+    ]
+  },
+  "photometry_app/ui/dialogs.py": {
+    "classes": [
+      "AstrostackGifExportOptions",
+      "AstrostackGifExportDialog",
+      "LightCurveFilterSettings",
+      "LightCurveFilterDialog",
+      "ResultsViewFilterSettings",
+      "ResultsViewFilterDialog",
+      "KnownObjectOrbit3DSearchEntry",
+      "KnownObjectOrbit3DPlannerRequest",
+      "_KnownObjectOrbit3DSearchWorker",
+      "_KnownObjectOrbit3DSearchResultsDialog",
+      "KnownObjectOrbit3DNearbySearchDialog",
+      "KnownObjectOrbit3DExactLookupDialog",
+      "KnownObjectOrbit3DPlannerDialog",
+      "HrMotionGroupDialog",
+      "ScanResultsSummaryDialog",
+      "AsteroidSequenceGroupSummary",
+      "AsteroidSequenceGroupDialog",
+      "SyntheticTrackingPreviewDialog",
+      "AdvancedSyntheticTrackingOptions",
+      "AdvancedSyntheticTrackingDialog",
+      "MovingObjectTrajectoryDialog",
+      "KnownObjectTrajectoryDialog",
+      "KnownObjectOrbit3DDialog",
+      "AsteroidDiscoveryDialog",
+      "AsteroidDiscoveryRunOptions",
+      "CalibrationPipelineDialog",
+      "WorkflowCalibrationPipelineDialog",
+      "AsteroidDiscoveryOptionsDialog",
+      "AsteroidRecoveryDialog",
+      "SettingsDialog",
+      "PreviewSelectionDialog",
+      "ThemeCustomizeDialog",
+      "ExportPreflightDialog",
+      "_EquatorialGridPreview",
+      "_AsteroidOverlayPreview"
+    ],
+    "functions": [
+      "_observation_timezone_options"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "astropy.io",
+      "collections",
+      "csv",
+      "dataclasses",
+      "datetime",
+      "math",
+      "matplotlib.backends.backend_qtagg",
+      "matplotlib.collections",
+      "matplotlib.figure",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.calibration",
+      "photometry_app.core.catalog_filters",
+      "photometry_app.core.discovery",
+      "photometry_app.core.hr_motion_groups",
+      "photometry_app.core.models"
+    ]
+  },
+  "photometry_app/ui/differential_label_dialog.py": {
+    "classes": [
+      "DifferentialQuickLabelDialog"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtWidgets",
+      "__future__",
+      "collections.abc",
+      "photometry_app.core.models",
+      "photometry_app.core.plotting",
+      "photometry_app.ui.light_curve_widget"
+    ]
+  },
+  "photometry_app/ui/hr_plot_widget.py": {
+    "classes": [
+      "_HrClassGuideSpec",
+      "_HrScaleAxisItem",
+      "HrDiagramPlotWidget"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "dataclasses",
+      "hashlib",
+      "matplotlib.figure",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.hr_diagram",
+      "photometry_app.core.plotting",
+      "pyqtgraph",
+      "typing"
+    ]
+  },
+  "photometry_app/ui/image_view.py": {
+    "classes": [
+      "ImageOverlay",
+      "EquatorialGridOverlay",
+      "SelectionOverlay",
+      "MotionVectorOverlay",
+      "ImageInfoItem",
+      "ImageInfoSection",
+      "ImageInfoPanel",
+      "AnnotatedImageView"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "collections.abc",
+      "dataclasses",
+      "math",
+      "numpy",
+      "photometry_app.core.plotting"
+    ]
+  },
+  "photometry_app/ui/levels_dialog.py": {
+    "classes": [
+      "CurvesDialog"
+    ],
+    "functions": [
+      "_initial_curve_points",
+      "_stored_curve_points",
+      "_downsample_annotated_display",
+      "_downsample_optional_array",
+      "_downsample_array"
+    ],
+    "imports": [
+      "PySide6.QtWidgets",
+      "__future__",
+      "dataclasses",
+      "numpy",
+      "photometry_app.core.plotting",
+      "photometry_app.ui.curves_widget",
+      "photometry_app.ui.image_view"
+    ]
+  },
+  "photometry_app/ui/levels_strip.py": {
+    "classes": [
+      "HistogramLevelsStrip"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "numpy",
+      "typing"
+    ]
+  },
+  "photometry_app/ui/light_curve_widget.py": {
+    "classes": [
+      "_LightCurveAxisItem",
+      "LightCurvePlotWidget"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "math",
+      "matplotlib",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.plotting",
+      "pyqtgraph"
+    ]
+  },
+  "photometry_app/ui/main_window.py": {
+    "classes": [
+      "_AsteroidBlinkExportCanceled",
+      "_TransientBlinkExportCanceled",
+      "_SkyExplorerManualAnnotation",
+      "_SkyExplorerManualAnnotationDrag",
+      "_HrPreparationResult",
+      "_HorizontalDragAdjustLabel",
+      "_HrRoiSelection",
+      "_DifferentialDiscoverRunOptions",
+      "_SnrOriginalPeriodState",
+      "_HrMeasurementCacheKey",
+      "_ComparisonFitContext",
+      "_DifferentialWorkflowOptions",
+      "_ElidedLabel",
+      "_HrResultsTableItemProxy",
+      "_SourceResultsTableItem",
+      "_SkyExplorerObjectTypeTableItem",
+      "_SkyExplorerObjectTypeTable",
+      "_SkyExplorerResultsTableItem",
+      "_SkyExplorerResultsTable",
+      "_AsteroidResultsTableItem",
+      "_AsteroidResultEntry",
+      "_AsteroidDiscoveryContinuationState",
+      "_AsteroidSkyViewMarker",
+      "_SkyGroundViewportGeometry",
+      "_SkyRenderedGroundLayerCacheEntry",
+      "_SkyVisibleObject",
+      "_SkyViewGridFamilyDetailWindow",
+      "_SkyViewGroundDetailWindow",
+      "_SkyViewProjectedGridCacheEntry",
+      "_SkyViewMilkyWayTextureLevel",
+      "_SkyViewMilkyWayDetailWindow",
+      "_SkyViewTimingWindow",
+      "_SkyViewCollectFrameState",
+      "_SkyViewRenderScene",
+      "_SkyViewMilkyWayTileDebugRecord",
+      "_SkyViewMilkyWayStaticTileMetadata",
+      "_SkyViewMilkyWayTileMetadataCache",
+      "_SkyViewMilkyWayShaderTileRequestCacheEntry",
+      "_SkyViewMilkyWayProjectedTileVertex",
+      "_SkyViewMilkyWayTileMeshBuildResult",
+      "_SkyViewGlProjectionUniforms",
+      "_SkyViewRenderResult",
+      "_OpenGLFaintStarLayer",
+      "_OpenGLStarFieldLayer",
+      "_OpenGLSolidGroundLayer",
+      "_OpenGLAtmosphereMaskLayer",
+      "_QPainterSkyViewRenderer",
+      "_SkyViewCollectCandidateDetail",
+      "_SkyViewCollectDetailWindow",
+      "_SkyAtlasViewWidget",
+      "_LegacySkyViewObservingSiteSelection",
+      "_LegacySkyViewLocationMapWidget",
+      "_LegacySkyViewLocationDialog",
+      "_SkyAtlasOverlayContainer",
+      "_SkyAtlasPopupOverlay",
+      "_SkyAtlasModalOverlay",
+      "_AsteroidSkyViewWidget",
+      "_ManualAperturePreview",
+      "_HrResultsTableModel",
+      "_HrResultsTableView",
+      "_CurrentPageStackedWidget",
+      "_DifferentialWorkflowDialog",
+      "MainWindow"
+    ],
+    "functions": [
+      "_theme_style",
+      "_coerce_utc_datetime",
+      "qt_object_is_valid"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtOpenGL",
+      "PySide6.QtOpenGLWidgets",
+      "PySide6.QtWidgets",
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "astropy.time",
+      "collections",
+      "concurrent.futures",
+      "csv",
+      "ctypes",
+      "dataclasses",
+      "datetime",
+      "hashlib",
+      "json",
+      "logging",
+      "math",
+      "numpy"
+    ]
+  },
+  "photometry_app/ui/moon_system.py": {
+    "classes": [
+      "MoonState",
+      "LunarOrientationState",
+      "LunarOrientationProvider",
+      "LunarOrientationProviderDiagnostics",
+      "LunarOrientationProviderSelection",
+      "LunarOrientationSpiceUnavailable",
+      "LunarOrientationApprox",
+      "LunarOrientationSpiceProvider",
+      "LunarOrientationKernelDiscovery",
+      "MoonTextureLod",
+      "MoonTileKey",
+      "MoonTileUvBounds",
+      "MoonTextureTile",
+      "MoonTileShaderBinding",
+      "MoonPolarCapBinding",
+      "MoonTileSampleRoute",
+      "MoonTileSettings",
+      "_MoonTileGenerationSnapshot",
+      "MoonTileDiagnostics",
+      "MoonVisualSettings",
+      "MoonDrawState",
+      "MoonAtmosphereState",
+      "MoonAtmosphereModel",
+      "MoonEarthshineModel",
+      "MoonTiledTextureManager",
+      "MoonEphemerisValidationCase",
+      "MoonEphemerisValidationResult",
+      "LunarOrientationComparisonCase",
+      "LunarOrientationComparisonResult",
+      "_MoonTextureCacheEntry",
+      "MoonCache",
+      "MoonEphemeris",
+      "MoonEphemerisRuntimeDiagnostics",
+      "MoonAsyncEphemerisSampler",
+      "MoonRendererGL",
+      "MoonVisualSmokeCase"
+    ],
+    "functions": [
+      "select_lunar_orientation_provider",
+      "_normalize_lunar_orientation_mode",
+      "_discover_spice_kernel_paths",
+      "_discover_spice_kernel_paths_with_diagnostics",
+      "_parse_spice_kernel_path_list",
+      "_kernel_paths_in_directory",
+      "_moon_fragment_visual_constant_source",
+      "compare_lunar_orientation_providers",
+      "_equatorial_unit_vector",
+      "_angle_distance_rad",
+      "_matrix_axis_delta_deg",
+      "validate_moon_ephemeris_against_astropy"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtOpenGL",
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "astropy.time",
+      "astropy.utils",
+      "collections",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "hashlib",
+      "importlib",
+      "json",
+      "math",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.benchmarking"
+    ]
+  },
+  "photometry_app/ui/moving_object_label_dialog.py": {
+    "classes": [
+      "MovingObjectQuickLabelDialog"
+    ],
+    "functions": [
+      "_centered_cutout",
+      "_normalize_cutout",
+      "_draw_target_marker",
+      "_draw_target_shape"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "collections.abc",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.discovery",
+      "photometry_app.core.image_io"
+    ]
+  },
+  "photometry_app/ui/sky_view_location.py": {
+    "classes": [
+      "_SkyViewObservingSiteSelection",
+      "_SkyViewLocationMapWidget",
+      "_SkyViewLocationDialog"
+    ],
+    "functions": [
+      "_map_tile_url",
+      "_download_map_tile",
+      "_normalize_latitude",
+      "_normalize_longitude",
+      "_observing_site_display_name",
+      "_reverse_geocode_observing_site"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "concurrent.futures",
+      "dataclasses",
+      "math",
+      "os",
+      "photometry_app.core.settings",
+      "requests"
+    ]
+  },
+  "photometry_app/ui/sky_view_milky_way_gl.py": {
+    "classes": [
+      "SkyViewMilkyWayGlUniforms",
+      "SkyViewMilkyWayTileMeshVertex",
+      "SkyViewMilkyWayTileDrawRequest",
+      "_SkyViewMilkyWayTextureCacheEntry",
+      "_SkyViewMilkyWayPreparedTileCacheEntry",
+      "_SkyViewMilkyWayDecodedTileCacheEntry",
+      "_SkyViewMilkyWayPreparedTileFutureResult",
+      "_SkyViewMilkyWayPreparedTileWorkerMetrics",
+      "_SkyViewMilkyWayBaseUploadFutureResult",
+      "OpenGLMilkyWayLayer"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtOpenGL",
+      "__future__",
+      "collections",
+      "concurrent.futures",
+      "dataclasses",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.benchmarking",
+      "photometry_app.core.milky_way_mask",
+      "photometry_app.core.qt_image_formats",
+      "time"
+    ]
+  },
+  "photometry_app/ui/sky_view_milky_way_pixel_probe_support.py": {
+    "classes": [
+      "IncrementalJsonReport"
+    ],
+    "functions": [
+      "clamp01",
+      "viewport_device_size",
+      "logical_to_framebuffer_xy",
+      "screenshot_to_logical_xy",
+      "top_left_to_bottom_left_readback_y",
+      "build_capture_coordinate_record",
+      "screen_region",
+      "decode_u16",
+      "decode_packed_uv",
+      "decode_packed_vec3",
+      "decode_tile_id_exact",
+      "sample_image_bilinear_from_coords",
+      "sample_model_gl_linear",
+      "sample_model_edge_inclusive",
+      "sample_model_half_pixel",
+      "sample_model_nearest_center",
+      "mae",
+      "evaluate_sampling_models",
+      "load_probe_samples_from_json",
+      "build_default_probe_samples",
+      "build_default_probe_samples_for_size",
+      "write_progress_marker",
+      "_write_json_file",
+      "summarize_model_mae"
+    ],
+    "imports": [
+      "__future__",
+      "collections",
+      "json",
+      "math",
+      "numpy",
+      "pathlib"
+    ]
+  },
+  "photometry_app/ui/sky_view_simulation.py": {
+    "classes": [
+      "SkyViewSimulationClock"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "datetime",
+      "time",
+      "typing"
+    ]
+  },
+  "photometry_app/ui/transient_label_dialog.py": {
+    "classes": [
+      "TransientQuickLabelDialog"
+    ],
+    "functions": [
+      "_centered_cutout",
+      "_normalize_cutout",
+      "_draw_center_marker"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "collections.abc",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.image_io",
+      "photometry_app.core.transient",
+      "photometry_app.core.wcs"
+    ]
+  },
+  "photometry_app/ui/workers.py": {
+    "classes": [
+      "CalculatedPeriodBatchResult",
+      "_ComparisonGroupSeriesDiagnostics",
+      "LiteraturePeriodBatchResult",
+      "IncreaseSnrBatchResult",
+      "ComparisonFitTrialResult",
+      "ComparisonFitOptimizationResult",
+      "DiscoverSourceResult",
+      "DiscoverTargetPlan",
+      "_DiscoverTargetEvaluationResult",
+      "DiscoverBatchResult",
+      "SourceReportExportTask",
+      "SourceReportExportResult",
+      "ReportExportBatchResult",
+      "HrStarDetailsResult",
+      "AsteroidOrbitContextResult",
+      "AsteroidOrbitContextTarget",
+      "ScanWorker",
+      "ProcessWorker",
+      "CachedProcessingReportWorker",
+      "PreviewWorker",
+      "ReportExportWorker",
+      "LightCurveGifExportWorker",
+      "HrPrepareWorker",
+      "SkyExplorerWorker",
+      "SolarSystemDetectionWorker",
+      "TransientSearchWorker",
+      "CalibrationWorker",
+      "AsteroidVisibleMagnitudeWorker",
+      "AsteroidOrbitContextWorker",
+      "AsteroidSequenceAlignmentWorker",
+      "AsteroidSyntheticTrackingWorker",
+      "AsteroidDiscoveryWorker",
+      "AsteroidDiscoveryResidualDebugWorker",
+      "AsteroidRecoveryWorker",
+      "ImageDisplayPreloadResult",
+      "AsteroidBlinkPreloadResult",
+      "AsteroidBlinkPreloadWorker",
+      "ImageDisplayPreloadWorker",
+      "HrStarDetailsWorker",
+      "CalculatePeriodWorker",
+      "LiteraturePeriodWorker",
+      "OptimizeComparisonFitWorker",
+      "DiscoverSourcesWorker",
+      "IncreaseSnrWorker"
+    ],
+    "functions": [
+      "_configure_windows_process_pool_executable",
+      "_comparison_group_series_diagnostics_sort_key",
+      "_summarize_discovery_series_failure",
+      "_merge_period_results",
+      "_calculate_period_for_series",
+      "_calculate_period_task",
+      "_fetch_literature_period_task",
+      "_recommended_calculated_period_workers",
+      "_catalog_source_key",
+      "_discover_candidate_stars",
+      "_discover_raw_light_curve_target_stars",
+      "_discover_potential_candidate_stars",
+      "_discovery_measurement_quality",
+      "_discovery_trial_is_better",
+      "_prepare_discovery_target",
+      "_measurement_matches_discovery_ideal_adu_range",
+      "_resolved_calculated_period_workers",
+      "_recommended_literature_period_workers",
+      "_resolved_literature_period_workers",
+      "_recommended_comparison_fit_workers",
+      "_resolved_comparison_fit_workers",
+      "_comparison_measurement_key",
+      "_comparison_fit_relative_error",
+      "_ordered_reference_candidate_ids",
+      "_magnitude_sorted_reference_candidate_ids",
+      "_resolved_fallback_target_magnitude",
+      "_discover_ranked_reference_candidate_ids",
+      "_comparison_source_names_by_id",
+      "_reference_measurement_frame_key",
+      "_index_reference_measurements_by_source_and_frame",
+      "_comparison_group_reference_measurements",
+      "_normalize_preferred_comparison_ids",
+      "_comparison_source_groups",
+      "_evaluate_comparison_source_group_core",
+      "_evaluate_comparison_source_group",
+      "_evaluate_discover_target_plan",
+      "_comparison_fit_task",
+      "_comparison_fit_trial_from_task_result",
+      "_comparison_fit_trial_is_better",
+      "_comparison_fit_progress_message",
+      "_synthetic_tracking_frame_midpoint_time",
+      "_blink_frame_cache_key",
+      "_preload_image_display",
+      "preload_image_displays",
+      "_blink_frame_midpoint_time",
+      "_rendered_blink_qimage",
+      "_resolve_blink_preload_worker_count",
+      "_preload_asteroid_blink_frame",
+      "preload_asteroid_blink_frames"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "__future__",
+      "collections",
+      "collections.abc",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "itertools",
+      "math",
+      "multiprocessing",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.alignment",
+      "photometry_app.core.calibration",
+      "photometry_app.core.catalogs",
+      "photometry_app.core.discovery",
+      "photometry_app.core.exporters",
+      "photometry_app.core.matching"
+    ]
+  },
+  "scripts/benchmark_full_frame_synthetic_tracking.py": {
+    "classes": [],
+    "functions": [
+      "_synthetic_frame",
+      "_build_benchmark_frames",
+      "run_benchmark",
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "datetime",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.settings",
+      "photometry_app.core.synthetic_tracking",
+      "time",
+      "unittest.mock"
+    ]
+  },
+  "scripts/build_bright_object_planner_database.py": {
+    "classes": [],
+    "functions": [
+      "_parse_utc",
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "datetime",
+      "pathlib",
+      "photometry_app.core.solar_system"
+    ]
+  },
+  "scripts/build_moon_tiles.py": {
+    "classes": [],
+    "functions": [
+      "_sha256_file",
+      "_source_transform_manifest",
+      "_transform_source_image",
+      "_landmark_uv",
+      "_uv_layout_summary",
+      "default_moon_tile_paths",
+      "_resolve_path",
+      "_load_image",
+      "_max_supported_level",
+      "_scaled_level_image",
+      "_clear_existing_output",
+      "_save_tile_image",
+      "_image_rgb_array",
+      "_rgb_array_image",
+      "_polar_cap_source_uv",
+      "_sample_equirectangular_rgb",
+      "_sample_planar_rgb",
+      "_project_polar_cap_image",
+      "_smootherstep_array",
+      "_luminance_array",
+      "_gaussian_blur_scalar_array",
+      "_gaussian_blur_rgb_array",
+      "_masked_mean",
+      "_masked_std",
+      "_polar_cap_absolute_latitudes",
+      "_polar_cap_region_metrics",
+      "_polar_cap_regional_metrics",
+      "_polar_cap_relative_footprint_metrics",
+      "_polar_cap_boundary_samples",
+      "_polar_cap_boundary_metrics",
+      "_apply_polar_cap_boundary_normalization",
+      "_apply_polar_cap_core_harmonization",
+      "_build_polar_cap_albedo_image",
+      "generate_synthetic_moon_source_maps",
+      "_level_build_entries",
+      "build_moon_tile_tree",
+      "_parse_lod_level",
+      "_parse_tile_coordinates",
+      "_collect_tile_files",
+      "_load_manifest",
+      "_expected_levels_from_manifest",
+      "_detected_source_dimensions",
+      "_manifest_source_transform",
+      "_apply_manifest_source_transform",
+      "_first_existing_tile_path",
+      "_sample_image_rgb_at_uv",
+      "_sample_tile_tree_rgb_at_uv",
+      "_uv_validation_samples",
+      "validate_tile_uv_sampling",
+      "_registration_uv_samples",
+      "_color_delta",
+      "_luminance",
+      "_registration_metrics",
+      "_landmark_registration_diagnostics",
+      "validate_global_vs_tiled_registration",
+      "validate_polar_cap_assets",
+      "audit_moon_texture_sources",
+      "_image_luminance_samples",
+      "validate_tile_lod_luminance_consistency",
+      "validate_tiled_normal_maps",
+      "validate_moon_tile_tree",
+      "_parse_source_crop",
+      "_parse_source_resize",
+      "_build_parser",
+      "main"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "__future__",
+      "argparse",
+      "datetime",
+      "hashlib",
+      "json",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.ui.moon_system",
+      "random",
+      "shutil",
+      "statistics"
+    ]
+  },
+  "scripts/check_moon_spice.py": {
+    "classes": [],
+    "functions": [
+      "_finite_vector",
+      "_finite_matrix",
+      "_matrix_is_orthonormal",
+      "_normalize",
+      "_equatorial_unit_vector",
+      "_spiceypy_import_status",
+      "_comparison_summary",
+      "build_moon_spice_diagnostics_report",
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "importlib",
+      "json",
+      "math",
+      "pathlib",
+      "photometry_app.ui.moon_system",
+      "typing"
+    ]
+  },
+  "scripts/compare_full_frame_synthetic_tracking_dataset.py": {
+    "classes": [],
+    "functions": [
+      "_dataset_frame_paths",
+      "_alternate_observation_times",
+      "_scan_frame_metadata",
+      "_frame_midpoint_time",
+      "_prepare_dataset_tracking_context",
+      "_run_backend_comparison",
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "dataclasses",
+      "datetime",
+      "json",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.image_io",
+      "photometry_app.core.scanner",
+      "photometry_app.core.settings",
+      "photometry_app.core.solar_system",
+      "photometry_app.core.synthetic_tracking",
+      "time"
+    ]
+  },
+  "scripts/generate_demo_dataset.py": {
+    "classes": [],
+    "functions": [
+      "main",
+      "_build_wcs",
+      "_inside_image",
+      "_draw_star"
+    ],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "astropy.wcs",
+      "datetime",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.catalogs",
+      "photometry_app.core.matching",
+      "photometry_app.core.models",
+      "photometry_app.core.settings"
+    ]
+  },
+  "scripts/generate_doc_screenshots.py": {
+    "classes": [],
+    "functions": [
+      "isolated_app_state",
+      "_widget_rect",
+      "_union_widget_rects",
+      "_save_crop",
+      "_build_scan_summaries",
+      "generate_loaded_results_dialog",
+      "generate_workspace_strip",
+      "_build_processing_report",
+      "generate_source_results_actions",
+      "main"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtWidgets",
+      "__future__",
+      "contextlib",
+      "datetime",
+      "os",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.ui.dialogs",
+      "photometry_app.ui.main_window",
+      "tempfile"
+    ]
+  },
+  "scripts/generate_milky_way_tiles.py": {
+    "classes": [],
+    "functions": [
+      "_parse_level_widths",
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "pathlib",
+      "photometry_app.core.milky_way_tile_generator"
+    ]
+  },
+  "scripts/generate_synthetic_tracking_comparison_plots.py": {
+    "classes": [],
+    "functions": [
+      "_set_serif_title",
+      "_load_json",
+      "_synthetic_size_rows",
+      "_synthetic_mode_rows",
+      "_apply_axes_style",
+      "_draw_panel_caption",
+      "_add_card_background",
+      "_annotate_bars",
+      "_draw_grouped_bars",
+      "_draw_davida_panel",
+      "_draw_table",
+      "_dashboard_rows",
+      "build_dashboard",
+      "build_table_figure",
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "json",
+      "matplotlib",
+      "matplotlib.gridspec",
+      "matplotlib.patches",
+      "matplotlib.pyplot",
+      "numpy",
+      "pathlib"
+    ]
+  },
+  "scripts/moon_visual_smoke.py": {
+    "classes": [
+      "_ImmediateExecutor"
+    ],
+    "functions": [
+      "_write_smoke_tile",
+      "_write_smoke_tile_level",
+      "_finite_vector",
+      "_finite_matrix",
+      "_state_is_finite",
+      "_orientation_comparison_summary",
+      "_tile_route_dict",
+      "_diagnostics_with_render_paths",
+      "_smoke_moon_draw_state",
+      "_moon_focus_zoom_sequence_report",
+      "_moon_phase5d_overlay_alignment_report",
+      "_moon_phase5d_debug_modes_report",
+      "_moon_phase5e_debug_controls_report",
+      "_moon_phase5f_high_zoom_source_report",
+      "build_moon_phase5g_real_tile_assets_report",
+      "build_moon_phase5j_runtime_transition_report",
+      "build_moon_phase5k_normal_continuity_report",
+      "_phase5l_polar_guard_from_normal_continuity_report",
+      "build_moon_phase5l_polar_guard_report",
+      "build_moon_phase5m_polar_cap_report",
+      "build_moon_phase5n_polar_cap_blend_report",
+      "build_moon_phase5o_polar_cap_integration_report",
+      "build_moon_visual_smoke_report",
+      "main"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "argparse",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "json",
+      "math",
+      "os",
+      "pathlib",
+      "photometry_app.core.sky_atlas",
+      "photometry_app.ui.moon_system",
+      "tempfile",
+      "types"
+    ]
+  },
+  "scripts/preprocess_milky_way_texture.py": {
+    "classes": [],
+    "functions": [
+      "process_milky_way",
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "imageio.v3",
+      "numpy",
+      "pathlib"
+    ]
+  },
+  "scripts/profile_discover_run.py": {
+    "classes": [],
+    "functions": [
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "pathlib",
+      "photometry_app.core.discovery_benchmark",
+      "photometry_app.core.settings",
+      "sys"
+    ]
+  },
+  "scripts/run_demo_smoke_test.py": {
+    "classes": [],
+    "functions": [
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "pathlib",
+      "photometry_app.core.pipeline",
+      "photometry_app.core.settings"
+    ]
+  },
+  "scripts/run_sky_view_benchmark.py": {
+    "classes": [
+      "SkyViewBenchmarkScenario",
+      "SkyViewBenchmarkHarness"
+    ],
+    "functions": [
+      "_configure_startup_load",
+      "_configure_idle_wide",
+      "_configure_dense_milky_way",
+      "_configure_dense_star_field",
+      "_configure_horizon_ground",
+      "_configure_zenith_pole",
+      "_configure_constellations",
+      "_configure_moon_visible",
+      "_configure_grid_enabled",
+      "_configure_time_simulation",
+      "_step_time_simulation",
+      "_configure_pan_drag",
+      "_step_pan_drag",
+      "_configure_zoom",
+      "_step_zoom",
+      "_configure_stress_max_layers",
+      "_configure_minimal_layers",
+      "_configure_layer_matrix_case",
+      "_build_layer_matrix_scenarios",
+      "_build_scenarios",
+      "_write_json",
+      "_write_section_csv",
+      "_write_frame_csv",
+      "_measured_rows",
+      "_format_ms",
+      "_top_section_rows",
+      "_percentile_milliseconds",
+      "_frame_phase_rows",
+      "_startup_section_rows",
+      "_unexpected_work_rows",
+      "_measured_frame_values",
+      "_summarize_milliseconds",
+      "_layer_matrix_rows",
+      "_write_layer_matrix_csv",
+      "_write_layer_matrix_markdown",
+      "_write_slow_frames_markdown",
+      "_write_gc_diagnostic_markdown",
+      "_write_summary_markdown",
+      "_parse_args",
+      "main"
+    ],
+    "imports": [
+      "__future__",
+      "argparse",
+      "csv",
+      "dataclasses",
+      "datetime",
+      "json",
+      "os",
+      "pathlib",
+      "sys",
+      "time",
+      "typing"
+    ]
+  },
+  "tests/test_alignment.py": {
+    "classes": [
+      "AlignmentTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "astropy.time",
+      "astropy.wcs",
+      "datetime",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.alignment",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_animation_export.py": {
+    "classes": [
+      "AnimationExportTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtGui",
+      "__future__",
+      "pathlib",
+      "photometry_app.core.animation_export",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_benchmarking.py": {
+    "classes": [
+      "BenchmarkRecorderTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "photometry_app.core.benchmarking",
+      "unittest"
+    ]
+  },
+  "tests/test_build_moon_tiles.py": {
+    "classes": [
+      "MoonTileBuildScriptTest"
+    ],
+    "functions": [
+      "_write_gradient_image"
+    ],
+    "imports": [
+      "PySide6.QtGui",
+      "__future__",
+      "json",
+      "pathlib",
+      "scripts.build_moon_tiles",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_calibration.py": {
+    "classes": [
+      "CalibrationPipelineTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.alignment",
+      "photometry_app.core.calibration",
+      "photometry_app.core.settings",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_candidate_training.py": {
+    "classes": [
+      "CandidateTrainingStoreTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "datetime",
+      "pathlib",
+      "photometry_app.core.candidate_training",
+      "photometry_app.core.discovery",
+      "photometry_app.core.transient",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_catalogs.py": {
+    "classes": [
+      "CatalogServiceTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "pathlib",
+      "photometry_app.core.catalogs",
+      "photometry_app.core.models",
+      "requests",
+      "tempfile",
+      "types",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_constellation_overlay.py": {
+    "classes": [
+      "ConstellationDataLoaderTest",
+      "ConstellationOverlayRenderTest"
+    ],
+    "functions": [
+      "_normalized_vector",
+      "_scene"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "math",
+      "numpy",
+      "os",
+      "photometry_app.ui.constellation_overlay",
+      "types",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_differential_label_dialog.py": {
+    "classes": [
+      "DifferentialQuickLabelDialogTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtWidgets",
+      "__future__",
+      "datetime",
+      "os",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.ui.differential_label_dialog",
+      "unittest"
+    ]
+  },
+  "tests/test_discovery.py": {
+    "classes": [
+      "DiscoverMovingCandidatesTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "datetime",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.discovery",
+      "photometry_app.core.models",
+      "photometry_app.core.solar_system",
+      "tempfile",
+      "types",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_discovery_benchmark.py": {
+    "classes": [
+      "DiscoveryBenchmarkTest",
+      "DiscoveryBenchmarkHelpersTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "datetime",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.discovery",
+      "photometry_app.core.discovery_benchmark",
+      "photometry_app.core.models",
+      "photometry_app.core.settings",
+      "photometry_app.core.solar_system",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_error_calculations.py": {
+    "classes": [
+      "ErrorCalculationsTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "math",
+      "numpy",
+      "photometry_app.core.error_calculations",
+      "unittest"
+    ]
+  },
+  "tests/test_exporters.py": {
+    "classes": [
+      "ExportersTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PIL",
+      "__future__",
+      "astropy.coordinates",
+      "astropy.io",
+      "astropy.time",
+      "astropy.units",
+      "datetime",
+      "json",
+      "matplotlib.colors",
+      "matplotlib.figure",
+      "numpy",
+      "pathlib",
+      "photometry_app.core",
+      "photometry_app.core.exporters",
+      "photometry_app.core.models",
+      "photometry_app.core.plotting",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_hr_diagram.py": {
+    "classes": [
+      "HrDiagramHelperTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.wcs",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.hr_diagram",
+      "photometry_app.core.models",
+      "photometry_app.core.settings",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_hr_motion_groups.py": {
+    "classes": [
+      "HrMotionGroupTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "importlib.util",
+      "photometry_app.core.hr_diagram",
+      "photometry_app.core.hr_motion_groups",
+      "unittest"
+    ]
+  },
+  "tests/test_hr_plot_widget.py": {
+    "classes": [
+      "HrDiagramPlotWidgetTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtWidgets",
+      "__future__",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.hr_diagram",
+      "photometry_app.ui.hr_plot_widget",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_image_io.py": {
+    "classes": [
+      "ImageIoTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PIL",
+      "__future__",
+      "astropy.io",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.image_io",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_image_view.py": {
+    "classes": [
+      "ImageViewInfoPanelTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtWidgets",
+      "__future__",
+      "math",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.plotting",
+      "photometry_app.ui.image_view",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_light_curve_widget.py": {
+    "classes": [
+      "LightCurvePlotWidgetTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtWidgets",
+      "__future__",
+      "datetime",
+      "os",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.plotting",
+      "photometry_app.ui.light_curve_widget",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_main.py": {
+    "classes": [
+      "MainStartupTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "__future__",
+      "photometry_app",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_main_window.py": {
+    "classes": [
+      "MainWindowLightCurveSegmentTest",
+      "SkyViewMilkyWayTextureTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtGui",
+      "PySide6.QtOpenGLWidgets",
+      "PySide6.QtTest",
+      "PySide6.QtWidgets",
+      "__future__",
+      "astropy.io",
+      "dataclasses",
+      "datetime",
+      "hashlib",
+      "importlib.util",
+      "json",
+      "math",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.alignment",
+      "photometry_app.core.calibration",
+      "photometry_app.core.catalogs",
+      "photometry_app.core.discovery"
+    ]
+  },
+  "tests/test_main_window_image_panel.py": {
+    "classes": [
+      "MainWindowImagePanelTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtWidgets",
+      "__future__",
+      "astropy.wcs",
+      "datetime",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.plotting",
+      "photometry_app.ui.main_window",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_matching.py": {
+    "classes": [
+      "MatchingTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "datetime",
+      "math",
+      "pathlib",
+      "photometry_app.core.matching",
+      "photometry_app.core.models",
+      "unittest"
+    ]
+  },
+  "tests/test_milky_way_assets.py": {
+    "classes": [
+      "MilkyWayManifestTest",
+      "MilkyWayAssetResolverTest",
+      "MilkyWayTileHelperTest",
+      "MilkyWayLevelSelectionTest",
+      "MilkyWayTileGeneratorTest"
+    ],
+    "functions": [
+      "_manifest_payload"
+    ],
+    "imports": [
+      "PIL",
+      "__future__",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.milky_way_assets",
+      "photometry_app.core.milky_way_tile_generator",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_milky_way_tile_format_benchmark.py": {
+    "classes": [
+      "MilkyWayTileFormatBenchmarkTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PIL",
+      "__future__",
+      "json",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.milky_way_tile_format_benchmark",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_moon_system.py": {
+    "classes": [
+      "_StaticOrientationProvider",
+      "_FakeSpiceModule",
+      "_FailingPxformSpiceModule",
+      "_ImmediateExecutor",
+      "_DeferredExecutor",
+      "_TileDeferredExecutor",
+      "_DiagnosticsDeferredExecutor",
+      "_FakeUniformFunctions",
+      "_FakeTexture",
+      "MoonSystemTest"
+    ],
+    "functions": [
+      "_assert_finite_vector",
+      "_assert_finite_matrix",
+      "_assert_finite_moon_state",
+      "_transpose",
+      "_rotation_z",
+      "_angle_distance_rad",
+      "_orientation_state",
+      "_assert_matrix_orthonormal",
+      "_fake_state",
+      "_fake_draw_state",
+      "_write_moon_tile",
+      "_write_full_moon_tile_level",
+      "_write_global_moon_fixture",
+      "_write_registered_tile_manifest",
+      "_texture_tile",
+      "_moon_renderer_uniform_names"
+    ],
+    "imports": [
+      "PySide6.QtGui",
+      "__future__",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "inspect",
+      "json",
+      "math",
+      "os",
+      "pathlib",
+      "photometry_app.ui.moon_system",
+      "scripts.check_moon_spice",
+      "tempfile",
+      "typing",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_moon_visual_smoke.py": {
+    "classes": [
+      "MoonVisualSmokeReportTest"
+    ],
+    "functions": [
+      "_write_gradient_image"
+    ],
+    "imports": [
+      "PySide6.QtGui",
+      "__future__",
+      "pathlib",
+      "scripts.build_moon_tiles",
+      "scripts.moon_visual_smoke",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_moving_object_label_dialog.py": {
+    "classes": [
+      "MovingObjectQuickLabelDialogTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtWidgets",
+      "__future__",
+      "astropy.io",
+      "datetime",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.discovery",
+      "photometry_app.ui.moving_object_label_dialog",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_photometry.py": {
+    "classes": [
+      "PhotometryErrorTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.io.fits",
+      "astropy.stats",
+      "astropy.wcs",
+      "datetime",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.photometry",
+      "photometry_app.core.settings",
+      "unittest"
+    ]
+  },
+  "tests/test_pipeline_integration.py": {
+    "classes": [
+      "FakeCatalogService",
+      "EmptyCatalogService",
+      "FailingAstrometryClient",
+      "RecordingAstrometryClient",
+      "SlowAstrometryClient",
+      "PipelineIntegrationTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "json",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.catalogs",
+      "photometry_app.core.exporters",
+      "photometry_app.core.models",
+      "photometry_app.core.photometry",
+      "photometry_app.core.pipeline",
+      "photometry_app.core.settings",
+      "photometry_app.core.wcs",
+      "tempfile",
+      "time",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_plotting.py": {
+    "classes": [
+      "AnnotatedImageDisplayTest",
+      "LightCurvePlotPayloadTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "datetime",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.plotting",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_qt_image_formats.py": {
+    "classes": [
+      "QtImageFormatSupportTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "pathlib",
+      "photometry_app.core.qt_image_format_smoke",
+      "photometry_app.core.qt_image_formats",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_recovery_audit_regressions.py": {
+    "classes": [
+      "RecoveryAuditRegressionTest"
+    ],
+    "functions": [
+      "_state_vector",
+      "_frame_measurement",
+      "_detection",
+      "_context"
+    ],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtTest",
+      "PySide6.QtWidgets",
+      "__future__",
+      "datetime",
+      "os",
+      "pathlib",
+      "photometry_app.core.solar_system",
+      "photometry_app.ui.dialogs",
+      "photometry_app.ui.main_window",
+      "photometry_app.ui.workers",
+      "types",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_runtime_dependencies.py": {
+    "classes": [
+      "RuntimeDependencyImportTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "importlib",
+      "unittest"
+    ]
+  },
+  "tests/test_scanner.py": {
+    "classes": [
+      "ScannerTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "datetime",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.scanner",
+      "tempfile",
+      "unittest",
+      "xisf"
+    ]
+  },
+  "tests/test_settings.py": {
+    "classes": [
+      "SettingsTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "json",
+      "os",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.settings",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_sky_atlas.py": {
+    "classes": [
+      "SkyAtlasCatalogCacheTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "json",
+      "pathlib",
+      "photometry_app.core.sky_atlas",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_sky_explorer.py": {
+    "classes": [
+      "SkyExplorerTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy",
+      "astropy.coordinates",
+      "astropy.table",
+      "datetime",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.settings",
+      "photometry_app.core.sky_explorer",
+      "photometry_app.core.solar_system",
+      "tempfile",
+      "types",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_sky_view_lzw_visual_smoke.py": {
+    "classes": [
+      "LzwVisualSmokeAuthorityTest"
+    ],
+    "functions": [
+      "_write_manifest",
+      "_metric"
+    ],
+    "imports": [
+      "__future__",
+      "_tmp_sky_view_lzw_visual_smoke",
+      "json",
+      "pathlib",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_sky_view_milky_way_gl.py": {
+    "classes": [
+      "SkyViewMilkyWayGlHelperTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PIL",
+      "PySide6.QtGui",
+      "__future__",
+      "collections",
+      "concurrent.futures",
+      "numpy",
+      "pathlib",
+      "photometry_app.ui.sky_view_milky_way_gl",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_sky_view_milky_way_pixel_probe_support.py": {
+    "classes": [],
+    "functions": [
+      "test_decode_helpers_round_trip",
+      "test_build_default_probe_samples_produces_unique_minimum_set",
+      "test_load_probe_samples_from_json_clamps_coordinates",
+      "test_evaluate_sampling_models_prefers_gl_linear_for_matching_sample",
+      "test_incremental_json_report_writes_partial_updates",
+      "test_incremental_json_report_falls_back_when_atomic_replace_is_denied",
+      "test_summarize_model_mae_aggregates_best_fit_counts",
+      "test_coordinate_helpers_map_screenshot_to_readback_space",
+      "test_build_capture_coordinate_record_tracks_all_spaces"
+    ],
+    "imports": [
+      "__future__",
+      "json",
+      "numpy",
+      "photometry_app.ui.sky_view_milky_way_pixel_probe_support"
+    ]
+  },
+  "tests/test_sky_view_simulation.py": {
+    "classes": [
+      "SkyViewSimulationClockTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "datetime",
+      "photometry_app.ui.sky_view_simulation",
+      "unittest"
+    ]
+  },
+  "tests/test_snr_binning.py": {
+    "classes": [
+      "SnrBinningTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "datetime",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.snr_binning",
+      "unittest"
+    ]
+  },
+  "tests/test_solar_system.py": {
+    "classes": [
+      "_StubQueryService",
+      "_StubGaiaCatalogService",
+      "SolarSystemTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.coordinates",
+      "astropy.table",
+      "astropy.time",
+      "astropy.units",
+      "astropy.wcs",
+      "datetime",
+      "io",
+      "math",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.settings",
+      "photometry_app.core.solar_system",
+      "requests",
+      "tempfile",
+      "types",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_synthetic_tracking.py": {
+    "classes": [
+      "SyntheticTrackingTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "concurrent.futures",
+      "datetime",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.array_backend",
+      "photometry_app.core.solar_system",
+      "photometry_app.core.synthetic_tracking",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_transient.py": {
+    "classes": [
+      "FakeCatalogService",
+      "FakeAstrometryClient",
+      "TransientFinderTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "astropy.wcs",
+      "datetime",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.settings",
+      "photometry_app.core.transient",
+      "photometry_app.core.wcs",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_transient_label_dialog.py": {
+    "classes": [
+      "TransientQuickLabelDialogTest"
+    ],
+    "functions": [],
+    "imports": [
+      "PySide6.QtCore",
+      "PySide6.QtWidgets",
+      "__future__",
+      "astropy.io",
+      "datetime",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.transient",
+      "photometry_app.ui.transient_label_dialog",
+      "tempfile",
+      "unittest"
+    ]
+  },
+  "tests/test_wcs.py": {
+    "classes": [
+      "AstrometryNetClientTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "astropy.io",
+      "astropy.io.fits",
+      "numpy",
+      "pathlib",
+      "photometry_app.core.models",
+      "photometry_app.core.wcs",
+      "requests",
+      "tempfile",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "tests/test_workers.py": {
+    "classes": [
+      "AsteroidDiscoveryWorkerTest",
+      "ImageDisplayPreloadWorkerTest",
+      "WorkerConcurrencyTest"
+    ],
+    "functions": [],
+    "imports": [
+      "__future__",
+      "concurrent.futures",
+      "dataclasses",
+      "datetime",
+      "numpy",
+      "os",
+      "pathlib",
+      "photometry_app.core.catalogs",
+      "photometry_app.core.discovery",
+      "photometry_app.core.models",
+      "photometry_app.core.plotting",
+      "photometry_app.core.settings",
+      "photometry_app.ui.workers",
+      "types",
+      "unittest",
+      "unittest.mock"
+    ]
+  },
+  "pyproject.toml": {
+    "kind": "config"
+  },
+  "CitizenPhotometryDebug.spec": {
+    "kind": "config"
+  },
+  ".vscode/settings.json": {
+    "kind": "config"
+  },
+  ".vscode/tasks.json": {
+    "kind": "config"
+  }
+}

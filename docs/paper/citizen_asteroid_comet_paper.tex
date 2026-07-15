@@ -1,0 +1,191 @@
+\documentclass[modern]{aastex701}
+
+\usepackage{amsmath}
+
+\shorttitle{Citizen Photometry Solar-System Mode}
+\shortauthors{Author et al.}
+
+\begin{document}
+
+\title{Citizen Photometry Solar-System Mode: A Local-First Desktop Workflow for Known-Object Recovery and Residual Moving-Object Discovery in Amateur Image Sequences}
+
+\correspondingauthor{Author Name Placeholder}
+\email{author@example.com}
+
+\author{Author Name Placeholder}
+\email{author@example.com}
+\affiliation{Affiliation Placeholder}
+
+\begin{abstract}
+Amateur observers routinely acquire short image sequences that contain asteroids, comets, and other moving solar-system targets, but those data are rarely reduced through a reproducible workflow that connects image-plane inspection to catalog predictions, recovery benchmarking, and exportable candidate tables. We present the solar-system mode of \emph{Citizen Photometry}, a local-first desktop workflow for known-object lookup, visibility triage, sequence alignment, image-first recovery benchmarking, and residual moving-object discovery in solved FITS or XISF image sequences. The software is designed for observers who keep their source images locally and want a guided environment rather than a script-based reduction stack. The current implementation combines world-coordinate-system validation with optional \texttt{astrometry.net} solving, field prediction queries, image-plane confirmation scoring, optional Gaia-based visible-limit estimation, reprojection of solved image sequences onto a common reference frame, a \texttt{Recover Known} benchmark that detects movers before associating them with likely visible catalog objects, a \texttt{Discover} path for residual unmatched tracklets, and a post-link linear-motion review that separates stronger candidates from lower-confidence review-only tracklets before export. This manuscript is a draft software-and-methods paper for that subsystem. It defines the use case, algorithmic structure, and current outputs, and it establishes the benchmark logic needed for later quantitative evaluation on real asteroid and comet datasets.
+\end{abstract}
+
+\keywords{Astronomy software --- Solar system astronomy --- Minor planets, asteroids: general --- Comets: general --- Citizen science --- Astronomical databases}
+
+\section{Introduction}\label{sec:introduction}
+
+Astrophotography sequences often contain more information than the observer initially intended to measure. A field collected for aesthetic imaging or for a known stellar target may also contain one or more moving solar-system objects, and short sequences of solved subframes can be sufficient to confirm or reject those predictions directly in the image plane. In practice, however, that information is difficult to extract reproducibly without a workflow that connects image metadata, sky-coordinate predictions, sequence alignment, and human review.
+
+The problem is not simply one of object lookup. Amateur image sequences are heterogeneous in filter, exposure time, astrometric quality, and signal-to-noise ratio. Some targets are already known objects that should be present but may be difficult to confirm, while other moving detections may not be explained by the currently predicted catalog list. A useful desktop workflow should therefore support both prediction-guided inspection and image-first residual discovery, while preserving local control over the underlying data.
+
+The solar-system mode of Citizen Photometry was developed for that setting. It is intended for solved single images and short solved subframe sequences, especially for users who want to inspect and benchmark known asteroids or comets without moving their raw image archive into a remote platform. The current subsystem is not a fully automated discovery survey pipeline. Instead, it is a local-first, review-oriented environment for known-object triage, recovery benchmarking, and residual candidate generation.
+
+\section{Problem Setting And Motivation}\label{sec:motivation}
+
+Several recurring practical constraints motivate this work.
+
+\begin{enumerate}
+\item Many observers already capture suitable time-separated frames, but do not have a compact software path from solved image folders to moving-object review products.
+\item Existing workflows often separate object prediction, alignment, blinking, candidate linking, and export across multiple tools or custom scripts.
+\item Observers may be willing to share derived products and benchmarks, but not their full raw image archives.
+\item For scientific and educational use, it is valuable to distinguish four review outcomes: predicted known objects that appear recoverable, predicted known objects that appear to be missed, stronger residual movers not currently explained by the active catalog predictions, and borderline tracklets that merit manual review but not equal discovery weight.
+\end{enumerate}
+
+These constraints imply a need for software that is not only predictive, but also image-first and auditable. A prediction list alone does not answer whether an object was actually recovered in the data, and a residual-candidate list alone does not answer whether that candidate simply corresponds to an already known object in the field. The present subsystem addresses that gap by combining both perspectives inside one review workflow.
+
+\section{Contributions}\label{sec:contributions}
+
+This draft paper makes four primary contributions.
+
+\begin{enumerate}
+\item It defines a local-first desktop workflow for asteroid and comet inspection in amateur image sequences, with emphasis on solved images, subgroup handling, and review-oriented exports.
+\item It introduces a two-path moving-object workflow: \texttt{Recover Known} for image-first benchmarking against likely visible catalog predictions, and \texttt{Discover} for residual unmatched tracklets.
+\item It describes an integrated implementation that combines WCS validation, field prediction queries, Gaia-based visible-limit estimation, optional sequence alignment, residual source detection, tracklet linking, and human review in a single application.
+\item It establishes a benchmark-oriented framing suitable for later validation papers, including exportable tables of recovered known objects, missed known objects, stronger unmatched candidates, lower-confidence review tracklets, and concise manuscript-ready summaries.
+\end{enumerate}
+
+This manuscript is intentionally scoped as a software-and-methods draft. It does not yet claim a large discovery yield, an orbit-quality follow-up pipeline, or a broad quantitative validation campaign across many observing setups.
+
+\section{Related Context}\label{sec:related}
+
+Citizen Photometry solar-system mode depends on the Python astronomy ecosystem, particularly \texttt{Astropy} and \texttt{astroquery} for world-coordinate logic, time handling, catalog interaction, and service access \citep{astropy2013,astropy2018,ginsburg2019}. The current implementation also depends on local WCS information when available and can use \texttt{astrometry.net} when an input image lacks a usable plate solution \citep{astrometrynet}. Gaia DR3 is used indirectly in the visible-limit estimator through field-star matching \citep{gaia-dr3}.
+
+The subsystem is adjacent to moving-object inspection tools, blinking workflows, and ephemeris services already used by many observers. Its intended contribution is not a replacement for expert survey pipelines or orbit-determination systems. Instead, it occupies a different operating point: a guided, inspectable, desktop environment that turns solved amateur image sequences into benchmark tables and candidate-review products while keeping the underlying data local.
+
+\section{Design Requirements}\label{sec:requirements}
+
+The solar-system mode was guided by five practical requirements.
+
+\begin{description}
+\item[Local-first processing.] Raw images should remain on the observer's machine; the primary shareable products are derived tables, diagnostics, and animations.
+\item[Prediction-plus-image logic.] The workflow should combine catalog predictions with image-plane evidence rather than treating either one as sufficient by itself.
+\item[Sequence awareness.] Mixed folders, subgroup selection, and optional alignment should be handled explicitly because real observing sequences are rarely perfectly uniform.
+\item[Inspectability.] Candidate and recovery outputs must be reviewable through tables, annotated images, blinking, and summary text rather than opaque batch classification.
+\item[Benchmark utility.] The software should expose whether known predicted objects were recovered or missed, because that distinction is critical for later scientific evaluation.
+\end{description}
+
+\section{Workflow Overview}\label{sec:overview}
+
+The current asteroid/comet workflow is organized around a small set of user-visible actions.
+
+\begin{enumerate}
+\item \texttt{Generate} loads known-object predictions for the active solved image or solved subgroup.
+\item \texttt{Estimate} samples Gaia field stars to provide a heuristic visible-limit estimate for the current frame.
+\item \texttt{Align} reprojects a solved multi-frame sequence onto a common reference WCS.
+\item \texttt{Recover Known} searches the current subgroup for movers first and then associates recovered tracklets with likely visible known predictions.
+\item \texttt{Discover} searches the current subgroup for residual moving candidates not already explained by the active prediction list.
+\item Blink, centered tracking, synthetic tracking, and export actions support manual review after those products are generated.
+\end{enumerate}
+
+This structure is deliberately asymmetric. \texttt{Generate} is prediction-guided, while \texttt{Recover Known} and \texttt{Discover} are image-first moving-object searches performed on the current subgroup. The design goal is to let the user move from catalog context to image evidence and then to exportable benchmark products.
+
+\section{Methods}\label{sec:methods}
+
+\subsection{Input Model And Sequence Handling}\label{subsec:inputs}
+
+The subsystem accepts either a single solved FITS or XISF image or a folder of solved subframes. For folders, the user can inspect the entire sequence or switch to subgroups split by filter and exposure. This distinction is operationally important because a mixed \texttt{All} sequence may be useful for browsing, but moving-object recovery and discovery are performed one subgroup at a time so that timing, image scale, and signal properties remain coherent.
+
+Observation timestamps, exposure times, filters, and WCS state are taken from image metadata when available. The review interface surfaces those properties because they are needed to interpret both object predictions and residual detections.
+
+\subsection{WCS Validation And Optional Solving}\label{subsec:wcs}
+
+Known-object prediction and image-plane association require a usable celestial WCS. The workflow therefore validates image headers before catalog lookup and before sequence alignment. If a source image lacks a usable WCS, the subsystem can attempt external solving through \texttt{astrometry.net} \citep{astrometrynet}. This fallback is particularly important in amateur archives, where a sequence may contain a mix of already solved and not-yet-solved products.
+
+For multi-frame sequences, an optional alignment step reprojects frames onto the current reference image WCS. This allows subsequent blinking and residual search to operate in one image coordinate system without rewriting the original source files.
+
+\subsection{Known-Object Field Prediction}\label{subsec:prediction}
+
+The prediction stage queries known solar-system objects that are expected to lie inside the current field. The current implementation uses a direct SkyBoT VOTable request path to avoid the stricter uncertainty clamp present in the default wrapper, and it preserves support for both asteroids and comets. The query layer also includes targeted fallback logic for special interstellar cases when the generic service response is incomplete or ambiguous.
+
+Each predicted object is projected into the image plane through the active WCS. The software records a predicted position, a catalog magnitude when available, an apparent motion estimate from the ephemeris rates, and a confidence-oriented status string derived from local image evidence. The current interface intentionally labels this field as \texttt{Pred Mag} rather than a stricter passband name because different upstream services may provide different brightness conventions, particularly for comet-class or interstellar objects.
+
+\subsection{Visible-Limit Estimation}\label{subsec:visiblelimit}
+
+The \texttt{Estimate} action provides a heuristic depth guide for the current frame. The estimator projects Gaia field stars into the image, samples them in magnitude bins, and searches for local image-plane matches above configurable signal-to-noise and offset thresholds. The result is expressed as the dimmest Gaia \emph{G}-band star visibly matched in the current frame under the chosen settings.
+
+This estimate is useful as a practical image-depth indicator, but it is not identical to an asteroid or comet detectability threshold. Solar-system targets may trail, may have different surface-brightness behavior than point sources, and may use catalog magnitude conventions that are not equivalent to Gaia \emph{G}. The software now surfaces that distinction explicitly in the interface because confusing those quantities can lead to overconfident interpretation of the object list.
+
+\subsection{Image-Plane Confirmation Scoring}\label{subsec:confirmation}
+
+For each predicted object, the subsystem performs a local image-plane search near the predicted coordinate. The current implementation measures the brightest local peak, its offset from the prediction, and a simple local signal-to-noise estimate from the neighborhood statistics. These quantities are combined with the predicted magnitude and expected exposure-motion estimate to generate a confidence score and a status label.
+
+This stage is not intended as a definitive detection classifier. Rather, it serves as a triage layer that helps the user distinguish objects that look likely visible in the current frame from those that are merely predicted to lie inside the field.
+
+\subsection{Known-Object Recovery Benchmarking}\label{subsec:recover}
+
+The \texttt{Recover Known} workflow operates on the current solved subgroup and requires at least three frames. It first performs an image-first moving-object search on the aligned sequence, producing motion-consistent candidate tracklets from residual detections. Only after that search does the workflow compare those tracklets to the set of likely visible known predictions from \texttt{Generate}.
+
+This ordering is deliberate. If the software were to start from known predictions alone, the resulting benchmark would partly measure the success of prediction-guided local matching rather than the recoverability of movers from the image sequence itself. By detecting movers first and associating later, the subsystem produces a more defensible benchmark split into recovered known objects, missed known objects, and still-unmatched moving candidates.
+
+The recovery dialog also exports three complementary CSV products: a benchmark table of recovered and missed known objects, an unmatched-candidate table, and a concise manuscript-style summary table. These are intended to support later quantitative papers without requiring users to reconstruct benchmark outputs manually.
+
+\subsection{Residual Moving-Object Discovery}\label{subsec:discover}
+
+The \texttt{Discover} workflow shares the same residual-search machinery but excludes known predicted positions while scanning the aligned subgroup. Candidate detections are linked across frames into motion-consistent tracklets using a simple reference-frame trajectory model and per-frame residual matching radius. After linking, the current implementation applies a constant-velocity linearity screen based on each tracklet's image-plane deflection RMS: stronger low-deflection tracklets remain in the primary potential-discovery bucket, borderline tracklets are retained in a separate review-only bucket, and larger-deflection junk tracklets are suppressed before presentation. Ranked candidates are then presented in a review dialog rather than immediately promoted to a discovery claim.
+
+This conservative framing is intentional. The subsystem is designed to generate reviewable residual candidates, not to automate formal discovery or follow-up reporting. In that sense, \texttt{Discover} is best understood as a triage and inspection tool for possible movers that survive the current catalog explanation set.
+
+\subsection{Review, Blink Inspection, And Synthetic Tracking}\label{subsec:review}
+
+After prediction or candidate generation, the user can review the sequence through blinking, center-on-object tracking, detailed inspector panels, and optional synthetic tracking for the selected known object. Synthetic tracking is included as an analysis aid rather than as the primary discovery engine. It provides an object-centered stacked view, per-frame inclusion details, and a revised signal-to-noise estimate for the selected predicted object.
+
+These manual-review tools matter because the intended users are not operating a fully autonomous survey. Human judgment remains central when deciding whether a predicted object is credible in the data, whether a residual tracklet is worth follow-up, or whether a sequence should be aligned differently before analysis.
+
+\section{Outputs And Intended Evaluation}\label{sec:outputs}
+
+The current subsystem produces several classes of output.
+
+\begin{enumerate}
+\item Predicted-object tables with image-plane confidence context.
+\item Review dialogs for recovered known objects, missed known objects, primary potential discoveries, and review-only better-detection possibilities.
+\item Exportable CSV tables for benchmark rows, retained unmatched candidates with their review bucket, and concise recovery summaries.
+\item Animated blink exports for the current viewport.
+\item Synthetic-tracking previews for the selected known object.
+\end{enumerate}
+
+These outputs support two different future paper styles. One is a software-and-methods paper, which is the goal of the present draft. The other is a validation paper built around real observing datasets, where recovery fraction, matched-frame counts, candidate quality, and object-specific case studies can be compared across known asteroids and comets.
+
+\section{Scope And Limitations}\label{sec:limitations}
+
+The present subsystem has clear limitations.
+
+\begin{enumerate}
+\item It assumes solved images or solvable images and is not designed for wide-field blind survey ingestion at scale.
+\item The moving-object search is intended for short solved subframe sequences, not for large-night archive mining over thousands of frames.
+\item The visible-limit estimator is a Gaia-star heuristic and should not be treated as a rigorous passband-calibrated asteroid detectability model.
+\item The current implementation emphasizes reviewable tracklets and known-object benchmarks rather than orbit fitting, MPC submission products, or automated discovery claims.
+\item This draft paper does not yet include a broad quantitative benchmark across many datasets, moon phases, filters, or observing systems.
+\end{enumerate}
+
+These constraints are important because they define the intended scientific claim. The subsystem is a practical bridge between solved amateur image sequences and benchmarkable moving-object review products, not yet a full end-to-end discovery-reporting platform.
+
+\section{Future Work}\label{sec:future}
+
+The next step is a quantitative follow-on paper built on representative asteroid and comet datasets. That paper should measure recovery fraction for known visible objects, characterize when the Gaia-based visible-limit estimate diverges from actual moving-target recoverability, and compare aligned versus already-aligned sequence paths across different exposure regimes and observing conditions.
+
+Additional software directions include richer provenance exports, clearer passband-source labeling for catalog magnitudes, follow-up packaging for promising residual candidates, and a larger evaluation set that includes interstellar and high-uncertainty comet cases alongside more typical main-belt and near-Earth objects.
+
+\section{Conclusion}\label{sec:conclusion}
+
+Citizen Photometry solar-system mode is motivated by a practical gap: amateur observers often possess solved image sequences that contain real moving-object information, but not a compact local workflow for turning those sequences into benchmarkable known-object recovery results and reviewable residual candidates. The current subsystem addresses that gap through a local-first desktop workflow that combines prediction services, image-plane confirmation, optional alignment, image-first mover recovery, residual discovery, and exportable benchmark tables. As a result, it provides a concrete software foundation for later validation papers and for a broader citizen-science contribution model based on locally held solar-system image data.
+
+\begin{acknowledgments}
+This manuscript is currently a draft. Author list, affiliations, acknowledgments, benchmark datasets, and quantitative evaluation remain to be finalized.
+\end{acknowledgments}
+
+\software{Python, Astropy, astroquery, NumPy, photutils, PySide6, pyqtgraph, Citizen Photometry \citep{citizen-photometry-software}}
+
+\bibliographystyle{aasjournalv7}
+\bibliography{references}
+
+\end{document}

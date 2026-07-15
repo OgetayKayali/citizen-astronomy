@@ -28,6 +28,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from astropy.io import fits
+from astropy.wcs import WCS
 import numpy as np
 
 from PySide6.QtCore import QDateTime, QEvent, QItemSelectionModel, QPoint, QPointF, QRectF, Qt, QTimeZone
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QDialog, QFrame, Q
 
 
 from photometry_app.core.alignment import AlignedFrameOutput, SequenceAlignmentResult
+from photometry_app.core.astrostack_presets import ASTROSTACK_PRESET_FILE_FILTER
 
 from photometry_app.core.catalogs import CatalogTargetDetails, LiteraturePeriodResult
 
@@ -55,6 +57,8 @@ from photometry_app.core.milky_way_assets import MilkyWayAssetInfo, MilkyWayAsse
 
 from photometry_app.core.sky_atlas import SkyAtlasObject, load_local_sky_atlas_objects, load_sky_atlas_objects, search_sky_atlas_objects
 
+from photometry_app.core.sky_atlas_custom_overlay import LoadedSkyAtlasCustomOverlay
+
 from photometry_app.core.sky_explorer import SkyExplorerCorner, SkyExplorerFieldFootprint, SkyExplorerLayerSummary, SkyExplorerObject, SkyExplorerResult
 
 from photometry_app.core.models import AppMode, CatalogStar, FieldCatalog, FileScanResult, LightCurvePoint, LightCurveSeries, ManualPhotometryConfig, ManualSourceConfig, ManualSourceRole, ObjectPhotometryMode, ObjectScanSummary, ObservationMetadata, PhotometryMeasurement, PlateSolveResult, ProcessingReport, ScanReport, SolvedField, VariableSelectionPreview, VariableStarLimitMode, WcsStatus
@@ -69,17 +73,19 @@ from photometry_app.core.settings import AppSettings, ObservingSitePreset
 
 from photometry_app.core.synthetic_tracking import SyntheticTrackingFrameTarget, SyntheticTrackingResult, format_synthetic_tracking_summary, measure_synthetic_tracking_peak
 
-from photometry_app.core.transient import TransientCandidate, TransientSearchResult, TransientSourceDetection
+from photometry_app.core.transient import TransientCandidate, TransientFrameResult, TransientSearchResult, TransientSourceDetection
 
-from photometry_app.ui.dialogs import AdvancedSyntheticTrackingOptions, AstrostackGifExportOptions, AsteroidDiscoveryDialog, AsteroidDiscoveryOptionsDialog, AsteroidDiscoveryRunOptions, AsteroidRecoveryDialog, CalibrationPipelineDialog, KnownObjectOrbit3DDialog, KnownObjectOrbit3DPlannerRequest, KnownObjectOrbit3DSearchEntry, KnownObjectTrajectoryDialog, LightCurveFilterDialog, LightCurveFilterSettings, MovingObjectTrajectoryDialog, PreviewSelectionDialog, ResultsViewFilterSettings, ScanResultsSummaryDialog, SettingsDialog, SyntheticTrackingPreviewDialog, ThemeCustomizeDialog, WorkflowCalibrationPipelineDialog
+from photometry_app.ui.dialogs import AdvancedSyntheticTrackingOptions, AstrostackGifExportDialog, AstrostackGifExportOptions, AsteroidDiscoveryDialog, AsteroidDiscoveryOptionsDialog, AsteroidDiscoveryRunOptions, AsteroidRecoveryDialog, CalibrationPipelineDialog, KnownObjectOrbit3DDialog, KnownObjectOrbit3DPlannerRequest, KnownObjectOrbit3DSearchEntry, KnownObjectTrajectoryDialog, LightCurveFilterDialog, LightCurveFilterSettings, MovingObjectTrajectoryDialog, PreviewSelectionDialog, ResultsViewFilterSettings, ScanResultsSummaryDialog, SettingsDialog, SyntheticTrackingPreviewDialog, ThemeCustomizeDialog, WorkflowCalibrationPipelineDialog
 
-from photometry_app.ui.image_view import ImageOverlay
+from photometry_app.ui.image_view import AnnotatedImageView, ImageOverlay
 
 from photometry_app.ui.levels_dialog import CurvesDialog
 
-from photometry_app.ui.main_window import MainWindow, _AsteroidBlinkExportCanceled, _AsteroidDiscoveryContinuationState, _DifferentialDiscoverRunOptions, _DifferentialWorkflowDialog, _DifferentialWorkflowOptions, _HrRoiSelection, _SkyAtlasViewWidget, _SkyViewLocationDialog, _SkyViewLocationMapWidget, _SkyViewMilkyWayProjectedTileVertex, _SkyViewMilkyWayTextureLevel, _SkyVisibleObject
+from photometry_app.ui.main_window import MainWindow, _AsteroidBlinkExportCanceled, _AsteroidDiscoveryContinuationState, _AstrostackOverlayLayer, _DifferentialDiscoverRunOptions, _DifferentialWorkflowDialog, _DifferentialWorkflowOptions, _HrRoiSelection, _SkyAtlasViewWidget, _SkyViewLocationDialog, _SkyViewLocationMapWidget, _SkyViewMilkyWayProjectedTileVertex, _SkyViewMilkyWayTextureLevel, _SkyVisibleObject
 from photometry_app.ui.moon_system import DEFAULT_MOON_VISUAL_SETTINGS, MoonDrawState, MoonEphemeris, MoonRendererGL, MoonState, MoonTextureLod, MoonTileDiagnostics
 from photometry_app.ui.sky_view_location import _SkyViewObservingSiteSelection
+
+from tests.test_animation_export import FakeStreamingGifWriter
 
 from photometry_app.ui.workers import AsteroidBlinkPreloadResult, AsteroidOrbitContextTarget, ComparisonFitOptimizationResult, ComparisonFitTrialResult, DiscoverBatchResult, DiscoverSourceResult, HrStarDetailsResult, ImageDisplayPreloadResult, IncreaseSnrBatchResult
 
@@ -105,6 +111,8 @@ class MainWindowAboutDialogTest(unittest.TestCase):
         self.assertEqual(args[0], window)
 
         self.assertEqual(args[1], "About Citizen Astronomy (CAst)")
+
+        self.assertIn("Version 0.1.1-alpha.1", args[2])
 
         self.assertIn("Developed by Ogetay.", args[2])
 
@@ -143,7 +151,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         training_db_path = Path(self._state_dir.name) / "training.sqlite3"
 
-        config_path.write_text("{}", encoding="utf-8")
+        config_path.write_text(
+            json.dumps({"default_settings": {"show_mode_launcher_on_startup": False}}),
+            encoding="utf-8",
+        )
 
         state_path.write_text("{}", encoding="utf-8")
 
@@ -1940,6 +1951,208 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(self.window._transient_frame_input.text(), image_path.name)
 
+    def test_transient_results_table_supports_extended_selection_and_select_all(self) -> None:
+
+        root_path = Path(self._config_dir.name)
+        candidates = (
+            self._build_transient_training_candidate("T001", root_path, snr=22.0, flux_ratio=4.0),
+            self._build_transient_training_candidate("T002", root_path, snr=4.0, flux_ratio=1.0),
+        )
+
+        self.window._populate_transient_results_table(candidates)
+
+        self.assertEqual(
+            self.window._transient_results_table.selectionMode(),
+            QTableWidget.SelectionMode.ExtendedSelection,
+        )
+
+        self.window._transient_results_table.selectAll()
+
+        selection_model = self.window._transient_results_table.selectionModel()
+        self.assertIsNotNone(selection_model)
+        self.assertEqual(
+            sorted(index.row() for index in selection_model.selectedRows()),
+            [0, 1],
+        )
+
+    def test_transient_selection_keeps_view_position_when_center_toggle_disabled(self) -> None:
+
+        root_path = Path(self._config_dir.name)
+        candidates = (
+            self._build_transient_training_candidate("T001", root_path, snr=22.0, flux_ratio=4.0),
+            self._build_transient_training_candidate("T002", root_path, snr=4.0, flux_ratio=1.0),
+        )
+
+        self.window._populate_transient_results_table(candidates)
+        self.assertFalse(self.window._transient_center_candidate_button.isChecked())
+
+        with (
+            patch.object(self.window, "_start_transient_image_preload"),
+            patch.object(self.window, "_set_current_transient_image_path") as set_current_image_path,
+        ):
+            self.window._transient_results_table.setCurrentCell(1, 0)
+            self.window._transient_results_table.selectRow(1)
+
+        self.assertEqual(
+            set_current_image_path.call_args.kwargs,
+            {"reset_view": False, "focus_candidate": False},
+        )
+        self.assertEqual(set_current_image_path.call_args.args[0], candidates[1].detections[0].source_path)
+
+    def test_transient_selection_centers_when_center_toggle_enabled(self) -> None:
+
+        root_path = Path(self._config_dir.name)
+        candidates = (
+            self._build_transient_training_candidate("T001", root_path, snr=22.0, flux_ratio=4.0),
+            self._build_transient_training_candidate("T002", root_path, snr=4.0, flux_ratio=1.0),
+        )
+
+        self.window._populate_transient_results_table(candidates)
+        self.window._transient_center_candidate_button.setChecked(True)
+
+        with (
+            patch.object(self.window, "_start_transient_image_preload"),
+            patch.object(self.window, "_set_current_transient_image_path") as set_current_image_path,
+        ):
+            self.window._transient_results_table.setCurrentCell(1, 0)
+            self.window._transient_results_table.selectRow(1)
+
+        self.assertEqual(
+            set_current_image_path.call_args.kwargs,
+            {"reset_view": False, "focus_candidate": True},
+        )
+        self.assertEqual(set_current_image_path.call_args.args[0], candidates[1].detections[0].source_path)
+
+    def test_transient_center_candidate_preserves_current_zoom(self) -> None:
+
+        root_path = Path(self._config_dir.name)
+        candidate = self._build_transient_training_candidate("T001", root_path, snr=22.0, flux_ratio=4.0)
+
+        self.window._populate_transient_results_table((candidate,))
+        self.window._transient_results_table.setCurrentCell(0, 0)
+        self.window._transient_results_table.selectRow(0)
+
+        with patch.object(self.window._transient_image_view, "focus_on") as focus_on:
+            self.window._center_selected_transient_candidate()
+
+        focus_on.assert_called_once_with(32.0, 32.0)
+
+    def test_transient_image_overlays_include_all_selected_candidates(self) -> None:
+
+        root_path = Path(self._config_dir.name)
+        image_path = root_path / "shared.fit"
+        image_path.write_text("placeholder", encoding="utf-8")
+        candidate_one = self._build_transient_training_candidate("T001", root_path, snr=22.0, flux_ratio=4.0)
+        candidate_two = self._build_transient_training_candidate("T002", root_path, snr=12.0, flux_ratio=2.5)
+        candidate_one_detection = replace(candidate_one.detections[0], source_path=image_path, x=14.0, y=18.0)
+        candidate_two_detection = replace(candidate_two.detections[0], source_path=image_path, x=40.0, y=28.0)
+        candidate_one = replace(candidate_one, detections=(candidate_one_detection,), blink_paths=(image_path,))
+        candidate_two = replace(candidate_two, detections=(candidate_two_detection,), blink_paths=(image_path,))
+
+        self.window._populate_transient_results_table((candidate_one, candidate_two))
+        self.window._current_transient_source_image = image_path
+
+        selection_model = self.window._transient_results_table.selectionModel()
+        self.assertIsNotNone(selection_model)
+        self.window._transient_results_table.setCurrentCell(0, 0)
+        selection_model.select(
+            self.window._transient_results_table.model().index(0, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        selection_model.select(
+            self.window._transient_results_table.model().index(1, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+        overlays = self.window._current_transient_image_overlays()
+
+        self.assertEqual(len(overlays), 2)
+        self.assertEqual({overlay.name for overlay in overlays}, {"T001", "T002"})
+        self.assertEqual({(overlay.x, overlay.y) for overlay in overlays}, {(14.0, 18.0), (40.0, 28.0)})
+
+    def test_transient_image_overlays_project_selected_candidates_onto_current_frame(self) -> None:
+
+        root_path = Path(self._config_dir.name)
+        image_path = root_path / "projected.fit"
+        other_path = root_path / "other.fit"
+        other_path.write_text("placeholder", encoding="utf-8")
+        header = fits.Header()
+        header["DATE-OBS"] = datetime(2026, 5, 1, 2, 0, tzinfo=UTC).isoformat()
+        header["CTYPE1"] = "RA---TAN"
+        header["CTYPE2"] = "DEC--TAN"
+        header["CRVAL1"] = 100.0
+        header["CRVAL2"] = 20.0
+        header["CRPIX1"] = 32.0
+        header["CRPIX2"] = 32.0
+        header["CD1_1"] = -1.0 / 3600.0
+        header["CD1_2"] = 0.0
+        header["CD2_1"] = 0.0
+        header["CD2_2"] = 1.0 / 3600.0
+        fits.PrimaryHDU(data=np.zeros((64, 64), dtype=np.float32), header=header).writeto(image_path)
+        sky = WCS(header).pixel_to_world(24.0, 36.0)
+        target_ra_deg = float(sky.ra.deg)
+        target_dec_deg = float(sky.dec.deg)
+        candidate = self._build_transient_training_candidate("T003", root_path, snr=15.0, flux_ratio=3.0)
+        projected_detection = replace(
+            candidate.detections[0],
+            source_path=other_path,
+            x=10.0,
+            y=10.0,
+            ra_deg=target_ra_deg,
+            dec_deg=target_dec_deg,
+        )
+        candidate = replace(
+            candidate,
+            ra_deg=target_ra_deg,
+            dec_deg=target_dec_deg,
+            detections=(projected_detection,),
+            blink_paths=(other_path,),
+        )
+        frame_result = TransientFrameResult(
+            source_path=image_path,
+            metadata=ObservationMetadata(
+                date_obs=datetime(2026, 5, 1, 2, 0, tzinfo=UTC),
+                filter_name="L",
+                exposure_seconds=60.0,
+                width=64,
+                height=64,
+                object_name="Transient Field",
+            ),
+            status=WcsStatus.SOLVED,
+            solved_field=SolvedField(
+                center_ra_deg=100.0,
+                center_dec_deg=20.0,
+                radius_deg=0.05,
+                width=64,
+                height=64,
+                wcs_path=image_path,
+            ),
+            wcs_path=image_path,
+        )
+        self.window._current_transient_search_result = TransientSearchResult(
+            root_path=root_path,
+            frame_results=(frame_result,),
+            total_files=1,
+            solved_frame_count=1,
+            astrometry_solved_count=0,
+            detected_source_count=1,
+            catalog_star_count=0,
+            candidates=(candidate,),
+            notes=(),
+            report_text="Projected overlay test.",
+        )
+        self.window._populate_transient_results_table((candidate,))
+        self.window._current_transient_source_image = image_path
+        self.window._transient_results_table.setCurrentCell(0, 0)
+        self.window._transient_results_table.selectRow(0)
+
+        overlays = self.window._current_transient_image_overlays()
+
+        self.assertEqual(len(overlays), 1)
+        self.assertEqual(overlays[0].name, "T003")
+        self.assertAlmostEqual(overlays[0].x, 24.0, places=2)
+        self.assertAlmostEqual(overlays[0].y, 36.0, places=2)
+
     def test_transient_preload_completion_stores_cached_displays(self) -> None:
 
         image_path = Path(self._config_dir.name) / "frame_b.fit"
@@ -2550,9 +2763,39 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIsNotNone(self.window._results_tabs.cornerWidget(Qt.Corner.TopRightCorner))
 
-        self.assertEqual(self.window._results_filter_button.text(), "Filter")
+        self.assertEqual(self.window._results_filter_button.text(), "")
+
+        self.assertFalse(self.window._results_filter_button.icon().isNull())
+
+        self.assertEqual(self.window._results_filter_button.accessibleName(), "Filter Source Results")
 
         self.assertIs(self.window._source_comparison_overlay.parentWidget(), self.window._source_table)
+
+    def test_differential_primary_view_controls_have_consistent_geometry(self) -> None:
+
+        export_height = self.window._export_light_curve_button.height()
+
+        self.assertEqual(self.window._fit_guess_period_button.height(), export_height)
+
+        self.assertEqual(self.window._fold_plot_button.height(), export_height)
+
+        self.assertEqual(self.window._light_curve_filter_button.height(), export_height)
+
+        self.assertEqual(
+            self.window._image_center_object_button.height(),
+            self.window._display_section_label.height(),
+        )
+
+        self.assertGreater(
+            self.window._image_center_object_button.minimumWidth(),
+            self.window._image_center_object_button.fontMetrics().horizontalAdvance("Center Object"),
+        )
+
+        accent = QColor(
+            self.window._resolved_theme_editor_colors().get("accent", "#3d8bfd")
+        ).darker(120).name().lower()
+
+        self.assertIn(f"border: 1px solid {accent};", self.window._display_section_label.styleSheet())
 
 
 
@@ -7759,6 +8002,30 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
+    def test_mode_menu_includes_choose_mode_action(self) -> None:
+
+        action_titles = [action.text() for action in self.window._mode_menu.actions() if action.text()]
+
+
+
+        self.assertEqual(action_titles[0], "Choose Mode...")
+
+
+
+    def test_mode_launcher_selection_opens_requested_mode(self) -> None:
+
+        self.window._handle_mode_launcher_selection(AppMode.HR_DIAGRAM)
+
+
+
+        self.assertIs(self.window._central_shell.currentWidget(), self.window._main_app_container)
+
+        self.assertIs(self.window._app_mode_stack.currentWidget(), self.window._hr_diagram_panel)
+
+        self.assertTrue(self.window.menuBar().isVisible())
+
+
+
     def test_file_menu_shows_open_folder_in_differential_mode(self) -> None:
 
         action_titles = [action.text() for action in self.window._file_menu.actions() if action.text()]
@@ -7770,6 +8037,100 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertIn("Clear Cache", action_titles)
 
         self.assertNotIn("Open File", action_titles)
+
+
+
+    def test_file_menu_shows_check_for_updates_in_every_mode(self) -> None:
+
+        for mode in AppMode:
+
+            self.window._sync_file_menu_actions(mode)
+
+            action_titles = [action.text() for action in self.window._file_menu.actions() if action.text()]
+
+            self.assertIn("Check for Updates", action_titles, mode.value)
+
+
+
+    def test_update_installer_launches_in_silent_update_mode(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            installer_path = Path(temp_dir) / "update.exe"
+
+            installer_path.write_bytes(b"installer")
+
+            with (
+
+                patch("photometry_app.ui.main_window.QProcess.startDetached", return_value=(True, 1234)) as start_detached,
+
+                patch("photometry_app.ui.main_window.QApplication.quit") as quit_application,
+
+            ):
+
+                self.window._launch_update_installer(installer_path)
+
+
+
+        arguments = start_detached.call_args.args[1]
+
+        self.assertIn("/SILENT", arguments)
+
+        self.assertIn("/UPDATE=1", arguments)
+
+        quit_application.assert_called_once_with()
+
+
+
+    def test_update_check_completion_reports_current_or_starts_download(self) -> None:
+
+        self.window._check_for_updates_action.setEnabled(False)
+
+        with patch("photometry_app.ui.main_window.QMessageBox.information") as information:
+
+            self.window._handle_update_check_completed(
+
+                SimpleNamespace(current_version="0.1.1-alpha.1", available_update=None)
+
+            )
+
+        self.assertTrue(self.window._check_for_updates_action.isEnabled())
+
+        self.assertIn("up to date", information.call_args.args[2])
+
+
+
+        available_update = SimpleNamespace(
+
+            version="0.1.2-alpha.1",
+
+            notes="Reviewer fixes",
+
+            installer_size=1024,
+
+        )
+
+        with (
+
+            patch(
+
+                "photometry_app.ui.main_window.QMessageBox.question",
+
+                return_value=QMessageBox.StandardButton.Yes,
+
+            ),
+
+            patch.object(self.window, "_start_update_download") as start_download,
+
+        ):
+
+            self.window._handle_update_check_completed(
+
+                SimpleNamespace(current_version="0.1.1-alpha.1", available_update=available_update)
+
+            )
+
+        start_download.assert_called_once_with(available_update)
 
 
 
@@ -15426,8 +15787,18 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             action_titles,
 
-            ["Differential Photometry", "Asteroid/Comet Detection", "HR Diagram", "Transient Finder", "Sky View", "Sky Explorer", "(alpha) Astrostack"],
-
+            [
+                "Choose Mode...",
+                "Differential Photometry",
+                "Asteroid/Comet Detection",
+                "HR Diagram",
+                "Transient Finder",
+                "Sky Atlas",
+                "Sky Explorer",
+                "Distance Map",
+                "Deep Stack",
+                "Observation Deck",
+            ],
         )
 
 
@@ -15461,7 +15832,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertTrue(self.window._app_mode_sky_view_action.isChecked())
 
-        self.assertEqual(self.window.windowTitle(), "Citizen Astronomy - Sky View")
+        self.assertEqual(self.window.windowTitle(), "Citizen Astronomy - Sky Atlas")
 
         self.assertTrue(self.window._sky_view_scientific_catalog_loaded)
 
@@ -15956,6 +16327,87 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertNotEqual(first_matrix, second_matrix)
         self.assertLess(abs(second_matrix[0][0] - first_matrix[0][0]), 0.001)
+
+    def test_sky_view_custom_overlay_quad_transform_maps_all_corners(self) -> None:
+
+        source_points = (
+            QPointF(0.0, 0.0),
+            QPointF(100.0, 0.0),
+            QPointF(100.0, 50.0),
+            QPointF(0.0, 50.0),
+        )
+        destination_points = (
+            QPointF(25.0, 30.0),
+            QPointF(145.0, 20.0),
+            QPointF(155.0, 95.0),
+            QPointF(15.0, 105.0),
+        )
+
+        transform = _SkyAtlasViewWidget._custom_sky_overlay_quad_transform(
+            source_points,
+            destination_points,
+        )
+
+        self.assertIsNotNone(transform)
+        assert transform is not None
+        for source_point, destination_point in zip(source_points, destination_points):
+            mapped_point = transform.map(source_point)
+            self.assertAlmostEqual(mapped_point.x(), destination_point.x(), places=4)
+            self.assertAlmostEqual(mapped_point.y(), destination_point.y(), places=4)
+
+    def test_sky_view_custom_overlay_mesh_draws_cached_texture(self) -> None:
+
+        header = fits.Header()
+        header["NAXIS"] = 2
+        header["NAXIS1"] = 100
+        header["NAXIS2"] = 80
+        header["CTYPE1"] = "RA---TAN"
+        header["CTYPE2"] = "DEC--TAN"
+        header["CRVAL1"] = 0.0
+        header["CRVAL2"] = 0.0
+        header["CRPIX1"] = 50.5
+        header["CRPIX2"] = 40.5
+        header["CD1_1"] = -0.02
+        header["CD1_2"] = 0.0
+        header["CD2_1"] = 0.0
+        header["CD2_2"] = 0.02
+        overlay = LoadedSkyAtlasCustomOverlay(
+            overlay_id="overlay-draw-test",
+            display_name="overlay.png",
+            image_rgb=np.full((80, 100, 3), (230, 80, 40), dtype=np.uint8),
+            image_alpha=None,
+            wcs=WCS(header, naxis=2),
+            width=100,
+            height=80,
+        )
+        widget = _SkyAtlasViewWidget()
+        widget.set_custom_sky_overlay_entries([overlay])
+        target = QImage(400, 300, QImage.Format.Format_ARGB32_Premultiplied)
+        target.fill(Qt.GlobalColor.transparent)
+        scene = SimpleNamespace(
+            viewport_rect=QRectF(0.0, 0.0, 400.0, 300.0),
+            custom_sky_overlays_enabled=True,
+            custom_sky_overlay_opacity=1.0,
+            custom_sky_overlay_brightness=1.0,
+            custom_sky_overlay_saturation=1.0,
+            custom_sky_overlay_feather=0.0,
+            field_width_deg=4.0,
+            field_height_deg=3.0,
+            camera_forward=(1.0, 0.0, 0.0),
+            camera_up=(0.0, 0.0, 1.0),
+            camera_right=(0.0, 1.0, 0.0),
+            equatorial_to_horizon_matrix=(
+                (1.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+            ),
+        )
+
+        painter = QPainter(target)
+        widget._draw_custom_sky_overlay_layer(painter, scene)
+        painter.end()
+
+        self.assertGreater(target.pixelColor(200, 150).alpha(), 0)
 
 
     def test_sky_view_location_button_opens_dialog_directly(self) -> None:
@@ -16779,9 +17231,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
     def test_sky_view_fast_star_point_width_keeps_threshold_stars_subliminal(self) -> None:
 
-        bright_width = _SkyAtlasViewWidget._fast_star_point_width(5.8, 0.9)
+        widget = _SkyAtlasViewWidget()
 
-        threshold_width = _SkyAtlasViewWidget._fast_star_point_width(8.0, 0.35)
+        bright_width = widget._fast_star_point_width(5.8, 0.9)
+
+        threshold_width = widget._fast_star_point_width(8.0, 0.35)
 
         self.assertGreater(bright_width, threshold_width)
 
@@ -17214,6 +17668,104 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertNotIn("HIP Too Faint", visible_names)
 
 
+    def test_sky_view_reuses_static_visible_object_projection(self) -> None:
+
+        widget = _SkyAtlasViewWidget()
+
+        widget.resize(640, 420)
+
+        widget._set_camera_state(0.0, 0.0, 25.0)
+
+        widget.set_show_ground(False)
+
+        visible_star = SkyAtlasObject(
+            name="HIP Cached Projection",
+            object_type="Star",
+            ra_deg=2.0,
+            dec_deg=1.0,
+            magnitude=2.4,
+            catalog="Hipparcos",
+            searchable=False,
+            label_visible=False,
+            selectable=False,
+        )
+
+        widget.set_objects((visible_star,))
+
+        rect = QRectF(0.0, 0.0, 640.0, 420.0)
+
+        first_visible_objects = widget._collect_visible_objects(rect)
+
+        with patch.object(
+            widget,
+            "_candidate_objects_for_current_view_with_detail",
+            side_effect=AssertionError("static frames should reuse projected objects"),
+        ):
+
+            second_visible_objects = widget._collect_visible_objects(rect)
+
+        self.assertIs(second_visible_objects, first_visible_objects)
+
+
+    def test_sky_view_interaction_star_budget_matches_stable_budget(self) -> None:
+
+        widget = _SkyAtlasViewWidget()
+
+        widget.resize(1200, 800)
+
+        rect = QRectF(0.0, 0.0, 1200.0, 800.0)
+
+        stable_visible_budget, stable_candidate_budget = widget._sky_view_star_budgets(rect)
+
+        widget._drag_origin = QPoint(10, 10)
+
+        interaction_visible_budget, interaction_candidate_budget = widget._sky_view_star_budgets(rect)
+
+        self.assertEqual(interaction_visible_budget, stable_visible_budget)
+
+        self.assertEqual(interaction_candidate_budget, stable_candidate_budget)
+
+        self.assertEqual(interaction_candidate_budget, interaction_visible_budget * 3)
+
+
+    def test_sky_view_wide_fov_hides_faint_stars_until_zoomed_in(self) -> None:
+
+        widget = _SkyAtlasViewWidget()
+
+        widget._star_magnitude_limit = 12.0
+
+        widget._set_camera_state(83.8, -5.0, 95.0)
+
+        wide_limit = widget._star_visible_magnitude_limit_for_current_fov()
+
+        widget._set_camera_state(83.8, -5.0, 20.0)
+
+        narrow_limit = widget._star_visible_magnitude_limit_for_current_fov()
+
+        self.assertLess(wide_limit, 6.5)
+
+        self.assertGreater(narrow_limit, wide_limit + 1.0)
+
+        self.assertGreater(narrow_limit, 7.5)
+
+
+    def test_sky_view_bright_stars_are_stronger_than_faint_stars(self) -> None:
+
+        widget = _SkyAtlasViewWidget()
+
+        bright = widget._star_relative_brightness_weight(1.0)
+
+        faint = widget._star_relative_brightness_weight(8.0)
+
+        self.assertGreater(bright, faint * 1.6)
+
+        bright_width = widget._fast_star_point_width(5.8, 0.9)
+
+        faint_width = widget._fast_star_point_width(8.0, 0.35)
+
+        self.assertGreater(bright_width, faint_width)
+
+
     def test_sky_view_high_zoom_uses_spatial_index_before_projection(self) -> None:
 
         widget = _SkyAtlasViewWidget()
@@ -17296,6 +17848,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         widget._spatial_object_bins = spatial_bins
 
+        widget._spatial_star_bins = spatial_bins
+
         field_height_deg = widget._field_height_deg(QRectF(0.0, 0.0, 640.0, 420.0))
 
         with patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)):
@@ -17314,12 +17868,12 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(detail.candidate_count_before_sorting, 6)
 
-        self.assertTrue(detail.per_frame_sort_happened)
+        self.assertFalse(detail.per_frame_sort_happened)
 
         self.assertEqual(len(candidates), 6)
 
 
-    def test_sky_view_large_spatial_candidate_union_falls_back_to_full_list(self) -> None:
+    def test_sky_view_large_spatial_candidate_union_stays_on_spatial_merge(self) -> None:
 
         widget = _SkyAtlasViewWidget()
 
@@ -17351,20 +17905,19 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         widget._spatial_object_bins = spatial_bins
 
+        widget._spatial_star_bins = spatial_bins
+
         field_height_deg = widget._field_height_deg(QRectF(0.0, 0.0, 640.0, 420.0))
 
-        with (
-            patch.object(_SkyAtlasViewWidget, "_SKY_VIEW_SPATIAL_BIN_MAX_CANDIDATES_FOR_SORT", 20),
-            patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)),
-        ):
+        with patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)):
 
             candidates, detail = widget._candidate_objects_for_current_view_with_detail(field_height_deg)
 
-        self.assertEqual(detail.candidate_path, "spatial_bins_fallback_full_list")
+        self.assertEqual(detail.candidate_path, "spatial_bins")
 
-        self.assertFalse(detail.used_spatial_bins)
+        self.assertTrue(detail.used_spatial_bins)
 
-        self.assertTrue(detail.fallback_to_full_list)
+        self.assertFalse(detail.fallback_to_full_list)
 
         self.assertEqual(detail.selected_bin_count, 2)
 
@@ -17374,10 +17927,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(detail.sort_seconds, 0.0)
 
-        self.assertIs(candidates, widget._objects)
+        self.assertIsNot(candidates, widget._objects)
 
 
-    def test_sky_view_large_selected_bin_count_falls_back_to_full_list(self) -> None:
+    def test_sky_view_large_selected_bin_count_stays_on_spatial_merge(self) -> None:
 
         widget = _SkyAtlasViewWidget()
 
@@ -17410,20 +17963,19 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         widget._spatial_object_bins = spatial_bins
 
+        widget._spatial_star_bins = spatial_bins
+
         field_height_deg = widget._field_height_deg(QRectF(0.0, 0.0, 640.0, 420.0))
 
-        with (
-            patch.object(_SkyAtlasViewWidget, "_SKY_VIEW_SPATIAL_BIN_MAX_SELECTED_BINS_FOR_SORT", 2),
-            patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)),
-        ):
+        with patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)):
 
             candidates, detail = widget._candidate_objects_for_current_view_with_detail(field_height_deg)
 
-        self.assertEqual(detail.candidate_path, "spatial_bins_fallback_full_list")
+        self.assertEqual(detail.candidate_path, "spatial_bins")
 
-        self.assertFalse(detail.used_spatial_bins)
+        self.assertTrue(detail.used_spatial_bins)
 
-        self.assertTrue(detail.fallback_to_full_list)
+        self.assertFalse(detail.fallback_to_full_list)
 
         self.assertEqual(detail.selected_bin_count, 3)
 
@@ -17431,10 +17983,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(detail.sort_seconds, 0.0)
 
-        self.assertIs(candidates, widget._objects)
+        self.assertIsNot(candidates, widget._objects)
 
 
-    def test_sky_view_spatial_fallback_preserves_selected_object_fallback(self) -> None:
+    def test_sky_view_spatial_merge_preserves_selected_object_fallback(self) -> None:
 
         widget = _SkyAtlasViewWidget()
 
@@ -17484,10 +18036,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         widget._spatial_object_bins = spatial_bins
 
-        with (
-            patch.object(_SkyAtlasViewWidget, "_SKY_VIEW_SPATIAL_BIN_MAX_CANDIDATES_FOR_SORT", 5),
-            patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)),
-        ):
+        widget._spatial_star_bins = spatial_bins
+
+        with patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)):
 
             visible_names = [
                 visible_object.sky_object.name
@@ -17497,7 +18048,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertIn("HIP Selected Faint", visible_names)
 
 
-    def test_sky_view_spatial_fallback_matches_forced_full_list_visible_order(self) -> None:
+    def test_sky_view_spatial_merge_matches_forced_full_list_visible_order(self) -> None:
 
         widget = _SkyAtlasViewWidget()
 
@@ -17533,12 +18084,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         widget._spatial_object_bins = spatial_bins
 
-        with (
-            patch.object(_SkyAtlasViewWidget, "_SKY_VIEW_SPATIAL_BIN_MAX_CANDIDATES_FOR_SORT", 20),
-            patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)),
-        ):
+        widget._spatial_star_bins = spatial_bins
 
-            fallback_names = [
+        with patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)):
+
+            spatial_names = [
                 visible_object.sky_object.name
                 for visible_object in widget._collect_visible_objects(rect)
             ]
@@ -17550,10 +18100,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                 for visible_object in widget._collect_visible_objects(rect)
             ]
 
-        self.assertEqual(fallback_names, full_list_names)
+        self.assertEqual(spatial_names, full_list_names)
 
 
-    def test_sky_view_collect_detail_reports_spatial_fallback_path(self) -> None:
+    def test_sky_view_collect_detail_reports_spatial_merge_path(self) -> None:
 
         with patch.dict(os.environ, {"CITIZEN_PHOTOMETRY_SKY_VIEW_COLLECT_DETAIL": "1"}):
 
@@ -17593,8 +18143,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         widget._spatial_object_bins = spatial_bins
 
+        widget._spatial_star_bins = spatial_bins
+
         with (
-            patch.object(_SkyAtlasViewWidget, "_SKY_VIEW_SPATIAL_BIN_MAX_CANDIDATES_FOR_SORT", 20),
             patch.object(widget, "_spatial_bin_keys_for_current_view", return_value=tuple(spatial_bins)),
             patch("builtins.print") as print_mock,
         ):
@@ -17605,13 +18156,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         printed_text = print_mock.call_args.args[0]
 
-        self.assertIn("path=spatial_bins_fallback_full_list", printed_text)
+        self.assertIn("path:spatial_bins", printed_text)
 
-        self.assertIn("spatial_fallback=1", printed_text)
+        self.assertIn("spatial_fallback:0", printed_text)
 
-        self.assertIn("threshold_fallbacks=1", printed_text)
+        self.assertIn("threshold_fallbacks:0", printed_text)
 
-        self.assertIn("sort=0.00", printed_text)
+        self.assertIn("sort:0.00", printed_text)
 
 
     def test_sky_view_polar_zoom_collects_all_projected_stars(self) -> None:
@@ -20054,6 +20605,85 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertIs(widget._object_at_position(220.0, 170.0), galaxy)
 
 
+    def test_sky_view_fast_path_stars_are_clickable_and_show_selection_ring(self) -> None:
+
+        widget = _SkyAtlasViewWidget()
+
+        widget.resize(640, 420)
+
+        faint_star = SkyAtlasObject(
+            name="HIP 123456",
+            object_type="Star",
+            ra_deg=83.8,
+            dec_deg=-5.0,
+            magnitude=8.4,
+            catalog="Hipparcos",
+            searchable=False,
+            label_visible=False,
+            selectable=False,
+        )
+
+        bright_star = SkyAtlasObject(
+            name="Rigel",
+            object_type="Star",
+            ra_deg=78.6,
+            dec_deg=-8.2,
+            magnitude=0.18,
+            catalog="Hipparcos",
+            searchable=True,
+            label_visible=True,
+            selectable=True,
+        )
+
+        rich_objects = [_SkyVisibleObject(bright_star, 180.0, 160.0, 1.0, 0.18, 45.0)]
+
+        all_visible_objects = [
+            _SkyVisibleObject(faint_star, 240.0, 200.0, 0.75, 8.4, 45.0),
+            *rich_objects,
+        ]
+
+        image = QImage(640, 420, QImage.Format.Format_ARGB32_Premultiplied)
+
+        image.fill(0)
+
+        painter = QPainter(image)
+
+        try:
+
+            widget._draw_object_overlays(
+                painter,
+                rich_objects,
+                QRectF(0.0, 0.0, 640.0, 420.0),
+                draw_star_sprites=False,
+                ground_geometry=None,
+                all_visible_objects=all_visible_objects,
+            )
+
+        finally:
+
+            painter.end()
+
+        projected_names = [entry[3].name for entry in widget._last_projected_objects]
+
+        self.assertIn("Rigel", projected_names)
+
+        self.assertIn("HIP 123456", projected_names)
+
+        self.assertIs(widget._object_at_position(240.0, 200.0), faint_star)
+
+        widget.set_selected_object(faint_star)
+
+        fast_star_groups, partitioned_rich, _gpu = widget._partition_visible_objects(all_visible_objects)
+
+        self.assertEqual(sum(len(points) for points in fast_star_groups.values()), 0)
+
+        self.assertEqual([item.sky_object.name for item in partitioned_rich], ["Rigel", "HIP 123456"])
+
+        self.assertIn("HIP 123456", widget._object_info_text(faint_star))
+
+        self.assertIn("Mag 8.40", widget._object_info_text(faint_star))
+
+
     def test_sky_view_projection_is_curved_even_before_full_sky(self) -> None:
 
         widget = _SkyAtlasViewWidget()
@@ -21225,11 +21855,24 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                 altitude_deg=8.0,
             )
 
+            widget._drag_origin = QPoint(4, 4)
+
+            drag_alpha, drag_scale, _ = widget._resolved_star_appearance(
+                star,
+                widget._magnitude_sort_key(star.magnitude),
+                0.85,
+                altitude_deg=8.0,
+            )
+
         self.assertNotAlmostEqual(high_alpha, 0.85, places=4)
 
         self.assertNotAlmostEqual(high_scale, 1.0, places=4)
 
         self.assertNotAlmostEqual(low_alpha, high_alpha, places=4)
+
+        self.assertAlmostEqual(drag_alpha, 0.85 * widget._star_relative_brightness_weight(4.9) * float(widget._star_brightness), places=4)
+
+        self.assertNotAlmostEqual(drag_alpha, low_alpha, places=4)
 
     def test_sky_view_moon_focus_clamps_star_presentation(self) -> None:
 
@@ -22282,6 +22925,19 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             controls_layout.indexOf(self.window._sky_explorer_center_object_button),
         )
         self.assertLess(
+            controls_layout.indexOf(self.window._sky_explorer_surveys_button),
+            controls_layout.indexOf(self.window._sky_explorer_center_object_button),
+        )
+        survey_action_texts = [
+            action.text()
+            for action in self.window._sky_explorer_surveys_menu.actions()
+            if action.text()
+        ]
+        self.assertEqual(
+            survey_action_texts[:5],
+            ["None", "DSS2 Blue", "SHS Ha", "PanSTARRS", "IPHAS DR2 Ha"],
+        )
+        self.assertLess(
             controls_layout.indexOf(self.window._sky_explorer_center_object_button),
             controls_layout.indexOf(self.window._sky_explorer_mag_limit_button),
         )
@@ -22298,20 +22954,575 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         display_controls_layout_obj = self.window._sky_explorer_display_controls_group.layout()
         self.assertIsNotNone(display_controls_layout_obj)
-        display_controls_layout = cast(QHBoxLayout, display_controls_layout_obj)
-        self.assertGreaterEqual(display_controls_layout.indexOf(self.window._sky_explorer_image_stretch_combo), 0)
+        display_controls_layout = cast(QVBoxLayout, display_controls_layout_obj)
+        stretch_row = cast(QHBoxLayout, display_controls_layout.itemAt(0).layout())
+        action_row = cast(QHBoxLayout, display_controls_layout.itemAt(1).layout())
+        self.assertGreaterEqual(stretch_row.indexOf(self.window._sky_explorer_image_stretch_combo), 0)
         self.assertGreater(
-            display_controls_layout.indexOf(self.window._sky_explorer_adjust_levels_button),
-            display_controls_layout.indexOf(self.window._sky_explorer_image_stretch_combo),
+            action_row.indexOf(self.window._sky_explorer_image_invert_checkbox),
+            action_row.indexOf(self.window._sky_explorer_adjust_levels_button),
         )
         self.assertGreater(
-            display_controls_layout.indexOf(self.window._sky_explorer_image_invert_checkbox),
-            display_controls_layout.indexOf(self.window._sky_explorer_adjust_levels_button),
+            action_row.indexOf(self.window._sky_explorer_image_reset_display_button),
+            action_row.indexOf(self.window._sky_explorer_image_invert_checkbox),
         )
-        self.assertGreater(
-            display_controls_layout.indexOf(self.window._sky_explorer_image_reset_display_button),
-            display_controls_layout.indexOf(self.window._sky_explorer_image_invert_checkbox),
+
+    def test_sky_explorer_export_menu_offers_image_and_animation_actions(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        export_menu = self.window._sky_explorer_export_image_button.menu()
+        self.assertIsNotNone(export_menu)
+        assert export_menu is not None
+        action_texts = [action.text() for action in export_menu.actions()]
+        self.assertEqual(action_texts, ["Image...", "Animation..."])
+
+    def test_sky_explorer_animation_export_requires_loaded_survey_comparison(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        source_path = Path(self._config_dir.name) / "source.fit"
+        source_path.write_bytes(b"\0")
+        self.window._current_sky_explorer_source_image = source_path
+        self.assertFalse(self.window._sky_explorer_can_export_comparison_animation())
+        self.assertFalse(self.window._sky_explorer_export_animation_action.isEnabled())
+
+        image_view = self.window._sky_explorer_image_view
+        image_view.set_comparison_split_enabled(True)
+        image_view.set_comparison_content(
+            build_annotated_image_display_from_array(
+                np.ones((100, 100), dtype=np.float32),
+                image_path=Path("survey.fit"),
+            ),
+            target_rect=QRectF(0.0, 0.0, 100.0, 100.0),
         )
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        self.window._sync_sky_explorer_image_controls()
+        self.assertTrue(self.window._sky_explorer_can_export_comparison_animation())
+        self.assertTrue(self.window._sky_explorer_export_animation_action.isEnabled())
+
+    def test_sky_explorer_survey_display_settings_are_independent(self) -> None:
+        primary_before = self.window._current_sky_explorer_image_render_settings()
+        self.window._sky_explorer_survey_stretch_combo.setCurrentIndex(
+            self.window._sky_explorer_survey_stretch_combo.findData("log")
+        )
+        self.window._sky_explorer_survey_invert_checkbox.setChecked(True)
+        self.window._sky_explorer_survey_levels = (0.1, 0.4, 0.9)
+        self.window._sky_explorer_survey_curve_points = ((0.25, 0.2), (0.75, 0.85))
+
+        survey_settings = self.window._current_sky_explorer_survey_render_settings()
+        primary_after = self.window._current_sky_explorer_image_render_settings()
+
+        self.assertEqual(primary_after, primary_before)
+        self.assertEqual(survey_settings.stretch_mode, "log")
+        self.assertTrue(survey_settings.inverted)
+        self.assertEqual(
+            (survey_settings.black_point, survey_settings.midtone_point, survey_settings.white_point),
+            (0.1, 0.4, 0.9),
+        )
+        self.assertEqual(survey_settings.curve_points, ((0.25, 0.2), (0.75, 0.85)))
+
+    def test_sky_explorer_survey_viewport_uses_sliced_source_wcs(self) -> None:
+        source_wcs = WCS(naxis=2)
+        source_wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        source_wcs.wcs.crval = [83.8, -5.4]
+        source_wcs.wcs.crpix = [500.0, 400.0]
+        source_wcs.wcs.cdelt = [-0.001, 0.001]
+        self.window._current_sky_explorer_source_image = Path("source.fit")
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+
+        with (
+            patch("photometry_app.ui.main_window._SKY_EXPLORER_SURVEY_FETCH_MARGIN_FRACTION", 0.0),
+            patch.object(self.window, "_sky_explorer_image_wcs", return_value=source_wcs),
+            patch.object(
+                self.window._sky_explorer_image_view,
+                "visible_image_rect",
+                return_value=QRectF(100.0, 200.0, 400.0, 300.0),
+            ),
+        ):
+            viewport_spec = self.window._sky_explorer_survey_viewport_wcs()
+
+        self.assertIsNotNone(viewport_spec)
+        assert viewport_spec is not None
+        viewport_wcs, width, height, target_rect, signature = viewport_spec
+        self.assertEqual((width, height), (200, 150))
+        self.assertEqual(viewport_wcs.array_shape, (150, 200))
+        self.assertAlmostEqual(target_rect[0], 100.5, places=6)
+        self.assertAlmostEqual(target_rect[1], 200.5, places=6)
+        self.assertAlmostEqual(target_rect[2], 400.0, places=6)
+        self.assertAlmostEqual(target_rect[3], 300.0, places=6)
+        self.assertEqual(signature[1], "dss2_blue")
+        np.testing.assert_allclose(
+            viewport_wcs.pixel_to_world_values(0.0, 0.0),
+            source_wcs.pixel_to_world_values(100.5, 200.5),
+            atol=1.0e-9,
+        )
+
+    def test_sky_explorer_survey_fetch_expands_visible_viewport_with_margin(self) -> None:
+        source_wcs = WCS(naxis=2)
+        source_wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        source_wcs.wcs.crval = [83.8, -5.4]
+        source_wcs.wcs.crpix = [500.0, 400.0]
+        source_wcs.wcs.cdelt = [-0.001, 0.001]
+        self.window._current_sky_explorer_source_image = Path("source.fit")
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+
+        with (
+            patch("photometry_app.ui.main_window._SKY_EXPLORER_SURVEY_FETCH_MARGIN_FRACTION", 0.5),
+            patch.object(self.window, "_sky_explorer_image_wcs", return_value=source_wcs),
+            patch.object(
+                self.window._sky_explorer_image_view,
+                "visible_image_rect",
+                return_value=QRectF(100.0, 200.0, 200.0, 100.0),
+            ),
+        ):
+            viewport_spec = self.window._sky_explorer_survey_viewport_wcs()
+
+        self.assertIsNotNone(viewport_spec)
+        assert viewport_spec is not None
+        _viewport_wcs, _width, _height, target_rect, signature = viewport_spec
+        self.assertEqual(signature[6:10], (0, 150, 400, 350))
+        self.assertLess(target_rect[0], 100.0)
+        self.assertGreater(target_rect[0] + target_rect[2], 300.0)
+
+    def test_sky_explorer_survey_cd_matrix_wcs_covers_full_fetch_footprint(self) -> None:
+        source_wcs = WCS(naxis=2)
+        source_wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        source_wcs.wcs.crval = [312.0, 44.0]
+        source_wcs.wcs.crpix = [3124.0, 2088.0]
+        source_wcs.wcs.cd = [[-6.68167795e-05, -8.61347223e-04], [8.61240079e-04, -6.68140650e-05]]
+        self.window._current_sky_explorer_source_image = Path("source.fit")
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        self.window._sky_explorer_image_view.resize(1200, 900)
+
+        with (
+            patch("photometry_app.ui.main_window._SKY_EXPLORER_SURVEY_FETCH_MARGIN_FRACTION", 0.0),
+            patch.object(self.window, "_sky_explorer_image_wcs", return_value=source_wcs),
+            patch.object(
+                self.window._sky_explorer_image_view,
+                "visible_image_rect",
+                return_value=QRectF(0.0, 0.0, 6248.0, 4176.0),
+            ),
+            patch.object(self.window, "_sky_explorer_display_image_size", return_value=(6248, 4176)),
+            patch.object(self.window, "_sky_explorer_wcs_reference_size", return_value=(6248, 4176)),
+        ):
+            viewport_spec = self.window._sky_explorer_survey_viewport_wcs(max_output_size=512)
+
+        self.assertIsNotNone(viewport_spec)
+        assert viewport_spec is not None
+        viewport_wcs, width, height, target_rect, signature = viewport_spec
+        self.assertEqual(signature[6:10], (0, 0, 6248, 4176))
+        self.assertGreater(width, 400)
+        self.assertGreater(height, 300)
+        self.assertLess(target_rect[0], 20.0)
+        self.assertLess(target_rect[1], 20.0)
+        self.assertGreater(target_rect[0] + target_rect[2], 6200.0)
+        self.assertGreater(target_rect[1] + target_rect[3], 4100.0)
+        corner_world = viewport_wcs.pixel_to_world_values(0.0, 0.0)
+        source_corner = source_wcs.pixel_to_world_values(0.0, 0.0)
+        np.testing.assert_allclose(corner_world, source_corner, rtol=0.0, atol=0.02)
+
+    def test_sky_explorer_survey_preview_is_distinct_for_large_viewport(self) -> None:
+        source_wcs = WCS(naxis=2)
+        source_wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        source_wcs.wcs.crval = [83.8, -5.4]
+        source_wcs.wcs.crpix = [500.0, 400.0]
+        source_wcs.wcs.cdelt = [-0.001, 0.001]
+        self.window._current_sky_explorer_source_image = Path("source.fit")
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        self.window._sky_explorer_image_view.resize(1200, 900)
+
+        with (
+            patch("photometry_app.ui.main_window._SKY_EXPLORER_SURVEY_FETCH_MARGIN_FRACTION", 0.0),
+            patch.object(self.window, "_sky_explorer_image_wcs", return_value=source_wcs),
+            patch.object(
+                self.window._sky_explorer_image_view,
+                "visible_image_rect",
+                return_value=QRectF(100.0, 200.0, 4000.0, 3000.0),
+            ),
+        ):
+            preview_spec = self.window._sky_explorer_survey_viewport_wcs(
+                max_output_size=512,
+            )
+            refine_spec = self.window._sky_explorer_survey_viewport_wcs(max_output_size=None)
+
+        self.assertIsNotNone(preview_spec)
+        self.assertIsNotNone(refine_spec)
+        assert preview_spec is not None
+        assert refine_spec is not None
+        self.assertTrue(self.window._sky_explorer_survey_specs_are_distinct(preview_spec, refine_spec))
+
+    def test_sky_explorer_survey_request_starts_with_preview_when_distinct(self) -> None:
+        preview_spec = (WCS(naxis=2), 128, 96, (0.0, 0.0, 100.0, 100.0), ("sig",) * 17)
+        refine_spec = (WCS(naxis=2), 512, 384, (0.0, 0.0, 100.0, 100.0), ("sig",) * 17)
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+
+        with (
+            patch.object(
+                self.window,
+                "_sky_explorer_survey_viewport_wcs",
+                side_effect=[preview_spec, refine_spec],
+            ),
+            patch.object(self.window, "_sky_explorer_survey_specs_are_distinct", return_value=True),
+            patch.object(self.window, "_sky_explorer_survey_viewport_needs_refresh", return_value=True),
+            patch.object(self.window, "_sky_explorer_survey_visible_in_cached_target", return_value=False),
+            patch.object(self.window, "_sky_explorer_survey_start_request") as start_request,
+        ):
+            self.window._request_current_sky_explorer_survey_viewport()
+
+        start_request.assert_called_once_with(
+            preview_spec,
+            detail_tier="preview",
+        )
+        self.assertEqual(
+            self.window._sky_explorer_image_view.comparison_loading_message(),
+            "Loading DSS2 Blue preview…",
+        )
+
+    def test_sky_explorer_survey_preview_completion_starts_refine_request(self) -> None:
+        from photometry_app.core.survey_images import SurveyImageResult, survey_definition_for_key
+
+        source_path = Path("source.fit")
+        self.window._current_sky_explorer_source_image = source_path
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        preview_signature = (
+            str(source_path.resolve()),
+            "dss2_blue",
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            0,
+            0,
+            100,
+            100,
+            1,
+            128,
+            96,
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+        )
+        preview_spec = (WCS(naxis=2), 128, 96, (0.0, 0.0, 100.0, 100.0), preview_signature)
+        refine_spec = (WCS(naxis=2), 512, 384, (0.0, 0.0, 100.0, 100.0), preview_signature)
+        result = SurveyImageResult(
+            survey=survey_definition_for_key("dss2_blue"),
+            image_data=np.ones((96, 128), dtype=np.float32),
+            target_rect=(0.0, 0.0, 100.0, 100.0),
+            loaded_from_cache=False,
+        )
+        self.window._sky_explorer_survey_worker_context = self.window._sky_explorer_survey_request_context(
+            preview_signature,
+            "preview",
+        )
+
+        with (
+            patch.object(
+                self.window._sky_explorer_image_view,
+                "visible_image_rect",
+                return_value=QRectF(0.0, 0.0, 100.0, 100.0),
+            ),
+            patch.object(
+                self.window,
+                "_sky_explorer_survey_viewport_specs",
+                return_value=(preview_spec, refine_spec),
+            ),
+            patch.object(self.window, "_sky_explorer_survey_specs_are_distinct", return_value=True),
+            patch.object(self.window, "_build_sky_explorer_survey_display", return_value=object()),
+            patch.object(self.window, "_apply_sky_explorer_survey_comparison"),
+            patch.object(self.window._sky_explorer_survey_refine_timer, "start") as start_refine_timer,
+            patch.object(self.window, "_start_pending_sky_explorer_survey_request"),
+        ):
+            self.window._handle_sky_explorer_survey_completed(result)
+
+        start_refine_timer.assert_called_once()
+        self.assertIs(self.window._sky_explorer_survey_result, result)
+
+    def test_sky_explorer_survey_context_covers_visible_uses_fetch_bounds(self) -> None:
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        signature = (
+            str(Path("source.fit").resolve()),
+            "dss2_blue",
+            20.0,
+            30.0,
+            40.0,
+            30.0,
+            0,
+            0,
+            200,
+            200,
+            4,
+            50,
+            50,
+            10.0,
+            20.0,
+            30.0,
+            40.0,
+        )
+        context = self.window._sky_explorer_survey_request_context(signature, "preview")
+
+        with patch.object(
+            self.window._sky_explorer_image_view,
+            "visible_image_rect",
+            return_value=QRectF(20.0, 30.0, 40.0, 30.0),
+        ):
+            self.assertTrue(self.window._sky_explorer_survey_context_covers_visible_viewport(context))
+
+    def test_sky_explorer_survey_refresh_clears_stale_survey_when_viewport_leaves_cache(self) -> None:
+        from photometry_app.core.survey_images import SurveyImageResult, survey_definition_for_key
+
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        image_view = self.window._sky_explorer_image_view
+        image_view.set_comparison_split_enabled(True)
+        image_view.set_comparison_content(
+            build_annotated_image_display_from_array(
+                np.ones((100, 100), dtype=np.float32),
+                image_path=Path("survey.fit"),
+            ),
+            target_rect=QRectF(0.0, 0.0, 100.0, 100.0),
+        )
+        self.window._sky_explorer_survey_result = SurveyImageResult(
+            survey=survey_definition_for_key("dss2_blue"),
+            image_data=np.ones((100, 100), dtype=np.float32),
+            target_rect=(0.0, 0.0, 100.0, 100.0),
+            loaded_from_cache=True,
+        )
+        self.window._sky_explorer_survey_result_context = (
+            self.window._sky_explorer_survey_request_generation,
+            str(Path("source.fit").resolve()),
+            "dss2_blue",
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            0,
+            0,
+            100,
+            100,
+            1,
+            100,
+            100,
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            "refine",
+        )
+
+        viewport_spec = (
+            WCS(naxis=2),
+            120,
+            120,
+            (150.0, 150.0, 120.0, 120.0),
+            (
+                str(Path("source.fit").resolve()),
+                "dss2_blue",
+                150.0,
+                150.0,
+                120.0,
+                120.0,
+                150,
+                150,
+                270,
+                270,
+                1,
+                120,
+                120,
+                150.0,
+                150.0,
+                120.0,
+                120.0,
+            ),
+        )
+
+        with (
+            patch.object(
+                self.window,
+                "_sky_explorer_survey_viewport_wcs",
+                side_effect=[viewport_spec, viewport_spec],
+            ),
+            patch.object(self.window, "_ensure_settings", return_value=SimpleNamespace(cache_dir=Path("cache"))),
+            patch.object(self.window, "_start_sky_explorer_survey_request") as start_request,
+            patch.object(
+                self.window._sky_explorer_image_view,
+                "visible_image_rect",
+                return_value=QRectF(150.0, 150.0, 120.0, 120.0),
+            ),
+        ):
+            self.window._request_current_sky_explorer_survey_viewport()
+
+        self.assertFalse(image_view._comparison_has_survey_raster())
+        self.assertTrue(image_view._comparison_loading)
+        start_request.assert_called_once()
+
+    def test_sky_explorer_survey_stale_completed_tile_is_not_applied_as_patch(self) -> None:
+        from photometry_app.core.survey_images import SurveyImageResult, survey_definition_for_key
+
+        source_path = Path("source.fit")
+        self.window._current_sky_explorer_source_image = source_path
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        self.window._sky_explorer_survey_worker_context = (
+            self.window._sky_explorer_survey_request_generation,
+            str(source_path.resolve()),
+            "dss2_blue",
+        )
+        result = SurveyImageResult(
+            survey=survey_definition_for_key("dss2_blue"),
+            image_data=np.ones((20, 20), dtype=np.float32),
+            target_rect=(40.0, 40.0, 20.0, 20.0),
+            loaded_from_cache=False,
+        )
+
+        with (
+            patch.object(
+                self.window._sky_explorer_image_view,
+                "visible_image_rect",
+                return_value=QRectF(0.0, 0.0, 100.0, 100.0),
+            ),
+            patch.object(self.window._sky_explorer_survey_refresh_timer, "start") as start_timer,
+        ):
+            self.window._handle_sky_explorer_survey_completed(result)
+
+        self.assertIsNone(self.window._sky_explorer_survey_result)
+        self.assertIsNone(self.window._sky_explorer_survey_display)
+        self.assertFalse(self.window._sky_explorer_image_view._comparison_has_survey_raster())
+        self.assertTrue(self.window._sky_explorer_image_view._comparison_is_active())
+        self.assertTrue(self.window._sky_explorer_image_view._comparison_loading)
+        start_timer.assert_called_once_with(0)
+
+    def test_sky_explorer_survey_viewport_change_keeps_loaded_survey_until_refresh_needed(self) -> None:
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        image_view = self.window._sky_explorer_image_view
+        image_view.set_comparison_split_enabled(True)
+        image_view.set_comparison_content(
+            build_annotated_image_display_from_array(
+                np.ones((100, 100), dtype=np.float32),
+                image_path=Path("survey.fit"),
+            ),
+            target_rect=QRectF(0.0, 0.0, 100.0, 100.0),
+        )
+        self.assertTrue(image_view._comparison_has_survey_raster())
+
+        with patch.object(self.window._sky_explorer_survey_refresh_timer, "start") as start_timer:
+            self.window._handle_sky_explorer_survey_viewport_changed()
+
+        self.assertTrue(image_view._comparison_is_active())
+        self.assertTrue(image_view._comparison_has_survey_raster())
+        self.assertFalse(image_view._comparison_loading)
+        start_timer.assert_called_once_with()
+
+    def test_sky_explorer_survey_viewport_reuses_cached_survey_on_zoom_in_within_sampling_step(self) -> None:
+        from photometry_app.core.survey_images import SurveyImageResult, survey_definition_for_key
+
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        self.window._sky_explorer_survey_result = SurveyImageResult(
+            survey=survey_definition_for_key("dss2_blue"),
+            image_data=np.ones((80, 80), dtype=np.float32),
+            target_rect=(10.0, 20.0, 80.0, 60.0),
+            loaded_from_cache=True,
+        )
+        self.window._sky_explorer_survey_result_context = (
+            self.window._sky_explorer_survey_request_generation,
+            str(Path("source.fit").resolve()),
+            "dss2_blue",
+            10.0,
+            20.0,
+            80.0,
+            60.0,
+            10,
+            20,
+            90,
+            80,
+            1,
+            80,
+            60,
+            10.0,
+            20.0,
+            80.0,
+            60.0,
+        )
+
+        signature = (
+            str(Path("source.fit").resolve()),
+            "dss2_blue",
+            20.0,
+            30.0,
+            40.0,
+            30.0,
+            20,
+            30,
+            60,
+            60,
+            1,
+            40,
+            30,
+            20.0,
+            30.0,
+            40.0,
+            30.0,
+        )
+
+        with patch.object(
+            self.window._sky_explorer_image_view,
+            "visible_image_rect",
+            return_value=QRectF(20.0, 30.0, 40.0, 30.0),
+        ):
+            self.assertFalse(self.window._sky_explorer_survey_viewport_needs_refresh(signature))
+
+    def test_sky_explorer_survey_viewport_refreshes_when_zoom_requires_higher_resolution(self) -> None:
+        from photometry_app.core.survey_images import SurveyImageResult, survey_definition_for_key
+
+        self.window._sky_explorer_active_survey_key = "dss2_blue"
+        self.window._sky_explorer_survey_result = SurveyImageResult(
+            survey=survey_definition_for_key("dss2_blue"),
+            image_data=np.ones((80, 80), dtype=np.float32),
+            target_rect=(10.0, 20.0, 80.0, 60.0),
+            loaded_from_cache=True,
+        )
+        self.window._sky_explorer_survey_result_context = (
+            self.window._sky_explorer_survey_request_generation,
+            str(Path("source.fit").resolve()),
+            "dss2_blue",
+            10.0,
+            20.0,
+            80.0,
+            60.0,
+            10,
+            20,
+            90,
+            80,
+            2,
+            40,
+            30,
+            10.0,
+            20.0,
+            80.0,
+            60.0,
+        )
+
+        signature = (
+            str(Path("source.fit").resolve()),
+            "dss2_blue",
+            20.0,
+            30.0,
+            40.0,
+            30.0,
+            20,
+            30,
+            60,
+            60,
+            1,
+            40,
+            30,
+            20.0,
+            30.0,
+            40.0,
+            30.0,
+        )
+
+        with patch.object(
+            self.window._sky_explorer_image_view,
+            "visible_image_rect",
+            return_value=QRectF(20.0, 30.0, 40.0, 30.0),
+        ):
+            self.assertTrue(self.window._sky_explorer_survey_viewport_needs_refresh(signature))
 
     def test_sky_explorer_panel_does_not_show_extra_progress_bar_row(self) -> None:
 
@@ -22890,6 +24101,82 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertTrue(all(label.count("\n") == 1 for label in mag_limit_labels))
 
 
+    def test_sky_explorer_mag_limit_overlays_use_dedicated_color_settings(self) -> None:
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_mag_limit_colors.fits"
+
+        image_path.touch()
+
+        self.window._current_sky_explorer_source_image = image_path
+
+        self.window._current_sky_explorer_result = SkyExplorerResult(
+
+            source_path=image_path,
+
+            solved_field=SolvedField(10.0, 20.0, 0.5, 16, 16, image_path),
+
+            used_astrometry_fallback=False,
+
+            footprint=SkyExplorerFieldFootprint(10.0, 20.0, 0.5, 1.0, 0.75, ()),
+
+            objects=(
+
+                SkyExplorerObject("gaia_stars", "Gaia DR3", "gaia-a", "Gaia A", "Star", 10.1, 20.1, 4.0, 4.0, 12.22, 8.0, "Gaia A", {}),
+
+            ),
+
+            layer_summaries=(SkyExplorerLayerSummary("gaia_stars", "Gaia Stars", 1, 1),),
+
+            warning_messages=(),
+
+            summary_text="Resolved a 0.500 deg field and prepared Gaia Stars: 1 for image overlay and table review.",
+
+        )
+
+        settings = self.window._ensure_settings()
+
+        settings.sky_explorer_mag_limit_marker_color = "#ff5500"
+
+        settings.sky_explorer_mag_limit_marker_stroke_color = "#112233"
+
+        settings.sky_explorer_mag_limit_marker_stroke_width = 3.5
+
+        settings.sky_explorer_mag_limit_target_size = 10.0
+
+        settings.sky_explorer_mag_limit_text_color = "#00aa55"
+
+        settings.sky_explorer_mag_limit_text_stroke_color = "#aabbcc"
+
+        settings.sky_explorer_mag_limit_text_stroke_width = 1.5
+
+        settings.sky_explorer_mag_limit_text_size = 12.0
+
+        self.window._sky_explorer_mag_limit_button.blockSignals(True)
+
+        self.window._sky_explorer_mag_limit_button.setChecked(True)
+
+        self.window._sky_explorer_mag_limit_button.blockSignals(False)
+
+
+        overlays = [overlay for overlay in self.window._current_sky_explorer_image_overlays() if overlay.source_id.startswith("mag-limit:")]
+
+        self.assertEqual(len(overlays), 1)
+
+        self.assertEqual(overlays[0].fill_color, "#ff5500")
+
+        self.assertEqual(overlays[0].color, "#112233")
+
+        self.assertEqual(overlays[0].pen_width, 3.5)
+
+        self.assertEqual(overlays[0].aperture_radius, 10.0)
+
+        self.assertEqual(overlays[0].text_color, "#00aa55")
+
+        self.assertEqual(overlays[0].text_outline_color, "#aabbcc")
+
+        self.assertEqual(overlays[0].text_outline_width, 1.5)
+
+
     def test_sky_explorer_mag_limit_button_starts_independent_gaia_query(self) -> None:
 
         image_path = Path(self._state_dir.name) / "sky_explorer_mag_limit_independent.fits"
@@ -22927,6 +24214,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(worker_class.call_args.kwargs["gaia_object_limit"], 0)
 
         self.assertFalse(worker_class.call_args.kwargs["include_dense_galaxy_catalog"])
+
+        self.assertTrue(worker_class.call_args.kwargs["ignore_gaia_hard_cap"])
 
         fake_worker.start.assert_called_once()
 
@@ -23030,7 +24319,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_gaia_query_signature()
+        self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_mag_limit_query_signature()
 
         self.window._sky_explorer_mag_limit_button.blockSignals(True)
 
@@ -23343,7 +24632,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_gaia_query_signature()
+        self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_mag_limit_query_signature()
 
         self.window._sky_explorer_mag_limit_button.blockSignals(True)
 
@@ -23408,7 +24697,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_gaia_query_signature()
+        self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_mag_limit_query_signature()
 
         self.window._sky_explorer_mag_limit_button.blockSignals(True)
 
@@ -25516,6 +26805,30 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertIn("Dec -08:18:", coordinate_text)
 
 
+    def test_sky_explorer_world_coordinates_use_source_image_wcs_without_explore_result(self) -> None:
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_context_source.xisf"
+
+        image_path.touch()
+
+        self.window._current_sky_explorer_source_image = image_path
+
+        fake_wcs = SimpleNamespace(
+            has_celestial=True,
+            pixel_to_world_values=lambda image_x, image_y: (75.6573166667, -8.3020694444),
+        )
+
+        with (
+            patch.object(self.window, "_sky_explorer_overlay_projection_wcs", return_value=None),
+            patch("photometry_app.ui.main_window.read_header", return_value={}),
+            patch("photometry_app.ui.main_window.celestial_wcs", return_value=fake_wcs),
+        ):
+
+            coordinates = self.window._sky_explorer_world_coordinates_for_image_point(125.0, 250.0)
+
+        self.assertEqual(coordinates, (75.6573166667, -8.3020694444))
+
+
     def test_sky_explorer_image_context_search_opens_simbad_coordinate_query(self) -> None:
 
         self.window._ensure_settings().sky_explorer_simbad_search_radius_arcsec = 24.5
@@ -25542,27 +26855,62 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
     def test_sky_explorer_image_context_menu_uses_search_action(self) -> None:
 
-        fake_action = QAction("Search", self.window)
+        search_action = QAction("Search", self.window)
+
+        detect_action = QAction("Detect", self.window)
 
         fake_menu = MagicMock()
 
-        fake_menu.addAction.return_value = fake_action
+        fake_menu.addAction.side_effect = [search_action, detect_action]
 
-        fake_menu.exec.return_value = fake_action
+        fake_menu.exec.return_value = search_action
 
         with patch.object(self.window, "_sky_explorer_world_coordinates_for_image_point", return_value=(75.0, -8.0)):
 
-            with patch("photometry_app.ui.main_window.QMenu", return_value=fake_menu):
+            with patch.object(self.window, "_sky_explorer_detected_objects_for_current_image", return_value=[]):
 
-                with patch.object(self.window, "_open_simbad_coordinate_search_for_sky_explorer_image_point") as open_search:
+                with patch.object(self.window, "_sky_explorer_detected_object_identities_for_current_image", return_value=set()):
 
-                    self.window._handle_sky_explorer_image_context_requested(125.0, 250.0, QPoint(30, 40), Qt.KeyboardModifier.NoModifier)
+                    with patch("photometry_app.ui.main_window.QMenu", return_value=fake_menu):
 
-        fake_menu.addAction.assert_called_once_with("Search")
+                        with patch.object(self.window, "_open_simbad_coordinate_search_for_sky_explorer_image_point") as open_search:
+
+                            self.window._handle_sky_explorer_image_context_requested(125.0, 250.0, QPoint(30, 40), Qt.KeyboardModifier.NoModifier)
+
+        fake_menu.addAction.assert_any_call("Search")
+
+        fake_menu.addAction.assert_any_call("Detect")
 
         fake_menu.exec.assert_called_once()
 
         open_search.assert_called_once_with(125.0, 250.0)
+
+
+    def test_sky_explorer_image_context_menu_detect_action_starts_detection(self) -> None:
+
+        search_action = QAction("Search", self.window)
+
+        detect_action = QAction("Detect", self.window)
+
+        fake_menu = MagicMock()
+
+        fake_menu.addAction.side_effect = [search_action, detect_action]
+
+        fake_menu.exec.return_value = detect_action
+
+        with patch.object(self.window, "_sky_explorer_world_coordinates_for_image_point", return_value=(75.0, -8.0)):
+
+            with patch.object(self.window, "_sky_explorer_detected_objects_for_current_image", return_value=[]):
+
+                with patch.object(self.window, "_sky_explorer_detected_object_identities_for_current_image", return_value=set()):
+
+                    with patch("photometry_app.ui.main_window.QMenu", return_value=fake_menu):
+
+                        with patch.object(self.window, "_detect_sky_explorer_targets_at_image_point") as start_detect:
+
+                            self.window._handle_sky_explorer_image_context_requested(125.0, 250.0, QPoint(30, 40), Qt.KeyboardModifier.NoModifier)
+
+        start_detect.assert_called_once_with(125.0, 250.0)
 
 
     def test_annotated_image_context_search_opens_simbad_coordinate_query(self) -> None:
@@ -25922,7 +27270,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertTrue(self.window._app_mode_astrostack_action.isChecked())
 
-            self.assertEqual(self.window.windowTitle(), "Citizen Astronomy - Astrostack")
+            self.assertEqual(self.window.windowTitle(), "Citizen Astronomy - Deep Stack")
 
             self.assertEqual(warnings, [])
 
@@ -26635,12 +27983,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             patch.object(self.window, "_load_settings_for_root"),
 
-            patch(
-                "photometry_app.ui.main_window.inspect_fits_file",
-                side_effect=lambda path, *_args, **_kwargs: metadata_by_path[path],
-            ),
-
             patch.object(self.window, "_refresh_astrostack_image_view") as refresh_view,
+
+            patch.object(self.window, "_refresh_astrostack_snr_curve_preview"),
 
         ):
 
@@ -26654,21 +27999,480 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(self.window._astrostack_frame_count_label.text(), "Frames: 2")
 
-        refresh_view.assert_called_once_with(reset_view=True)
+        refresh_view.assert_called_once_with(reset_view=True, ensure_default_plot=True)
 
 
 
-    def test_astrostack_roi_ui_is_rectangle_only(self) -> None:
+    def test_astrostack_overlay_control_panel_has_annotation_tools_and_layers(self) -> None:
 
-        self.assertEqual(self.window._astrostack_roi_mode_combo.count(), 1)
+        self.assertIsNotNone(getattr(self.window, "_astrostack_overlay_control_panel", None))
 
-        self.assertEqual(self.window._astrostack_roi_mode_combo.currentData(), "rectangle")
+        self.assertIsNotNone(getattr(self.window, "_astrostack_content_splitter", None))
+
+        self.assertIsNotNone(getattr(self.window, "_astrostack_layer_list", None))
+
+        self.assertIn("hand", self.window._astrostack_annotation_tool_buttons)
+
+        self.assertIn("mouse", self.window._astrostack_annotation_tool_buttons)
+
+        self.assertIn("circle", self.window._astrostack_annotation_tool_buttons)
+
+        self.assertIn("rectangle", self.window._astrostack_annotation_tool_buttons)
+
+        self.assertIn("plot", self.window._astrostack_annotation_tool_buttons)
+
+        self.assertIsNotNone(getattr(self.window, "_astrostack_plot_properties_group", None))
+
+        self.assertEqual(self.window._astrostack_content_splitter.widget(0), self.window._astrostack_overlay_control_panel)
+
+    def test_astrostack_plot_metric_series_uses_frame_and_snr_values(self) -> None:
+
+        self.window._astrostack_frame_paths = [Path("a.fits"), Path("b.fits"), Path("c.fits")]
+
+        self.window._astrostack_frame_exposure_seconds = (30.0, 45.0, 60.0)
+
+        self.window._astrostack_snr_frame_indices = (1, 2, 3)
+
+        self.window._astrostack_reference_snr = 4.0
+
+        self.window._astrostack_snr_values = (4.0, 5.656854, 6.928203)
+
+        frame_series = self.window._astrostack_plot_metric_series("frame_count")
+
+        integration_series = self.window._astrostack_plot_metric_series("integration_time")
+
+        snr_series = self.window._astrostack_plot_metric_series("snr")
+
+        self.assertEqual(frame_series, (1.0, 2.0, 3.0))
+
+        self.assertEqual(integration_series, (30.0, 75.0, 135.0))
+
+        self.assertEqual(snr_series, (4.0, 5.656854, 6.928203))
+
+    def test_astrostack_plot_metric_series_uses_fwhm_values(self) -> None:
+
+        self.window._astrostack_frame_paths = [Path("a.fits"), Path("b.fits"), Path("c.fits")]
+
+        self.window._astrostack_snr_frame_indices = (1, 2, 3)
+
+        self.window._astrostack_fwhm_values = (3.1, 2.9, 2.7)
+
+        fwhm_series = self.window._astrostack_plot_metric_series("fwhm")
+
+        self.assertEqual(fwhm_series, (3.1, 2.9, 2.7))
+
+    def test_astrostack_plot_metric_series_preview_uses_only_first_frame_measurement(self) -> None:
+
+        self.window._astrostack_frame_paths = [Path("a.fits"), Path("b.fits"), Path("c.fits")]
+
+        self.window._astrostack_snr_frame_indices = (1,)
+
+        self.window._astrostack_snr_values = (2.6,)
+
+        self.window._astrostack_fwhm_values = (2.6,)
+
+        self.assertEqual(self.window._astrostack_plot_metric_series("frame_count"), (1.0,))
+
+        self.assertEqual(self.window._astrostack_plot_metric_series("snr"), (2.6,))
+
+        self.assertEqual(self.window._astrostack_plot_metric_series("fwhm"), (2.6,))
+
+    def test_astrostack_plot_metric_series_uses_partial_measured_values_during_export(self) -> None:
+
+        self.window._astrostack_plot_metrics_preview_mode = False
+
+        self.window._astrostack_frame_paths = [Path("a.fits"), Path("b.fits"), Path("c.fits")]
+
+        self.window._astrostack_snr_frame_indices = (1, 2)
+
+        self.window._astrostack_snr_values = (1.5, 2.0)
+
+        self.window._astrostack_fwhm_values = (3.2, 2.8)
+
+        self.assertEqual(self.window._astrostack_plot_metric_series("frame_count"), (1.0, 2.0))
+
+        self.assertEqual(self.window._astrostack_plot_metric_series("snr"), (1.5, 2.0))
+
+        self.assertEqual(self.window._astrostack_plot_metric_series("fwhm"), (3.2, 2.8))
+
+    def test_astrostack_plot_metric_series_starts_empty_during_export(self) -> None:
+
+        self.window._astrostack_plot_metrics_preview_mode = False
+
+        self.window._astrostack_frame_paths = [Path("a.fits"), Path("b.fits")]
+
+        self.assertEqual(self.window._astrostack_plot_metric_series("frame_count"), ())
+
+        self.assertEqual(self.window._astrostack_plot_metric_series("snr"), ())
+
+    def test_ensure_default_astrostack_plot_layer_adds_preset_once(self) -> None:
+
+        self.window._astrostack_overlay_layers = []
+
+        self.window._ensure_default_astrostack_plot_layer(800, 600)
+
+        self.assertEqual(len(self.window._astrostack_overlay_layers), 1)
+
+        plot_layer = self.window._astrostack_overlay_layers[0]
+
+        self.assertEqual(plot_layer.shape, "plot")
+
+        self.assertEqual(plot_layer.label, "Stack SNR")
+
+        self.assertTrue(plot_layer.plot_include_stack_status)
+
+        self.assertEqual(plot_layer.plot_x_metric, "frame_count")
+
+        self.assertEqual(plot_layer.plot_y_metric, "snr")
+
+        bounds = AnnotatedImageView.default_chart_overlay_rect(800, 600, title="Stack SNR")
+
+        self.assertAlmostEqual(plot_layer.x2 - plot_layer.x, bounds.width(), places=3)
+
+        self.assertAlmostEqual(plot_layer.y2 - plot_layer.y, bounds.height(), places=3)
+
+        self.assertAlmostEqual(plot_layer.x, bounds.left(), places=3)
+
+        self.assertAlmostEqual(plot_layer.y, bounds.top(), places=3)
+
+        self.window._ensure_default_astrostack_plot_layer(800, 600)
+
+        self.assertEqual(len(self.window._astrostack_overlay_layers), 1)
+
+    def test_refresh_astrostack_image_view_does_not_recreate_removed_plot(self) -> None:
+
+        self.window._astrostack_overlay_layers = []
+
+        with patch.object(self.window, "_astrostack_preview_display") as preview_display, patch.object(
+            self.window,
+            "_astrostack_layer_overlays",
+            return_value=[],
+        ), patch.object(self.window._astrostack_image_view, "set_content") as set_content:
+
+            preview_display.return_value = SimpleNamespace(normalized_data=np.zeros((600, 800), dtype=np.float32))
+
+            self.window._refresh_astrostack_image_view(reset_view=False, ensure_default_plot=False)
+
+        self.assertEqual(len(self.window._astrostack_overlay_layers), 0)
+
+        set_content.assert_called_once()
+
+    def test_astrostack_plot_layer_overlay_includes_line_chart(self) -> None:
+
+        self.window._astrostack_frame_paths = [Path("a.fits"), Path("b.fits")]
+
+        self.window._astrostack_snr_frame_indices = (1, 2)
+
+        self.window._astrostack_snr_values = (2.0, 2.828427)
+
+        plot_layer = _AstrostackOverlayLayer(
+            layer_id="plot-1",
+            shape="plot",
+            label="Quality",
+            x=10.0,
+            y=20.0,
+            x2=210.0,
+            y2=170.0,
+            plot_include_stack_status=True,
+        )
+
+        overlay = self.window._astrostack_layer_to_overlay(plot_layer)
+
+        self.assertEqual(overlay.marker_style, "plot")
+
+        self.assertEqual(overlay.plot_title, "Quality")
+
+        self.assertIsNotNone(overlay.chart_overlay_panel)
+
+        assert overlay.chart_overlay_panel is not None
+
+        self.assertEqual(overlay.chart_overlay_panel.line_chart.x_label, "Stacked frames")
+
+        self.assertEqual(overlay.chart_overlay_panel.line_chart.y_label, "SNR")
+
+        self.assertEqual(len(overlay.chart_overlay_panel.line_chart.x_values), 2)
+
+        self.assertIsNotNone(overlay.plot_style)
+
+        assert overlay.plot_style is not None
+
+        self.assertEqual(overlay.plot_style.curve_color, "#3d8bfd")
+
+        self.assertEqual(overlay.plot_style.title_text_color, "#f2f2f2")
+
+    def test_astrostack_overlay_layers_support_reorder_and_removal(self) -> None:
+
+        first_layer = _AstrostackOverlayLayer(layer_id="layer-1", shape="text", label="Alpha", x=10.0, y=20.0)
+
+        second_layer = _AstrostackOverlayLayer(layer_id="layer-2", shape="circle", label="", x=30.0, y=40.0, radius=12.0)
+
+        self.window._astrostack_overlay_layers = [first_layer, second_layer]
+
+        self.window._select_astrostack_layer("layer-1", refresh=False)
+
+        self.window._move_astrostack_layer_up()
+
+        self.assertEqual(self.window._astrostack_overlay_layers[0].layer_id, "layer-2")
+
+        self.assertEqual(self.window._astrostack_overlay_layers[1].layer_id, "layer-1")
+
+        self.window._remove_selected_astrostack_layer()
+
+        self.assertEqual(len(self.window._astrostack_overlay_layers), 1)
+
+        self.assertEqual(self.window._astrostack_overlay_layers[0].layer_id, "layer-2")
+
+    def test_astrostack_layer_preset_save_and_load_round_trip(self) -> None:
+
+        preset_path = Path(self._config_dir.name) / "layers.astrostack.json"
+
+        first_layer = _AstrostackOverlayLayer(layer_id="layer-1", shape="text", label="Alpha", x=10.0, y=20.0)
+
+        second_layer = _AstrostackOverlayLayer(layer_id="layer-2", shape="plot", label="SNR", x=30.0, y=40.0)
+
+        self.window._astrostack_overlay_layers = [first_layer, second_layer]
+
+        self.window._astrostack_roi_selections = [_HrRoiSelection("rectangle", 5.0, 5.0, 95.0, 95.0)]
+
+        with (
+
+            patch.object(self.window, "_astrostack_reference_image_dimensions", return_value=(100, 100)),
+
+            patch("photometry_app.ui.main_window.QFileDialog.getSaveFileName", return_value=(str(preset_path), ASTROSTACK_PRESET_FILE_FILTER)),
+
+            patch("photometry_app.ui.main_window.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes),
+
+            patch("photometry_app.ui.main_window.QFileDialog.getOpenFileName", return_value=(str(preset_path), ASTROSTACK_PRESET_FILE_FILTER)),
+
+        ):
+
+            self.window._save_astrostack_layer_preset()
+
+            self.window._astrostack_overlay_layers = []
+
+            self.window._astrostack_roi_selections = []
+
+            self.window._load_astrostack_layer_preset()
+
+        self.assertEqual(len(self.window._astrostack_overlay_layers), 2)
+
+        self.assertEqual(self.window._astrostack_overlay_layers[0].label, "Alpha")
+
+        self.assertEqual(self.window._astrostack_overlay_layers[1].shape, "plot")
+
+        self.assertNotEqual(self.window._astrostack_overlay_layers[0].layer_id, "layer-1")
+
+        self.assertEqual(len(self.window._astrostack_roi_selections), 1)
+
+        self.assertAlmostEqual(self.window._astrostack_roi_selections[0].x0, 5.0)
+
+    def test_astrostack_toolbar_uses_crop_and_display_menu(self) -> None:
+
+        self.assertEqual(self.window._astrostack_crop_button.text(), "Crop")
+
+        self.assertEqual(self.window._astrostack_display_section_label.text(), "Display")
 
         self.assertEqual(self.window._current_astrostack_roi_mode(), "rectangle")
 
+        display_menu = self.window._astrostack_display_section_label.menu()
+
+        self.assertIsNotNone(display_menu)
+
+        assert display_menu is not None
+
+        display_action = cast(QWidgetAction, display_menu.actions()[0])
+
+        self.assertIs(display_action.defaultWidget(), self.window._astrostack_display_controls_group)
+
+        display_controls_layout_obj = self.window._astrostack_display_controls_group.layout()
+
+        self.assertIsNotNone(display_controls_layout_obj)
+
+        display_controls_layout = cast(QHBoxLayout, display_controls_layout_obj)
+
+        self.assertGreaterEqual(display_controls_layout.indexOf(self.window._astrostack_image_stretch_combo), 0)
+
+        self.assertGreater(
+
+            display_controls_layout.indexOf(self.window._astrostack_adjust_levels_button),
+
+            display_controls_layout.indexOf(self.window._astrostack_image_stretch_combo),
+
+        )
+
+        self.assertGreater(
+
+            display_controls_layout.indexOf(self.window._astrostack_image_invert_checkbox),
+
+            display_controls_layout.indexOf(self.window._astrostack_adjust_levels_button),
+
+        )
+
+        self.assertGreater(
+
+            display_controls_layout.indexOf(self.window._astrostack_image_reset_view_button),
+
+            display_controls_layout.indexOf(self.window._astrostack_image_invert_checkbox),
+
+        )
+
+        self.assertGreater(
+
+            display_controls_layout.indexOf(self.window._astrostack_image_reset_display_button),
+
+            display_controls_layout.indexOf(self.window._astrostack_image_reset_view_button),
+
+        )
 
 
-    def test_refresh_astrostack_image_view_enables_gesture_roi(self) -> None:
+
+    def test_astrostack_crop_button_toggles_selection_and_reset(self) -> None:
+
+        source_path = Path(self._config_dir.name) / "astrostack_crop.fit"
+
+        source_path.write_bytes(b"source")
+
+        self.window._current_astrostack_source_image = source_path
+
+        self.window._sync_astrostack_controls()
+
+        self.assertFalse(self.window._astrostack_crop_mode_active)
+
+        self.window._handle_astrostack_crop_button_clicked()
+
+        self.assertTrue(self.window._astrostack_crop_mode_active)
+
+        self.assertEqual(self.window._astrostack_crop_button.text(), "Crop")
+
+        self.window._astrostack_roi_selections = [_HrRoiSelection("rectangle", 2.0, 1.0, 7.0, 6.0)]
+
+        self.window._sync_astrostack_crop_button()
+
+        self.assertEqual(self.window._astrostack_crop_button.text(), "Reset")
+
+        self.assertFalse(self.window._astrostack_crop_mode_active)
+
+        self.window._handle_astrostack_crop_button_clicked()
+
+        self.assertEqual(self.window._astrostack_crop_button.text(), "Crop")
+
+        self.assertFalse(self.window._astrostack_roi_selections)
+
+    def test_astrostack_snr_panel_toggle_updates_button_and_refresh(self) -> None:
+
+        source_path = Path(self._config_dir.name) / "astrostack_snr.fit"
+
+        source_path.write_bytes(b"source")
+
+        self.window._current_astrostack_source_image = source_path
+
+        self.window._astrostack_frame_paths = [source_path]
+
+        self.window._astrostack_snr_frame_indices = (1, 2)
+
+        self.window._astrostack_snr_values = (1.0, 1.4)
+
+        self.window._astrostack_snr_panel_visible = True
+
+        self.window._update_astrostack_snr_panel_toggle_button()
+
+        self.assertEqual(self.window._astrostack_snr_panel_toggle_button.text(), "Hide Info")
+
+        with patch.object(self.window, "_refresh_astrostack_image_view") as refresh_view:
+
+            self.window._toggle_astrostack_snr_panel()
+
+        self.assertFalse(self.window._astrostack_snr_panel_visible)
+
+        self.assertEqual(self.window._astrostack_snr_panel_toggle_button.text(), "Show Info")
+
+        refresh_view.assert_called_once_with(reset_view=False)
+
+    def test_astrostack_snr_chart_overlay_includes_plot_and_status(self) -> None:
+
+        self.window._astrostack_frame_paths = [Path("a.fit"), Path("b.fit"), Path("c.fit")]
+
+        self.window._astrostack_frame_exposure_seconds = (120.0, 180.0, 60.0)
+
+        self.window._astrostack_snr_frame_indices = (1, 2, 3)
+
+        self.window._astrostack_snr_values = (2.0, 3.0, 4.0)
+
+        self.window._astrostack_snr_highlight_index = 1
+
+        overlay = self.window._current_astrostack_snr_chart_overlay()
+
+        self.assertEqual(overlay.title, "Stack SNR")
+
+        self.assertEqual(overlay.frame_text, "2/3")
+
+        self.assertEqual(overlay.integration_text, "00h05m")
+
+        self.assertEqual(overlay.line_chart.x_values, (1.0, 2.0, 3.0))
+
+        self.assertEqual(overlay.line_chart.highlight_index, 1)
+
+    def test_format_astrostack_integration_time_uses_hhmm(self) -> None:
+
+        self.assertEqual(self.window._format_astrostack_integration_time(0.0), "--")
+
+        self.assertEqual(self.window._format_astrostack_integration_time(5 * 3600 + 34 * 60), "05h34m")
+
+    def test_estimate_astrostack_image_snr_uses_background_noise(self) -> None:
+
+        background = np.full((8, 8), 10.0, dtype=np.float32)
+
+        background[3, 3] = 30.0
+
+        snr = self.window._estimate_astrostack_image_snr(background)
+
+        self.assertGreater(snr, 1.0)
+
+    def test_astrostack_crop_mode_shows_tip_and_crosshair(self) -> None:
+
+        source_path = Path(self._config_dir.name) / "astrostack_crop_cursor.fit"
+
+        source_path.write_bytes(b"source")
+
+        self.window._current_astrostack_source_image = source_path
+
+        self.window._sync_astrostack_controls()
+
+        self.assertEqual(self.window._astrostack_crop_tip_label.text(), "")
+
+        self.window._handle_astrostack_crop_button_clicked()
+
+        self.assertTrue(self.window._astrostack_crop_mode_active)
+
+        self.assertEqual(
+
+            self.window._astrostack_crop_tip_label.text(),
+
+            "Drag on the image to select a crop region. Click Crop again to cancel.",
+
+        )
+
+        self.assertEqual(self.window._astrostack_image_view.cursor().shape(), Qt.CursorShape.CrossCursor)
+
+        self.window._handle_astrostack_crop_button_clicked()
+
+        self.assertEqual(self.window._astrostack_crop_tip_label.text(), "")
+
+        self.assertEqual(self.window._astrostack_image_view.cursor().shape(), Qt.CursorShape.ArrowCursor)
+
+        crop_tip_metrics = self.window._astrostack_crop_tip_label.fontMetrics()
+
+        crop_tip_line_height = crop_tip_metrics.height()
+
+        self.assertEqual(
+
+            self.window._astrostack_crop_tip_label.height(),
+
+            max(crop_tip_line_height, (crop_tip_line_height + 16) // 2),
+
+        )
+
+    def test_refresh_astrostack_image_view_enables_gesture_roi_when_crop_mode_active(self) -> None:
 
         source_path = Path(self._config_dir.name) / "astrostack.fit"
 
@@ -26698,7 +28502,35 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
+        self.assertFalse(set_content.call_args.kwargs["gesture_roi_enabled"])
+
+        self.assertFalse(set_content.call_args.kwargs["gesture_roi_shift_required"])
+
+
+
+        self.window._astrostack_crop_mode_active = True
+
+
+
+        with (
+
+            patch.object(self.window, "_cached_annotated_image_display", return_value=display),
+
+            patch.object(self.window._astrostack_image_view, "set_content") as set_content,
+
+            patch.object(self.window._astrostack_image_view, "set_gesture_roi_mode") as set_gesture_roi_mode,
+
+        ):
+
+            self.window._refresh_astrostack_image_view(reset_view=False)
+
+
+
         self.assertTrue(set_content.call_args.kwargs["gesture_roi_enabled"])
+
+        self.assertFalse(set_content.call_args.kwargs["gesture_roi_shift_required"])
+
+        set_gesture_roi_mode.assert_called_once_with(enabled=True, shift_required=False)
 
 
 
@@ -26900,17 +28732,33 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_asteroid_selection_actions_group_object_specific_tools_together(self) -> None:
+    def test_asteroid_workflow_groups_open_align_separately_from_functional_actions(self) -> None:
 
-        layout = self.window._asteroid_selection_actions_layout
+        layout = self.window._asteroid_header_layout
+
+        functional_layout = self.window._asteroid_functional_actions_layout
 
 
 
-        self.assertLess(layout.indexOf(self.window._asteroid_trajectory_button), layout.indexOf(self.window._asteroid_3d_button))
+        self.assertLess(layout.indexOf(self.window._asteroid_detect_button), layout.indexOf(self.window._asteroid_align_button))
 
-        self.assertLess(layout.indexOf(self.window._asteroid_3d_button), layout.indexOf(self.window._asteroid_plan_button))
+        self.assertLess(layout.indexOf(self.window._asteroid_align_button), layout.indexOf(self.window._asteroid_workflow_separator))
 
-        self.assertLess(layout.indexOf(self.window._asteroid_plan_button), layout.indexOf(self.window._asteroid_synthetic_track_button))
+        self.assertLess(layout.indexOf(self.window._asteroid_workflow_separator), layout.indexOf(self.window._asteroid_functional_actions_group))
+
+        self.assertLess(functional_layout.indexOf(self.window._asteroid_discover_button), functional_layout.indexOf(self.window._asteroid_3d_button))
+
+        self.assertLess(functional_layout.indexOf(self.window._asteroid_3d_button), functional_layout.indexOf(self.window._asteroid_synthetic_track_button))
+
+        self.assertLess(functional_layout.indexOf(self.window._asteroid_synthetic_track_button), functional_layout.indexOf(self.window._asteroid_trajectory_button))
+
+        self.assertEqual(self.window._asteroid_trajectory_button.text(), "Plots")
+
+        self.assertEqual(self.window._asteroid_3d_button.text(), "Trajectory View")
+
+        self.assertIn("border: 1px solid", self.window._asteroid_functional_actions_group.styleSheet())
+
+        self.assertNotIn("border: 1px solid", self.window._asteroid_discover_button.styleSheet())
 
         self.assertEqual(layout.indexOf(self.window._asteroid_center_object_button), -1)
 
@@ -27056,7 +28904,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         results_layout = cast(QVBoxLayout, results_layout_obj)
 
-        self.assertIs(results_layout.itemAt(0).layout(), self.window._asteroid_selection_actions_layout)
+        self.assertIs(results_layout.itemAt(0).widget(), self.window._asteroid_results_splitter)
 
         image_layout_obj = self.window._asteroid_image_group.layout()
 
@@ -33752,11 +35600,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertLess(workflow_layout.indexOf(self.window._asteroid_detect_button), workflow_layout.indexOf(self.window._asteroid_align_button))
 
-        self.assertLess(workflow_layout.indexOf(self.window._asteroid_align_button), workflow_layout.indexOf(self.window._asteroid_discover_button))
+        self.assertLess(workflow_layout.indexOf(self.window._asteroid_align_button), workflow_layout.indexOf(self.window._asteroid_workflow_separator))
 
-        self.assertLess(workflow_layout.indexOf(self.window._asteroid_discover_button), workflow_layout.indexOf(self.window._asteroid_discovery_test_button))
+        self.assertLess(workflow_layout.indexOf(self.window._asteroid_workflow_separator), workflow_layout.indexOf(self.window._asteroid_functional_actions_group))
 
-        self.assertLess(workflow_layout.indexOf(self.window._asteroid_discovery_test_button), workflow_layout.indexOf(self.window._asteroid_group_selector))
+        self.assertLess(workflow_layout.indexOf(self.window._asteroid_functional_actions_group), workflow_layout.indexOf(self.window._asteroid_group_selector))
 
         self.assertLess(workflow_layout.indexOf(self.window._asteroid_group_selector), workflow_layout.indexOf(self.window._asteroid_frame_selector))
 
@@ -33981,10 +35829,6 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIn("Run Generate first", self.window._asteroid_discover_button.toolTip())
 
-        self.assertFalse(self.window._asteroid_discovery_test_button.isEnabled())
-
-        self.assertIn("Run Generate first", self.window._asteroid_discovery_test_button.toolTip())
-
 
 
         self.window._current_asteroid_detection_result = SolarSystemDetectionResult(
@@ -34031,10 +35875,6 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIn("Switch from All", self.window._asteroid_discover_button.toolTip())
 
-        self.assertFalse(self.window._asteroid_discovery_test_button.isEnabled())
-
-        self.assertIn("Switch from All", self.window._asteroid_discovery_test_button.toolTip())
-
 
 
         subgroup_key = self.window._asteroid_sequence_group_key("L", 120.0)
@@ -34057,9 +35897,37 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIn("reference grid", self.window._asteroid_discover_button.toolTip())
 
-        self.assertTrue(self.window._asteroid_discovery_test_button.isEnabled())
 
-        self.assertIn("residual-search debug export", self.window._asteroid_discovery_test_button.toolTip())
+
+    def test_asteroid_left_panel_restore_handle_appears_when_collapsed(self) -> None:
+
+        self.window._asteroid_main_splitter.setSizes([0, 1200])
+
+        self.window._sync_asteroid_left_panel_restore_handle()
+
+        self.assertTrue(self.window._asteroid_left_panel_restore_handle.isVisible())
+
+        self.window._restore_asteroid_left_panel()
+
+        self.assertFalse(self.window._asteroid_left_panel_restore_handle.isVisible())
+
+        self.assertGreater(self.window._asteroid_main_splitter.sizes()[0], 0)
+
+
+
+    def test_asteroid_results_panel_restore_handle_appears_when_collapsed(self) -> None:
+
+        self.window._asteroid_results_splitter.setSizes([600, 0])
+
+        self.window._sync_asteroid_results_panel_restore_handle()
+
+        self.assertTrue(self.window._asteroid_results_panel_restore_handle.isVisible())
+
+        self.window._restore_asteroid_results_panel()
+
+        self.assertFalse(self.window._asteroid_results_panel_restore_handle.isVisible())
+
+        self.assertGreater(self.window._asteroid_results_splitter.sizes()[1], 0)
 
 
 
@@ -39492,8 +41360,6 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             summary_text="Aligned 2 frame(s)",
         )
 
-        captured_frame = QImage(24, 16, QImage.Format.Format_ARGB32)
-
         self.window._astrostack_frame_paths = [first_path, second_path]
 
         self.window._current_astrostack_root_path = folder_path
@@ -39532,11 +41398,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                 ],
             ),
 
-            patch("photometry_app.ui.main_window.AnnotatedImageView.capture_view_image", return_value=captured_frame),
+            patch("photometry_app.ui.main_window.AnnotatedImageView.composite_astrostack_export_frame", side_effect=lambda _self, image, **_kwargs: image) as composite_frame,
 
-            patch("photometry_app.ui.main_window.export_qimages_to_gif") as export_gif,
+            patch("photometry_app.ui.main_window.StreamingGifWriter", FakeStreamingGifWriter),
 
         ):
+
+            self.window._astrostack_snr_panel_visible = True
 
             self.window._export_astrostack_animation()
 
@@ -39548,25 +41416,69 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(align_sequence.call_args.kwargs["reference_path"], first_path)
 
-        self.assertEqual(align_sequence.call_args.kwargs["max_parallel_workers"], self.window._settings.astrostack_parallel_workers)
+        self.assertEqual(align_sequence.call_args.kwargs["max_parallel_workers"], self.window._settings.shared_parallel_workers)
 
-        self.assertEqual(align_sequence.call_args.kwargs["worker_limit_override"], self.window._settings.astrostack_parallel_workers)
+        self.assertEqual(align_sequence.call_args.kwargs["worker_limit_override"], self.window._settings.shared_parallel_workers)
 
         warning_message.assert_not_called()
 
-        export_gif.assert_called_once()
+        gif_writer = FakeStreamingGifWriter.last_instance
 
-        exported_frames = export_gif.call_args.args[0]
+        self.assertIsNotNone(gif_writer)
 
-        self.assertEqual(len(exported_frames), 2)
+        assert gif_writer is not None
 
-        self.assertEqual(export_gif.call_args.args[1], output_path)
+        self.assertEqual(gif_writer.frame_count, 2)
 
-        self.assertEqual(export_gif.call_args.kwargs["frame_duration_ms"], 125)
+        self.assertEqual(gif_writer.output_path, output_path)
 
-        self.assertIsNone(export_gif.call_args.kwargs["loop_count"])
+        self.assertEqual(gif_writer.kwargs["frame_duration_ms"], 125)
 
-        self.assertEqual(export_gif.call_args.kwargs["scale_percent"], 80)
+        self.assertIsNone(gif_writer.kwargs["loop_count"])
+
+        self.assertEqual(gif_writer.kwargs["scale_percent"], 80)
+
+        self.assertEqual(composite_frame.call_count, 2)
+
+
+
+    def test_astrostack_stack_dialog_defaults_fast_mode_on(self) -> None:
+
+        dialog = AstrostackGifExportDialog(frame_count=200, parent=self.window)
+
+        self.assertTrue(dialog._fast_mode_input.isChecked())
+
+        options = dialog.selected_options()
+
+        self.assertTrue(options.fast_mode)
+
+        self.assertEqual(options.export_format, "gif")
+
+        self.assertEqual(options.scale_percent, 100)
+
+        dialog._fast_mode_input.setChecked(False)
+
+        options = dialog.selected_options()
+
+        self.assertFalse(options.fast_mode)
+
+    def test_astrostack_stack_dialog_supports_mp4_and_output_size(self) -> None:
+
+        dialog = AstrostackGifExportDialog(frame_count=10, parent=self.window)
+
+        mp4_index = dialog._format_input.findData("mp4")
+
+        dialog._format_input.setCurrentIndex(mp4_index)
+
+        dialog._scale_input.setValue(50)
+
+        options = dialog.selected_options()
+
+        self.assertEqual(options.export_format, "mp4")
+
+        self.assertEqual(options.scale_percent, 50)
+
+        self.assertFalse(dialog._playback_widget.isVisible())
 
 
 
@@ -39618,7 +41530,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                 ],
             ),
 
-            patch("photometry_app.ui.main_window.export_qimages_to_gif") as export_gif,
+            patch("photometry_app.ui.main_window.StreamingGifWriter", FakeStreamingGifWriter),
 
         ):
 
@@ -39630,11 +41542,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         warning_message.assert_not_called()
 
-        export_gif.assert_called_once()
+        gif_writer = FakeStreamingGifWriter.last_instance
 
-        exported_frames = export_gif.call_args.args[0]
+        self.assertIsNotNone(gif_writer)
 
-        self.assertEqual(len(exported_frames), 2)
+        assert gif_writer is not None
+
+        self.assertEqual(gif_writer.frame_count, 2)
 
 
 
@@ -47422,39 +49336,35 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-            self.assertEqual(dialog._settings_tabs.count(), 8)
+            self.assertEqual(dialog._settings_tabs.count(), 6)
 
             self.assertEqual(dialog._settings_tabs.tabText(0), "General")
 
-            self.assertEqual(dialog._settings_tabs.tabText(1), "Science Export")
+            self.assertEqual(dialog._settings_tabs.tabText(1), "Differential Photometry")
 
             self.assertEqual(dialog._settings_tabs.tabText(2), "HR Diagram")
 
             self.assertEqual(dialog._settings_tabs.tabText(3), "Asteroid/Comet")
 
-            self.assertEqual(dialog._settings_tabs.tabText(4), "Astrostack")
+            self.assertEqual(dialog._settings_tabs.tabText(4), "Sky Explorer")
 
             self.assertEqual(dialog._settings_tabs.tabText(5), "Setup")
 
-            self.assertEqual(dialog._settings_tabs.tabText(6), "Sky Explorer")
-
-            self.assertEqual(dialog._settings_tabs.tabText(7), "Advanced")
-
             self.assertIs(dialog._settings_tabs.widget(0), dialog._general_settings_tab)
 
-            self.assertIs(dialog._settings_tabs.widget(1), dialog._science_export_tab)
+            self.assertIs(dialog._settings_tabs.widget(1), dialog._differential_photometry_tab)
 
             self.assertIs(dialog._settings_tabs.widget(2), dialog._hr_settings_tab)
 
             self.assertIs(dialog._settings_tabs.widget(3), dialog._asteroid_settings_tab)
 
-            self.assertIs(dialog._settings_tabs.widget(4), dialog._astrostack_settings_tab)
+            self.assertIs(dialog._settings_tabs.widget(4), dialog._sky_explorer_settings_tab)
 
             self.assertIs(dialog._settings_tabs.widget(5), dialog._setup_settings_tab)
 
-            self.assertIs(dialog._settings_tabs.widget(6), dialog._sky_explorer_settings_tab)
+            self.assertIs(dialog._advanced_settings_group.parent(), dialog._general_settings_tab)
 
-            self.assertIs(dialog._settings_tabs.widget(7), dialog._advanced_settings_tab)
+            self.assertIs(dialog._science_export_group.parent(), dialog._differential_photometry_tab)
 
 
 
@@ -47462,7 +49372,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_settings_dialog_builds_astrostack_worker_override(self) -> None:
+    def test_astrostack_alignment_uses_shared_parallel_workers(self) -> None:
+
+        from photometry_app.core.settings import resolve_astrostack_parallel_workers, resolve_shared_parallel_workers
 
         with tempfile.TemporaryDirectory() as temp_dir:
 
@@ -47474,19 +49386,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             settings.astrostack_parallel_workers = 6
 
-            dialog = SettingsDialog(root_path, settings, parent=self.window)
 
 
+            self.assertEqual(resolve_shared_parallel_workers(settings), 4)
 
-            self.assertEqual(dialog._astrostack_parallel_workers_input.value(), 6)
-
-            built = dialog.build_settings()
-
-            self.assertEqual(built.astrostack_parallel_workers, 6)
-
-
-
-            dialog.close()
+            self.assertEqual(resolve_astrostack_parallel_workers(settings), 4)
 
     def test_asteroid_discovery_dialog_quick_label_saves_and_advances_selection(self) -> None:
 
@@ -53280,7 +55184,7 @@ class SkyViewMilkyWayTextureTest(unittest.TestCase):
 
     def test_milky_way_render_mode_normalizes_user_choices(self) -> None:
 
-        self.assertEqual(_SkyAtlasViewWidget._normalize_milky_way_render_mode(None), "advanced")
+        self.assertEqual(_SkyAtlasViewWidget._normalize_milky_way_render_mode(None), "full")
         self.assertEqual(_SkyAtlasViewWidget._normalize_milky_way_render_mode("Basic Milky Way"), "basic")
         self.assertEqual(_SkyAtlasViewWidget._normalize_milky_way_render_mode("single-texture"), "basic")
         self.assertEqual(_SkyAtlasViewWidget._normalize_milky_way_render_mode("Fully Milky Way"), "full")
@@ -54785,11 +56689,15 @@ class SkyViewMilkyWayTextureTest(unittest.TestCase):
                     self.assertTrue(hasattr(window, "_sky_view_milky_way_saturation_slider"))
                     self.assertTrue(hasattr(window, "_sky_view_milky_way_black_point_slider"))
                     self.assertTrue(hasattr(window, "_sky_view_milky_way_gamma_slider"))
-                    self.assertEqual(window._sky_view_milky_way_opacity_slider.value(), 48)
-                    self.assertEqual(window._sky_view_milky_way_brightness_slider.value(), 118)
-                    self.assertEqual(window._sky_view_milky_way_contrast_slider.value(), 134)
-                    self.assertEqual(window._sky_view_milky_way_saturation_slider.value(), 155)
-                    self.assertAlmostEqual(window._sky_view_canvas.milky_way_opacity(), 0.48)
+                    self.assertEqual(window._sky_view_milky_way_opacity_slider.value(), 65)
+                    self.assertEqual(window._sky_view_milky_way_brightness_slider.value(), 130)
+                    self.assertEqual(window._sky_view_milky_way_contrast_slider.value(), 135)
+                    self.assertEqual(window._sky_view_milky_way_saturation_slider.value(), 200)
+                    self.assertAlmostEqual(window._sky_view_canvas.milky_way_opacity(), 0.65)
+                    self.assertEqual(
+                        window._sky_view_milky_way_render_mode_combo.currentData(),
+                        "full",
+                    )
 
                 finally:
 

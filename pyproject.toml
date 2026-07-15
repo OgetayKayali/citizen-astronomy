@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "citizen-photometry"
+version = "0.1.1a1"
+description = "Desktop tool for citizen-science photometry from FITS image series."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "astropy>=6.1",
+    "astroquery>=0.4.10",
+    "imageio>=2.37",
+    "imageio-ffmpeg>=0.6",
+    "matplotlib>=3.10",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "Pillow>=10.4",
+    "photutils>=2.1",
+    "PyOpenGL>=3.1.7",
+    "PyOpenGL-accelerate>=3.1.7",
+    "pyqtgraph>=0.13",
+    "PySide6>=6.8",
+    "reproject>=0.14",
+    "requests>=2.32",
+    "scikit-learn>=1.8",
+    "xisf>=0.9.6",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "cupy-cuda11x>=13.3",
+]
+
+[project.scripts]
+citizen-photometry = "photometry_app.main:main"
+
+[tool.setuptools.packages.find]
+include = ["photometry_app*"]
+
+[tool.setuptools.package-data]
+photometry_app = ["data/*.json"]

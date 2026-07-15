@@ -1,0 +1,15 @@
+﻿BACKEND: backend=legacy reason=draw exception: 'PySide6.QtOpenGL.QOpenGLFunctions_2_0' object has no attribute 'GL_BLEND'
+BACKEND: backend=legacy reason=previously disabled for session
+phase3_perf_benchmark frames= 60
+BACKEND: backend=legacy reason=previously disabled for session
+BACKEND: backend=legacy reason=previously disabled for session
+drag: avg=0.00ms p95=0.00ms fps~=1000000000.0 n=60 stars=0 backend=legacy upload_bytes=0
+  star_renderer_log=backend=legacy reason=previously disabled for session
+BACKEND: backend=legacy reason=previously disabled for session
+BACKEND: backend=legacy reason=previously disabled for session
+zoom: avg=0.00ms p95=0.00ms fps~=1000000000.0 n=60 stars=0 backend=legacy upload_bytes=0
+  star_renderer_log=backend=legacy reason=previously disabled for session
+BACKEND: backend=legacy reason=previously disabled for session
+BACKEND: backend=legacy reason=previously disabled for session
+stable_twinkle: avg=0.00ms p95=0.00ms fps~=1000000000.0 n=60 stars=0 backend=legacy upload_bytes=0
+  star_renderer_log=backend=legacy reason=previously disabled for session

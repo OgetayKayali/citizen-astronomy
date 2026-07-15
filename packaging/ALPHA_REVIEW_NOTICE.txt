@@ -1,0 +1,11 @@
+PRIVATE ALPHA REVIEW — DO NOT DISTRIBUTE
+=========================================
+
+This build of Citizen Astronomy (CAst) is provided only to invited alpha
+reviewers for evaluation and feedback.
+
+You may not redistribute, publish, upload, mirror, or otherwise share this
+installer, the installed application folder, or screenshots/video intended for
+public release without explicit written permission from the developer.
+
+Alpha-reviewer build only. Do not distribute.

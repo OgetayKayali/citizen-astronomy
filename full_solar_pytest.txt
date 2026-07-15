@@ -1,0 +1,24 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Kay\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Kay\Desktop\Projects\Photometry
+configfile: pyproject.toml
+collecting ... collected 15 items
+
+tests/test_solar_system.py::SolarSystemTest::test_altitude_deg_returns_none_when_iers_lookup_fails PASSED [  6%]
+tests/test_solar_system.py::SolarSystemTest::test_detect_known_objects_projects_predictions_into_image_space PASSED [ 13%]
+tests/test_solar_system.py::SolarSystemTest::test_estimate_visible_magnitude_limit_reports_detailed_progress_messages PASSED [ 20%]
+tests/test_solar_system.py::SolarSystemTest::test_estimate_visible_magnitude_limit_uses_configurable_settings_and_annotations PASSED [ 26%]
+tests/test_solar_system.py::SolarSystemTest::test_estimate_visible_magnitude_limit_uses_dimmest_visible_bin PASSED [ 33%]
+tests/test_solar_system.py::SolarSystemTest::test_measure_detection_in_frame_returns_current_frame_signal_metrics PASSED [ 40%]
+tests/test_solar_system.py::SolarSystemTest::test_measure_detections_in_frame_reads_frame_once_for_multiple_detections PASSED [ 46%]
+tests/test_solar_system.py::SolarSystemTest::test_parse_observation_time_uses_fallback_timezone_for_naive_input PASSED [ 53%]
+tests/test_solar_system.py::SolarSystemTest::test_predictions_from_skybot_qtable_accept_unit_bearing_columns PASSED [ 60%]
+tests/test_solar_system.py::SolarSystemTest::test_predictions_from_skybot_table_classifies_comets_and_filters_faint_rows PASSED [ 66%]
+tests/test_solar_system.py::SolarSystemTest::test_predictions_from_skybot_table_combines_split_interstellar_designation_and_name PASSED [ 73%]
+tests/test_solar_system.py::SolarSystemTest::test_predictions_from_skybot_table_keeps_interstellar_comets_past_asteroid_mag_cut PASSED [ 80%]
+tests/test_solar_system.py::SolarSystemTest::test_skybot_query_service_does_not_duplicate_existing_interstellar_object PASSED [ 86%]
+tests/test_solar_system.py::SolarSystemTest::test_skybot_query_service_requests_comets_with_relaxed_position_error PASSED [ 93%]
+tests/test_solar_system.py::SolarSystemTest::test_skybot_query_service_supplements_missing_interstellar_object PASSED [100%]
+
+============================= 15 passed in 0.73s ==============================
