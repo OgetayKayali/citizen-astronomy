@@ -38,6 +38,8 @@ When you open a folder, CAst recursively scans for `.fit`, `.fits`, and `.xisf` 
 
 After scanning, a Loaded Results dialog lets you choose which object to analyze.
 
+![Opening a folder in Differential Photometry](guides/images/dif_phot_openfolder.jpg)
+
 ### Step 2: WCS Validation and Plate Solving
 
 Every frame needs a valid World Coordinate System so that CAst can identify which star is which across multiple images. CAst validates the WCS by checking for `CTYPE1`/`CTYPE2` keywords containing RA/DEC projections, along with `CRVAL`, `CRPIX`, and CD or PC matrix keywords.
@@ -63,6 +65,7 @@ $$
 $$
 
 Where:
+
 - **Master bias** is the pixel-wise median of all bias frames.
 - **Master dark** is the pixel-wise median of dark frames, bias-subtracted, and scaled by the exposure ratio: $s = t_{\text{science}} / t_{\text{dark}}$.
 - **Master flat** is the pixel-wise median of flat frames, bias- and dark-subtracted, then normalized by dividing by its own median positive value. Pixels at or below zero are set to 1.0 to prevent division artifacts.
@@ -94,18 +97,24 @@ Only values between 0.8 and 14 pixels are accepted.
 CAst uses circular aperture photometry, implemented with `photutils`. Two sizing modes are available:
 
 **Fixed mode** uses pixel-valued radii directly:
-| Parameter | Default |
-|---|---|
-| Aperture radius | 5.0 px |
-| Inner annulus | 8.0 px |
-| Outer annulus | 12.0 px |
+
+
+| Parameter       | Default |
+| --------------- | ------- |
+| Aperture radius | 5.0 px  |
+| Inner annulus   | 8.0 px  |
+| Outer annulus   | 12.0 px |
+
 
 **FWHM-scaled mode** (recommended) adapts apertures to the measured seeing:
-| Parameter | Default scale |
-|---|---|
-| Aperture radius | 1.6x FWHM |
-| Inner annulus | 3.0x FWHM |
-| Outer annulus | 4.5x FWHM |
+
+
+| Parameter       | Default scale |
+| --------------- | ------------- |
+| Aperture radius | 1.6x FWHM     |
+| Inner annulus   | 3.0x FWHM     |
+| Outer annulus   | 4.5x FWHM     |
+
 
 Minimum separations are enforced: the inner annulus is at least 1 pixel larger than the aperture, and the outer annulus is at least 1 pixel larger than the inner.
 
@@ -124,7 +133,7 @@ $$
 
 Where $S_{\text{aperture}}$ is the raw aperture sum, $\tilde{B}$ is the sigma-clipped median background, and $A_{\text{aperture}}$ is the aperture area in pixels.
 
-5. **Instrumental magnitude:**
+1. **Instrumental magnitude:**
 
 $$
 m_{\text{inst}} = -2.5 \log_{10}(F)
@@ -142,7 +151,7 @@ Good comparison stars are critical. CAst selects them automatically from the Gai
 For each measurement of the target star, the **5 nearest** comparison stars (by sky distance) are used. Their fluxes are combined using inverse-variance weighting:
 
 $$
-F_{\text{ref}} = \frac{\sum_i w_i \, F_i}{\sum_i w_i}, \quad w_i = \frac{1}{\sigma_{F_i}^2}
+F_{\text{ref}} = \frac{\sum_i w_i  F_i}{\sum_i w_i}, \quad w_i = \frac{1}{\sigma_{F_i}^2}
 $$
 
 This ensemble approach minimizes the noise contribution from any single comparison star. If no valid flux errors are available, an unweighted median is used as a fallback.
@@ -154,7 +163,7 @@ Manual mode allows you to explicitly designate which stars serve as target, comp
 The differential magnitude is computed as:
 
 $$
-\Delta m = -2.5 \log_{10}\!\left(\frac{F_{\text{target}}}{F_{\text{ref}}}\right)
+\Delta m = -2.5 \log_{10}\left(\frac{F_{\text{target}}}{F_{\text{ref}}}\right)
 $$
 
 This is the core measurement. Because both the target and comparison stars are observed through the same atmosphere at the same time, first-order atmospheric extinction cancels out. Thin clouds, haze, and transparency variations affect all stars equally and divide away.
@@ -194,6 +203,7 @@ $$
 $$
 
 Where:
+
 - $S \cdot g$ = source photon noise (flux times gain, in electrons)
 - $B_{\text{sky}} \cdot g$ = sky background noise (per pixel, in electrons)
 - $D \cdot t$ = dark current noise (dark current rate times exposure time)
@@ -236,7 +246,7 @@ Where $D$ is the telescope aperture in cm, $X$ is the airmass, $h$ is the observ
 Real data often has noise sources not captured by theory (tracking errors, flat-field residuals, focus drift). CAst estimates this from the data itself using a robust MAD (Median Absolute Deviation) estimator with iterative 4-sigma clipping:
 
 $$
-\sigma_{\text{empirical}} = 1.4826 \cdot \text{median}\!\left(|x_i - \tilde{x}|\right)
+\sigma_{\text{empirical}} = 1.4826 \cdot \text{median}\left(|x_i - \tilde{x}|\right)
 $$
 
 The factor 1.4826 scales the MAD to be consistent with the standard deviation of a Gaussian distribution.
@@ -247,19 +257,21 @@ The factor 1.4826 scales the MAD to be consistent with the standard deviation of
 
 Every measurement passes through a multi-criterion quality analysis. Each starts with a quality score of 1.0, which is reduced by penalties:
 
-| Check | Threshold | Penalty |
-|---|---|---|
-| Low SNR | < 5 | -0.18 |
-| Very low SNR | < 3 | **Excluded** |
-| Centroid shift | > 2.5 px | -0.10 |
-| Large centroid shift | > 4.0 px | **Excluded** |
-| Comparison scatter | > 8% | -0.15 |
-| Extreme comparison scatter | > 18% | **Excluded** |
-| Global outlier (MAD) | z > 4.5 | -0.28, **Excluded** |
+
+| Check                         | Threshold         | Penalty             |
+| ----------------------------- | ----------------- | ------------------- |
+| Low SNR                       | < 5               | -0.18               |
+| Very low SNR                  | < 3               | **Excluded**        |
+| Centroid shift                | > 2.5 px          | -0.10               |
+| Large centroid shift          | > 4.0 px          | **Excluded**        |
+| Comparison scatter            | > 8%              | -0.15               |
+| Extreme comparison scatter    | > 18%             | **Excluded**        |
+| Global outlier (MAD)          | z > 4.5           | -0.28, **Excluded** |
 | Local outlier (Hampel filter) | z > 4.5, window=2 | -0.28, **Excluded** |
-| Saturated pixels | Any | **Excluded** |
-| Non-positive flux | Any | **Excluded** |
-| Quality score below floor | < 0.35 | **Excluded** |
+| Saturated pixels              | Any               | **Excluded**        |
+| Non-positive flux             | Any               | **Excluded**        |
+| Quality score below floor     | < 0.35            | **Excluded**        |
+
 
 Outlier detection uses a robust z-score: $z = |x - \tilde{x}| / (1.4826 \cdot \text{MAD})$. The Hampel filter applies this locally in a sliding window to catch isolated bad points without biasing the global statistics.
 
@@ -290,7 +302,7 @@ The default astronomical periodogram for unevenly sampled data. CAst uses `astro
 A more thorough search that fits a truncated Fourier series at each candidate period:
 
 $$
-f(t) = a_0 + \sum_{k=1}^{K} \left[ a_k \cos\!\left(\frac{2\pi k \, t}{P}\right) + b_k \sin\!\left(\frac{2\pi k \, t}{P}\right) \right]
+f(t) = a_0 + \sum_{k=1}^{K} \left[ a_k \cos\left(\frac{2\pi k  t}{P}\right) + b_k \sin\left(\frac{2\pi k  t}{P}\right) \right]
 $$
 
 with up to $K = 6$ harmonics. The search proceeds in three stages:
@@ -316,9 +328,11 @@ The minimum search period is the larger of the user-configured minimum and twice
 After a period is determined, CAst can overlay a fit curve for visual interpretation.
 
 ### Polynomial Fit
+
 Fits a polynomial of configurable degree (default 3) with robust iterative re-weighting (Huber-style, 4 iterations). The time axis is centered and normalized to prevent numerical instability.
 
 ### Periodic Fit
+
 Fits a Fourier series at the determined period (default 2 harmonics, up to 6). Coefficients are solved using robust weighted linear least squares. This is the natural fit for periodic variables.
 
 ---
@@ -331,12 +345,12 @@ The **Discover** action systematically searches for unreported variable stars am
 2. An optimized comparison star subset is selected.
 3. A differential light curve is constructed.
 4. Variability metrics are computed:
-   - **Reduced chi-squared** -- how much the light curve deviates from a constant.
-   - **MAD** (Median Absolute Deviation) -- robust scatter measure.
-   - **Amplitude** -- the 5th to 95th percentile brightness range.
-   - **Stetson J index** -- a correlated-variability statistic that rewards pairs of consecutive measurements that deviate together.
-   - **Stetson K index** -- measures the kurtosis of the magnitude distribution.
-   - **Von Neumann ratio** -- sensitive to smooth versus erratic variations.
+  - **Reduced chi-squared** -- how much the light curve deviates from a constant.
+  - **MAD** (Median Absolute Deviation) -- robust scatter measure.
+  - **Amplitude** -- the 5th to 95th percentile brightness range.
+  - **Stetson J index** -- a correlated-variability statistic that rewards pairs of consecutive measurements that deviate together.
+  - **Stetson K index** -- measures the kurtosis of the magnitude distribution.
+  - **Von Neumann ratio** -- sensitive to smooth versus erratic variations.
 5. These metrics are combined into a **candidate score** (0 to 100) via weighted contributions.
 
 A trained **Random Forest classifier** (160 trees, balanced class weighting) can also score candidates if you have labeled previous examples as real or artifact. Labels and feature vectors are stored in a local database, and the model retrains as you label more candidates.
@@ -374,6 +388,7 @@ where $z$ is the zenith distance, computed by transforming the target's RA/Dec t
 ### Preflight Validation
 
 Before the export file is written, a preflight JSON report is generated listing:
+
 - Whether observer code and chart ID are present.
 - How many rows are STD versus DIF.
 - Warnings for missing airmass, unrecognized filter codes, missing observer code, etc.
@@ -392,10 +407,10 @@ The **Increase SNR** action temporally bins adjacent measurements to improve the
 1. Measurements are sorted chronologically.
 2. The variability type is classified as **sharp** (eclipsing binaries, RR Lyrae, delta Scuti, transits) or **smooth** (rotational, semi-regular, sinusoidal).
 3. A maximum bin duration is computed from the period to avoid smearing real variability:
-   - Sharp variables: 1.5% of the period.
-   - Smooth variables: 5% of the period.
-   - Default: 3% of the period.
-   - Absolute cap: 600 seconds.
+  - Sharp variables: 1.5% of the period.
+  - Smooth variables: 5% of the period.
+  - Default: 3% of the period.
+  - Absolute cap: 600 seconds.
 4. The target number of frames per bin is estimated from the SNR deficit: $n = \lceil (\text{target SNR} / \text{median SNR})^2 \rceil$, capped at 15.
 5. Frames within each bin are combined using inverse-variance weighted flux averaging, with optional 3.5-sigma MAD clipping to reject outliers within the bin.
 
@@ -407,19 +422,21 @@ The **Increase SNR** action temporally bins adjacent measurements to improve the
 
 A full `File > Export Report` produces a comprehensive science bundle:
 
-| File | Contents |
-|---|---|
-| `_measurements.csv` | Raw per-frame photometry (28 columns) |
-| `_light_curves.csv` | Time-ordered differential magnitudes per series |
-| `_accepted_observations.csv / .json` | Science-ready rows (51-field schema v3) |
-| `_rejected_observations.csv / .json` | Excluded rows with rejection reasons |
-| `_reference_manifest.csv` | Per-reference-star usage, magnitudes, saturation |
-| `_reduction_manifest.json` | Observation metadata, aperture settings, star counts |
-| `_provenance_manifest.json` | File paths, calibration states, comparison methods |
-| `_aavso_extended.txt` | AAVSO upload file |
-| `_aavso_preflight.json` | Pre-upload validation report |
-| `_plots/` | Light curve PNGs in the current theme |
-| `_annotated_images/` | Field images with aperture overlays |
+
+| File                                 | Contents                                             |
+| ------------------------------------ | ---------------------------------------------------- |
+| `_measurements.csv`                  | Raw per-frame photometry (28 columns)                |
+| `_light_curves.csv`                  | Time-ordered differential magnitudes per series      |
+| `_accepted_observations.csv / .json` | Science-ready rows (51-field schema v3)              |
+| `_rejected_observations.csv / .json` | Excluded rows with rejection reasons                 |
+| `_reference_manifest.csv`            | Per-reference-star usage, magnitudes, saturation     |
+| `_reduction_manifest.json`           | Observation metadata, aperture settings, star counts |
+| `_provenance_manifest.json`          | File paths, calibration states, comparison methods   |
+| `_aavso_extended.txt`                | AAVSO upload file                                    |
+| `_aavso_preflight.json`              | Pre-upload validation report                         |
+| `_plots/`                            | Light curve PNGs in the current theme                |
+| `_annotated_images/`                 | Field images with aperture overlays                  |
+
 
 ---
 
