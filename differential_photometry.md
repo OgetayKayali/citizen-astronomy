@@ -58,13 +58,13 @@ Any Gaia star within 30 arcseconds of a known variable is excluded from the refe
 
 If you have calibration frames, CAst applies the standard CCD reduction formula:
 
-\[
+$$
 \text{calibrated} = \frac{\text{light} - \text{bias} - s \cdot \text{dark}}{\text{flat}_{\text{norm}}}
-\]
+$$
 
 Where:
 - **Master bias** is the pixel-wise median of all bias frames.
-- **Master dark** is the pixel-wise median of dark frames, bias-subtracted, and scaled by the exposure ratio: \( s = t_{\text{science}} / t_{\text{dark}} \).
+- **Master dark** is the pixel-wise median of dark frames, bias-subtracted, and scaled by the exposure ratio: $s = t_{\text{science}} / t_{\text{dark}}$.
 - **Master flat** is the pixel-wise median of flat frames, bias- and dark-subtracted, then normalized by dividing by its own median positive value. Pixels at or below zero are set to 1.0 to prevent division artifacts.
 
 Non-finite pixels in the calibrated output are set to zero. Calibrated frames can optionally be WCS-aligned onto a common grid.
@@ -83,7 +83,7 @@ Before measuring any star, CAst estimates the seeing by measuring the Full Width
 2. The stellar signal is isolated above a threshold of max(3% of peak, 1.5x background scatter).
 3. A signal-weighted centroid is computed within the cutout.
 4. **Primary method (radial profile):** Pixel values are binned by radial distance from the centroid in 0.5-pixel steps. The radius where the median annular signal drops below half the peak is found by linear interpolation. FWHM = 2x that radius.
-5. **Fallback (second moments):** If the radial profile method fails, weighted second moments are computed, and FWHM = 2.355 x sigma (the Gaussian conversion constant \( 2\sqrt{2 \ln 2} \)).
+5. **Fallback (second moments):** If the radial profile method fails, weighted second moments are computed, and FWHM = 2.355 x sigma (the Gaussian conversion constant $2\sqrt{2 \ln 2}$).
 
 Only values between 0.8 and 14 pixels are accepted.
 
@@ -118,17 +118,17 @@ For each star in each frame:
 3. **Sky background:** A `CircularAnnulus` is placed around the star. The annulus pixels are sigma-clipped (3-sigma) and the **median** of the remaining pixels is taken as the local sky background per pixel.
 4. **Background subtraction:**
 
-\[
+$$
 F = S_{\text{aperture}} - \tilde{B} \cdot A_{\text{aperture}}
-\]
+$$
 
-Where \( S_{\text{aperture}} \) is the raw aperture sum, \( \tilde{B} \) is the sigma-clipped median background, and \( A_{\text{aperture}} \) is the aperture area in pixels.
+Where $S_{\text{aperture}}$ is the raw aperture sum, $\tilde{B}$ is the sigma-clipped median background, and $A_{\text{aperture}}$ is the aperture area in pixels.
 
 5. **Instrumental magnitude:**
 
-\[
+$$
 m_{\text{inst}} = -2.5 \log_{10}(F)
-\]
+$$
 
 ### Comparison Star Selection
 
@@ -141,9 +141,9 @@ Good comparison stars are critical. CAst selects them automatically from the Gai
 
 For each measurement of the target star, the **5 nearest** comparison stars (by sky distance) are used. Their fluxes are combined using inverse-variance weighting:
 
-\[
+$$
 F_{\text{ref}} = \frac{\sum_i w_i \, F_i}{\sum_i w_i}, \quad w_i = \frac{1}{\sigma_{F_i}^2}
-\]
+$$
 
 This ensemble approach minimizes the noise contribution from any single comparison star. If no valid flux errors are available, an unweighted median is used as a fallback.
 
@@ -153,9 +153,9 @@ Manual mode allows you to explicitly designate which stars serve as target, comp
 
 The differential magnitude is computed as:
 
-\[
+$$
 \Delta m = -2.5 \log_{10}\!\left(\frac{F_{\text{target}}}{F_{\text{ref}}}\right)
-\]
+$$
 
 This is the core measurement. Because both the target and comparison stars are observed through the same atmosphere at the same time, first-order atmospheric extinction cancels out. Thin clouds, haze, and transparency variations affect all stars equally and divide away.
 
@@ -163,15 +163,15 @@ This is the core measurement. Because both the target and comparison stars are o
 
 When comparison stars have known catalog magnitudes (from Gaia DR3), CAst can compute a photometric zero point:
 
-\[
+$$
 \text{ZP} = m_{\text{catalog}} - m_{\text{inst}}
-\]
+$$
 
 If multiple reference stars have catalog magnitudes with valid uncertainties, the zero point is an **inverse-variance weighted average**. Otherwise, the **median** is used. The calibrated magnitude is:
 
-\[
+$$
 m_{\text{cal}} = m_{\text{inst}} + \text{ZP}
-\]
+$$
 
 When a zero point is available, the AAVSO export uses `MTYPE=STD` (standard). Otherwise, it falls back to `MTYPE=DIF` (differential).
 
@@ -181,25 +181,25 @@ When a zero point is available, the AAVSO export uses `MTYPE=STD` (standard). Ot
 
 CAst computes a complete error budget for every measurement. The total uncertainty combines three independent components in quadrature:
 
-\[
+$$
 \sigma_{\text{total}} = \sqrt{\sigma_{\text{CCD}}^2 + \sigma_{\text{empirical}}^2 + \sigma_{\text{scintillation}}^2}
-\]
+$$
 
 ### CCD Noise Model
 
 The theoretical flux error follows the standard CCD equation:
 
-\[
+$$
 \sigma_F = \sqrt{S \cdot g + n_{\text{ap}} \cdot \left( B_{\text{sky}} \cdot g + D \cdot t + R^2 \right) + \frac{n_{\text{ap}}^2}{n_{\text{sky}}} \cdot \left( B_{\text{sky}} \cdot g + D \cdot t + R^2 \right)}
-\]
+$$
 
 Where:
-- \( S \cdot g \) = source photon noise (flux times gain, in electrons)
-- \( B_{\text{sky}} \cdot g \) = sky background noise (per pixel, in electrons)
-- \( D \cdot t \) = dark current noise (dark current rate times exposure time)
-- \( R^2 \) = readout noise variance (read noise in electrons, squared)
-- \( n_{\text{ap}} \) = number of pixels in the aperture
-- \( n_{\text{sky}} \) = number of pixels in the sky annulus
+- $S \cdot g$ = source photon noise (flux times gain, in electrons)
+- $B_{\text{sky}} \cdot g$ = sky background noise (per pixel, in electrons)
+- $D \cdot t$ = dark current noise (dark current rate times exposure time)
+- $R^2$ = readout noise variance (read noise in electrons, squared)
+- $n_{\text{ap}}$ = number of pixels in the aperture
+- $n_{\text{sky}}$ = number of pixels in the sky annulus
 
 The third term accounts for uncertainty in the background estimate itself -- the finite number of sky pixels means the background level is measured with some noise, and this propagates into every aperture measurement.
 
@@ -209,35 +209,35 @@ If gain is specified in ADU, the result is divided by gain to convert back to fl
 
 Flux error is converted to magnitude error using the standard propagation:
 
-\[
+$$
 \sigma_m = \frac{2.5}{\ln 10} \cdot \frac{\sigma_F}{F} \approx 1.0857 \cdot \frac{\sigma_F}{F}
-\]
+$$
 
 ### Differential Magnitude Error
 
 The error on the differential magnitude combines the target and reference uncertainties:
 
-\[
+$$
 \sigma_{\Delta m} = \frac{2.5}{\ln 10} \cdot \sqrt{\left(\frac{\sigma_{F_{\text{target}}}}{F_{\text{target}}}\right)^2 + \left(\frac{\sigma_{F_{\text{ref}}}}{F_{\text{ref}}}\right)^2}
-\]
+$$
 
 ### Scintillation
 
 Atmospheric scintillation (twinkling) adds noise that the CCD equation does not capture. CAst estimates it using the Young approximation:
 
-\[
+$$
 \sigma_{\text{scint}} = \frac{0.09 \cdot D^{-2/3} \cdot X^{1.75} \cdot e^{-h/8000}}{\sqrt{2t}} \cdot \sqrt{1 + \frac{1}{N_{\text{comp}}}}
-\]
+$$
 
-Where \( D \) is the telescope aperture in cm, \( X \) is the airmass, \( h \) is the observatory altitude in meters, \( t \) is the exposure time in seconds, and \( N_{\text{comp}} \) is the number of comparison stars. The last factor accounts for scintillation in the comparison ensemble.
+Where $D$ is the telescope aperture in cm, $X$ is the airmass, $h$ is the observatory altitude in meters, $t$ is the exposure time in seconds, and $N_{\text{comp}}$ is the number of comparison stars. The last factor accounts for scintillation in the comparison ensemble.
 
 ### Empirical Scatter
 
 Real data often has noise sources not captured by theory (tracking errors, flat-field residuals, focus drift). CAst estimates this from the data itself using a robust MAD (Median Absolute Deviation) estimator with iterative 4-sigma clipping:
 
-\[
+$$
 \sigma_{\text{empirical}} = 1.4826 \cdot \text{median}\!\left(|x_i - \tilde{x}|\right)
-\]
+$$
 
 The factor 1.4826 scales the MAD to be consistent with the standard deviation of a Gaussian distribution.
 
@@ -261,7 +261,7 @@ Every measurement passes through a multi-criterion quality analysis. Each starts
 | Non-positive flux | Any | **Excluded** |
 | Quality score below floor | < 0.35 | **Excluded** |
 
-Outlier detection uses a robust z-score: \( z = |x - \tilde{x}| / (1.4826 \cdot \text{MAD}) \). The Hampel filter applies this locally in a sliding window to catch isolated bad points without biasing the global statistics.
+Outlier detection uses a robust z-score: $z = |x - \tilde{x}| / (1.4826 \cdot \text{MAD})$. The Hampel filter applies this locally in a sliding window to catch isolated bad points without biasing the global statistics.
 
 Near-saturation is flagged at 95% of the saturation threshold.
 
@@ -269,9 +269,9 @@ Near-saturation is flagged at 95% of the saturation threshold.
 
 When check stars are available (a star with a known magnitude that is treated as if it were a variable), CAst computes per-frame check residuals:
 
-\[
+$$
 \Delta_{\text{check}} = m_{\text{check,calibrated}} - m_{\text{check,catalog}}
-\]
+$$
 
 and the per-series RMS of those residuals. This provides an independent assessment of the photometric accuracy: if your check star shows a stable residual RMS of 0.01 mag, your measurements of the target are likely accurate to a similar level.
 
@@ -289,11 +289,11 @@ The default astronomical periodogram for unevenly sampled data. CAst uses `astro
 
 A more thorough search that fits a truncated Fourier series at each candidate period:
 
-\[
+$$
 f(t) = a_0 + \sum_{k=1}^{K} \left[ a_k \cos\!\left(\frac{2\pi k \, t}{P}\right) + b_k \sin\!\left(\frac{2\pi k \, t}{P}\right) \right]
-\]
+$$
 
-with up to \( K = 6 \) harmonics. The search proceeds in three stages:
+with up to $K = 6$ harmonics. The search proceeds in three stages:
 
 1. **Coarse scan:** 240 logarithmically spaced candidate periods.
 2. **Refinement:** Three progressively narrower windows around the best candidate, each testing 180-200 periods.
@@ -365,11 +365,11 @@ The export writes a comma-delimited file with 15 columns:
 
 Airmass is read from header keywords (`AIRMASS`, `SECZ`, `SECAIRM`). If absent, CAst computes a geometric estimate:
 
-\[
+$$
 X = \sec(z)
-\]
+$$
 
-where \( z \) is the zenith distance, computed by transforming the target's RA/Dec to the local altitude-azimuth frame at the observation time using the configured observatory coordinates (latitude, longitude, elevation).
+where $z$ is the zenith distance, computed by transforming the target's RA/Dec to the local altitude-azimuth frame at the observation time using the configured observatory coordinates (latitude, longitude, elevation).
 
 ### Preflight Validation
 
@@ -396,7 +396,7 @@ The **Increase SNR** action temporally bins adjacent measurements to improve the
    - Smooth variables: 5% of the period.
    - Default: 3% of the period.
    - Absolute cap: 600 seconds.
-4. The target number of frames per bin is estimated from the SNR deficit: \( n = \lceil (\text{target SNR} / \text{median SNR})^2 \rceil \), capped at 15.
+4. The target number of frames per bin is estimated from the SNR deficit: $n = \lceil (\text{target SNR} / \text{median SNR})^2 \rceil$, capped at 15.
 5. Frames within each bin are combined using inverse-variance weighted flux averaging, with optional 3.5-sigma MAD clipping to reject outliers within the bin.
 
 **Reset SNR** restores the original unbinned data from a cached copy.
