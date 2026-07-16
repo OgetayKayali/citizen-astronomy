@@ -190,6 +190,8 @@ When a zero point is available, the AAVSO export uses `MTYPE=STD` (standard). Ot
 
 ![W UMa results](/guides/images/WUMa.jpg)
 
+The above is the results screen after Generate completes its work and scans all the known variables in the field. Selecting a Source from the Source Results will show the object in the sky along with its automatically selected comparison stars. These comparison stars will show up at the bottom of the Source Results as a sticky row. You may manually define the apertures and make your own measurement by clicking the "Aperture Editor" on the top-right corner. Although the mode provides a fully automated algorithm, a completely manual and fully customizable advanced options are available for expert users.
+
 ---
 
 ## Uncertainty and Error Analysis
