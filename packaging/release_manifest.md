@@ -55,7 +55,7 @@ Private alpha-review packaging audit. Reviewers must not need Python, pip, Qt, a
 
 ### Documentation and version
 
-- `README.md`, `DOCUMENTATION.md`, `guides/hr_diagram.md`
+- `README.md`, `guides/` (mode guides + `themes_layout_ui.md`)
 
 ### Icons
 

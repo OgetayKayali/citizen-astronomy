@@ -133,7 +133,6 @@ flowchart TB
 | Path | Purpose |
 |------|---------|
 | `README.md` | Product overview for GitHub |
-| `DOCUMENTATION.md` | Long-form user + developer documentation |
 | `CODEBASE_MAP.md` | This map |
 | `CONTRIBUTING.md` | Contribution / copyright policy |
 | `LICENSE` | CC BY-NC-ND 4.0 |
@@ -785,11 +784,11 @@ Publisher smoke subset includes updater contract tests, selected main-window upd
 | Path | Audience |
 |------|----------|
 | `README.md` | GitHub landing / capabilities |
-| `DOCUMENTATION.md` | Full user guide + developer notes (overview, HR, install, step-by-step, comparison stars, themes, photometry methods, errors, curve fitting, Sky View renderer/MW tiles, troubleshooting, developer workflow) |
 | `guides/differential_photometry.md` | Mode guide |
 | `guides/hr_diagram.md` | Mode guide |
 | `guides/asteroid_comet_detection.md` | Mode guide |
 | `guides/transient_finder.md` | Mode guide |
+| `guides/themes_layout_ui.md` | Themes, folder layout, shared UI panels |
 | `build.md` | Maintainer build instructions |
 | `CONTRIBUTING.md` | Contribution policy |
 | `packaging/ALPHA_REVIEW_*.md` | Alpha reviewer / validation docs |
@@ -878,7 +877,7 @@ From `pyproject.toml` (Python ≥ 3.11):
 | Mode launcher | `ui/mode_launcher.py` |
 | In-app updates | `core/app_updates.py` |
 | Publish release | `packaging/publish_github_update.ps1` |
-| User guides | `guides/*.md`, `DOCUMENTATION.md` |
+| User guides | `guides/*.md` |
 
 ---
 

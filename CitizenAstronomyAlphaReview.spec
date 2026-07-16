@@ -30,7 +30,6 @@ def data_tree(relative_path: str, destination: str):
 
 datas = [
     data_file("README.md"),
-    data_file("DOCUMENTATION.md"),
     data_file("LICENSE"),
     data_file("assets/citizen_astronomy.ico", "assets"),
     data_file("textures/milkyway_2020_4k_preview.png", "textures"),

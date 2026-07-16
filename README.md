@@ -86,7 +86,9 @@ Depending on the mode and export action, CAst can produce:
 
 ## Documentation
 
-See [DOCUMENTATION.md](DOCUMENTATION.md) for the full user guide, plus mode guides under [`guides/`](guides/): [Differential Photometry](guides/differential_photometry.md), [HR Diagram](guides/hr_diagram.md), [Asteroid/Comet Detection](guides/asteroid_comet_detection.md), and [Transient Finder](guides/transient_finder.md).
+Mode guides live under [`guides/`](guides/): [Differential Photometry](guides/differential_photometry.md), [HR Diagram](guides/hr_diagram.md), [Asteroid/Comet Detection](guides/asteroid_comet_detection.md), and [Transient Finder](guides/transient_finder.md).
+
+Shared shell details — themes, folder layout, and common UI panels — are in [Themes, Layout, and Shared UI](guides/themes_layout_ui.md).
 
 For a detailed map of the repository layout, modules, modes, workers, packaging, and tests, see [CODEBASE_MAP.md](CODEBASE_MAP.md).
 

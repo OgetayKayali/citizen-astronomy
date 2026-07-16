@@ -7,11 +7,11 @@ a = Analysis(
     binaries=[],
     datas=[
         ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\README.md', '.'),
-        ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\DOCUMENTATION.md', '.'),
         ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\hr_diagram.md', 'guides'),
         ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\differential_photometry.md', 'guides'),
         ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\asteroid_comet_detection.md', 'guides'),
         ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\transient_finder.md', 'guides'),
+        ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\themes_layout_ui.md', 'guides'),
     ],
     hiddenimports=['xisf', 'pyqtgraph', 'pyqtgraph.opengl', 'OpenGL', 'OpenGL.GL', 'OpenGL.platform.win32', 'OpenGL_accelerate', 'astroquery.vizier', 'astroquery.ipac.nexsci.nasa_exoplanet_archive', 'astropy.tests', 'astropy.tests.runner', 'scipy.special._cdflib', 'imageio', 'imageio.v2', 'imageio.plugins.ffmpeg', 'imageio_ffmpeg'],
     hookspath=[],
