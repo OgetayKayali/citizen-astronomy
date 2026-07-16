@@ -88,6 +88,8 @@ Depending on the mode and export action, CAst can produce:
 
 See [DOCUMENTATION.md](DOCUMENTATION.md) for the full user guide, plus mode guides under [`guides/`](guides/): [Differential Photometry](guides/differential_photometry.md), [HR Diagram](guides/hr_diagram.md), [Asteroid/Comet Detection](guides/asteroid_comet_detection.md), and [Transient Finder](guides/transient_finder.md).
 
+For a detailed map of the repository layout, modules, modes, workers, packaging, and tests, see [CODEBASE_MAP.md](CODEBASE_MAP.md).
+
 ## Status
 
 CAst is in **alpha**. It is under active development and being distributed privately for review. Core workflows are functional but some features are still incomplete. The installer is currently unsigned -- Windows SmartScreen may show a warning on first run.
