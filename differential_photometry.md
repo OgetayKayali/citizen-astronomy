@@ -72,6 +72,8 @@ Where:
 
 Non-finite pixels in the calibrated output are set to zero. Calibrated frames can optionally be WCS-aligned onto a common grid.
 
+![Calibration screen](/guides/images/calibration.jpg)
+
 ---
 
 ## The Measurement Pipeline
@@ -117,6 +119,8 @@ CAst uses circular aperture photometry, implemented with `photutils`. Two sizing
 
 
 Minimum separations are enforced: the inner annulus is at least 1 pixel larger than the aperture, and the outer annulus is at least 1 pixel larger than the inner.
+
+![Aperture radius, inner annulus, and outer annulus on W UMa](/guides/images/WUMa_rings.jpg)
 
 #### Flux Extraction
 
@@ -183,6 +187,8 @@ m_{\text{cal}} = m_{\text{inst}} + \text{ZP}
 $$
 
 When a zero point is available, the AAVSO export uses `MTYPE=STD` (standard). Otherwise, it falls back to `MTYPE=DIF` (differential).
+
+![W UMa results](/guides/images/WUMa.jpg)
 
 ---
 
