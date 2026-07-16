@@ -7,7 +7,7 @@ Thank you for your interest in contributing to CAst.
 CAst is maintained by a sole developer. Contributions are welcome but must be coordinated:
 
 1. **Reach out first.** Open an issue or discussion to propose your idea before writing code. Unsolicited pull requests may be declined.
-2. **All contributions require approval.** I decide what gets merged and when.
+2. **All contributions require approval.** The developer of the project decides what to commit.
 3. **Copyright assignment.** By submitting a pull request, you agree that your contribution becomes part of this project under the same [CC BY-NC-ND 4.0](LICENSE) license, and you assign copyright to the project author. This ensures the project stays under unified ownership and cannot be fragmented.
 
 ## What this means
