@@ -10,7 +10,7 @@ Every clear night, amateur telescopes around the world capture photons that prof
 
 Open a folder of time-series images, and CAst scans your frames, identifies field stars through Gaia DR3 and VSX catalogs, performs aperture photometry with adaptive FWHM-scaled apertures, and produces differential light curves. Fit periods with Lomb-Scargle, refine comparison stars, bin for signal-to-noise, and export science-ready AAVSO reports.
 
-A more detailed guide can be found at ![Differential photometry guide](/differential_photometry.md)
+A more detailed guide can be found at [Differential Photometry Guide.](/differential_photometry.md)
 
 ### HR Diagram
 
