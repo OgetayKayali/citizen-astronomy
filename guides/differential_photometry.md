@@ -38,7 +38,7 @@ When you open a folder, CAst recursively scans for `.fit`, `.fits`, and `.xisf` 
 
 After scanning, a Loaded Results dialog lets you choose which object to analyze.
 
-![Opening a folder in Differential Photometry](guides/images/dif_phot_openfolder.jpg)
+![Opening a folder in Differential Photometry](images/dif_phot_openfolder.jpg)
 
 ### Step 2: WCS Validation and Plate Solving
 
@@ -72,7 +72,7 @@ Where:
 
 Non-finite pixels in the calibrated output are set to zero. Calibrated frames can optionally be WCS-aligned onto a common grid.
 
-![Calibration screen](/guides/images/calibration.jpg)
+![Calibration screen](images/calibration.jpg)
 
 ---
 
@@ -120,7 +120,7 @@ CAst uses circular aperture photometry, implemented with `photutils`. Two sizing
 
 Minimum separations are enforced: the inner annulus is at least 1 pixel larger than the aperture, and the outer annulus is at least 1 pixel larger than the inner.
 
-![Aperture radius, inner annulus, and outer annulus on W UMa](/guides/images/WUMa_rings.jpg)
+![Aperture radius, inner annulus, and outer annulus on W UMa](images/WUMa_rings.jpg)
 
 #### Flux Extraction
 
@@ -188,7 +188,7 @@ $$
 
 When a zero point is available, the AAVSO export uses `MTYPE=STD` (standard). Otherwise, it falls back to `MTYPE=DIF` (differential).
 
-![W UMa results](/guides/images/WUMa.jpg)
+![W UMa results](images/WUMa.jpg)
 
 The above is the results screen after Generate completes its work and scans all the known variables in the field. Selecting a Source from the Source Results will show the object in the sky along with its automatically selected comparison stars. These comparison stars will show up at the bottom of the Source Results as a sticky row. You may manually define the apertures and make your own measurement by clicking the "Aperture Editor" on the top-right corner. Although the mode provides a fully automated algorithm, a completely manual and fully customizable advanced options are available for expert users.
 

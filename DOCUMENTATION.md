@@ -42,7 +42,7 @@ The software is designed primarily around known variable stars and field inspect
 
 
 
-The H-R Diagram mode has its own detailed guide in [HR_DIAGRAM.md](HR_DIAGRAM.md).
+The H-R Diagram mode has its own detailed guide in [guides/hr_diagram.md](guides/hr_diagram.md).
 
 
 
