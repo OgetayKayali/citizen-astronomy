@@ -40,6 +40,7 @@ from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QDialog, QFrame, Q
 
 
 
+from photometry_app.app_metadata import APP_VERSION
 from photometry_app.core.alignment import AlignedFrameOutput, SequenceAlignmentResult
 from photometry_app.core.astrostack_presets import ASTROSTACK_PRESET_FILE_FILTER
 
@@ -112,7 +113,7 @@ class MainWindowAboutDialogTest(unittest.TestCase):
 
         self.assertEqual(args[1], "About Citizen Astronomy (CAst)")
 
-        self.assertIn("Version 0.1.1-alpha.1", args[2])
+        self.assertIn(f"Version {APP_VERSION}", args[2])
 
         self.assertIn("Logo designed by Ege Palaz (https://palaz.se/).", args[2])
 
