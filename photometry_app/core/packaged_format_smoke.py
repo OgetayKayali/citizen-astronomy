@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QImage, QImageReader
+from PySide6.QtWidgets import QApplication
 
 from photometry_app.core.image_io import read_header_and_shape, read_photometry_image_data
 from photometry_app.core.qt_image_format_smoke import build_qt_image_format_smoke_result
@@ -100,7 +101,7 @@ def _check_xisf_file(path: Path) -> dict[str, object]:
 
 def build_packaged_format_smoke_result(*, fixtures_dir: str | Path) -> dict[str, object]:
     if QCoreApplication.instance() is None:
-        _app = QCoreApplication([])
+        _app = QApplication([])
 
     resolved_fixtures_dir = Path(fixtures_dir).resolve()
     qt_result = build_qt_image_format_smoke_result()
@@ -155,14 +156,26 @@ def about_dialog_content() -> tuple[str, str]:
 
 def run_about_dialog_smoke() -> dict[str, object]:
     from photometry_app.app_metadata import APP_VERSION
-    from PySide6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
-    app = QApplication.instance() or QApplication([])
     title, message = about_dialog_content()
     if f"Version {APP_VERSION}" not in message:
         return {"success": False, "error": "application version missing from About dialog text"}
     if "Alpha-reviewer build only. Do not distribute." not in message:
         return {"success": False, "error": "alpha-review notice missing from About dialog text"}
+
+    existing = QCoreApplication.instance()
+    if existing is None:
+        app = QApplication([])
+    elif isinstance(existing, QApplication):
+        app = existing
+    else:
+        return {
+            "success": False,
+            "error": "About dialog smoke requires QApplication; found a plain QCoreApplication",
+            "title": title,
+            "version": APP_VERSION,
+        }
 
     # Exercise the same QMessageBox construction path without a blocking modal.
     box = QMessageBox(QMessageBox.Icon.Information, title, message)

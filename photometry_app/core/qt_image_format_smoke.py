@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QImage
+from PySide6.QtWidgets import QApplication
 
 from photometry_app.core.qt_image_formats import query_qt_image_format_support
 
@@ -37,8 +38,10 @@ def image_to_rgb_array(image: QImage) -> np.ndarray:
 
 
 def build_qt_image_format_smoke_result() -> dict[str, object]:
+    # Prefer QApplication so later widget smokes in the same process (About dialog)
+    # are not stuck with a plain QCoreApplication that cannot host QMessageBox.
     if QCoreApplication.instance() is None:
-        _app = QCoreApplication([])
+        _app = QApplication([])
 
     support = query_qt_image_format_support()
     image_bytes = base64.b64decode(SAMPLE_TIFF_LZW_BASE64)
