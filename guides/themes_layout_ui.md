@@ -11,7 +11,7 @@ Citizen Astronomy (CAst) is organized around a mode launcher and a shared applic
 On startup (or when you return to the home screen), CAst shows a **mode launcher** with two groups:
 
 - **Science Workflows** — Differential Photometry, Asteroid / Comet Detection, Transient Finder
-- **Visualizations & Tools** — Sky Atlas, Sky Explorer, HR Diagram, Distance Map, Deep Stack
+- **Visualizations & Tools** — Sky Atlas, Sky Explorer, HR Diagram, Distance Map, AstroStack
 
 Each card opens that mode’s workspace. **Observation Deck** is available from the mode menu but is not shown as a launcher card.
 
@@ -225,8 +225,13 @@ Use the dedicated guides for click-path and science detail:
 | HR Diagram | [hr_diagram.md](hr_diagram.md) |
 | Asteroid / Comet Detection | [asteroid_comet_detection.md](asteroid_comet_detection.md) |
 | Transient Finder | [transient_finder.md](transient_finder.md) |
+| Sky Explorer | [sky_explorer.md](sky_explorer.md) |
+| AstroStack | [astrostack.md](astrostack.md) |
+| Sky Atlas | [sky_atlas.md](sky_atlas.md) |
+| Distance Map | [distance_map.md](distance_map.md) |
+| Sky Explorer | [sky_explorer.md](sky_explorer.md) |
 
-Other modes (Sky Atlas, Sky Explorer, Distance Map, Deep Stack, Observation Deck) follow the same shell patterns: open or load data, use the mode toolbar, inspect overlays/tables, and export from the File menu when available.
+Other modes (Sky Atlas, Sky Explorer, Distance Map, AstroStack, Observation Deck) follow the same shell patterns: open or load data, use the mode toolbar, inspect overlays/tables, and export from the File menu when available.
 
 ---
 

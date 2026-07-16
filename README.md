@@ -38,15 +38,21 @@ A more detailed guide can be found at [Transient Finder Guide](guides/transient_
 
 ### AstroStack
 
-Combine and process image sequences with stacking and signal analysis tools.
+Open a folder of related frames and turn it into a cumulative stacking animation. AstroStack can align plate-solved images onto a common WCS grid, crop to the region you care about, track running metrics such as signal, noise, SNR, FWHM, and total integration time, and export GIF or MP4 animations with annotations and live plot overlays. In the current UI this mode may still appear as **Deep Stack**, but it is the same workflow.
 
-### Sky View
+A more detailed guide can be found at [AstroStack Guide](guides/astrostack.md).
 
-An interactive sky atlas with a GPU-rendered Milky Way, constellation overlays, a detailed Moon with tiled albedo and normal-map textures, real-time ephemeris, and smooth pan/zoom navigation.
+### Sky Atlas
+
+Explore the sky as a live interactive atlas with searchable bright stars, Messier targets, constellations, and the Moon; observer-location and UTC time controls; constellation, grid, horizon, and Milky Way layers; and on-demand deep star catalogs. Sky Atlas also lets users create their **own surveys from their own sky data** by importing sky-registered PNG, XISF, TIFF, or FITS images as custom overlay surveys.
+
+A more detailed guide can be found at [Sky Atlas Guide](guides/sky_atlas.md).
 
 ### Distance Map
 
-Visualize stellar distances and spatial structure within your observed fields.
+Take a solved field image and turn it into a Gaia-based 3D parallax map. Distance Map filters stars by magnitude, distance, and parallax quality, visualizes the field in 3D, highlights likely co-moving groups with **Find Cluster**, and lets you inspect the same selection in the image, table, and spatial view.
+
+A more detailed guide can be found at [Distance Map Guide](guides/distance_map.md).
 
 ## Supported inputs
 
@@ -88,7 +94,7 @@ Depending on the mode and export action, CAst can produce:
 
 ## Documentation
 
-Mode guides live under [`guides/`](guides/): [Differential Photometry](guides/differential_photometry.md), [HR Diagram](guides/hr_diagram.md), [Asteroid/Comet Detection](guides/asteroid_comet_detection.md), [Transient Finder](guides/transient_finder.md), and [Sky Explorer](guides/sky_explorer.md).
+Mode guides live under [`guides/`](guides/): [Differential Photometry](guides/differential_photometry.md), [HR Diagram](guides/hr_diagram.md), [Asteroid/Comet Detection](guides/asteroid_comet_detection.md), [Transient Finder](guides/transient_finder.md), [Sky Explorer](guides/sky_explorer.md), [AstroStack](guides/astrostack.md), [Sky Atlas](guides/sky_atlas.md), and [Distance Map](guides/distance_map.md).
 
 Shared shell details — themes, folder layout, and common UI panels — are in [Themes, Layout, and Shared UI](guides/themes_layout_ui.md).
 
