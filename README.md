@@ -7,27 +7,37 @@ Every clear night, amateur telescopes around the world capture photons that prof
 ## What you can do
 
 ### Differential Photometry
+
 Open a folder of time-series images, and CAst scans your frames, identifies field stars through Gaia DR3 and VSX catalogs, performs aperture photometry with adaptive FWHM-scaled apertures, and produces differential light curves. Fit periods with Lomb-Scargle, refine comparison stars, bin for signal-to-noise, and export science-ready AAVSO reports.
 
+A more detailed guide can be found at ![Differential photometry guide](/differential_photometry.md)
+
 ### HR Diagram
+
 Load a single deep image of a star cluster and plot a color-magnitude diagram using Gaia BP-RP photometry and absolute magnitudes. Identify co-moving stellar groups with proper-motion clustering, overlay theoretical isochrones, and export publication-quality diagrams with temperature and luminosity scales.
 
 ### Asteroid and Comet Detection
+
 Point CAst at a sequence of solved frames and it queries known solar system objects predicted in your field -- including faint comets and interstellar visitors. Blink through your frames, track objects across exposures, align subframes onto a common WCS grid, and run the **Discover** pipeline to find moving objects that aren't in the catalogs yet. Confirm candidates with synthetic tracking that shifts and stacks on predicted motion. Visualize orbits in an interactive 3D heliocentric view built from JPL Horizons data.
 
 ### Sky Explorer
+
 Open any solved image and instantly identify what's in the field: deep-sky objects, variable stars, Gaia catalog stars, exoplanet hosts, and solar system bodies, all overlaid on your image with a searchable results table.
 
 ### Transient Finder
+
 Search a folder of repeated sky images for objects that vary significantly between frames. CAst solves missing plate solutions automatically, builds a shared comparison catalog, and flags candidates with real frame-to-frame variability.
 
 ### AstroStack
+
 Combine and process image sequences with stacking and signal analysis tools.
 
 ### Sky View
+
 An interactive sky atlas with a GPU-rendered Milky Way, constellation overlays, a detailed Moon with tiled albedo and normal-map textures, real-time ephemeris, and smooth pan/zoom navigation.
 
 ### Distance Map
+
 Visualize stellar distances and spatial structure within your observed fields.
 
 ## Supported inputs
