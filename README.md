@@ -20,7 +20,9 @@ A more detailed guide can be found at [HR Diagram Guide](HR_DIAGRAM.md).
 
 ### Asteroid and Comet Detection
 
-Point CAst at a sequence of solved frames and it queries known solar system objects predicted in your field -- including faint comets and interstellar visitors. Blink through your frames, track objects across exposures, align subframes onto a common WCS grid, and run the **Discover** pipeline to find moving objects that aren't in the catalogs yet. Confirm candidates with synthetic tracking that shifts and stacks on predicted motion. Visualize orbits in an interactive 3D heliocentric view built from JPL Horizons data.
+Point CAst at a sequence of solved frames and it queries known solar system objects predicted in your field -- including faint comets and interstellar visitors. Blink through your frames, track objects across exposures, align subframes onto a common WCS grid, and run the **Discover** pipeline to find moving objects that aren't in the catalogs yet. Confirm candidates with synthetic tracking that shifts and stacks on predicted motion. Inspect paths with **Plots**, and visualize orbits in a heliocentric **Trajectory View** built from JPL Horizons data.
+
+A more detailed guide can be found at [Asteroid and Comet Detection Guide](asteroid_comet_detection.md).
 
 ### Sky Explorer
 
@@ -82,7 +84,7 @@ Depending on the mode and export action, CAst can produce:
 
 ## Documentation
 
-See [DOCUMENTATION.md](DOCUMENTATION.md) for the full user guide and [HR_DIAGRAM.md](HR_DIAGRAM.md) for the HR Diagram reference.
+See [DOCUMENTATION.md](DOCUMENTATION.md) for the full user guide, [differential_photometry.md](differential_photometry.md) for Differential Photometry, [HR_DIAGRAM.md](HR_DIAGRAM.md) for the HR Diagram reference, and [asteroid_comet_detection.md](asteroid_comet_detection.md) for Asteroid/Comet Detection.
 
 ## Status
 
