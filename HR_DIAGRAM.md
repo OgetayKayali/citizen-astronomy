@@ -1,1383 +1,353 @@
-# HR Diagram Guide
+# HR Diagram
 
+## Introduction
 
+Every star has a place on a map drawn more than a century ago -- a map that still tells us more about stellar life than almost any other plot in astronomy.
 
-## Purpose
+The Hertzsprung-Russell diagram (HR diagram) places stars by color (temperature) against intrinsic brightness (luminosity). Hot blue stars sit to the left. Cool red stars sit to the right. Giants rise above the main sequence. White dwarfs settle below it. Look at a cluster, and you are not looking at a random spray of points: you are looking at a population that formed together, aged together, and left a fingerprint of that shared history on the diagram.
 
+**Citizen Astronomy (CAst)** turns a single deep image of a star field into an interactive HR diagram. You open a plate-solved FITS or XISF frame, CAst detects the stars on your image, matches them to Gaia DR3, computes absolute magnitudes from parallax, and plots a color-magnitude diagram you can explore, filter, and export.
 
+### What you can do with this mode
 
-The HR Diagram mode builds an interactive color-magnitude view from a single solved linear RGB image.
+- **Build a color-magnitude diagram from your own data.** See your field in Gaia BP-RP color versus absolute G magnitude, with educational temperature and luminosity scales.
+- **Explore stellar populations.** Overlay main-sequence, giant, subgiant, white-dwarf, and age-guide curves to understand what kinds of stars you are looking at.
+- **Find co-moving groups.** Use Gaia proper motions (and parallax when available) to detect stars that share a common space motion -- the kinematic signature of open clusters, associations, and moving groups.
+- **Connect the plot to the sky.** Click a point on the diagram and see the same star on your source image, with apertures, selection markers, and optional proper-motion vectors.
+- **Export science-ready figures.** Save themed snapshots, clean scientific plots, annotated source images, and working tables for further analysis.
 
+### Why this matters
 
+Professional surveys have mapped billions of stars, but the educational power of an HR diagram is strongest when it is *your* field -- the cluster you imaged, the association in *your* frame. Seeing the main sequence turn off, spotting a handful of giants, or finding a co-moving subgroup in your own data is how stellar evolution stops being an abstract textbook figure and becomes something you measured.
 
-It is designed for field inspection rather than time-series differential photometry. The workflow measures stars on one source image, cross-matches them to Gaia, derives plot-ready quantities, and lets you inspect the filtered result interactively.
+Amateur images of open clusters, globular clusters, and rich Milky Way fields already contain the photometry and the sky positions. Gaia supplies the colors, parallaxes, and proper motions. CAst brings them together.
 
+---
 
+## How It Works
 
-In the current implementation, HR mode does not use the object-folder batch workflow. It works from one selected source image at a time.
+### Step 1: Choose a Source Image
 
+Switch to **HR Diagram** mode and open a single FITS, FIT, or XISF image with `File > Open File`.
 
+HR mode expects:
 
-## What HR Mode Expects
+- a **plate-solved** image with usable celestial WCS
+- preferably a **linear RGB** image (color-calibrated if possible)
+- network access for Gaia (and related catalog) lookups
 
+The preview can be stretched for comfortable viewing, but photometric measurement is performed on the original linear image data. If the image lacks a valid WCS, configure an astrometry.net API key so CAst can solve it first.
 
+Unlike Differential Photometry, HR mode works from **one source image at a time**, not a time-series folder.
 
-Use HR mode when you have:
+### Step 2: Set Working Directory and Source Limits
 
+The **working directory** stores HR artifacts such as the working table (`hr_working_table.csv` / `.json`). If you do not choose one, CAst derives a default from the selected image path.
 
+**Max Sources** limits how many Gaia-matched detections are measured:
 
-- a solved FITS, FIT, or XISF source image
-
-- a linear RGB image, ideally color-calibrated
-
-- valid celestial WCS in the file header or synthesized XISF astrometric metadata
-
-- network access for Gaia and VSX catalog lookups
-
-
-
-The UI itself describes the intended input as a solved linear RGB image. The preview can be stretched for inspection, but measurement is still performed on the original linear image data.
-
-
-
-## High-Level Workflow
-
-
-
-The HR workflow has two layers:
-
-
-
-1. full-field measurement
-
-2. fast display filtering
-
-
-
-The important design rule is:
-
-
-
-- source detection and measurement happen for the full field of view when you generate the diagram
-
-- ROI selection only filters which already-measured rows are shown on the diagram; the `Source Results` table can still show the broader matching set and highlights which rows currently survive onto the plot
-
-
-
-That separation is what makes `Update Diagram` fast when only the ROI changes.
-
-
-
-## User Workflow
-
-
-
-### 1. Switch To HR Mode
-
-
-
-Open the app and switch the application mode to HR Diagram.
-
-
-
-### 2. Select The Source Image
-
-
-
-Choose the image from `File > Open File` or use the HR source image input.
-
-
-
-The image should be:
-
-
-
-- plate solved
-
-- RGB or compatible 3-channel XISF/FITS data
-
-- linear if you want the photometric measurements to remain meaningful
-
-
-
-### 3. Confirm The Working Directory
-
-
-
-The working directory is where HR artifacts are written. If you do not pick one explicitly, the app derives a default from the selected source image.
-
-
-
-### 4. Set The Max Source Limit
-
-
-
-`Max Sources` limits how many Gaia-matched detections are actually measured.
-
-
-
+- default: **5000**
 - `0` means all matched sources
+- in dense fields, the brightest matches are kept first
 
-- the default is `5000`
+This limit is the main control on full regeneration time.
 
-- when the field is dense, the brightest matched detections are kept first
+### Step 3: Optional ROI
 
+Before generating, you can draft a region of interest on the source image:
 
+- **Circle ROI** (default) or **Rectangle ROI**
+- hold **Shift** and left-drag to draft
+- plain drag and mouse wheel keep pan/zoom
+- **Invert ROI** flips the mask so stars *outside* the region are kept
 
-This limit directly affects full regeneration time.
+Important design rule: detection and measurement still happen for the field when you open/prepare the image. The ROI mainly controls which already-measured stars appear on the diagram. That separation is what makes **Update** fast when only the ROI changes.
 
+### Step 4: Open (Generate the Diagram)
 
+Click **Open** to choose the source image (or set the path from the HR controls). Opening the image starts the full preparation workflow automatically. CAst then:
 
-### 5. Optionally Draft An ROI
+1. Resolves the image WCS footprint.
+2. Queries field catalogs (primarily Gaia DR3).
+3. Detects stars on the image itself.
+4. Cross-matches detections to Gaia.
+5. Measures matched sources through aperture photometry.
+6. Derives plot quantities (colors, absolute magnitudes, zero-point proxies).
+7. Writes working-table outputs and refreshes the plot and Source Results table.
 
+While generation runs, a thin progress strip reports the current stage. Optional background name resolution can continue after the first plot appears.
 
+---
 
-The image view supports draft ROI drawing with:
+## The Measurement Pipeline
 
+### Star Detection on the Image
 
+CAst does not simply drop Gaia catalog positions onto the plot. It first finds stars that are actually present in *your* pixels.
 
-- `Circle ROI`
+Detection uses `photutils.detection.DAOStarFinder` on a background-subtracted centroid plane:
 
-- `Rectangle ROI`
+- Background median and scatter from 3-sigma clipped statistics.
+- Detection threshold: **5 times** the background standard deviation.
+- Assumed FWHM for the finder: between 2 and 8 pixels, scaled from the aperture radius (`0.8 * aperture_radius`).
+- Border pixels are excluded; detections must lie inside the usable image margin.
+- Candidates are sorted brightest-first by peak value.
 
-- the `Image` and `Results` buttons above the left pane now switch between the source-image view and the source-results view without using tabs
+### Cross-Match to Gaia
 
-- `Settings > HR Diagram` now holds the live ROI `Tool` selector and `Invert ROI` toggle
+Detected positions are converted to sky coordinates through the image WCS and matched to Gaia stars with Astropy's `match_to_catalog_sky`.
 
+The maximum match radius adapts to the plate scale and aperture:
 
+$$
+\theta_{\max} = \max\!\left(1.5'',\; \min\!\left(6.0'',\; \max(2.5\,\text{pix}\cdot s,\; r_{\text{ap}})\right)\right)
+$$
 
-Current behavior:
-
-
-
-- plain left-drag and mouse wheel keep their default pan/zoom behavior
-
-- `Circle ROI` is the default draft shape
-
-- hold `Shift` and left-drag on the image to draft the currently selected ROI shape
-
-
-- ROI shapes always keep stars inside the region unless `Invert ROI` is enabled, in which case the final ROI mask is flipped
-
-- starting a new drag replaces the previous draft ROI instead of stacking another draft region on top of it
-
-- the shared `Reset` button clears the draft ROI and restores the default image stretch and zoom
-
-- the current diagram does not change until `Generate`, `Update Diagram`, or `Regenerate` is pressed
-
-
-
-### 6. Click Generate
-
-
-
-On first run, the button reads `Generate`.
-
-
-
-The app then:
-
-
-
-1. resolves the WCS footprint of the source image
-
-2. queries the field catalogs
-
-3. detects stars on the image itself
-
-4. cross-matches those detections to Gaia
-
-5. measures matched sources in the image
-
-6. writes HR output files
-
-7. refreshes the plot and `Source Results` table
-
-While generation is running, HR mode shows a thin progress strip above the main split view and temporarily replaces the left footer's draft-ROI note with the current preparation message. If catalog-name searching is enabled, that same progress strip and footer note continue working after the image and plot appear while bright targets are resolved in the background. When that follow-up search finishes or fails, the footer note returns to its usual ROI-specific status text.
-
-
-
-### 7. Inspect The Diagram And Table
-
-
-
-After generation, you can:
-
-
-
-- change the X and Y axes
-
-- start from the default `Gaia BP-RP` versus `Gaia Absolute G Magnitude` educational view
-
-- read a bottom-axis color-temperature scale in Kelvin and a left-axis decade-scaled luminosity axis in `L_sun` whenever the current HR axes support those physical conversions, with the raw Gaia axes moving to the top and right in that mode
-
-- hide flagged rows
-
-- hide saturated rows
-
-- use the persisted `Require Parallax` setting from `Settings > HR Diagram` to keep only rows with positive parallax-derived values when needed
-
-- constrain the plot to a Gaia G apparent-magnitude range with lower and upper bounds
-
-- overlay educational stellar-class guide lines for the Gaia BP-RP versus Gaia Absolute G Magnitude educational HR view, including Main Sequence, Giants, Supergiants, Subgiants, and White Dwarfs
-
-- overlay an age-guide curve for Gaia BP-RP versus Gaia Absolute G Magnitude views, with an adjustable age in Gyr
-
-- edit the title shown at the top of the plot
-
-- export the live plot area as a themed snapshot or export a separate scientific-style HR plot using the full filtered dataset
-
-- change the number of table rows shown from `Settings > Open Settings > HR Diagram`
-
-- drag the divider between `Source Results` and `Work Log` to give either pane more room
-
-- sort the HR table by clicking a column header
-
-- click plot points to select a source
-
-- inspect a small selection popup from the plot with local row values, derived temperature and luminosity, and cached background-loaded SIMBAD details such as spectral type when available
-
-- click table rows to highlight the same source on the plot
-
-- multi-select `Source Results` rows and use the right-click menu to add them to the plot, remove them from the plot, or clear their manual plot override state
-
-- multi-select `Source Results` rows and use the right-click menu to copy their names to the clipboard for quick searching
-
-- inspect a `Proper Motion` column in the filtered HR table for the currently visible rows
-
-- open the selected source in CDS, SIMBAD, Gaia, or VSX; the HR browser actions now prefer exact identifier lookups over coordinate-only searches when a named object is available
-
-- use `Find Motion Group` to detect the dominant common-motion grouping from Gaia proper motion with a saved detection preset, while `Advanced...` opens optional expert controls for backend choice, strictness, parallax handling, HR cleanup, and automatic `Only Group` filtering; the workflow still highlights that likely cluster-like subset across the HR plot, `Source Results`, and motion overlays before optionally narrowing the view with `Only Group`
-
-
-
-The selected HR row is also carried into the left-side `Image` view, where the same star is annotated with its measurement aperture and annulus.
-
-
-
-The plot can either scale marker size from Gaia G apparent magnitude, so brighter stars appear as larger circles, or use a fixed point size for every source.
-
-
-
-The secondary physical scales are currently meaningful for:
-
-
-
-- bottom-axis color temperature when the X axis is `Gaia BP-RP`
-
-- left-axis luminosity when the Y axis is `Gaia Absolute G Magnitude` or `Measured Absolute Magnitude Proxy`
-
-
-
-If you switch to axes where those conversions are not meaningful, the plot falls back to showing the primary axis labels on the usual bottom and left sides.
-
-
-
-The menu bar path `Settings > HR Diagram` stores the HR plot presentation defaults, including:
-
-
-
-- `Require Parallax`
-
-- `Color Saturation`
-
-- `Opacity`
-
-- `Selected Circle Color`
-
-- `Selected Circle Opacity`
-
-- `Selected Circle Size`
-
-- `Data Point Size`
-
-- `Fixed Point Size`
-
-- motion-vector color and width for the `Source Image` overlay
-
-- an optional `Color vectors by angle` setting under `Settings > HR Diagram`, which maps motion-vector direction onto a circular hue palette so stars moving in similar directions share similar colors
-
-- an optional `Scale vector saturation by magnitude` setting under `Settings > HR Diagram`, which makes the smallest motion vectors in the current field the least saturated and the largest the most saturated while keeping a visible minimum color cue
-
-- an optional `Search catalog/designation names` setting that runs a background SIMBAD lookup for bright HR targets after the diagram loads so friendlier names can replace Gaia-style identifiers in `Source Results`, popups, and overlays when available
-
-- a `Name Search Mag` threshold that defaults to `12.0` Gaia G mag and limits which bright rows are included in that background search
-
-- the live ROI `Tool` selector and `Invert ROI` toggle used by the `Image` view
-
-
-
-The same defaults are also available in `Open Settings` under the `HR Diagram` tab, including the `Table Row Limit` used for `Source Results`.
-
-
-
-Scientific HR exports now pin the bottom temperature axis to the visible Gaia BP-RP anchor temperatures so the export keeps readable labels without repeating the `30,000` K and `2,600` K endpoint ticks.
-
-
-
-The `Class Guides` toggle in the HR plot toolbar is an educational overlay only. The guide lines are approximate and are shown only when the plot uses `Gaia BP-RP` versus `Gaia Absolute G Magnitude`.
-
-
-
-The shared HR action row above the left pane now keeps `Generate`, `Image`, `Results`, `Stretch`, `Adjust Levels`, `Reset`, and `Show Motion` together so you can switch panes or adjust the image without the left-side controls shifting when the generation action changes between `Open`, `Generate`, `Update Diagram`, or `Regenerate`.
-
-
-
-The diagram-summary note now sits at the bottom of the right plot pane, while the draft-ROI note sits at the bottom of the left image-or-results pane. Those two notes are the only persistent bottom-strip text in HR mode.
-
-
-
-The HR toolbar also includes:
-
-
-
-- a title field that edits the plot title live
-
-- a format selector for `PNG`, `PDF`, or `SVG`
-
-- `Snapshot` export, which captures the current plot area exactly as shown with the active theme and zoom level
-
-- `Scientific` export, which renders a cleaner white-background plot from the full filtered HR dataset while keeping the current axis limits
-
-- `Image + Plot...`, which saves the current annotated `Source Image` view and the current visible HR plot side by side as one PNG snapshot
-
-- `Source Image...`, which saves just the current annotated `Source Image` pane
-
-
-
-### 8. Update The Diagram Without Re-Measuring
-
-
-
-If only the ROI changed and the measurement-affecting settings are unchanged, the button becomes `Update Diagram`.
-
-
-
-That path reuses the cached full-field HR working table and only reapplies the ROI to the existing measurements.
-
-
-
-If the source image or important measurement settings changed, the button becomes `Regenerate`.
-
-
-
-## Generate, Update Diagram, And Regenerate
-
-
-
-The button text is meaningful.
-
-
-
-### Generate
-
-
-
-Shown when no HR working table exists yet.
-
-
-
-### Update Diagram
-
-
-
-Shown when the app can reuse the existing measurements.
-
-
-
-When a draft ROI change is pending, `Update Diagram` uses the same accent-attention styling as `Generate` so it is visually obvious that the cached measurements can be reapplied.
-
-
-
-This is valid only when all of the following still match the cached run:
-
-
-
-- source image path
-
-- HR max source limit
-
-- aperture radius
-
-- annulus inner radius
-
-- annulus outer radius
-
-- frame-edge margin percent
-
-- saturation-filter enabled state
-
-
-
-Typical `Update Diagram` use case:
-
-
-
-- draw a different ROI
-
-- leave measurement settings alone
-
-- press `Update Diagram`
-
-
-
-### Regenerate
-
-
-
-Shown when a cached HR working table exists but is no longer valid for the current settings.
-
-
-
-Typical `Regenerate` triggers:
-
-
-
-- different source image
-
-- changed aperture or annulus settings
-
-- changed edge margin
-
-- changed saturation filter setting
-
-- changed HR max source count
-
-
-
-## ROI Semantics
-
-
-
-The HR image panel uses draft ROI and applied ROI as separate concepts.
-
-
-
-### Draft ROI
-
-
-
-The visible ROI drawn on the image is only a draft until you press the generation button.
-
-
-
-### Applied ROI
-
-
-
-When you press `Generate`, `Update Diagram`, or `Regenerate`, the current draft ROI is copied into the applied ROI state. The HR plot is then filtered from that applied ROI snapshot, while `Source Results` continues to show the broader matching set and marks which rows are currently plotted.
-
-
-
-### Why This Matters
-
-
-
-This behavior prevents the plot from changing every time you draw, clear, or tweak a draft region. The diagram only updates when you explicitly ask for it.
-
-
-
-### Include, Exclude, And Invert
-
-
-
-ROI filtering supports:
-
-
-
-- include regions: keep sources inside these regions
-
-- exclude regions: remove sources inside these regions
-
-- invert: flip the final ROI mask
-
-
-
-If no applied ROI exists, the whole measured field is shown.
-
-
-
-## Source Image Annotations And Motion View
-
-
-
-The `Image` view is not limited to ROI drafting.
-
-
-
-It also reflects the current HR selection and can optionally visualize Gaia proper motion for the currently visible HR rows.
-
-
-
-If the selected source image is RGB, the preview now stays in color instead of collapsing to grayscale.
-
-
-
-### Selected Source Annotation
-
-
-
-When you select one or more stars in either of these places:
-
-
-
-- the `Source Results` table
-
-- the HR plot
-
-
-
-and then switch to `Image`, the selected sources are annotated on the image with single-circle markers that use the configured HR selection-circle color.
-
-
-
-If `Find Motion Group` is active, the highlighted group members are also annotated automatically on `Source Image` even before you manually reselect rows in `Source Results`.
-
-
-
-The image view also recenters itself so the current selection is visible immediately. For multi-row table selections, the `Image` view falls back to the full-field framing and centers on the selected group.
-
-
-
-The `Source Image...` action under the top-right `Export` menu writes the current `Image` view to disk with the active overlays included, such as selected-source circles, proper-motion vectors, and ROI drawings.
-
-
-
-### Show Motion
-
-
-
-The `Show Motion` button enables a proper-motion vector overlay for the currently plotted HR rows.
-
-
-
-Current behavior:
-
-
-
-- vectors are generated lazily only when `Show Motion` is enabled
-
-- when an applied ROI is active, vectors follow only the stars that currently survive onto the plotted subset
-
-- vector direction follows the source image WCS, so rotated images still show the correct on-image direction of motion
-
-- vector length is scaled from Gaia proper-motion magnitude, using $|\mu| = \sqrt{\mu_{\alpha*}^2 + \mu_{\delta}^2}$ as the value metric
-
-- when `Color vectors by angle` is enabled, the vector hue follows its on-image angle through a circular palette, so $0^\circ$ and $360^\circ$ share the same color while different motion directions separate visually
-
-- when `Scale vector saturation by magnitude` is enabled, the current field's smallest proper-motion vectors use the least saturation and the largest use the most saturation, so magnitude differences are visible without losing the direction color cue
-
-- `Find Motion Group` uses the currently saved detection preset, can still run either the built-in lightweight density-style grouping pass or an alternative `Sklearn DBSCAN` pass in Gaia proper-motion space, adds parallax when enough rows support it unless the advanced settings say otherwise, optionally applies a second-pass HR consistency refinement, and highlights the dominant group in the plot, `Source Results`, and motion overlay
-
-- `Advanced...` opens the Motion Group Detection dialog, where `Default`, `Tight`, `Loose`, `Parallax Priority`, and `Custom` presets keep the main toolbar simple while still exposing expert controls when needed
-
-- the expert section in `Advanced...` lets you choose the backend, tighten or loosen strictness, require parallax or ignore it, and turn HR cleanup on or off without adding those controls permanently to the toolbar
-
-- `Only Group` switches the HR plot, `Source Results`, and motion overlay from highlight mode into a filtered member-only view
-
-- common-motion members are marked with the configured selected-circle styling in the live plot and scientific export, while `Source Results` and source-image motion vectors still keep their dedicated highlight treatment until `Clear Motion Group` is pressed
-
-- the vector color and width are configured in `Settings > HR Diagram`
-
-- `Ctrl` + left-click on a star in `Source Image` selects that source directly from the image, updates the HR plot selection, opens the plot popup details, and enables the catalog browser buttons even when `Show Motion` is off
-
-
-
-This is especially useful when you want to see whether a subset of field stars shares a common apparent motion pattern, such as a cluster-like grouping.
-
-
-
-## Age Guide Overlay
-
-
-
-The HR plot can overlay an optional age-guide curve when the axes are `Gaia BP-RP` on X and `Gaia Absolute G Magnitude` on Y.
-
-
-
-This overlay is meant as a fast visual guide, especially for old cluster fields such as globular clusters.
-
-
-
-Current behavior:
-
-
-
-- the guide is local and immediate; it does not query any remote service
-
-- the age value is adjustable in Gyr from the HR plot control row
-
-- the guide is only drawn for the Gaia-color versus Gaia-absolute-magnitude view, because the other axis combinations do not share the same interpretation
-
-- when enabled on unsupported axes, the plot keeps working normally and reports that the guide is only available for the Gaia BP-RP / Gaia Absolute G Magnitude view
-
-
-
-## Gaia Button Behavior
-
-
-
-When the selected HR row is a Gaia DR3 source, the `Gaia` button now opens a direct Gaia TAP query result for that source ID instead of opening only the Gaia Archive home page. The same source ID is also copied to the clipboard.
-
-
-
-## Plot Selection Popup
-
-
-
-When you click a source directly on the HR plot, the app now shows a small popup near the cursor.
-
-
-
-The popup immediately uses data already present in the HR row, including:
-
-
-
-- source name and catalog/source ID
-
-- Gaia G apparent magnitude
-
-- BP-RP color
-
-- parallax
-
-
-
-If network lookup is available, the app also starts a background SIMBAD query for the selected coordinates and refreshes the popup when a match is found.
-
-
-
-Current behavior:
-
-
-
-- the lookup runs off the UI thread so plot selection does not freeze the window
-
-- results are cached for the rest of the session, so reselecting the same source does not repeat the network request
-
-- when SIMBAD returns a match, the popup can include object type, SIMBAD identifier, spectral type, and a SIMBAD V magnitude if available
-
-
-
-## Source Detection And Matching
-
-
-
-The HR workflow is image-first.
-
-
-
-It does not iterate over every Gaia source in the solved footprint and try to measure all of them. Instead it:
-
-
-
-1. creates a centroid plane
-
-2. runs `DAOStarFinder` on the image
-
-3. keeps valid detections inside the usable image area
-
-4. sorts detections by peak brightness
-
-5. converts detections to sky coordinates using the image WCS
-
-6. matches detections to Gaia sources
-
-7. keeps the best match per Gaia source
-
-
-
-Important implementation details:
-
-
-
-- the source-detection threshold is based on a sigma-clipped background estimate
-
-- the cross-match radius is bounded rather than unbounded
-
-- wide fields still cache the full Gaia field, but only Gaia-matched image detections are measured
-
-
-
-This is the main reason HR preparation scales much better than a naive full-footprint measurement approach.
-
-
-
-## How Measurements Are Computed
-
-
-
-Each matched source stores one `HrMeasurementRow`.
-
-
-
-Key fields include:
-
-
-
-- source identity and catalog metadata
-
-- sky position and image coordinates
-
-- aperture and annulus radii
-
-- per-channel fluxes and flux errors
-
-- instrumental magnitudes
-
-- signal-to-noise estimates
-
-- background levels
-
-- saturation status
-
-- flags
-
-- calibrated luminance magnitude
-
-- absolute-magnitude proxy
-
-- Gaia absolute G magnitude
-
-- plot color index
-
-
-
-### Photometry Planes
-
-
-
-If the image is RGB, the workflow measures:
-
-
-
-- red
-
-- green
-
-- blue
-
-- luminance
-
-
-
-The luminance plane is the mean of the three RGB planes.
-
-
-
-If the image is monochrome, only luminance is used.
-
-
+where $s$ is the mean pixel scale in arcseconds and $r_{\text{ap}}$ is the aperture radius in pixels. When multiple detections compete for the same Gaia star, the closest match wins.
 
 ### Aperture Photometry
 
+Matched stars are measured with circular apertures and annuli (same photutils tooling used elsewhere in CAst):
 
+- Fluxes are measured in red, green, and blue channels when available, plus a luminance combination.
+- Local sky is estimated from a circular annulus.
+- Instrumental magnitudes use $m = -2.5\log_{10}(F)$.
+- An instrumental color index $B - R$ is available as a fallback when Gaia BP-RP is missing.
+- Saturation and non-positive flux conditions are flagged.
 
-For each plane:
+### Zero-Point Proxy from Gaia G
 
+For stars with both a Gaia G magnitude and a usable instrumental luminance magnitude, CAst builds a simple photometric zero point:
 
+$$
+\text{ZP} = \mathrm{median}\!\left(G_{\text{Gaia}} - m_{\text{inst, lum}}\right)
+$$
 
-- the aperture sum is measured in a circular aperture
+Calibrated luminance magnitudes are then:
 
-- the local background is estimated from a circular annulus
+$$
+m_{\text{cal}} = m_{\text{inst, lum}} + \text{ZP}
+$$
 
-- the background contribution is subtracted
+This is not a full standard-system transformation. It is a practical bridge between your image and Gaia so that a measured absolute-magnitude *proxy* can be computed when useful.
 
-- flux error and SNR are derived from the measurement statistics
+### Absolute Magnitude from Parallax
 
+The default educational Y-axis uses Gaia absolute G magnitude. Given apparent magnitude $m$ and parallax $\varpi$ in milliarcseconds:
 
+$$
+M = m + 5\log_{10}(\varpi) - 10
+$$
 
-If the background-subtracted flux is non-positive, that plane is flagged and no magnitude is produced for it.
+This is the standard conversion when parallax is in mas (equivalent to the usual $M = m - 5\log_{10}(d_{\mathrm{pc}}) + 5$ with $d = 1000/\varpi$).
 
+CAst computes:
 
+- **Gaia Absolute G Magnitude** from Gaia G + Gaia parallax
+- **Measured Absolute Magnitude Proxy** from the calibrated luminance magnitude + parallax, when the zero-point step succeeded
 
-### Saturation And Edge Handling
-
-
-
-Rows may be flagged or excluded from zero-point calibration when they are:
-
-
-
-- saturated
-
-- near saturation
-
-- too close to the image edge according to the configured frame-edge margin
-
-- non-positive after background subtraction
-
-
-
-## Derived Plot Quantities
-
-
-
-### Instrumental Magnitude
-
-
-
-For a valid plane measurement, instrumental magnitude is computed as:
-
-
-
-$$m_{inst} = -2.5 \log_{10}(F)$$
-
-
-
-where $F$ is the background-subtracted flux.
-
-
-
-### Instrumental Blue Minus Red
-
-
-
-If both instrumental blue and red magnitudes exist:
-
-
-
-$$m_{B-R} = m_{blue} - m_{red}$$
-
-
+Only positive, finite parallaxes are used. Rows without usable parallax can be hidden with **Require Parallax** in Settings.
 
 ### Plot Color Index
 
+The default X-axis is **Gaia BP-RP**. If BP-RP is unavailable for a star, CAst falls back to the instrumental blue-minus-red color when that is available. Point display colors preferentially follow a Gaia BP-RP palette, with an instrumental RGB fallback.
 
+---
 
-The plotted color index prefers Gaia `BP-RP`.
+## Reading the Diagram
 
+### Default Educational View
 
+By default the plot shows:
 
-Fallback behavior:
+- **X:** Gaia BP-RP
+- **Y:** Gaia Absolute G Magnitude (brighter upward / fainter downward as usual for magnitude axes)
 
+When those axes are active, CAst also shows secondary physical scales:
 
+- **Bottom axis:** approximate color temperature in kelvin
+- **Left axis:** luminosity in solar units ($L_\odot$), decade-scaled
 
-- use Gaia `BP-RP` when available
+The raw Gaia axes move to the top and right when those conversions are meaningful. If you switch to axes where the conversions do not apply, the plot falls back to ordinary bottom/left primary labels.
 
-- otherwise use instrumental blue minus red
+### Temperature from BP-RP
 
+Color temperature is **not** solved from a full stellar-atmosphere model. It is an educational interpolation between fixed BP-RP and temperature anchors spanning roughly:
 
+| BP-RP | Approx. $T$ (K) |
+|---|---|
+| -0.4 | 30,000 |
+| 0.0 | 10,000 |
+| 0.6 | 6,200 |
+| 1.2 | 4,600 |
+| 2.2 | 3,200 |
+| 3.0 | 2,600 |
 
-### Zero-Point Calibration
+Intermediate values are linearly interpolated in BP-RP.
 
+### Luminosity from Absolute Magnitude
 
+Luminosity relative to the Sun uses:
 
-The app derives a luminance zero-point offset from rows that are usable for calibration.
+$$
+\frac{L}{L_\odot} = 10^{\,(M_{G,\odot} - M_G)/2.5}
+$$
 
+with $M_{G,\odot} = 4.67$ as the solar absolute G magnitude constant used in the plot widget. Tick labels are shown as decade-friendly $L_\odot$ values.
 
+### Class Guides and Age Guide
 
-Conceptually:
+For the Gaia BP-RP versus Gaia Absolute G educational view you can overlay:
 
+- **Class guides:** Main Sequence, Giants, Supergiants, Subgiants, White Dwarfs
+- **Age guide:** an educational parametric curve at a selectable age in Gyr (default 12 Gyr; clamp range roughly 0.1-13.5 Gyr)
 
+These are educational overlays, not fitted theoretical isochrones for your specific cluster metallicity and distance.
 
-$$ZP = \mathrm{median}(G_{Gaia} - m_{inst,L})$$
+### Filtering and Presentation
 
+Useful controls include:
 
+- hide flagged or saturated rows
+- **Require Parallax**
+- Gaia G apparent-magnitude min/max range
+- fixed marker size versus brightness-scaled markers
+- color saturation and point opacity
+- editable plot title
+- high-density downsampling so crowded fields stay interactive
 
-Then:
+### Source Results and Selection
 
+The Source Results table lists measured stars with columns such as Gaia magnitudes, BP-RP, parallax, and proper motion. Selection is linked across the plot, table, and source image:
 
+- click a plot point to select a star
+- click a table row to highlight the same star on the plot
+- multi-select rows to add/remove them from the plot or clear manual overrides
+- right-click **Copy Name** for quick external searches
+- open exact catalog pages in CDS, SIMBAD, Gaia, or VSX when a real object name is known
 
-$$m_{cal,L} = m_{inst,L} + ZP$$
+A small plot popup can show local row values plus derived temperature and luminosity, with cached SIMBAD spectral type when available.
 
+---
 
+## Find Cluster (Common Motion Group)
 
-Only non-saturated rows with usable Gaia G and instrumental luminance magnitude participate.
+Open clusters and moving groups are not defined only by where they sit on an HR diagram. They are also co-moving through space. **Find Cluster** looks for that kinematic signature in your Gaia-matched sample.
 
+### What it uses
 
+For each eligible star:
 
-### Measured Absolute Magnitude Proxy
+- proper motion in RA and Dec (mas/yr)
+- optionally parallax (mas), when enough stars have positive parallax values
 
+Features are robustly normalized (median / MAD scaling) before clustering.
 
+### Clustering
 
-If calibrated luminance magnitude and positive parallax are available, the app computes:
+CAst runs a DBSCAN-style search:
 
+- **Lightweight** built-in DBSCAN (default for smaller samples)
+- **Sklearn DBSCAN** for larger samples (auto-selected around 180+ eligible points), with fallback to the lightweight path if sklearn is unavailable
 
+Neighborhood size (`eps`) is estimated from k-th neighbor distances and scaled by a **strictness** factor. The largest cluster is retained as the candidate common-motion group.
 
-$$M_{proxy} = m_{cal,L} + 5\log_{10}(\varpi_{mas}) - 10$$
+Minimum requirements are intentional and conservative: at least five stars with usable proper motion, and enough points after parallax filtering when parallax mode demands it.
 
+### Presets
 
+| Preset | Intent |
+|---|---|
+| **Default** | Balanced auto backend, auto parallax when enough stars support it, HR cleanup on |
+| **Tight** | Stricter cluster threshold; emphasize the dense core |
+| **Loose** | Broader associations; parallax ignored; HR cleanup off |
+| **Parallax Priority** | Require positive parallax for every candidate; keep HR cleanup |
+| **Custom / Advanced** | Manual backend, strictness, parallax mode, and cleanup |
 
-where $\varpi_{mas}$ is parallax in milliarcseconds.
+### HR Cleanup
 
+After the astrometric cluster is found, optional **HR consistency refinement** removes members that are outliers in BP-RP / absolute-magnitude space relative to the group. This reduces contaminants that share motion by chance but do not belong on the same evolutionary sequence.
 
+### Only Group
 
-This is called a proxy because it is built from luminance calibration tied to Gaia G rather than a strict passband-correct absolute magnitude.
+When enabled (manually, or automatically after detection if that Advanced option is on), the diagram and related views can be narrowed to the detected members. After a successful detection, the button becomes **Find All**, which clears the motion group and restores the broader sample.
 
+Members are highlighted consistently across:
 
+- the HR plot
+- Source Results
+- source-image selection markers and proper-motion overlays
+- scientific exports that mark group members distinctly
 
-### Gaia Absolute G Magnitude
+---
 
+## Source Image Overlays
 
+The left **Image** view keeps your original field in context:
 
-If Gaia G apparent magnitude and positive parallax are available, the app also computes:
+- measurement aperture and annulus for the selected star
+- selection circles for plot selection, table selection, or motion-group members
+- optional Gaia proper-motion vectors for the currently plotted subset
+- vector color/width settings, plus optional color-by-angle mapping so similar directions share similar hues
+- Ctrl + click a star on the image to select it (highlights the plot/table and enables catalog browser buttons)
+- multi-select Source Results rows to add/remove them from the plot or clear manual overrides
+- **Save Image...** for the current annotated view
+- **Show Motion / Hide Motion** to toggle Gaia proper-motion vectors for the currently plotted subset
 
+RGB source previews remain in color so the eye can compare the plot to the field.
 
+---
 
-$$M_G = G_{Gaia} + 5\log_{10}(\varpi_{mas}) - 10$$
+## Update / Reset vs Full Re-prepare
 
+- **Update** applies a draft ROI (and related display filters) to already-measured rows without redoing detection and photometry. Use this for interactive exploration.
+- **Reset** clears the applied ROI and restores the broader measured set in the diagram workflow.
+- Opening a new image (or changing measurement settings that invalidate the cache, such as max sources or aperture radii) triggers a full re-prepare: catalogs, detection, matching, and measurement.
 
+---
 
-This gives you a clean Gaia-only absolute-magnitude axis that does not depend on the image-measured luminance calibration.
+## Exports
 
+HR mode supports several export paths:
 
+| Export | What you get |
+|---|---|
+| **Snapshot** | Current plot area exactly as shown (theme, zoom, overlays) |
+| **Scientific** | Cleaner scientific-style plot from the full filtered dataset at current axis limits |
+| **Image + Plot...** | Annotated source image and visible HR plot side by side |
+| **Source Image...** | Annotated source-image pane alone |
+| **Working table** | `hr_working_table.csv` / `.json` with measured and derived columns |
+| **HR File > Export bundle** | Named folder with annotated source image, scientific HR diagram, and matching science-table CSV |
 
-## Plot Controls
+Scientific exports can keep motion-group members visually distinct and pin temperature-axis ticks to readable BP-RP temperature anchors.
 
-
-
-The HR plot supports these X axes:
-
-
-
-- Gaia BP-RP
-
-- Instrumental Blue - Red
-
-- Resolved Color Index
-
-
-
-The Y axis supports:
-
-
-
-- Measured Absolute Magnitude Proxy
-
-- Gaia Absolute G Magnitude
-
-- Calibrated Luminance Magnitude
-
-- Gaia G Magnitude
-
-
-
-Additional controls:
-
-
-
-- `Hide flagged`
-
-- `Hide saturated`
-
-- `Reset`
-
-
-
-Notes:
-
-
-
-- the plot uses deterministic downsampling for large fields so the displayed distribution stays visually stable when table limits change
-
-- the selected source is highlighted on the plot
-
-- if the selected source would otherwise be omitted from the display sample, it is forced into the displayed set so the highlight remains visible
-
-- `Settings > HR Diagram` controls whether positive parallax is required, how saturated the red/blue plot colors appear, point opacity, the selected-point circle color/opacity/size factor, and whether marker sizes are fixed or scaled by Gaia G apparent magnitude
-
-
-
-## Image Preview Controls
-
-
-
-The image panel includes:
-
-
-
-- stretch mode: `Linear`, `Asinh`, `Sqrt`, `Log`
-
-- brightness
-
-- contrast
-
-- `Reset View`
-
-- `Reset Display`
-
-
-
-These controls are visual only.
-
-
-
-They do not change:
-
-
-
-- measurement values
-
-- ROI coordinates
-
-- source detection
-
-- aperture photometry
-
-
-
-The implementation explicitly keeps measurement and ROI logic on the original linear image while the preview uses a non-linear visual reference.
-
-
-
-## HR Results Table
-
-
-
-The `Source Results` table shows the currently visible table subset from the filterable HR rows, even when the plot itself is narrowed by ROI or manual plot overrides.
-
-
-
-Columns:
-
-
-
-- Source
-
-- Catalog
-
-- Gaia G
-
-- BP-RP
-
-- Calibrated
-
-- Abs Proxy
-
-- SNR
-
-- Zero Point
-
-- Flags
-
-
-
-Important behavior:
-
-
-
-- the table row limit only controls how many rows are shown in the table, not how many rows were measured
-
-- sorting is numeric-aware for numeric columns
-
-- the table is model-backed rather than `QTableWidget`-backed so large row counts remain responsive
-
-- rows that are currently included on the HR plot are tinted with a secondary background color
-
-- rows that are currently included on the HR plot are also floated above non-plotted rows in `Source Results` after `Generate`, `Update Diagram`, or `Regenerate`
-
-- rows added or removed manually from the plot via the `Source Results` right-click menu use distinct highlight colors so the override state is visible
-
-- selecting a row updates the active browser buttons and plot highlight
-
-- the table supports multi-selection so you can add or remove several rows from the plot in one action
-
-- the `Source Results` right-click menu can also pin the current selection to the top of the table so those stars remain easy to find while you review thousands of rows
-
-- the HR splitter sizes are cached in settings, so custom `Source Results` versus `Work Log` sizing persists across reloads and relaunches
-
-
-
-## Browser Buttons
-
-
-
-The HR results panel exposes direct catalog links for the selected row:
-
-
-
-- `CDS`
-
-- `Simbad`
-
-- `Gaia`
-
-- `VSX`
-
-
-
-Availability depends on the selected catalog:
-
-
-
-- `Gaia` is enabled for Gaia DR3 rows
-
-- `VSX` is enabled for VSX rows
-
-- `CDS` and `Simbad` are enabled whenever a valid HR row is selected
-
-
-
-## Work Log And Progress
-
-
-
-The HR panel includes two user-facing progress mechanisms:
-
-
-
-- a `Work Log` pane with timestamped messages
-
-- the plot-area status message shown while a diagram is being prepared
-
-
-
-During generation the app reports:
-
-
-
-- WCS resolution progress
-
-- catalog loading
-
-- HR source-measurement progress
-
-- HR working-table finalization after the last measurement update
-
-- file-writing completion
-
-- field and working-table summary values
-
-
-
-When measurement progress messages match the internal `[HR current/total]` format, the progress bar shows percentage complete.
-
-Routine HR progress messages no longer reuse the application status bar, so the bottom footer strip stays reserved for the draft-ROI and diagram-summary notes.
-
-
-
-## Files Written By HR Mode
-
-
-
-The working directory receives three HR artifacts:
-
-
-
-- `hr_field_catalog.json`
-
-- `hr_working_table.json`
-
-- `hr_working_table.csv`
-
-
-
-### hr_field_catalog.json
-
-
-
-Contains:
-
-
-
-- source image path
-
-- solved field center, radius, dimensions, and WCS path
-
-- catalog counts
-
-- serialized Gaia stars
-
-- serialized VSX variables
-
-- serialized exoplanet entries
-
-
-
-### hr_working_table.json
-
-
-
-Contains:
-
-
-
-- source image path
-
-- solved field metadata
-
-- the full serialized `HrWorkingTable`
-
-
-
-### hr_working_table.csv
-
-
-
-Contains one flat row per measured HR source, including:
-
-
-
-- source identity
-
-- Gaia metadata
-
-- image coordinates
-
-- aperture geometry
-
-- per-plane flux and magnitude values
-
-- calibrated and derived quantities
-
-- zero-point usage
-
-- flags
-
-
-
-## Performance Notes
-
-
-
-The current HR implementation includes several performance-oriented choices:
-
-
-
-- image-first source detection rather than full-catalog measurement
-
-- optional source cap for dense fields
-
-- cached full-field measurement reuse for ROI-only updates
-
-- vectorized ROI masking over cached row coordinates
-
-- deterministic plot downsampling for display stability
-
-- model-backed HR table rendering for large row counts
-
-
-
-If a field is very dense, the most expensive operations are still:
-
-
-
-- full first-time generation
-
-- regenerating after measurement-setting changes
-
-
-
-## Troubleshooting
-
-
-
-### The Generate Button Says Update Diagram
-
-
-
-That means the app believes the existing HR working table is still valid and can be reused.
-
-
-
-### The Generate Button Says Regenerate
-
-
-
-That means a full remeasurement is required because the cache key no longer matches the current HR setup.
-
-
-
-### Clearing The ROI Did Not Clear The Current Diagram
-
-
-
-That is expected.
-
-
-
-`Clear All` only clears the draft ROI. The current plot keeps using the last applied ROI until you press the generation button again.
-
-
-
-### The Image Looks Different But The Results Did Not Change
-
-
-
-That is also expected.
-
-
-
-Brightness, contrast, and stretch are preview-only controls.
-
-
-
-### Some Rows Have Flags Or Missing Values
-
-
-
-Common reasons include:
-
-
-
-- saturated sources
-
-- near-saturated sources
-
-- non-positive background-subtracted flux
-
-- missing or invalid parallax
-
-- sources near the frame edge
-
-
-
-### Why Are There Fewer Plotted Rows Than Measured Rows?
-
-
-
-Because the visible plot may exclude rows due to:
-
-
-
-- ROI filtering
-
-- manual add/remove overrides from `Source Results`
-
-- stable high-density display downsampling that keeps the visible plot subset from reshuffling when you remove an unrelated star
-
-- hidden flagged rows
-
-- hidden saturated rows
-
-- missing axis values
-
-- parallax requirement
-
-- display downsampling for large fields
-
-
+---
 
 ## Limitations
 
+### What HR mode does not do
 
+- **It is not cluster fitting.** Class guides and the age curve are educational overlays, not tailored isochrones for your cluster's age, metallicity, and reddening.
+- **It is not full photometric standardization.** The Gaia G zero-point bridge is a practical proxy, not a Johnson/Cousins or Sloan transformation with color terms.
+- **It does not replace Gaia Archive science pipelines.** Parallaxes, BP-RP colors, and proper motions come from Gaia; CAst organizes and visualizes them against your image detections.
+- **It is single-image.** Time-series variability and multi-epoch photometry belong in Differential Photometry / Transient Finder, not here.
+- **Crowded cores remain hard.** DAOStarFinder + aperture photometry can blend or miss stars in dense cluster cores where PSF photometry would do better.
+- **Motion groups are statistical.** Common proper motion does not prove physical membership by itself. Chance alignments, binaries, and field contaminants remain possible.
 
-Current HR mode is intentionally scoped.
+### What could be improved
 
+- Reddening / extinction corrections and true isochrone overlays for specific clusters
+- PSF photometry for crowded fields
+- Explicit membership probabilities instead of a single dominant DBSCAN cluster
+- Deeper integration of SIMBAD spectral types into automated classification
+- Distance-prior or Bayesian absolute-magnitude treatments for noisy parallaxes
 
+---
 
-- it works from one source image at a time
+## Conclusion
 
-- it depends on valid WCS for the selected image
+An HR diagram is a story about how stars are born, live, and die -- told in color and brightness. With one deep image and Gaia behind it, CAst lets you place *your* field on that story: see the main sequence, notice the outliers, chase a co-moving group, and export figures you can share, teach with, or study further.
 
-- the absolute magnitude value is a proxy derived from calibrated luminance and parallax, not a full astrophysical passband transform
+The diagram on your screen is not just a plot. It is a census of the stars you pointed at, drawn with the same axes astronomers have used for more than a hundred years.
 
-- it is optimized for interactive inspection, not publication-grade stellar-population analysis
-
-
-
-## Related Files
-
-
-
-- [README.md](README.md)
-
-- [DOCUMENTATION.md](DOCUMENTATION.md)
-
-- [photometry_app/core/hr_diagram.py](photometry_app/core/hr_diagram.py)
-
-- [photometry_app/ui/hr_plot_widget.py](photometry_app/ui/hr_plot_widget.py)
-
-- [photometry_app/ui/main_window.py](photometry_app/ui/main_window.py)
-
+Every cluster begins as a cloud. Every sequence on the diagram begins with someone deciding to look.

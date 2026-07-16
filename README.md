@@ -14,7 +14,9 @@ A more detailed guide can be found at [Differential Photometry Guide.](/differen
 
 ### HR Diagram
 
-Load a single deep image of a star cluster and plot a color-magnitude diagram using Gaia BP-RP photometry and absolute magnitudes. Identify co-moving stellar groups with proper-motion clustering, overlay theoretical isochrones, and export publication-quality diagrams with temperature and luminosity scales.
+Load a single deep image of a star cluster and plot a color-magnitude diagram using Gaia BP-RP photometry and absolute magnitudes. Identify co-moving stellar groups with proper-motion clustering, overlay educational class and age guides, and export publication-quality diagrams with temperature and luminosity scales.
+
+A more detailed guide can be found at [HR Diagram Guide](HR_DIAGRAM.md).
 
 ### Asteroid and Comet Detection
 
