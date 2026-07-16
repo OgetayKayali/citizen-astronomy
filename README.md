@@ -32,6 +32,8 @@ Open any solved image and instantly identify what's in the field: deep-sky objec
 
 Search a folder of repeated sky images for objects that vary significantly between frames. CAst solves missing plate solutions automatically, builds a shared comparison catalog, and flags candidates with real frame-to-frame variability.
 
+A more detailed guide can be found at [Transient Finder Guide](transient_finder.md).
+
 ### AstroStack
 
 Combine and process image sequences with stacking and signal analysis tools.
@@ -84,7 +86,7 @@ Depending on the mode and export action, CAst can produce:
 
 ## Documentation
 
-See [DOCUMENTATION.md](DOCUMENTATION.md) for the full user guide, [differential_photometry.md](differential_photometry.md) for Differential Photometry, [HR_DIAGRAM.md](HR_DIAGRAM.md) for the HR Diagram reference, and [asteroid_comet_detection.md](asteroid_comet_detection.md) for Asteroid/Comet Detection.
+See [DOCUMENTATION.md](DOCUMENTATION.md) for the full user guide, [differential_photometry.md](differential_photometry.md) for Differential Photometry, [HR_DIAGRAM.md](HR_DIAGRAM.md) for the HR Diagram reference, [asteroid_comet_detection.md](asteroid_comet_detection.md) for Asteroid/Comet Detection, and [transient_finder.md](transient_finder.md) for Transient Finder.
 
 ## Status
 
