@@ -75,3 +75,11 @@ star_instructions*.md
 hr_working_table.csv
 hr_working_table.json
 hr_field_catalog.json
+
+# Internal / non-user docs (manuscripts, AI agent maps, engineering notes)
+docs/paper/
+docs/ai/
+docs/MOON_PHASE5*.md
+docs/recovery_audit_*.md
+docs/codebase_map_printable.*
+docs/Doc_*.md
