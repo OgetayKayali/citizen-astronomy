@@ -26,7 +26,9 @@ A more detailed guide can be found at [Asteroid and Comet Detection Guide](guide
 
 ### Sky Explorer
 
-Open any solved image and instantly identify what's in the field: deep-sky objects, variable stars, Gaia catalog stars, exoplanet hosts, and solar system bodies, all overlaid on your image with a searchable results table.
+Open any plate-solved image and turn it into an annotated field census. CAst queries SIMBAD, Gaia DR3, VSX, the NASA Exoplanet Archive, and JPL Horizons for objects inside your footprint, then overlays them on the frame with a searchable results table. Switch object-type modes from Simple deep-sky classes to Scientific SIMBAD codes, compare against DSS or Hα survey cutouts with an interactive divider, mark magnitude reach with Mag Limit, add manual annotations, and export stills or comparison animations.
+
+A more detailed guide can be found at [Sky Explorer Guide](guides/sky_explorer.md).
 
 ### Transient Finder
 
@@ -86,7 +88,7 @@ Depending on the mode and export action, CAst can produce:
 
 ## Documentation
 
-Mode guides live under [`guides/`](guides/): [Differential Photometry](guides/differential_photometry.md), [HR Diagram](guides/hr_diagram.md), [Asteroid/Comet Detection](guides/asteroid_comet_detection.md), and [Transient Finder](guides/transient_finder.md).
+Mode guides live under [`guides/`](guides/): [Differential Photometry](guides/differential_photometry.md), [HR Diagram](guides/hr_diagram.md), [Asteroid/Comet Detection](guides/asteroid_comet_detection.md), [Transient Finder](guides/transient_finder.md), and [Sky Explorer](guides/sky_explorer.md).
 
 Shared shell details — themes, folder layout, and common UI panels — are in [Themes, Layout, and Shared UI](guides/themes_layout_ui.md).
 

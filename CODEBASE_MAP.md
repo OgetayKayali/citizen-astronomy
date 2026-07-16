@@ -788,6 +788,7 @@ Publisher smoke subset includes updater contract tests, selected main-window upd
 | `guides/hr_diagram.md` | Mode guide |
 | `guides/asteroid_comet_detection.md` | Mode guide |
 | `guides/transient_finder.md` | Mode guide |
+| `guides/sky_explorer.md` | Mode guide |
 | `guides/themes_layout_ui.md` | Themes, folder layout, shared UI panels |
 | `build.md` | Maintainer build instructions |
 | `CONTRIBUTING.md` | Contribution policy |
