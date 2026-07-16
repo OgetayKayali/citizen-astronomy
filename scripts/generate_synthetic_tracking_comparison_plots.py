@@ -342,8 +342,8 @@ def build_table_figure(davida_payload: dict[str, object], output_path: Path) -> 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate comparison plots for Synthetic Track CPU versus GPU results.")
     parser.add_argument("--davida-json", default="_tmp_davida_full_frame_compare.json", help="Path to the real Davida comparison JSON payload.")
-    parser.add_argument("--dashboard-output", default="docs/screenshots/synthetic_tracking_comparison_dashboard.png", help="Output path for the dashboard PNG.")
-    parser.add_argument("--table-output", default="docs/screenshots/synthetic_tracking_comparison_table.png", help="Output path for the table PNG.")
+    parser.add_argument("--dashboard-output", default="docs/synthetic_tracking_comparison_dashboard.png", help="Output path for the dashboard PNG.")
+    parser.add_argument("--table-output", default="docs/synthetic_tracking_comparison_table.png", help="Output path for the table PNG.")
     args = parser.parse_args()
 
     davida_payload = _load_json(Path(args.davida_json).expanduser())

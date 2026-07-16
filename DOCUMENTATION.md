@@ -760,7 +760,7 @@ If you are refreshing this document now, capture these three views first:
 
 
 
-Current reference screenshots are committed under `docs/screenshots/` and can be regenerated with `scripts/generate_doc_screenshots.py`.
+Current reference screenshots for synthetic tracking comparisons are under `docs/` and can be regenerated with `scripts/generate_synthetic_tracking_comparison_plots.py`. Other documentation screenshots can be regenerated with `scripts/generate_doc_screenshots.py`.
 
 
 
