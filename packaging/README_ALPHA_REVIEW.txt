@@ -8,6 +8,7 @@ This installer is for invited alpha reviewers only.
 Do not distribute, mirror, upload, publish, or share this build outside the
 private alpha-review program.
 
+Logo designed by Ege Palaz: https://palaz.se/
 Developed by Ogetay.
 More information: https://ogetay.com/citizen-astronomy-cast
 

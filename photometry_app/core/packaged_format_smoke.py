@@ -148,6 +148,7 @@ def about_dialog_content() -> tuple[str, str]:
     return (
         f"About {APP_DISPLAY_NAME}",
         f"Version {APP_VERSION}\n\n"
+        "Logo designed by Ege Palaz (https://palaz.se/).\n"
         "Developed by Ogetay.\n"
         "For more info, please visit: ogetay.com/citizen-astronomy-cast\n\n"
         "Alpha-reviewer build only. Do not distribute.",

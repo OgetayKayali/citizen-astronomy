@@ -7,7 +7,7 @@ from pathlib import Path
 APP_DISPLAY_NAME = "Citizen Astronomy (CAst)"
 APP_WINDOW_TITLE_NAME = "Citizen Astronomy"
 APP_USER_MODEL_ID = "CitizenAstronomy.CAst"
-APP_VERSION = "0.1.1-alpha.1"
+APP_VERSION = "0.1.1-alpha.2"
 APP_UPDATE_CHANNEL = "alpha"
 # Set this to the public "owner/repository" before publishing the first update.
 APP_UPDATE_GITHUB_REPOSITORY = "OgetayKayali/citizen-astronomy"

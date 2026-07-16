@@ -114,6 +114,8 @@ class MainWindowAboutDialogTest(unittest.TestCase):
 
         self.assertIn("Version 0.1.1-alpha.1", args[2])
 
+        self.assertIn("Logo designed by Ege Palaz (https://palaz.se/).", args[2])
+
         self.assertIn("Developed by Ogetay.", args[2])
 
         self.assertIn("For more info, please visit: ogetay.com/citizen-astronomy-cast", args[2])
@@ -29158,33 +29160,16 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.window._populate_asteroid_results_table(list(result.detections))
 
-        with patch.object(
-            self.window,
-            "_asteroid_sky_view_catalog_objects_for_current_source",
-            return_value=(
-                SkyExplorerObject(
-                    layer_key="gaia_stars",
-                    catalog="gaia",
-                    source_id="gaia-1",
-                    name="Gaia Bright",
-                    object_type="Star",
-                    ra_deg=120.0,
-                    dec_deg=22.0,
-                    pixel_x=10.0,
-                    pixel_y=10.0,
-                    magnitude=6.2,
-                    angular_distance_arcmin=0.0,
-                    short_label="Gaia",
-                ),
-            ),
-        ):
-            self.window._asteroid_results_table.selectRow(0)
+        self.window._asteroid_results_table.selectRow(0)
 
-            self.window._handle_asteroid_result_selection_changed(allow_live_measurements=False)
+        self.window._handle_asteroid_result_selection_changed(allow_live_measurements=False)
 
         self.assertEqual(self.window._asteroid_sky_time_label.text(), "UTC +0.0 h")
 
         self.assertIn("(1) Ceres", self.window._asteroid_sky_info_label.text())
+
+        self.assertEqual(self.window._asteroid_sky_view._stars, ())
+        self.assertTrue(self.window._asteroid_sky_view._markers)
 
     def test_asteroid_mode_uses_premium_card_containers(self) -> None:
 

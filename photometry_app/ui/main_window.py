@@ -612,8 +612,6 @@ _ASTEROID_PROGRESS_BAR_HEIGHT_PX = 10
 _ASTEROID_SKY_VIEW_MIN_OFFSET_HOURS = -12.0
 _ASTEROID_SKY_VIEW_MAX_OFFSET_HOURS = 12.0
 _ASTEROID_SKY_VIEW_OFFSET_STEP_HOURS = 0.5
-_ASTEROID_SKY_VIEW_STAR_LIMIT = 250
-_ASTEROID_SKY_VIEW_MAX_STAR_MAGNITUDE = 8.5
 _ASTEROID_ALL_GROUP_KEY = "__all__"
 _ASTEROID_BLINK_INTERVAL_MS = 350
 _MODE_TOOLBAR_BUTTON_HEIGHT = 46
@@ -23411,7 +23409,11 @@ class _AsteroidSkyViewWidget(QWidget):
 
     def _draw_stars(self, painter: QPainter, rect: QRectF) -> None:
 
-        stars = sorted(self._stars, key=lambda item: (_sky_explorer_numeric_magnitude(item.magnitude), item.name.casefold()), reverse=True)
+        def _star_sort_magnitude(item: SkyExplorerObject) -> float:
+            numeric_magnitude = _sky_explorer_numeric_magnitude(item)
+            return 99.0 if numeric_magnitude is None else float(numeric_magnitude)
+
+        stars = sorted(self._stars, key=lambda item: (_star_sort_magnitude(item), item.name.casefold()), reverse=True)
 
         for star in stars:
 
@@ -23423,7 +23425,7 @@ class _AsteroidSkyViewWidget(QWidget):
 
             x, y = projected
 
-            magnitude = _sky_explorer_numeric_magnitude(star.magnitude)
+            magnitude = _star_sort_magnitude(star)
 
             radius = max(1.2, min(7.0, 7.8 - (magnitude * 0.46)))
 
@@ -23544,7 +23546,7 @@ class _AsteroidSkyViewWidget(QWidget):
 
         painter.setPen(QColor("#d8dfeb"))
 
-        footer_text = f"FOV {self._field_width_deg:.2f} deg | Drag to pan | Wheel to zoom | Click star/object for details"
+        footer_text = f"FOV {self._field_width_deg:.2f} deg | Drag to pan | Wheel to zoom | Click object for details"
 
         painter.drawText(rect.adjusted(12, rect.height() - 30, -12, -8), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, footer_text)
 
@@ -28093,8 +28095,6 @@ class MainWindow(QMainWindow):
 
         self._asteroid_synthetic_tracking_context: tuple[SolarSystemDetectionResult, int] | None = None
 
-        self._asteroid_sky_view_cache: dict[str, tuple[SkyExplorerObject, ...]] = {}
-
         self._asteroid_sky_view_time_offset_hours = 0.0
 
         self._selected_asteroid_detection_index: int | None = None
@@ -29051,7 +29051,7 @@ class MainWindow(QMainWindow):
 
         self._asteroid_sky_reset_view_button.clicked.connect(self._reset_asteroid_sky_view)
 
-        self._asteroid_sky_info_label = QLabel("Select a predicted asteroid/comet row to load the sky-context view.")
+        self._asteroid_sky_info_label = QLabel("Select a predicted asteroid/comet row to scrub its isolated sky-motion track.")
 
         self._asteroid_sky_info_label.setWordWrap(True)
 
@@ -48014,6 +48014,7 @@ class MainWindow(QMainWindow):
             self,
             f"About {APP_DISPLAY_NAME}",
             f"Version {APP_VERSION}\n\n"
+            "Logo designed by Ege Palaz (https://palaz.se/).\n"
             "Developed by Ogetay.\n"
             "For more info, please visit: ogetay.com/citizen-astronomy-cast\n\n"
             "Alpha-reviewer build only. Do not distribute.",
@@ -59073,40 +59074,9 @@ class MainWindow(QMainWindow):
             break
 
     def _asteroid_sky_view_catalog_objects_for_current_source(self) -> tuple[SkyExplorerObject, ...]:
-
-        source_path = self._current_asteroid_source_image
-
-        if source_path is None or not source_path.exists():
-
-            return ()
-
-        cache_key = str(source_path.resolve())
-
-        cached_objects = self._asteroid_sky_view_cache.get(cache_key)
-
-        if cached_objects is not None:
-
-            return cached_objects
-
-        settings = self._ensure_settings()
-
-        explorer_result = explore_sky_image(
-            source_path,
-            settings=settings,
-            selected_layers=("gaia_stars",),
-            gaia_object_limit=_ASTEROID_SKY_VIEW_STAR_LIMIT,
-        )
-
-        bright_stars = tuple(
-            object_entry
-            for object_entry in explorer_result.objects
-            if object_entry.layer_key == "gaia_stars"
-            and _sky_explorer_numeric_magnitude(object_entry.magnitude) <= _ASTEROID_SKY_VIEW_MAX_STAR_MAGNITUDE
-        )
-
-        self._asteroid_sky_view_cache[cache_key] = bright_stars
-
-        return bright_stars
+        # Intentionally empty: Sky View is an isolated asteroid/comet motion canvas.
+        # Field stars would clutter the time-scrub view of movers only.
+        return ()
 
     def _asteroid_sky_view_field_width_deg(self, result: SolarSystemDetectionResult) -> float:
 
@@ -59158,7 +59128,7 @@ class MainWindow(QMainWindow):
 
         if selected_detection is None:
 
-            info_text = "Select a predicted asteroid/comet row to center the Sky View and draw its future or past track."
+            info_text = "Select a predicted asteroid/comet row to center Sky View and scrub its isolated motion track."
 
             return tuple(markers), (), info_text, result.solved_field.center_ra_deg, result.solved_field.center_dec_deg
 
@@ -59219,20 +59189,10 @@ class MainWindow(QMainWindow):
 
             return
 
-        try:
-
-            stars = self._asteroid_sky_view_catalog_objects_for_current_source()
-
-        except Exception as exc:
-
-            self._asteroid_sky_view.clear_scene(f"Sky View could not load bright field stars: {exc}")
-
-            return
-
         markers, trail_points, info_text, center_ra_deg, center_dec_deg = self._asteroid_sky_view_markers(result, observation_time)
 
         self._asteroid_sky_view.set_scene(
-            stars=stars,
+            stars=(),
             markers=markers,
             trail_points=trail_points,
             center_ra_deg=center_ra_deg,

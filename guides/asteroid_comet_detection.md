@@ -369,6 +369,22 @@ Open Plots from the main table after Generate, or from Discover / recovery revie
 
 ---
 
+## Sky View
+
+Results-panel tab: **Sky View**.
+
+This is an **isolated asteroid/comet motion canvas**. It deliberately draws only predicted movers and the selected object's scrubbed trail — not background field stars — so you can watch how objects in the field move over time without stellar clutter.
+
+Controls:
+
+- **Time** slider — scrub hours before/after the frame UTC (`UTC ±… h`)
+- **Now** — return to the observation time
+- **Reset View** — recenter the field
+
+Select a Predicted Objects row to highlight it, draw its trail, and scrub motion. Click markers to jump between objects.
+
+---
+
 ## Trajectory View (3D)
 
 Toolbar label: **Trajectory View**. Window title: `3D View - …`.
