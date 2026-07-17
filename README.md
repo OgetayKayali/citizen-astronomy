@@ -4,13 +4,17 @@ Every clear night, amateur telescopes around the world capture photons that prof
 
 **CAst** is a Windows desktop application that takes folders of FITS and XISF images and gives you the tools to measure variable stars, discover moving asteroids, build Hertzsprung-Russell diagrams, and explore the sky -- all from one guided interface, no command-line scripting required.
 
-## What you can do
+![CAst mode launcher](guides/images/entry_screen.jpg)
+
+## Modes of CAst
 
 ### Differential Photometry
 
 Open a folder of time-series images, and CAst scans your frames, identifies field stars through Gaia DR3 and VSX catalogs, performs aperture photometry with adaptive FWHM-scaled apertures, and produces differential light curves. Fit periods with Lomb-Scargle, refine comparison stars, bin for signal-to-noise, and export science-ready AAVSO reports.
 
 A more detailed guide can be found at [Differential Photometry Guide](guides/differential_photometry.md).
+
+![WUMa light curve](guides/images/light_curve_WUMa.jpg)
 
 ### HR Diagram
 
