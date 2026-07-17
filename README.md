@@ -1,4 +1,4 @@
-# Citizen Astronomy (CAst)
+# <img src="assets/citizen_astronomy.ico" alt="CAst" width="40" height="40"> Citizen Astronomy (CAst)
 
 Every clear night, amateur telescopes around the world capture photons that professional observatories never will -- the right patch of sky, at the right moment, with enough patience to notice something change. Citizen Astronomy turns those images into science.
 
