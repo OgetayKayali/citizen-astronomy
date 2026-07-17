@@ -73,11 +73,15 @@ https://github.com/user-attachments/assets/05b354d0-dbcb-4a6a-ad3d-79a4d0ed59a3
 
 Explore the sky as a live interactive atlas with searchable bright stars, Messier targets, constellations, and the Moon; observer-location and UTC time controls; constellation, grid, horizon, and Milky Way layers; and on-demand deep star catalogs. Sky Atlas also lets users create their **own surveys from their own sky data** by importing sky-registered PNG, XISF, TIFF, or FITS images as custom overlay surveys.
 
+![Sky Atlas](guides/images/sky_atlas.jpg)
+
 A more detailed guide can be found at [Sky Atlas Guide](guides/sky_atlas.md).
 
 ## Distance Map
 
-Take a solved field image and turn it into a Gaia-based 3D parallax map. Distance Map filters stars by magnitude, distance, and parallax quality, visualizes the field in 3D, highlights likely co-moving groups with **Find Cluster**, and lets you inspect the same selection in the image, table, and spatial view.
+Take a solved field image and turn it into a Gaia-based 3D parallax map -- distributing the stars from your photograph into real space using their measured distances. Distance Map filters stars by magnitude, distance, and parallax quality, visualizes the field in 3D, highlights likely co-moving groups with **Find Cluster**, and lets you inspect the same selection in the image, table, and spatial view. With **Tomography**, you can drag your field image along the depth axis to slide through that volume and see where those stars actually sit in space, not just where they landed on the detector.
+
+![Distance Map](guides/images/distance_map.jpg)
 
 A more detailed guide can be found at [Distance Map Guide](guides/distance_map.md).
 
