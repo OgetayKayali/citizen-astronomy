@@ -22,6 +22,8 @@ Load a single deep image of a star cluster and plot a color-magnitude diagram us
 
 A more detailed guide can be found at [HR Diagram Guide](guides/hr_diagram.md).
 
+![HR diagram](guides/images/HR_diagram.jpg)
+
 ### Asteroid and Comet Detection
 
 Point CAst at a sequence of solved frames and it queries known solar system objects predicted in your field -- including faint comets and interstellar visitors. Blink through your frames, track objects across exposures, align subframes onto a common WCS grid, and run the **Discover** pipeline to find moving objects that aren't in the catalogs yet. Confirm candidates with synthetic tracking that shifts and stacks on predicted motion. Inspect paths with **Plots**, and visualize orbits in a heliocentric **Trajectory View** built from JPL Horizons data.
