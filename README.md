@@ -34,6 +34,10 @@ When you want orbital context instead of image-plane confirmation, open **Trajec
 
 ![Trajectory View](guides/images/trajectory_view.jpg)
 
+**Synthetic Track** goes further for objects that are too faint to see in any single frame. By shifting each exposure along a trial motion and stacking the result, CAst concentrates the moving signal into a detectable peak while stationary stars smear out. That can reveal known asteroids or comets that were invisible by eye, and it is also a powerful follow-up for **Discover** candidates -- confirming whether a suspected tracklet is a real mover, which is how new asteroids and comets can be pulled out of data that looked empty frame by frame.
+
+![Synthetic Track](guides/images/synthetic_track.jpg)
+
 For a more quantitative look, **Plots** provides the scientific trajectory panels: predicted versus measured paths, residuals, offsets and SNR versus time, and frame-by-frame tables that turn a blinking speck into measurable motion.
 
 ![Trajectory plots](guides/images/trajectory_plots.jpg)
