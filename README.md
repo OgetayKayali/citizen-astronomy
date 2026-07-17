@@ -48,11 +48,15 @@ A more detailed guide can be found at [Asteroid and Comet Detection Guide](guide
 
 Open any plate-solved image and turn it into an annotated field census. CAst queries SIMBAD, Gaia DR3, VSX, the NASA Exoplanet Archive, and JPL Horizons for objects inside your footprint, then overlays them on the frame with a searchable results table. Switch object-type modes from Simple deep-sky classes to Scientific SIMBAD codes, compare against DSS or Hα survey cutouts with an interactive divider, mark magnitude reach with Mag Limit, add manual annotations, and export stills or comparison animations.
 
+![Sky Explorer](guides/images/sky_explorer.jpg)
+
 A more detailed guide can be found at [Sky Explorer Guide](guides/sky_explorer.md).
 
 ## Transient Finder
 
 Search a folder of repeated sky images for objects that vary significantly between frames. CAst solves missing plate solutions automatically, builds a shared comparison catalog, and flags candidates with real frame-to-frame variability.
+
+![Transient Finder](guides/images/transient_finder.jpg)
 
 A more detailed guide can be found at [Transient Finder Guide](guides/transient_finder.md).
 
