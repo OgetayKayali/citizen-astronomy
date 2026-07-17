@@ -26,7 +26,17 @@ A more detailed guide can be found at [HR Diagram Guide](guides/hr_diagram.md).
 
 ## Asteroid and Comet Detection
 
-Point CAst at a sequence of solved frames and it queries known solar system objects predicted in your field -- including faint comets and interstellar visitors. Blink through your frames, track objects across exposures, align subframes onto a common WCS grid, and run the **Discover** pipeline to find moving objects that aren't in the catalogs yet. Confirm candidates with synthetic tracking that shifts and stacks on predicted motion. Inspect paths with **Plots**, and visualize orbits in a heliocentric **Trajectory View** built from JPL Horizons data.
+Point CAst at a sequence of plate-solved frames and it becomes a moving-object workstation. Generate known asteroid and comet predictions for your field -- including faint objects and interstellar visitors -- then blink the stack, mark detections, align frames onto a shared WCS grid, and run **Discover** to hunt for movers that are not already in the catalogs. Confirm faint candidates with **Synthetic Track**, which shifts and stacks on predicted motion so trails that were invisible in a single frame stand out in the combined view.
+
+![Asteroid and comet detection](guides/images/asteroid_comet_detection.jpg)
+
+When you want orbital context instead of image-plane confirmation, open **Trajectory View**. This interactive heliocentric scene places selected asteroids and comets among the major planets using JPL Horizons data, so you can scrub through time and watch how each object's path and apparent brightness evolve across the nights you observed -- and beyond.
+
+![Trajectory View](guides/images/trajectory_view.jpg)
+
+For a more quantitative look, **Plots** provides the scientific trajectory panels: predicted versus measured paths, residuals, offsets and SNR versus time, and frame-by-frame tables that turn a blinking speck into measurable motion.
+
+![Trajectory plots](guides/images/trajectory_plots.jpg)
 
 A more detailed guide can be found at [Asteroid and Comet Detection Guide](guides/asteroid_comet_detection.md).
 
