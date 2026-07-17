@@ -42,11 +42,14 @@ Search a folder of repeated sky images for objects that vary significantly betwe
 
 A more detailed guide can be found at [Transient Finder Guide](guides/transient_finder.md).
 
-### AstroStack
+### Deep Stack
 
-Open a folder of related frames and turn it into a cumulative stacking animation. AstroStack can align plate-solved images onto a common WCS grid, crop to the region you care about, track running metrics such as signal, noise, SNR, FWHM, and total integration time, and export GIF or MP4 animations with annotations and live plot overlays. In the current UI this mode may still appear as **Deep Stack**, but it is the same workflow.
+Open a folder of related frames and turn it into a cumulative stacking animation. Deep Stack can align plate-solved images onto a common WCS grid, crop to the region you care about, track running metrics such as signal, noise, SNR, FWHM, and total integration time, and export GIF or MP4 animations with annotations and live plot overlays. 
 
 A more detailed guide can be found at [AstroStack Guide](guides/astrostack.md).
+
+https://github.com/user-attachments/assets/05b354d0-dbcb-4a6a-ad3d-79a4d0ed59a3
+
 
 ### Sky Atlas
 
