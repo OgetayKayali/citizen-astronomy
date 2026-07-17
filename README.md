@@ -6,9 +6,9 @@ Every clear night, amateur telescopes around the world capture photons that prof
 
 ![CAst mode launcher](guides/images/entry_screen.jpg)
 
-## Modes of CAst
+CAst is organized around dedicated **modes**, each built for a different kind of observing or exploration. Choose a science workflow when you want measurements and exports, or open a visualization tool when you want to understand a field, the sky, or a stack. The sections below introduce each mode; follow the linked guides for step-by-step detail.
 
-### Differential Photometry
+## Differential Photometry
 
 Open a folder of time-series images, and CAst scans your frames, identifies field stars through Gaia DR3 and VSX catalogs, performs aperture photometry with adaptive FWHM-scaled apertures, and produces differential light curves. Fit periods with Lomb-Scargle, refine comparison stars, bin for signal-to-noise, and export science-ready AAVSO reports.
 
@@ -16,7 +16,7 @@ A more detailed guide can be found at [Differential Photometry Guide](guides/dif
 
 ![WUMa light curve](guides/images/light_curve_WUMa.jpg)
 
-### HR Diagram
+## HR Diagram
 
 Load a single deep image of a star cluster and plot a color-magnitude diagram using Gaia BP-RP photometry and absolute magnitudes. Identify co-moving stellar groups with proper-motion clustering, overlay educational class and age guides, and export publication-quality diagrams with temperature and luminosity scales.
 
@@ -24,25 +24,25 @@ A more detailed guide can be found at [HR Diagram Guide](guides/hr_diagram.md).
 
 ![HR diagram](guides/images/HR_diagram.jpg)
 
-### Asteroid and Comet Detection
+## Asteroid and Comet Detection
 
 Point CAst at a sequence of solved frames and it queries known solar system objects predicted in your field -- including faint comets and interstellar visitors. Blink through your frames, track objects across exposures, align subframes onto a common WCS grid, and run the **Discover** pipeline to find moving objects that aren't in the catalogs yet. Confirm candidates with synthetic tracking that shifts and stacks on predicted motion. Inspect paths with **Plots**, and visualize orbits in a heliocentric **Trajectory View** built from JPL Horizons data.
 
 A more detailed guide can be found at [Asteroid and Comet Detection Guide](guides/asteroid_comet_detection.md).
 
-### Sky Explorer
+## Sky Explorer
 
 Open any plate-solved image and turn it into an annotated field census. CAst queries SIMBAD, Gaia DR3, VSX, the NASA Exoplanet Archive, and JPL Horizons for objects inside your footprint, then overlays them on the frame with a searchable results table. Switch object-type modes from Simple deep-sky classes to Scientific SIMBAD codes, compare against DSS or Hα survey cutouts with an interactive divider, mark magnitude reach with Mag Limit, add manual annotations, and export stills or comparison animations.
 
 A more detailed guide can be found at [Sky Explorer Guide](guides/sky_explorer.md).
 
-### Transient Finder
+## Transient Finder
 
 Search a folder of repeated sky images for objects that vary significantly between frames. CAst solves missing plate solutions automatically, builds a shared comparison catalog, and flags candidates with real frame-to-frame variability.
 
 A more detailed guide can be found at [Transient Finder Guide](guides/transient_finder.md).
 
-### Deep Stack
+## Deep Stack
 
 Open a folder of related frames and turn it into a cumulative stacking animation. Deep Stack can align plate-solved images onto a common WCS grid, crop to the region you care about, track running metrics such as signal, noise, SNR, FWHM, and total integration time, and export GIF or MP4 animations with annotations and live plot overlays. 
 
@@ -51,13 +51,13 @@ A more detailed guide can be found at [AstroStack Guide](guides/astrostack.md).
 https://github.com/user-attachments/assets/05b354d0-dbcb-4a6a-ad3d-79a4d0ed59a3
 
 
-### Sky Atlas
+## Sky Atlas
 
 Explore the sky as a live interactive atlas with searchable bright stars, Messier targets, constellations, and the Moon; observer-location and UTC time controls; constellation, grid, horizon, and Milky Way layers; and on-demand deep star catalogs. Sky Atlas also lets users create their **own surveys from their own sky data** by importing sky-registered PNG, XISF, TIFF, or FITS images as custom overlay surveys.
 
 A more detailed guide can be found at [Sky Atlas Guide](guides/sky_atlas.md).
 
-### Distance Map
+## Distance Map
 
 Take a solved field image and turn it into a Gaia-based 3D parallax map. Distance Map filters stars by magnitude, distance, and parallax quality, visualizes the field in 3D, highlights likely co-moving groups with **Find Cluster**, and lets you inspect the same selection in the image, table, and spatial view.
 
