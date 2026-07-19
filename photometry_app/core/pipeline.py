@@ -1587,14 +1587,29 @@ class PhotometryPipeline:
 
         representative_requests = [*pending_individual, *(group[0] for group in pending_grouped.values())]
 
+        if any(request.try_local_gaia for request in representative_requests):
+
+            solve_plan = "metadata-seeded Gaia matching first"
+
+            if settings.astrometry_api_key:
+
+                solve_plan += "; astrometry.net only if Gaia cannot recover a WCS"
+
+        elif settings.astrometry_api_key:
+
+            solve_plan = "astrometry.net"
+
+        else:
+
+            solve_plan = "no available WCS fallback"
+
         _emit_progress(
 
             progress_callback,
 
             (
-                f"Solving {len(representative_requests)} unresolved field(s) with metadata-seeded Gaia matching"
-                + (" and astrometry.net fallback" if settings.astrometry_api_key else "")
-                + f", using up to {min(_DEFAULT_ASTROMETRY_PARALLEL_SUBMISSIONS, len(representative_requests))} concurrent solve(s)."
+                f"Solving {len(representative_requests)} unresolved field(s) via {solve_plan}, "
+                f"using up to {min(_DEFAULT_ASTROMETRY_PARALLEL_SUBMISSIONS, len(representative_requests))} concurrent solve(s)."
             ),
 
         )
@@ -1829,7 +1844,21 @@ class PhotometryPipeline:
 
             future_map = {
 
-                executor.submit(self._solve_single_pending_request, request, solve_cache_dir, api_key): request
+                executor.submit(
+
+                    self._solve_single_pending_request,
+
+                    request,
+
+                    solve_cache_dir,
+
+                    api_key,
+
+                    progress_callback,
+
+                    total_files,
+
+                ): request
 
                 for request in requests_to_solve
 
@@ -1845,7 +1874,25 @@ class PhotometryPipeline:
 
                 if result.solved_field is not None:
 
-                    _emit_progress(progress_callback, f"[WCS {request.index + 1}/{total_files}] Solved field ready for {request.file_result.path.name}.")
+                    if any("metadata-seeded Gaia" in reason for reason in result.reasons):
+
+                        method_text = "via metadata-seeded Gaia matching"
+
+                    elif any("astrometry.net" in reason.casefold() for reason in result.reasons):
+
+                        method_text = "via astrometry.net"
+
+                    else:
+
+                        method_text = "with a recovered WCS"
+
+                    _emit_progress(
+
+                        progress_callback,
+
+                        f"[WCS {request.index + 1}/{total_files}] Solved field ready for {request.file_result.path.name} {method_text}.",
+
+                    )
 
                 else:
 
@@ -1867,11 +1914,37 @@ class PhotometryPipeline:
 
         api_key: str,
 
+        progress_callback: Callable[[str], None] | None = None,
+
+        total_files: int = 1,
+
     ) -> PlateSolveResult:
 
         local_reasons: list[str] = []
 
+        file_label = f"[WCS {request.index + 1}/{max(1, int(total_files))}]"
+
+        file_name = request.file_result.path.name
+
         if request.try_local_gaia:
+
+            _emit_progress(
+
+                progress_callback,
+
+                f"{file_label} Trying metadata-seeded Gaia matching for {file_name}.",
+
+            )
+
+            def _local_progress(message: str) -> None:
+
+                text = str(message or "").strip()
+
+                if not text:
+
+                    return
+
+                _emit_progress(progress_callback, f"{file_label} {text}")
 
             try:
 
@@ -1880,6 +1953,8 @@ class PhotometryPipeline:
                     request.file_result.path,
 
                     solve_cache_dir / "local-gaia",
+
+                    progress_callback=_local_progress,
 
                 )
 
@@ -1907,11 +1982,33 @@ class PhotometryPipeline:
 
                     solved_field=local_result.solved_field,
 
-                    reasons=_deduplicate([*request.initial_reasons, *local_result.reasons]),
+                    reasons=_deduplicate(
+
+                        [
+
+                            *request.initial_reasons,
+
+                            *local_result.reasons,
+
+                            "Recovered WCS via metadata-seeded Gaia matching.",
+
+                        ]
+
+                    ),
 
                 )
 
             local_reasons.extend(local_result.reasons)
+
+            if api_key:
+
+                _emit_progress(
+
+                    progress_callback,
+
+                    f"{file_label} Gaia matching did not recover a WCS for {file_name}; trying astrometry.net.",
+
+                )
 
         if not api_key:
 
@@ -1969,7 +2066,29 @@ class PhotometryPipeline:
 
             solved_field=result.solved_field,
 
-            reasons=_deduplicate([*request.initial_reasons, *local_reasons, *result.reasons]),
+            reasons=_deduplicate(
+
+                [
+
+                    *request.initial_reasons,
+
+                    *local_reasons,
+
+                    *result.reasons,
+
+                    *(
+
+                        ("Recovered WCS via astrometry.net.",)
+
+                        if result.solved_field is not None
+
+                        else ()
+
+                    ),
+
+                ]
+
+            ),
 
         )
 

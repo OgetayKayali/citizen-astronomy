@@ -46,14 +46,12 @@ Record:
 
 ---
 
-## 2. SmartScreen / unsigned installer note
+## 2. Publisher signature / SmartScreen check
 
-This alpha installer is **unsigned**. Windows Defender SmartScreen may show a warning such as “Windows protected your PC” or “Unknown publisher.”
-
-Expected reviewer action:
-
-1. Choose **More info** (if shown)
-2. Choose **Run anyway**
+Reviewer releases must be Authenticode-signed and timestamped. Open the Setup
+file's **Properties → Digital Signatures** and confirm the expected publisher.
+Treat a missing/invalid signature or a SmartScreen **Unknown publisher** warning
+as a failed release gate; do not bypass it.
 
 Record whether SmartScreen appeared: [ ] Yes  [ ] No
 
@@ -62,20 +60,19 @@ Record whether SmartScreen appeared: [ ] Yes  [ ] No
 ## 3. Install steps
 
 1. Close any running `CitizenAstronomyAlphaReview.exe` instances on the test machine.
-2. Run `CitizenAstronomyAlphaReview-Alpha-Setup.exe`.
-3. Accept the default install location unless testing a custom path:
+2. Run the generated Velopack `*Setup.exe`.
+3. Confirm the per-user managed installation appears at:
 
    ```text
-   %LOCALAPPDATA%\Programs\Citizen Astronomy (CAst) Alpha Review\
+   %LOCALAPPDATA%\CitizenAstronomy.CAst\
    ```
 
-4. Optionally enable the desktop shortcut during setup.
-5. Finish setup and confirm these files exist:
+4. Finish setup and confirm these files exist:
 
    - [ ] `CitizenAstronomyAlphaReview.exe`
-   - [ ] `_internal\` folder
-   - [ ] `README_ALPHA_REVIEW.txt`
-   - [ ] `ALPHA_REVIEW_NOTICE.txt`
+   - [ ] `Update.exe`
+   - [ ] `current\CitizenAstronomyAlphaReview.exe`
+   - [ ] `current\_internal\` folder
 
 Record installed path:
 
@@ -114,7 +111,7 @@ From the build machine, copy `packaging\fixtures\` to the clean machine.
 ### Option A — direct EXE smoke flags (no Python required)
 
 ```powershell
-$exe = "$env:LOCALAPPDATA\Programs\Citizen Astronomy (CAst) Alpha Review\CitizenAstronomyAlphaReview.exe"
+$exe = "$env:LOCALAPPDATA\CitizenAstronomy.CAst\CitizenAstronomyAlphaReview.exe"
 $fixtures = "C:\path\copied\packaging\fixtures"
 $out = "$env:USERPROFILE\Desktop\installed_format_smoke.json"
 
@@ -228,11 +225,11 @@ Record any missing textures, black tiles, or OpenGL fallback warnings:
 **Important:** close the app completely before uninstalling. Uninstall while the EXE is running can leave locked DLLs behind.
 
 1. Confirm `CitizenAstronomyAlphaReview.exe` is not running.
-2. Run **Uninstall Citizen Astronomy (CAst) Alpha Review** from Start Menu (or Windows Settings → Apps).
+2. Run **Uninstall Citizen Astronomy (CAst)** from Start Menu (or Windows Settings → Apps).
 3. Verify:
 
-   - [ ] Install folder under `%LOCALAPPDATA%\Programs\Citizen Astronomy (CAst) Alpha Review\` is removed
-   - [ ] Start Menu program group is removed
+   - [ ] Install folder under `%LOCALAPPDATA%\CitizenAstronomy.CAst\` is removed
+   - [ ] Start Menu shortcut is removed
    - [ ] Desktop shortcut is removed (if one was created)
 
 ### User settings survive uninstall by design
@@ -240,8 +237,7 @@ Record any missing textures, black tiles, or OpenGL fallback warnings:
 These paths are **not** removed by the alpha installer and may remain after uninstall:
 
 ```text
-%LOCALAPPDATA%\CitizenAstronomy\settings.json
-%LOCALAPPDATA%\CitizenAstronomy\state.json
+%LOCALAPPDATA%\CitizenPhotometry\
 %LOCALAPPDATA%\CitizenAstronomy\startup-error.log
 ```
 
@@ -272,7 +268,7 @@ If blocked, file findings in `packaging/ALPHA_REVIEW_VALIDATION_REPORT_TEMPLATE.
 
 ```powershell
 # Installed EXE path
-$exe = "$env:LOCALAPPDATA\Programs\Citizen Astronomy (CAst) Alpha Review\CitizenAstronomyAlphaReview.exe"
+$exe = "$env:LOCALAPPDATA\CitizenAstronomy.CAst\CitizenAstronomyAlphaReview.exe"
 
 # Startup-error log
 $log = "$env:LOCALAPPDATA\CitizenAstronomy\startup-error.log"

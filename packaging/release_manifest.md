@@ -5,7 +5,8 @@ Private alpha-review packaging audit. Reviewers must not need Python, pip, Qt, a
 ## Canonical build output
 
 - **PyInstaller one-folder bundle:** `CitizenAstronomyAlphaReview/` produced by `CitizenAstronomyAlphaReview.spec`
-- **Installer input:** the tested one-folder bundle only; Inno Setup wraps it, it does not replace it
+- **Velopack input:** the tested one-folder bundle; Velopack produces signed Setup, full recovery package, alpha feed, and binary delta
+- **Legacy input:** Inno Setup wraps the first Velopack Setup only for migration from pre-Velopack builds
 
 ## Runtime Python dependencies
 
@@ -29,6 +30,7 @@ Private alpha-review packaging audit. Reviewers must not need Python, pip, Qt, a
 | `pyqtgraph`, `pyqtgraph.opengl` | optional `try/except` in `dialogs.py` | 3D orbit views | `collect_all('pyqtgraph')` |
 | `OpenGL`, `OpenGL_accelerate` | via pyqtgraph OpenGL | 3D rendering | `hiddenimports` |
 | `sklearn.*` | optional/lazy in `hr_motion_groups.py`, `candidate_training.py` | motion groups / training | `hiddenimports` + sklearn tree |
+| `velopack==1.2.0` | startup hook + update adapter | managed install and delta/full updates | `collect_all('velopack')` |
 | `spiceypy` | `importlib.import_module` in `moon_system.py` | optional high-precision Moon ephemeris | intentionally optional; not bundled |
 | `cupy` | optional in `array_backend.py` | GPU arrays | excluded in spec |
 
@@ -83,6 +85,7 @@ Private alpha-review packaging audit. Reviewers must not need Python, pip, Qt, a
 - `astroquery/simbad/data/query_criteria_fields.json`
 - `photutils/CITATION.rst`
 - `copy_metadata('xisf')`, `copy_metadata('lz4')`, `copy_metadata('zstandard')`
+- Velopack Python/native runtime collected by `collect_all('velopack')`
 
 ## Qt plugins required at runtime
 
@@ -100,10 +103,9 @@ Validated by `--qt-image-format-smoke` and `--packaged-format-smoke`.
 
 ## User-writable runtime paths (not bundled)
 
-- `%LOCALAPPDATA%\CitizenAstronomy\settings.json`
-- `%LOCALAPPDATA%\CitizenAstronomy\state.json`
+- `%LOCALAPPDATA%\CitizenPhotometry\` settings, state, training data, and science caches
 - `%LOCALAPPDATA%\CitizenAstronomy\startup-error.log` (created only on startup failure)
-- Catalog / cache directories under the Citizen Astronomy app data root
+- `%LOCALAPPDATA%\CitizenAstronomy.CAst\` Velopack launcher, `current`, packages, and `Update.exe`
 
 ## Network-only runtime data (not bundled)
 
@@ -116,10 +118,10 @@ Validated by `--qt-image-format-smoke` and `--packaged-format-smoke`.
 
 File: `CitizenAstronomyAlphaReview.spec`
 
-- One-folder `COLLECT` output, windowed EXE, UPX enabled
+- One-folder `COLLECT` output, windowed EXE, UPX disabled for efficient binary deltas
 - Custom hook path: `packaging/hooks/`
 - `hook-xisf.py` bundles xisf metadata and lz4/zstandard binary libs
-- `collect_all('lz4')`, `collect_all('zstandard')`, `collect_all('pyqtgraph')`
+- `collect_all('lz4')`, `collect_all('zstandard')`, `collect_all('pyqtgraph')`, `collect_all('velopack')`
 - Preserved Simbad `query_criteria_fields.json` fix
 - Preserved Milky Way / Moon / constellation asset trees
 - Excludes: `pytest`, `matplotlib.tests`, `astroquery.dace`, `cupy`
@@ -141,4 +143,4 @@ File: `CitizenAstronomyAlphaReview.spec`
 2. `spiceypy` is optional and not bundled; Moon ephemeris falls back to built-in paths.
 3. MP4 export depends on `imageio-ffmpeg`; GIF/PNG export is the safer alpha path.
 4. First-use networked catalog features require internet access and may be slow on first query.
-5. Windows SmartScreen may warn on unsigned local installers; this is expected for private alpha builds.
+5. Reviewer releases require timestamped Authenticode signing; `-AllowUnsigned` is for disposable local validation only.

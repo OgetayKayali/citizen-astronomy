@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "citizen-photometry"
-version = "0.1.1a3"
+version = "0.1.1a4"
 description = "Desktop tool for citizen-science photometry from FITS image series."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,7 @@ dependencies = [
     "reproject>=0.14",
     "requests>=2.32",
     "scikit-learn>=1.8",
+    "velopack==1.2.0",
     "xisf>=0.9.6",
 ]
 

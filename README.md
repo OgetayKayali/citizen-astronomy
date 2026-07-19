@@ -94,7 +94,7 @@ Images can be plate-solved beforehand or solved on the fly through astrometry.ne
 
 ## Installation
 
-**For alpha reviewers:** Download the installer from the [Releases](../../releases) page. After installation, check for updates from **File > Check for Updates** inside the app.
+**For alpha reviewers:** Download the Setup executable from the [Releases](../../releases) page. After installation, use **File > Check for Updates**. CAst downloads a small delta for compatible hotfixes and automatically falls back to a verified full package when required.
 
 **For developers:**
 
@@ -133,7 +133,7 @@ For a detailed map of the repository layout, modules, modes, workers, packaging,
 
 ## Status
 
-CAst is in **alpha**. It is under active development and being distributed privately for review. Core workflows are functional but some features are still incomplete. The installer is currently unsigned -- Windows SmartScreen may show a warning on first run.
+CAst is in **alpha**. It is under active development and being distributed privately for review. Core workflows are functional but some features are still incomplete. Reviewer Setup and updater executables are Authenticode-signed; install only releases published by the project.
 
 ## License
 

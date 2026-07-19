@@ -48506,9 +48506,13 @@ class MainWindow(QMainWindow):
 
         notes = str(getattr(available_update, "notes", "")).strip()
 
-        installer_size = int(getattr(available_update, "installer_size", 0) or 0)
+        download_size = int(getattr(available_update, "download_size", 0) or 0)
 
-        size_text = f"\nDownload size: {installer_size / (1024 * 1024):.1f} MiB" if installer_size > 0 else ""
+        package_kind = str(getattr(available_update, "package_kind", "full")).strip().lower()
+
+        package_label = "Delta update" if package_kind == "delta" else "Full update"
+
+        size_text = f"\n{package_label} download: {download_size / (1024 * 1024):.1f} MiB" if download_size > 0 else ""
 
         notes_text = f"\n\n{notes}" if notes else ""
 
@@ -48620,15 +48624,13 @@ class MainWindow(QMainWindow):
 
 
 
-    def _handle_update_download_completed(self, installer_path: object) -> None:
+    def _handle_update_download_completed(self, downloaded_update: object) -> None:
 
         self._update_download_worker = None
 
         self._check_for_updates_action.setEnabled(True)
 
         self._close_update_download_progress_dialog()
-
-        resolved_path = Path(installer_path)
 
         choice = QMessageBox.question(
 
@@ -48638,7 +48640,8 @@ class MainWindow(QMainWindow):
 
             "The update was downloaded and verified. Install it now?\n\n"
 
-            "Citizen Astronomy will close, update in place, and restart.",
+            "Citizen Astronomy will close, update in place, and restart. "
+            "If you choose No, the verified update will be applied the next time the app starts.",
 
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
 
@@ -48648,7 +48651,11 @@ class MainWindow(QMainWindow):
 
         if choice == QMessageBox.StandardButton.Yes:
 
-            self._launch_update_installer(resolved_path)
+            self._apply_downloaded_update(downloaded_update)
+
+        else:
+
+            self.statusBar().showMessage("Update will be applied on the next app launch.", 7000)
 
 
 
@@ -48686,39 +48693,19 @@ class MainWindow(QMainWindow):
 
 
 
-    def _launch_update_installer(self, installer_path: Path) -> None:
+    def _apply_downloaded_update(self, downloaded_update: object) -> None:
 
-        if not installer_path.is_file():
+        try:
 
-            QMessageBox.warning(self, "Update Installer Missing", f"The verified installer no longer exists:\n{installer_path}")
+            from photometry_app.core.app_updates import apply_update_and_restart
 
-            return
+            apply_update_and_restart(downloaded_update)
 
-        arguments = [
+        except Exception as exc:
 
-            "/SILENT",
+            self.statusBar().showMessage("Update could not be applied.", 5000)
 
-            "/SUPPRESSMSGBOXES",
-
-            "/NORESTART",
-
-            "/CLOSEAPPLICATIONS",
-
-            "/UPDATE=1",
-
-        ]
-
-        start_result = QProcess.startDetached(str(installer_path), arguments)
-
-        started = bool(start_result[0]) if isinstance(start_result, tuple) else bool(start_result)
-
-        if not started:
-
-            QMessageBox.warning(self, "Update Could Not Start", "Windows could not start the downloaded update installer.")
-
-            return
-
-        QApplication.quit()
+            QMessageBox.warning(self, "Update Could Not Start", str(exc))
 
     def _populate_light_curve_settings_menu(self) -> None:
 

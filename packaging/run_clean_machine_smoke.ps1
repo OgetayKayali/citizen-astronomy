@@ -11,7 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $ExePath) {
-    $ExePath = Join-Path $env:LOCALAPPDATA "Programs\Citizen Astronomy (CAst) Alpha Review\CitizenAstronomyAlphaReview.exe"
+    $ExePath = Join-Path $env:LOCALAPPDATA "CitizenAstronomy.CAst\CitizenAstronomyAlphaReview.exe"
 }
 
 if (-not (Test-Path -LiteralPath $ExePath)) {

@@ -190,10 +190,10 @@ flowchart TB
 | `APP_DISPLAY_NAME` | `Citizen Astronomy (CAst)` |
 | `APP_WINDOW_TITLE_NAME` | `Citizen Astronomy` |
 | `APP_USER_MODEL_ID` | `CitizenAstronomy.CAst` |
-| `APP_VERSION` | `0.1.1-alpha.3` (runtime / About / updates) |
+| `APP_VERSION` | `0.1.1-alpha.4` (runtime / About / updates) |
 | `APP_UPDATE_CHANNEL` | `alpha` |
 | `APP_UPDATE_GITHUB_REPOSITORY` | `OgetayKayali/citizen-astronomy` |
-| `APP_UPDATE_MANIFEST_ASSET_NAME` | `CitizenAstronomy-update.json` |
+| `APP_UPDATE_MANIFEST_ASSET_NAME` | Legacy bootstrap manifest (`CitizenAstronomy-update.json`) |
 
 | Helper | Behavior |
 |--------|----------|
@@ -201,7 +201,7 @@ flowchart TB
 | `application_install_path()` | EXE directory when frozen, else repo root |
 | `application_icon_path()` | First existing icon under `assets/` |
 
-**Note:** `pyproject.toml` version is `0.1.1a1` (PEP 440); runtime branding uses the hyphenated alpha string above.
+**Note:** `pyproject.toml` version is `0.1.1a4` (PEP 440); runtime branding uses the hyphenated alpha string above.
 
 ---
 
@@ -359,7 +359,7 @@ Worker count fields of `0` typically mean “auto” via `resolve_*` helpers in 
 | `packaged_format_smoke.py` | Frozen format smoke + About dialog smoke |
 | `qt_image_formats.py` | Query Qt image plugin support |
 | `qt_image_format_smoke.py` | Embedded TIFF-LZW Qt decode smoke |
-| `app_updates.py` | GitHub Releases update contract |
+| `app_updates.py` | Velopack GitHub alpha check/download/apply adapter |
 | `benchmarking.py` | Optional timing recorder |
 
 ### 9.2 Image I/O, scan, WCS, alignment
@@ -587,7 +587,7 @@ Large dialog suite (~11k lines). Major public dialogs:
 | `DiscoverSourcesWorker` | Source discovery photometry (**thread pool**) |
 | `IncreaseSnrWorker` | SNR binning |
 | `UpdateCheckWorker` | `check_for_updates` |
-| `UpdateDownloadWorker` | `download_update` |
+| `UpdateDownloadWorker` | `download_update_package` |
 
 Supporting result/dataclass types in the same module include period batches, discover batches, export tasks, orbit context payloads, blink preload results, etc.
 
@@ -669,7 +669,7 @@ Screenshots embedded by the mode guides (differential photometry UI examples).
 | JPL SBDB | `solar_system.py` | Small-body database |
 | Miriade (IMCCE) | `solar_system.py` | Ephemeris alternative |
 | hips2fits (CDS) | `survey_images.py` | Survey cutouts |
-| GitHub Releases API | `app_updates.py` | In-app update manifest + installer |
+| GitHub Releases / Velopack | `app_updates.py` | Alpha release feed, delta/full packages |
 
 **API key:** Astrometry.net via Settings or `CITIZEN_PHOTOMETRY_ASTROMETRY_API_KEY`.
 
@@ -684,9 +684,9 @@ Screenshots embedded by the mode guides (differential photometry UI examples).
 ```text
 CitizenAstronomyAlphaReview.spec  →  _tmp_alpha_review_dist/CitizenAstronomyAlphaReview/
         ↓
-packaging/inno/CitizenAstronomyAlphaReview.iss  →  packaging/dist/*-Setup.exe
+vpk pack --channel alpha --delta BestSize  →  Setup + full/delta .nupkg + releases.alpha.json
         ↓
-packaging/publish_github_update.ps1  →  GitHub Release + CitizenAstronomy-update.json
+packaging/publish_github_update.ps1  →  signed GitHub prerelease assets
 ```
 
 ### Key packaging files
@@ -697,9 +697,10 @@ packaging/publish_github_update.ps1  →  GitHub Release + CitizenAstronomy-upda
 | `CitizenPhotometryDebug.spec` | Debug console freeze |
 | `packaging/hooks/hook-xisf.py` | xisf + lz4/zstandard |
 | `packaging/hooks/hook-imageio_ffmpeg.py` | ffmpeg for MP4 |
-| `packaging/inno/CitizenAstronomyAlphaReview.iss` | Inno Setup installer |
-| `packaging/publish_github_update.ps1` | Clean-tree gate → fixtures → PyInstaller → tests → smokes → Inno → GitHub release |
-| `packaging/validate_two_version_update.ps1` | Two-version update contract |
+| `packaging/inno/CitizenAstronomyVelopackBootstrap.iss` | One-time legacy Inno → Velopack migration wrapper |
+| `packaging/inno/CitizenAstronomyAlphaReview.iss` | Retained legacy full installer (pre-Velopack only) |
+| `packaging/publish_github_update.ps1` | Clean-tree gate → fixtures → PyInstaller → tests/smokes → signed Velopack full/delta → GitHub |
+| `packaging/validate_two_version_update.ps1` | Legacy install → bootstrap migration → delta reconstruction/apply contract |
 | `packaging/run_clean_machine_smoke.ps1` | Clean-machine smoke orchestration |
 | `packaging/generate_smoke_fixtures.py` | Tiny FITS/XISF/PNG/WebP fixtures |
 | `packaging/release_manifest.md` | Bundled dependency / asset audit |
@@ -709,17 +710,20 @@ packaging/publish_github_update.ps1  →  GitHub Release + CitizenAstronomy-upda
 
 | Piece | Detail |
 |-------|--------|
-| Schema | `schema_version = 1` |
-| Manifest asset | `CitizenAstronomy-update.json` |
-| Fields | `app_id`, `channel`, `version`, `installer_asset`, `installer_size`, `installer_sha256`, `notes` |
-| Flow | `UpdateCheckWorker` → Releases API → parse manifest → semver compare → `UpdateDownloadWorker` with size/hash verify → launch installer |
-| Errors | `UpdateConfigurationError`, `UpdateNetworkError`, `UpdateManifestError`, `UpdateVerificationError`, `UpdateDownloadCancelled` |
+| Feed | Velopack `releases.alpha.json` on GitHub prereleases |
+| Assets | Signed Setup, full `.nupkg`, delta `.nupkg`; full is always retained as fallback |
+| Flow | `UpdateCheckWorker` → `GithubSource` / `UpdateManager` → selected delta chain or full → `UpdateDownloadWorker` → external `Update.exe` apply/restart |
+| Integrity | Velopack package SHA-256 verification and reconstruction; Authenticode-signed executables |
+| Legacy bridge | Schema-v1 `CitizenAstronomy-update.json` is emitted only for the first migration release |
+| Errors | `UpdateConfigurationError`, `UpdateNetworkError`, `UpdateVerificationError`, `UpdateDownloadCancelled` |
 
 ### Publish gate notes
 
 - Requires clean git tree for **tracked** source files.
 - Allowlist only ignores certain **untracked** paths (`packaging/dist`, `_tmp_*`, untracked `packaging/fixtures/...`).
 - Regenerating `packaging/fixtures/smoke_tiny.xisf` dirties a tracked file — restore before re-running publish if needed.
+- Requires matching Python `velopack==1.2.0` and `vpk` 1.2.0 plus Authenticode signing unless explicitly running an unsigned local validation.
+- Downloads the previous alpha package before packing so `BestSize` can produce a delta; `-EnforceSmallDelta` caps code-only deltas at 10% of full.
 - Release packaging tests run `test_qt_image_formats.py` then `test_packaged_format_smoke.py` in one process; format smoke must create `QApplication` (not bare `QCoreApplication`) so About dialog smoke does not abort.
 
 ---
@@ -803,7 +807,9 @@ Publisher smoke subset includes updater contract tests, selected main-window upd
 
 | Path / variable | Role |
 |-----------------|------|
-| `%LOCALAPPDATA%\CitizenAstronomy\` | Settings, state, caches, downloaded updates, `startup-error.log` |
+| `%LOCALAPPDATA%\CitizenAstronomy.CAst\` | Velopack launcher, `current`, package cache, and `Update.exe` |
+| `%LOCALAPPDATA%\CitizenPhotometry\` | Settings, state, training data, and science caches |
+| `%LOCALAPPDATA%\CitizenAstronomy\` | Startup log and legacy update cache |
 | `CITIZEN_PHOTOMETRY_ASTROMETRY_API_KEY` | Astrometry.net API key override |
 | SPICE-related env (see `assets/spice/README.md`) | Optional lunar orientation provider |
 | Project `.photometry-settings.json` | Local developer settings snapshot |
@@ -826,6 +832,7 @@ From `pyproject.toml` (Python ≥ 3.11):
 | `pyqtgraph`, `PyOpenGL`, `PyOpenGL-accelerate` | GL / interactive plots |
 | `scikit-learn` | Candidate training helpers |
 | `requests` | HTTP (updates, etc.) |
+| `velopack==1.2.0` | Managed Windows install, GitHub alpha feed, delta/full updates |
 | optional `cupy-cuda11x` (`gpu` extra) | GPU array backend |
 
 ---

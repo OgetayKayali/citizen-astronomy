@@ -1458,6 +1458,14 @@ class PipelineIntegrationTest(unittest.TestCase):
 
             self.assertEqual(results[0][1].solved_field.center_ra_deg, 97.6355)
 
+            self.assertIn(
+
+                "Recovered WCS via metadata-seeded Gaia matching.",
+
+                results[0][1].reasons,
+
+            )
+
 
 
     def test_preview_variable_selection_falls_back_to_alternate_solved_field_catalog(self) -> None:

@@ -5066,20 +5066,20 @@ class UpdateWorkerTest(unittest.TestCase):
 
     def test_download_worker_forwards_progress_and_result(self) -> None:
         update = SimpleNamespace(version="0.1.1-alpha.2")
-        installer_path = Path("update.exe")
+        downloaded_update = SimpleNamespace(update=update)
         progress_values: list[tuple[int, int]] = []
-        completed_paths: list[Path] = []
+        completed_results: list[object] = []
         worker = UpdateDownloadWorker(update)
         worker.progress_updated.connect(lambda downloaded, total: progress_values.append((downloaded, total)))
-        worker.update_download_completed.connect(completed_paths.append)
+        worker.update_download_completed.connect(completed_results.append)
 
         def fake_download(_update, *, progress_callback, cancellation_requested):
             self.assertFalse(cancellation_requested())
             progress_callback(50, 100)
-            return installer_path
+            return downloaded_update
 
-        with patch("photometry_app.core.app_updates.download_update_installer", side_effect=fake_download):
+        with patch("photometry_app.core.app_updates.download_update_package", side_effect=fake_download):
             worker.run()
 
         self.assertEqual(progress_values, [(50, 100)])
-        self.assertEqual(completed_paths, [installer_path])
+        self.assertEqual(completed_results, [downloaded_update])

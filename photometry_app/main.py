@@ -63,6 +63,28 @@ def _set_windows_app_user_model_id() -> None:
         pass
 
 
+def _run_velopack_startup() -> None:
+
+    """Handle Velopack install/update hooks before normal app startup."""
+
+    from velopack import App
+
+    # A package is downloaded only after explicit user consent. If the user
+    # chooses "Later" at the restart prompt, apply that verified package on the
+    # next launch instead of leaving it permanently staged.
+    App().set_auto_apply_on_startup(True).run()
+
+
+def _is_packaging_smoke_invocation(argv: list[str]) -> bool:
+
+    smoke_flags = {
+        "--qt-image-format-smoke",
+        "--packaged-format-smoke",
+        "--about-dialog-smoke",
+    }
+    return any(argument in smoke_flags for argument in argv[1:])
+
+
 def _configure_qt_application_attributes() -> None:
 
     from PySide6.QtCore import QCoreApplication, Qt
@@ -136,6 +158,10 @@ def main() -> int:
     multiprocessing.freeze_support()
 
     try:
+
+        if getattr(sys, "frozen", False) and not _is_packaging_smoke_invocation(sys.argv):
+
+            _run_velopack_startup()
 
         cli_args, qt_argv = _parse_cli_args(sys.argv)
 

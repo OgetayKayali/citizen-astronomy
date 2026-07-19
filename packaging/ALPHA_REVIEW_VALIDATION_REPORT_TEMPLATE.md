@@ -50,8 +50,8 @@ Machine / VM name:
 |-------|-------------------|--------|-------|
 | Canonical PyInstaller rebuild | `pyinstaller ... CitizenAstronomyAlphaReview.spec` | [ ] Pass [ ] Fail | |
 | Pre-install packaged smoke | `scripts\run_packaged_alpha_smoke.py` | [ ] Pass [ ] Fail | |
-| Inno Setup compile | `ISCC.exe packaging\inno\CitizenAstronomyAlphaReview.iss` | [ ] Pass [ ] Fail | |
-| Installer exists | `packaging\dist\CitizenAstronomyAlphaReview-Alpha-Setup.exe` | [ ] Pass [ ] Fail | |
+| Velopack full/delta pack | `vpk pack --channel alpha --delta BestSize ...` | [ ] Pass [ ] Fail | |
+| Signed Setup/full/delta/feed exist | `packaging\dist\velopack\` | [ ] Pass [ ] Fail | |
 
 ---
 
@@ -59,7 +59,7 @@ Machine / VM name:
 
 | Check | Result | Notes |
 |-------|--------|-------|
-| SmartScreen warning shown (expected for unsigned build) | [ ] Yes [ ] No | |
+| Authenticode signature valid / expected publisher | [ ] Pass [ ] Fail | |
 | Install succeeded | [ ] Pass [ ] Fail | |
 | Start Menu shortcut works | [ ] Pass [ ] Fail | |
 | Desktop shortcut works (if created) | [ ] Pass [ ] N/A | |
@@ -83,7 +83,7 @@ Machine / VM name:
 Installed folder path:
 
 ```text
-%LOCALAPPDATA%\Programs\Citizen Astronomy (CAst) Alpha Review\
+%LOCALAPPDATA%\CitizenAstronomy.CAst\
 ```
 
 Installed smoke JSON (attach or paste path):
@@ -163,6 +163,6 @@ Sign-off date:
 
 - [ ] `installed_format_smoke.json` or summary JSON
 - [ ] `startup-error.log` (only if startup failed)
-- [ ] Screenshots of SmartScreen warning (optional)
+- [ ] Screenshot of digital-signature properties
 - [ ] Screenshots of Sky View layer issues (optional)
 - [ ] Sample XISF/FITS used during manual open tests (optional)

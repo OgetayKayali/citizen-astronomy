@@ -5,7 +5,8 @@ This guide explains how to build **Citizen Astronomy (CAst)** as a Windows execu
 The canonical release path uses:
 
 - **PyInstaller** → one-folder application bundle (`CitizenAstronomyAlphaReview.exe` + `_internal\`)
-- **Inno Setup 6** → single-file installer (`CitizenAstronomyAlphaReview-Alpha-Setup.exe`)
+- **Velopack 1.2** → signed Setup, full recovery package, and small binary delta packages
+- **Inno Setup 6** → only the one-time wrapper that migrates pre-Velopack alpha installations
 
 For dependency details, bundled assets, and validation expectations, see:
 
@@ -25,7 +26,9 @@ Build on **Windows 10/11 x64** from the repository root.
 | Git | To clone the repo |
 | Large runtime assets | Required by `CitizenAstronomyAlphaReview.spec` (see below) |
 | **PyInstaller** | Installed into the project virtual environment |
-| **Inno Setup 6** | Optional, but required for the installable setup `.exe` (`ISCC.exe` on `PATH`) |
+| **.NET SDK + `vpk` 1.2.0** | Required for Velopack Setup/full/delta packaging |
+| **Authenticode signing** | Required by the release publisher; see `packaging/ALPHA_REVIEW_RELEASE.md` |
+| **Inno Setup 6** | Required only for the first Velopack migration release |
 
 ### Required asset trees
 
@@ -57,6 +60,7 @@ python -m venv .venv
 python -m pip install --upgrade pip
 pip install -e .
 pip install pyinstaller
+dotnet tool install --global vpk --version 1.2.0
 ```
 
 Verify the app runs from source:
@@ -141,33 +145,48 @@ Expected:
 
 ---
 
-## 5. Build the installable setup `.exe`
+## 5. Build the installable Setup and update packages
 
-Install **Inno Setup 6**, then compile the installer script:
+For a local unsigned packaging check, package the tested one-folder bundle:
 
 ```powershell
-ISCC.exe packaging\inno\CitizenAstronomyAlphaReview.iss
+vpk pack `
+  --packId CitizenAstronomy.CAst `
+  --packVersion 0.1.1-alpha.4 `
+  --packDir _tmp_alpha_review_dist\CitizenAstronomyAlphaReview `
+  --mainExe CitizenAstronomyAlphaReview.exe `
+  --channel alpha `
+  --runtime win-x64 `
+  --delta BestSize `
+  --outputDir packaging\dist\velopack
 ```
 
-The installer script expects the PyInstaller output at:
+The release publisher performs this step with signing, previous-package
+download, smoke gates, and GitHub upload:
+
+```powershell
+.\packaging\publish_github_update.ps1 `
+  -Repository "OgetayKayali/citizen-astronomy" `
+  -Notes "Reviewer-visible release notes."
+```
+
+### Package output
 
 ```text
-_tmp_alpha_review_dist\CitizenAstronomyAlphaReview\
+packaging\dist\velopack\*Setup.exe
+packaging\dist\velopack\*-full.nupkg
+packaging\dist\velopack\*-delta.nupkg
+packaging\dist\velopack\releases.alpha.json
 ```
 
-### Installer output
+The Setup installs per-user without elevation to:
 
 ```text
-packaging\dist\CitizenAstronomyAlphaReview-Alpha-Setup.exe
+%LOCALAPPDATA%\CitizenAstronomy.CAst\
 ```
 
-This is the file you distribute to reviewers or testers. It installs per-user (no admin required) to:
-
-```text
-%LOCALAPPDATA%\Programs\Citizen Astronomy (CAst) Alpha Review\
-```
-
-The installer also adds Start Menu shortcuts and an uninstall entry.
+Distribute the Setup to new users. Installed users receive a matching delta
+when possible and automatically fall back to the full package when necessary.
 
 ---
 
@@ -176,7 +195,7 @@ The installer also adds Start Menu shortcuts and an uninstall entry.
 After running the setup program on a clean Windows account or VM:
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Citizen Astronomy (CAst) Alpha Review\CitizenAstronomyAlphaReview.exe" `
+& "$env:LOCALAPPDATA\CitizenAstronomy.CAst\CitizenAstronomyAlphaReview.exe" `
   --packaged-format-smoke `
   --packaged-format-smoke-fixtures "C:\path\to\repo\packaging\fixtures"
 ```
@@ -213,8 +232,10 @@ This path is **not** the canonical alpha-review installer input. Prefer `Citizen
 | Issue | What to check |
 |-------|----------------|
 | PyInstaller fails on missing files | Confirm all asset paths listed in `CitizenAstronomyAlphaReview.spec` exist |
-| Inno Setup cannot find bundle | Build step 3 first; path must be `_tmp_alpha_review_dist\CitizenAstronomyAlphaReview\` |
-| Windows SmartScreen warning | Installer is unsigned; expected for private alpha builds |
+| Velopack says the app is not integrated | Confirm `velopack.App().run()` is called before normal startup and rebuild |
+| No delta was generated | Download the previous channel package into the same output directory before `vpk pack` |
+| Code-only delta exceeds 10% | Confirm UPX is disabled; benchmark `noarchive=True` if compressed Python archives remain inefficient |
+| Windows SmartScreen warning | Configure timestamped Authenticode signing; reviewer releases should not be unsigned |
 | XISF or TIFF fails in frozen build | Re-run packaged smoke; confirm `qtiff.dll` exists under `_internal\PySide6\plugins\imageformats\` |
 | Network catalog features fail | Internet required on first use; not all optional ephemeris kernels are bundled |
 
@@ -225,6 +246,6 @@ This path is **not** the canonical alpha-review installer input. Prefer `Citizen
 | Artifact | Path |
 |----------|------|
 | App executable (folder bundle) | `_tmp_alpha_review_dist\CitizenAstronomyAlphaReview\CitizenAstronomyAlphaReview.exe` |
-| Setup installer | `packaging\dist\CitizenAstronomyAlphaReview-Alpha-Setup.exe` |
+| Velopack Setup/full/delta/feed | `packaging\dist\velopack\` |
 | PyInstaller spec | `CitizenAstronomyAlphaReview.spec` |
-| Inno Setup script | `packaging\inno\CitizenAstronomyAlphaReview.iss` |
+| Legacy migration wrapper | `packaging\inno\CitizenAstronomyVelopackBootstrap.iss` |

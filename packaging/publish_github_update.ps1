@@ -5,11 +5,26 @@ param(
 
     [string]$Version,
 
-    [string]$Notes
+    [string]$Notes,
+
+    [switch]$FirstVelopackRelease,
+
+    [switch]$IncludeLegacyBootstrap,
+
+    [string]$SignTemplate = $env:CITIZEN_ASTRONOMY_SIGN_TEMPLATE,
+
+    [string]$AzureTrustedSignFile = $env:CITIZEN_ASTRONOMY_AZURE_SIGN_FILE,
+
+    [switch]$AllowUnsigned,
+
+    [switch]$EnforceSmallDelta
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$velopackToolVersion = "1.2.0"
+$maximumCodeOnlyDeltaRatio = 0.10
+$githubReleaseAssetLimitBytes = 2GB
 
 function Get-PythonStringConstant {
     param(
@@ -109,6 +124,26 @@ function Invoke-NativeCapture {
     return $output
 }
 
+function Invoke-SigningTemplate {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Template,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath
+    )
+
+    if (-not $Template.Contains("{{file}}")) {
+        throw "The signing template must contain the {{file}} placeholder."
+    }
+    $quotedPath = '"' + $TargetPath.Replace('"', '\"') + '"'
+    $commandLine = $Template.Replace("{{file}}", $quotedPath)
+    $cmdPath = Resolve-RequiredCommand -Name "cmd.exe"
+    Invoke-NativeCommand -FilePath $cmdPath -ArgumentList @(
+        "/D", "/S", "/C", $commandLine
+    ) -Description "Signing $([IO.Path]::GetFileName($TargetPath))"
+}
+
 $Repository = $Repository.Trim()
 if ($Repository -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9_.-]+$') {
     throw "Repository must use the GitHub owner/name form (for example, ogetay/citizen-astronomy)."
@@ -180,6 +215,26 @@ $effectiveNotes = if ($PSBoundParameters.ContainsKey("Notes")) {
 if ([string]::IsNullOrWhiteSpace($effectiveNotes)) {
     throw "Notes must not be empty when -Notes is supplied."
 }
+if ($FirstVelopackRelease -and (-not $IncludeLegacyBootstrap)) {
+    throw "The first Velopack release must include the legacy bootstrap for existing Inno users."
+}
+if ((-not [string]::IsNullOrWhiteSpace($SignTemplate)) -and
+    (-not [string]::IsNullOrWhiteSpace($AzureTrustedSignFile))) {
+    throw "Use either -SignTemplate or -AzureTrustedSignFile, not both."
+}
+if ((-not $AllowUnsigned) -and
+    [string]::IsNullOrWhiteSpace($SignTemplate) -and
+    [string]::IsNullOrWhiteSpace($AzureTrustedSignFile)) {
+    throw "Code signing is required. Configure CITIZEN_ASTRONOMY_SIGN_TEMPLATE or CITIZEN_ASTRONOMY_AZURE_SIGN_FILE; use -AllowUnsigned only for local validation builds."
+}
+if ((-not [string]::IsNullOrWhiteSpace($AzureTrustedSignFile)) -and
+    (-not (Test-Path -LiteralPath $AzureTrustedSignFile -PathType Leaf))) {
+    throw "Azure Artifact Signing metadata was not found at '$AzureTrustedSignFile'."
+}
+if ($IncludeLegacyBootstrap -and (-not $AllowUnsigned) -and
+    [string]::IsNullOrWhiteSpace($SignTemplate)) {
+    throw "The legacy bootstrap must be signed with -SignTemplate. Azure-only vpk signing does not sign the outer Inno migration wrapper."
+}
 
 $pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
@@ -188,26 +243,38 @@ if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
 
 $gitPath = Resolve-RequiredCommand -Name "git.exe"
 $ghPath = Resolve-RequiredCommand -Name "gh.exe"
-$isccPath = Resolve-Iscc
+$vpkPath = Resolve-RequiredCommand -Name "vpk.exe"
+$isccPath = if ($IncludeLegacyBootstrap) { Resolve-Iscc } else { $null }
+
+$vpkHelpLines = @(Invoke-NativeCapture -FilePath $vpkPath -ArgumentList @(
+    "--help"
+) -Description "Checking the Velopack CLI version")
+if (($vpkHelpLines -join [Environment]::NewLine) -notmatch
+    ("Velopack CLI " + [regex]::Escape($velopackToolVersion) + "\b")) {
+    throw "Velopack CLI $velopackToolVersion is required. Install it with: dotnet tool install --global vpk --version $velopackToolVersion"
+}
 
 $specPath = Join-Path $projectRoot "CitizenAstronomyAlphaReview.spec"
-$issPath = Join-Path $projectRoot "packaging\inno\CitizenAstronomyAlphaReview.iss"
+$bootstrapIssPath = Join-Path $projectRoot "packaging\inno\CitizenAstronomyVelopackBootstrap.iss"
+$bundleDirectory = Join-Path $projectRoot "_tmp_alpha_review_dist\CitizenAstronomyAlphaReview"
 $bundleExe = Join-Path $projectRoot "_tmp_alpha_review_dist\CitizenAstronomyAlphaReview\CitizenAstronomyAlphaReview.exe"
 $fixturesPath = Join-Path $projectRoot "packaging\fixtures"
 $packagedSmokeOutput = Join-Path $projectRoot "_tmp_packaged_alpha_smoke_result.json"
 $formatSmokeOutput = Join-Path $projectRoot "_tmp_packaged_format_smoke_result.json"
 $distDirectory = Join-Path $projectRoot "packaging\dist"
-$outputBaseFilename = "CitizenAstronomyAlphaReview-$Version-Setup"
-$installerAssetName = "$outputBaseFilename.exe"
-$installerPath = Join-Path $distDirectory $installerAssetName
-$manifestPath = Join-Path $distDirectory $manifestAssetName
+$velopackOutputDirectory = Join-Path $distDirectory "velopack"
+$releaseNotesPath = Join-Path $distDirectory "CitizenAstronomy-release-notes.md"
 $tag = "v$Version"
 
 $startupSmokePath = Join-Path $projectRoot "_tmp_startup_smoke.py"
-foreach ($requiredPath in @($specPath, $issPath, $startupSmokePath)) {
+foreach ($requiredPath in @($specPath, $startupSmokePath)) {
     if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
         throw "Required release input is missing: $requiredPath"
     }
+}
+if ($IncludeLegacyBootstrap -and
+    (-not (Test-Path -LiteralPath $bootstrapIssPath -PathType Leaf))) {
+    throw "The legacy migration bootstrap script is missing: $bootstrapIssPath"
 }
 
 Push-Location $projectRoot
@@ -326,7 +393,7 @@ try {
         "tests\test_workers.py",
         "tests\test_main_window.py",
         "-q",
-        "-k", "UpdateWorker or about_dialog_mentions or file_menu_shows_check_for_updates or update_installer_launches or update_check_completion"
+        "-k", "UpdateWorker or about_dialog_mentions or file_menu_shows_check_for_updates or ready_update_is_applied or update_check_completion"
     ) -Description "Running updater worker and menu tests"
 
     Invoke-NativeCommand -FilePath $pythonPath -ArgumentList @(
@@ -356,76 +423,189 @@ try {
     if (-not (Test-Path -LiteralPath $distDirectory -PathType Container)) {
         $null = New-Item -ItemType Directory -Path $distDirectory
     }
-    Remove-Item -LiteralPath $installerPath, $manifestPath -Force -ErrorAction SilentlyContinue
-
-    Invoke-NativeCommand -FilePath $isccPath -ArgumentList @(
-        "/DAppVersion=$Version",
-        "/DOutputBaseFilename=$outputBaseFilename",
-        $issPath
-    ) -Description "Building the versioned Inno Setup installer"
-
-    if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
-        throw "ISCC completed but the versioned installer was not created at '$installerPath'."
+    if (Test-Path -LiteralPath $velopackOutputDirectory) {
+        Remove-Item -LiteralPath $velopackOutputDirectory -Recurse -Force
     }
+    $null = New-Item -ItemType Directory -Path $velopackOutputDirectory
 
-    $installerInfo = Get-Item -LiteralPath $installerPath
-    $installerHash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $manifest = [ordered]@{
-        schema_version    = 1
-        app_id            = $appId
-        channel           = $channel
-        version           = $Version
-        installer_asset   = $installerAssetName
-        installer_size    = [int64]$installerInfo.Length
-        installer_sha256 = $installerHash
-        notes             = $effectiveNotes
-    }
-
-    $manifestJson = $manifest | ConvertTo-Json -Depth 3
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [IO.File]::WriteAllText($manifestPath, $manifestJson + [Environment]::NewLine, $utf8NoBom)
+    [IO.File]::WriteAllText($releaseNotesPath, $effectiveNotes + [Environment]::NewLine, $utf8NoBom)
 
-    $expectedFields = @(
-        "schema_version",
-        "app_id",
-        "channel",
-        "version",
-        "installer_asset",
-        "installer_size",
-        "installer_sha256",
-        "notes"
+    $githubUrl = "https://github.com/$Repository"
+    if (-not $FirstVelopackRelease) {
+        $downloadArguments = @(
+            "download", "github",
+            "--outputDir", $velopackOutputDirectory,
+            "--channel", $channel,
+            "--repoUrl", $githubUrl
+        )
+        if ($channel -ne "stable") {
+            $downloadArguments += @("--pre", "true")
+        }
+        Invoke-NativeCommand -FilePath $vpkPath -ArgumentList $downloadArguments -Description "Downloading the previous Velopack release for delta generation"
+    }
+
+    $packArguments = @(
+        "pack",
+        "--outputDir", $velopackOutputDirectory,
+        "--channel", $channel,
+        "--runtime", "win-x64",
+        "--packId", $appId,
+        "--packVersion", $Version,
+        "--packDir", $bundleDirectory,
+        "--packAuthors", "Ogetay",
+        "--packTitle", "Citizen Astronomy (CAst)",
+        "--releaseNotes", $releaseNotesPath,
+        "--delta", "BestSize",
+        "--icon", (Join-Path $projectRoot "assets\citizen_astronomy.ico"),
+        "--mainExe", "CitizenAstronomyAlphaReview.exe",
+        "--aumid", $appId,
+        "--shortcuts", "StartMenuRoot",
+        "--noPortable", "true"
     )
-    $manifestCheck = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    $actualFields = @($manifestCheck.PSObject.Properties.Name)
-    $fieldDifference = @(Compare-Object -ReferenceObject $expectedFields -DifferenceObject $actualFields)
-    if ($fieldDifference.Count -ne 0) {
-        throw "Generated update manifest does not contain exactly the required fields."
+    if (-not [string]::IsNullOrWhiteSpace($SignTemplate)) {
+        $packArguments += @("--signTemplate", $SignTemplate)
+    } elseif (-not [string]::IsNullOrWhiteSpace($AzureTrustedSignFile)) {
+        $packArguments += @("--azureTrustedSignFile", $AzureTrustedSignFile)
     }
-    if (($manifestCheck.schema_version -ne 1) -or
-        ($manifestCheck.app_id -ne $appId) -or
-        ($manifestCheck.channel -ne $channel) -or
-        ($manifestCheck.version -ne $Version) -or
-        ($manifestCheck.installer_asset -ne $installerAssetName) -or
-        ([int64]$manifestCheck.installer_size -ne [int64]$installerInfo.Length) -or
-        ($manifestCheck.installer_sha256 -ne $installerHash) -or
-        ($manifestCheck.notes -ne $effectiveNotes)) {
-        throw "Generated update manifest failed its value validation."
+    Invoke-NativeCommand -FilePath $vpkPath -ArgumentList $packArguments -Description "Building Velopack full and delta packages"
+
+    $fullPackages = @(Get-ChildItem -LiteralPath $velopackOutputDirectory -File -Filter "*-full.nupkg" |
+        Sort-Object LastWriteTimeUtc -Descending)
+    $deltaPackages = @(Get-ChildItem -LiteralPath $velopackOutputDirectory -File -Filter "*-delta.nupkg" |
+        Sort-Object LastWriteTimeUtc -Descending)
+    $setupPackages = @(Get-ChildItem -LiteralPath $velopackOutputDirectory -File -Filter "*Setup.exe" |
+        Sort-Object LastWriteTimeUtc -Descending)
+    $channelFeedPath = Join-Path $velopackOutputDirectory "releases.$channel.json"
+    if (($fullPackages.Count -eq 0) -or ($setupPackages.Count -eq 0) -or
+        (-not (Test-Path -LiteralPath $channelFeedPath -PathType Leaf))) {
+        throw "Velopack did not produce the required Setup, full package, and releases.$channel.json feed."
+    }
+    $currentFullPackage = $fullPackages[0]
+    $currentDeltaPackage = if ($deltaPackages.Count -gt 0) { $deltaPackages[0] } else { $null }
+    foreach ($releaseAsset in @($currentFullPackage, $setupPackages[0])) {
+        if ($releaseAsset.Length -ge $githubReleaseAssetLimitBytes) {
+            throw "Release asset '$($releaseAsset.Name)' is at or above GitHub's 2 GiB per-file limit."
+        }
+    }
+    if ((-not $FirstVelopackRelease) -and ($null -eq $currentDeltaPackage)) {
+        throw "Velopack did not produce a delta package from the previous $channel release."
+    }
+    if ($null -ne $currentDeltaPackage) {
+        if ($currentDeltaPackage.Length -ge $githubReleaseAssetLimitBytes) {
+            throw "Delta '$($currentDeltaPackage.Name)' is at or above GitHub's 2 GiB per-file limit."
+        }
+        $deltaRatio = [double]$currentDeltaPackage.Length / [double]$currentFullPackage.Length
+        Write-Host ("==> Delta: {0} bytes ({1:P1} of full package)" -f $currentDeltaPackage.Length, $deltaRatio)
+        if ($EnforceSmallDelta -and ($deltaRatio -gt $maximumCodeOnlyDeltaRatio)) {
+            throw ("The code-only delta is {0:P1} of the full package; the release gate is {1:P0}." -f $deltaRatio, $maximumCodeOnlyDeltaRatio)
+        }
+    }
+    Write-Host "==> Full package: $($currentFullPackage.Name) ($($currentFullPackage.Length) bytes)"
+    Write-Host "==> Setup: $($setupPackages[0].Name)"
+
+    $tokenLines = @(Invoke-NativeCapture -FilePath $ghPath -ArgumentList @(
+        "auth", "token"
+    ) -Description "Reading the GitHub token for Velopack")
+    $previousVpkToken = $env:VPK_TOKEN
+    try {
+        $env:VPK_TOKEN = ([string]$tokenLines[0]).Trim()
+        $uploadArguments = @(
+            "upload", "github",
+            "--outputDir", $velopackOutputDirectory,
+            "--channel", $channel,
+            "--repoUrl", $githubUrl,
+            "--publish", "true",
+            "--tag", $tag,
+            "--releaseName", "Citizen Astronomy $Version",
+            "--targetCommitish", $commit
+        )
+        if ($channel -ne "stable") {
+            $uploadArguments += @("--pre", "true")
+        }
+        Invoke-NativeCommand -FilePath $vpkPath -ArgumentList $uploadArguments -Description "Publishing the Velopack GitHub release"
+    } finally {
+        $env:VPK_TOKEN = $previousVpkToken
     }
 
-    Write-Host "==> Installer: $installerAssetName"
-    Write-Host "    Size: $($installerInfo.Length) bytes"
-    Write-Host "    SHA256: $installerHash"
+    if ($IncludeLegacyBootstrap) {
+        $bootstrapBaseName = "CitizenAstronomyAlphaReview-$Version-Setup"
+        $bootstrapAssetName = "$bootstrapBaseName.exe"
+        $bootstrapPath = Join-Path $distDirectory $bootstrapAssetName
+        $legacyManifestPath = Join-Path $distDirectory $manifestAssetName
+        Remove-Item -LiteralPath $bootstrapPath, $legacyManifestPath -Force -ErrorAction SilentlyContinue
 
-    Invoke-NativeCommand -FilePath $ghPath -ArgumentList @(
-        "release", "create", $tag,
-        $installerPath,
-        $manifestPath,
-        "--repo", $Repository,
-        "--target", $commit,
-        "--title", "Citizen Astronomy $Version",
-        "--notes", $effectiveNotes,
-        "--prerelease"
-    ) -Description "Publishing the GitHub prerelease"
+        Invoke-NativeCommand -FilePath $isccPath -ArgumentList @(
+            "/DAppVersion=$Version",
+            "/DVelopackSetupPath=$($setupPackages[0].FullName)",
+            "/DOutputDir=$distDirectory",
+            "/DOutputBaseFilename=$bootstrapBaseName",
+            $bootstrapIssPath
+        ) -Description "Building the legacy Inno-to-Velopack bootstrap"
+        if (-not (Test-Path -LiteralPath $bootstrapPath -PathType Leaf)) {
+            throw "ISCC completed but the legacy bootstrap was not created at '$bootstrapPath'."
+        }
+        if ((Get-Item -LiteralPath $bootstrapPath).Length -ge $githubReleaseAssetLimitBytes) {
+            throw "The legacy bootstrap is at or above GitHub's 2 GiB per-file limit."
+        }
+        if (-not [string]::IsNullOrWhiteSpace($SignTemplate)) {
+            Invoke-SigningTemplate -Template $SignTemplate -TargetPath $bootstrapPath
+        }
+
+        $bootstrapInfo = Get-Item -LiteralPath $bootstrapPath
+        $bootstrapHash = (Get-FileHash -LiteralPath $bootstrapPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $legacyManifest = [ordered]@{
+            schema_version    = 1
+            app_id            = $appId
+            channel           = $channel
+            version           = $Version
+            installer_asset   = $bootstrapAssetName
+            installer_size    = [int64]$bootstrapInfo.Length
+            installer_sha256 = $bootstrapHash
+            notes             = $effectiveNotes
+        }
+        $legacyManifestJson = $legacyManifest | ConvertTo-Json -Depth 3
+        [IO.File]::WriteAllText(
+            $legacyManifestPath,
+            $legacyManifestJson + [Environment]::NewLine,
+            $utf8NoBom
+        )
+        $expectedLegacyFields = @(
+            "schema_version",
+            "app_id",
+            "channel",
+            "version",
+            "installer_asset",
+            "installer_size",
+            "installer_sha256",
+            "notes"
+        )
+        $legacyManifestCheck = Get-Content -LiteralPath $legacyManifestPath -Raw | ConvertFrom-Json
+        $actualLegacyFields = @($legacyManifestCheck.PSObject.Properties.Name)
+        if (@(Compare-Object -ReferenceObject $expectedLegacyFields -DifferenceObject $actualLegacyFields).Count -ne 0) {
+            throw "The generated legacy manifest does not contain exactly the schema-v1 fields."
+        }
+        if (($legacyManifestCheck.schema_version -ne 1) -or
+            ($legacyManifestCheck.app_id -ne $appId) -or
+            ($legacyManifestCheck.channel -ne $channel) -or
+            ($legacyManifestCheck.version -ne $Version) -or
+            ($legacyManifestCheck.installer_asset -ne $bootstrapAssetName) -or
+            ([int64]$legacyManifestCheck.installer_size -ne [int64]$bootstrapInfo.Length) -or
+            ($legacyManifestCheck.installer_sha256 -ne $bootstrapHash) -or
+            ($legacyManifestCheck.notes -ne $effectiveNotes)) {
+            throw "The generated legacy manifest failed its value validation."
+        }
+
+        Invoke-NativeCommand -FilePath $ghPath -ArgumentList @(
+            "release", "upload", $tag,
+            $bootstrapPath,
+            $legacyManifestPath,
+            "--repo", $Repository,
+            "--clobber"
+        ) -Description "Attaching the legacy migration bootstrap and schema-v1 manifest"
+        Write-Host "==> Legacy bootstrap: $bootstrapAssetName ($($bootstrapInfo.Length) bytes)"
+        Write-Host "    SHA256: $bootstrapHash"
+    }
 
     $releaseUrlLines = @(Invoke-NativeCapture -FilePath $ghPath -ArgumentList @(
         "release", "view", $tag,

@@ -95,7 +95,7 @@ hiddenimports = [
     "matplotlib.backends.backend_qtagg",
 ]
 
-for package_name in ("lz4", "zstandard", "pyqtgraph", "imageio_ffmpeg"):
+for package_name in ("lz4", "zstandard", "pyqtgraph", "imageio_ffmpeg", "velopack"):
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package_name)
     datas += pkg_datas
     binaries += pkg_binaries
@@ -131,7 +131,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -146,7 +146,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name=APP_NAME,
 )

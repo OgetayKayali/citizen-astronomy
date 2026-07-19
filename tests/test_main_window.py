@@ -8055,33 +8055,19 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_update_installer_launches_in_silent_update_mode(self) -> None:
+    def test_ready_update_is_applied_and_restarted_by_velopack(self) -> None:
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        downloaded_update = SimpleNamespace(update=object())
 
-            installer_path = Path(temp_dir) / "update.exe"
+        with patch(
 
-            installer_path.write_bytes(b"installer")
+            "photometry_app.core.app_updates.apply_update_and_restart"
 
-            with (
+        ) as apply_update:
 
-                patch("photometry_app.ui.main_window.QProcess.startDetached", return_value=(True, 1234)) as start_detached,
+            self.window._apply_downloaded_update(downloaded_update)
 
-                patch("photometry_app.ui.main_window.QApplication.quit") as quit_application,
-
-            ):
-
-                self.window._launch_update_installer(installer_path)
-
-
-
-        arguments = start_detached.call_args.args[1]
-
-        self.assertIn("/SILENT", arguments)
-
-        self.assertIn("/UPDATE=1", arguments)
-
-        quit_application.assert_called_once_with()
+        apply_update.assert_called_once_with(downloaded_update)
 
 
 
@@ -8109,7 +8095,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             notes="Reviewer fixes",
 
-            installer_size=1024,
+            download_size=1024,
+
+            package_kind="delta",
 
         )
 
@@ -8134,6 +8122,30 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             )
 
         start_download.assert_called_once_with(available_update)
+
+    def test_downloaded_update_can_be_deferred_to_next_launch(self) -> None:
+
+        downloaded_update = SimpleNamespace(update=object())
+
+        with (
+
+            patch(
+
+                "photometry_app.ui.main_window.QMessageBox.question",
+
+                return_value=QMessageBox.StandardButton.No,
+
+            ),
+
+            patch.object(self.window, "_apply_downloaded_update") as apply_update,
+
+        ):
+
+            self.window._handle_update_download_completed(downloaded_update)
+
+        apply_update.assert_not_called()
+
+        self.assertIn("next app launch", self.window.statusBar().currentMessage())
 
 
 

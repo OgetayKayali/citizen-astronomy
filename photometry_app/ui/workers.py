@@ -7406,11 +7406,11 @@ class UpdateDownloadWorker(QThread):
 
         try:
 
-            from photometry_app.core.app_updates import download_update_installer
+            from photometry_app.core.app_updates import download_update_package
 
 
 
-            installer_path = download_update_installer(
+            downloaded_update = download_update_package(
 
                 self._update,
 
@@ -7426,5 +7426,5 @@ class UpdateDownloadWorker(QThread):
 
             return
 
-        self.update_download_completed.emit(installer_path)
+        self.update_download_completed.emit(downloaded_update)
 
