@@ -8123,6 +8123,46 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         start_download.assert_called_once_with(available_update)
 
+    def test_startup_update_check_runs_in_automatic_mode(self) -> None:
+
+        with patch.object(self.window, "_start_update_check") as start_update_check:
+
+            self.window._check_for_updates_on_startup()
+
+        start_update_check.assert_called_once_with(automatic=True)
+
+    def test_automatic_update_check_only_prompts_when_an_update_exists(self) -> None:
+
+        self.window._update_check_is_automatic = True
+
+        self.window._check_for_updates_action.setEnabled(False)
+
+        with patch("photometry_app.ui.main_window.QMessageBox.information") as information:
+
+            self.window._handle_update_check_completed(
+
+                SimpleNamespace(current_version="0.1.1-alpha.4", available_update=None)
+
+            )
+
+        information.assert_not_called()
+
+        self.assertTrue(self.window._check_for_updates_action.isEnabled())
+
+    def test_automatic_update_check_failure_does_not_interrupt_startup(self) -> None:
+
+        self.window._update_check_is_automatic = True
+
+        self.window._check_for_updates_action.setEnabled(False)
+
+        with patch("photometry_app.ui.main_window.QMessageBox.warning") as warning:
+
+            self.window._handle_update_check_failed("No network")
+
+        warning.assert_not_called()
+
+        self.assertTrue(self.window._check_for_updates_action.isEnabled())
+
     def test_downloaded_update_can_be_deferred_to_next_launch(self) -> None:
 
         downloaded_update = SimpleNamespace(update=object())

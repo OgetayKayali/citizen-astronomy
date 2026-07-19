@@ -25,6 +25,8 @@ import requests
 
 import shutil
 
+import sys
+
 import tempfile
 
 import warnings
@@ -24992,6 +24994,8 @@ class MainWindow(QMainWindow):
 
         self._update_download_progress_dialog: QProgressDialog | None = None
 
+        self._update_check_is_automatic = False
+
         self._differential_workflow_dialog: _DifferentialWorkflowDialog | None = None
 
         self._differential_workflow_scan_requested = False
@@ -28249,6 +28253,10 @@ class MainWindow(QMainWindow):
         self._sync_interface_tips()
 
         self._sync_mode_launcher_visibility()
+
+        if getattr(sys, "frozen", False):
+
+            QTimer.singleShot(1500, self._check_for_updates_on_startup)
 
     def _sync_mode_launcher_accent(self) -> None:
 
@@ -48446,11 +48454,23 @@ class MainWindow(QMainWindow):
 
     def _check_for_updates(self) -> None:
 
+        self._start_update_check(automatic=False)
+
+    def _check_for_updates_on_startup(self) -> None:
+
+        self._start_update_check(automatic=True)
+
+    def _start_update_check(self, *, automatic: bool) -> None:
+
         if self._update_check_worker is not None or self._update_download_worker is not None:
 
-            self.statusBar().showMessage("An update operation is already running.", 5000)
+            if not automatic:
+
+                self.statusBar().showMessage("An update operation is already running.", 5000)
 
             return
+
+        self._update_check_is_automatic = automatic
 
         self._check_for_updates_action.setEnabled(False)
 
@@ -48478,6 +48498,10 @@ class MainWindow(QMainWindow):
 
     def _handle_update_check_completed(self, result: object) -> None:
 
+        automatic = self._update_check_is_automatic
+
+        self._update_check_is_automatic = False
+
         self._update_check_worker = None
 
         self._check_for_updates_action.setEnabled(True)
@@ -48488,15 +48512,17 @@ class MainWindow(QMainWindow):
 
             current_version = str(getattr(result, "current_version", APP_VERSION))
 
-            QMessageBox.information(
+            if not automatic:
 
-                self,
+                QMessageBox.information(
 
-                "No Updates Available",
+                    self,
 
-                f"Citizen Astronomy {current_version} is up to date on the alpha channel.",
+                    "No Updates Available",
 
-            )
+                    f"Citizen Astronomy {current_version} is up to date on the alpha channel.",
+
+                )
 
             self.statusBar().showMessage("Citizen Astronomy is up to date.", 5000)
 
@@ -48538,13 +48564,19 @@ class MainWindow(QMainWindow):
 
     def _handle_update_check_failed(self, message: str) -> None:
 
+        automatic = self._update_check_is_automatic
+
+        self._update_check_is_automatic = False
+
         self._update_check_worker = None
 
         self._check_for_updates_action.setEnabled(True)
 
         self.statusBar().showMessage("Update check failed.", 5000)
 
-        QMessageBox.warning(self, "Update Check Failed", message)
+        if not automatic:
+
+            QMessageBox.warning(self, "Update Check Failed", message)
 
 
 
