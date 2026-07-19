@@ -149,6 +149,14 @@ from photometry_app.core.sky_atlas_custom_overlay import (
 )
 from photometry_app.core.sky_explorer import *
 from photometry_app.core.sky_explorer import _sky_explorer_numeric_magnitude
+from photometry_app.core.sky_explorer_collage import (
+    DEFAULT_COLLAGE_MARGIN_FRACTION,
+    SkyExplorerCollageOptions,
+    build_sky_explorer_collage,
+    format_sky_explorer_collage_summary,
+    partition_sky_explorer_collage_objects,
+    save_sky_explorer_collage_image,
+)
 from photometry_app.core.survey_images import (
     SurveyImageRequest,
     fetch_survey_image,
@@ -164,6 +172,7 @@ from photometry_app.ui.dialogs import *
 from photometry_app.ui.distance_map_view import DistanceMapPanel
 from photometry_app.ui.astro_tools_panel import AstroToolsPanel
 from photometry_app.ui.differential_label_dialog import DifferentialQuickLabelDialog
+from photometry_app.ui.sky_explorer_collage_dialog import SkyExplorerCollageDialog
 from photometry_app.ui.hr_plot_widget import *
 from photometry_app.ui.image_view import *
 from photometry_app.ui.levels_dialog import CurvesDialog
@@ -37512,7 +37521,7 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
 
-        self._sky_explorer_results_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._sky_explorer_results_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
 
         self._sky_explorer_results_table.setSortingEnabled(False)
 
@@ -37850,6 +37859,13 @@ class MainWindow(QMainWindow):
         self._sky_explorer_export_menu.addAction(self._sky_explorer_export_animation_action)
         self._sky_explorer_export_image_button.setMenu(self._sky_explorer_export_menu)
 
+        self._sky_explorer_collage_button = QPushButton("Collage...")
+        self._sky_explorer_collage_button.setToolTip(
+            "Export a collage of selected or visible Sky Explorer objects that have catalog size metadata."
+        )
+        self._sky_explorer_collage_button.clicked.connect(self._export_sky_explorer_collage)
+        self._sky_explorer_collage_options = SkyExplorerCollageOptions(margin_fraction=DEFAULT_COLLAGE_MARGIN_FRACTION)
+
         self._set_sky_explorer_header_button_widths()
 
         self._sky_explorer_image_view = AnnotatedImageView(self)
@@ -38025,6 +38041,8 @@ class MainWindow(QMainWindow):
         image_controls_layout.addWidget(self._sky_explorer_show_auto_annotations_button)
 
         image_controls_layout.addWidget(self._sky_explorer_mag_limit_button)
+
+        image_controls_layout.addWidget(self._sky_explorer_collage_button)
 
         image_controls_layout.addWidget(self._sky_explorer_export_image_button)
         self._sky_explorer_image_controls_layout = image_controls_layout
@@ -39171,6 +39189,8 @@ class MainWindow(QMainWindow):
 
         mag_limit_width = self.fontMetrics().horizontalAdvance("Mag Limit") + button_padding_px
 
+        collage_width = self.fontMetrics().horizontalAdvance("Collage...") + button_padding_px
+
         surveys_width = self.fontMetrics().horizontalAdvance("Surveys") + button_padding_px + 12
 
         auto_width = self.fontMetrics().horizontalAdvance("Auto") + button_padding_px
@@ -39203,6 +39223,8 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_mag_limit_button.setFixedWidth(mag_limit_width)
 
+        self._sky_explorer_collage_button.setFixedWidth(collage_width)
+
         self._sky_explorer_surveys_button.setFixedWidth(surveys_width)
 
         self._sky_explorer_show_auto_annotations_button.setFixedWidth(auto_width)
@@ -39220,6 +39242,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_show_auto_annotations_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_mag_limit_button.setFixedHeight(header_control_height)
+
+        self._sky_explorer_collage_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_surveys_button.setFixedHeight(header_control_height)
 
@@ -40427,7 +40451,7 @@ class MainWindow(QMainWindow):
 
             sky_object
 
-            for sky_object in self._sky_explorer_result_objects_after_view_filters(result)
+            for sky_object in result.objects
 
             if _sky_explorer_numeric_magnitude(sky_object) is not None
 
@@ -40493,7 +40517,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_sky_explorer_filtered_view(self, *, preserve_selection: bool, select_first_row: bool) -> None:
 
-        previous_selection = self._selected_sky_explorer_object() if preserve_selection else None
+        previous_selections = self._selected_sky_explorer_objects() if preserve_selection else ()
+
+        previous_primary = self._selected_sky_explorer_object() if preserve_selection else None
 
         visible_objects = self._filtered_sky_explorer_objects()
 
@@ -40501,21 +40527,41 @@ class MainWindow(QMainWindow):
 
         self._populate_sky_explorer_results_table(visible_objects)
 
+        restored_objects: list[SkyExplorerObject] = []
+
+        if previous_selections:
+
+            for previous in previous_selections:
+
+                for sky_object in visible_objects:
+
+                    if self._sky_explorer_objects_match(sky_object, previous):
+
+                        restored_objects.append(sky_object)
+
+                        break
+
         selected_object: SkyExplorerObject | None = None
 
-        if previous_selection is not None:
+        if previous_primary is not None:
 
-            for sky_object in visible_objects:
+            for sky_object in restored_objects or visible_objects:
 
-                if self._sky_explorer_objects_match(sky_object, previous_selection):
+                if self._sky_explorer_objects_match(sky_object, previous_primary):
 
                     selected_object = sky_object
 
                     break
 
+        if selected_object is None and restored_objects:
+
+            selected_object = restored_objects[0]
+
         if selected_object is None and select_first_row and visible_objects:
 
             selected_object = visible_objects[0]
+
+            restored_objects = [selected_object]
 
         if selected_object is None:
 
@@ -40535,7 +40581,13 @@ class MainWindow(QMainWindow):
 
             return
 
-        self._select_sky_explorer_result_object(selected_object)
+        if restored_objects:
+
+            self._select_sky_explorer_result_objects(restored_objects, current_object=selected_object)
+
+        else:
+
+            self._select_sky_explorer_result_object(selected_object)
 
     def _sky_explorer_objects_match(self, first: SkyExplorerObject, second: SkyExplorerObject) -> bool:
 
@@ -40587,7 +40639,9 @@ class MainWindow(QMainWindow):
 
     def _handle_sky_explorer_results_sort_requested(self, column_index: int) -> None:
 
-        previous_selection = self._selected_sky_explorer_object()
+        previous_selections = self._selected_sky_explorer_objects()
+
+        previous_primary = self._selected_sky_explorer_object()
 
         if column_index == self._sky_explorer_results_sort_column:
 
@@ -40617,9 +40671,13 @@ class MainWindow(QMainWindow):
 
         self._populate_sky_explorer_results_table(self._current_sky_explorer_visible_objects)
 
-        if previous_selection is not None:
+        if previous_selections:
 
-            self._select_sky_explorer_result_object(previous_selection)
+            self._select_sky_explorer_result_objects(previous_selections, current_object=previous_primary)
+
+        elif previous_primary is not None:
+
+            self._select_sky_explorer_result_object(previous_primary)
 
     def _sky_explorer_result_sort_key(self, sky_object: SkyExplorerObject, column_index: int) -> tuple[int, float | str]:
 
@@ -40930,35 +40988,31 @@ class MainWindow(QMainWindow):
 
     def _selected_sky_explorer_object(self) -> SkyExplorerObject | None:
 
-        selected_items = self._sky_explorer_results_table.selectedItems()
+        current_item = self._sky_explorer_results_table.currentItem()
 
-        if not selected_items:
+        if current_item is not None:
 
-            return None
+            item = self._sky_explorer_results_table.item(current_item.row(), 0)
 
-        row_index = selected_items[0].row()
+            if item is not None:
 
-        item = self._sky_explorer_results_table.item(row_index, 0)
+                sky_object = item.data(_SKY_EXPLORER_OBJECT_ROLE)
 
-        if item is None:
+                if isinstance(sky_object, SkyExplorerObject):
 
-            return None
+                    return sky_object
 
-        sky_object = item.data(_SKY_EXPLORER_OBJECT_ROLE)
+        selected_objects = self._selected_sky_explorer_objects()
 
-        return sky_object if isinstance(sky_object, SkyExplorerObject) else None
+        return selected_objects[0] if selected_objects else None
 
-    def _select_sky_explorer_result_object(self, sky_object: SkyExplorerObject) -> bool:
+    def _selected_sky_explorer_objects(self) -> tuple[SkyExplorerObject, ...]:
 
-        group_key, _group_title, _group_order = self._sky_explorer_result_group_info(sky_object)
+        selected_rows = sorted({item.row() for item in self._sky_explorer_results_table.selectedItems()})
 
-        if group_key in self._sky_explorer_collapsed_result_groups:
+        selected_objects: list[SkyExplorerObject] = []
 
-            self._sky_explorer_collapsed_result_groups.discard(group_key)
-
-            self._populate_sky_explorer_results_table(self._current_sky_explorer_visible_objects)
-
-        for row_index in range(self._sky_explorer_results_table.rowCount()):
+        for row_index in selected_rows:
 
             item = self._sky_explorer_results_table.item(row_index, 0)
 
@@ -40966,19 +41020,127 @@ class MainWindow(QMainWindow):
 
                 continue
 
-            row_object = item.data(_SKY_EXPLORER_OBJECT_ROLE)
+            sky_object = item.data(_SKY_EXPLORER_OBJECT_ROLE)
 
-            if isinstance(row_object, SkyExplorerObject) and self._sky_explorer_objects_match(row_object, sky_object):
+            if isinstance(sky_object, SkyExplorerObject):
 
-                self._sky_explorer_results_table.setCurrentCell(row_index, 0)
+                selected_objects.append(sky_object)
 
-                self._sky_explorer_results_table.selectRow(row_index)
+        return tuple(selected_objects)
 
-                self._sky_explorer_results_table.scrollToItem(item)
+    def _select_sky_explorer_result_object(self, sky_object: SkyExplorerObject) -> bool:
 
-                return True
+        return self._select_sky_explorer_result_objects((sky_object,), current_object=sky_object)
 
-        return False
+    def _select_sky_explorer_result_objects(
+
+        self,
+
+        sky_objects: Sequence[SkyExplorerObject],
+
+        *,
+
+        current_object: SkyExplorerObject | None = None,
+
+    ) -> bool:
+
+        if not sky_objects:
+
+            return False
+
+        groups_to_expand = {
+
+            self._sky_explorer_result_group_info(sky_object)[0]
+
+            for sky_object in sky_objects
+
+        }
+
+        expanded_any = False
+
+        for group_key in groups_to_expand:
+
+            if group_key in self._sky_explorer_collapsed_result_groups:
+
+                self._sky_explorer_collapsed_result_groups.discard(group_key)
+
+                expanded_any = True
+
+        if expanded_any:
+
+            self._populate_sky_explorer_results_table(self._current_sky_explorer_visible_objects)
+
+        target_identities = {self._sky_explorer_object_identity(sky_object) for sky_object in sky_objects}
+
+        current_identity = (
+
+            self._sky_explorer_object_identity(current_object) if current_object is not None else None
+
+        )
+
+        self._sky_explorer_results_table.blockSignals(True)
+
+        try:
+
+            self._sky_explorer_results_table.clearSelection()
+
+            first_item: QTableWidgetItem | None = None
+
+            current_item: QTableWidgetItem | None = None
+
+            column_count = max(1, self._sky_explorer_results_table.columnCount())
+
+            for row_index in range(self._sky_explorer_results_table.rowCount()):
+
+                item = self._sky_explorer_results_table.item(row_index, 0)
+
+                if item is None:
+
+                    continue
+
+                row_object = item.data(_SKY_EXPLORER_OBJECT_ROLE)
+
+                if not isinstance(row_object, SkyExplorerObject):
+
+                    continue
+
+                identity = self._sky_explorer_object_identity(row_object)
+
+                if identity not in target_identities:
+
+                    continue
+
+                self._sky_explorer_results_table.setRangeSelected(
+
+                    QTableWidgetSelectionRange(row_index, 0, row_index, column_count - 1),
+
+                    True,
+
+                )
+
+                if first_item is None:
+
+                    first_item = item
+
+                if current_identity is not None and identity == current_identity:
+
+                    current_item = item
+
+            focus_item = current_item or first_item
+
+            if focus_item is not None:
+
+                self._sky_explorer_results_table.setCurrentItem(focus_item)
+
+                self._sky_explorer_results_table.scrollToItem(focus_item)
+
+        finally:
+
+            self._sky_explorer_results_table.blockSignals(False)
+
+        self._handle_sky_explorer_result_selection_changed()
+
+        return first_item is not None
 
     def _handle_sky_explorer_image_overlay_clicked(self, overlay: object) -> None:
 
@@ -41302,6 +41464,10 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_export_image_button.setEnabled(has_image)
 
+        if hasattr(self, "_sky_explorer_collage_button"):
+
+            self._sky_explorer_collage_button.setEnabled(self._sky_explorer_can_export_collage())
+
         if hasattr(self, "_sky_explorer_export_animation_action"):
 
             self._sky_explorer_export_animation_action.setEnabled(
@@ -41525,6 +41691,264 @@ class MainWindow(QMainWindow):
             return Path.cwd() / "sky_explorer_annotated.png"
 
         return image_path.with_name(f"{image_path.stem}_sky_explorer.png")
+
+    def _sky_explorer_default_collage_export_path(self) -> Path:
+
+        image_path = getattr(self, "_current_sky_explorer_source_image", None)
+
+        if image_path is None:
+
+            return Path.cwd() / "sky_explorer_collage.png"
+
+        return image_path.with_name(f"{image_path.stem}_sky_explorer_collage.png")
+
+    def _sky_explorer_can_export_collage(self) -> bool:
+
+        image_path = getattr(self, "_current_sky_explorer_source_image", None)
+
+        if image_path is None or not Path(image_path).exists():
+
+            return False
+
+        if self._current_sky_explorer_result is None:
+
+            return False
+
+        if self._sky_explorer_image_wcs() is None:
+
+            return False
+
+        selected_eligible, _selected_skipped = partition_sky_explorer_collage_objects(self._selected_sky_explorer_objects())
+
+        visible_eligible, _visible_skipped = partition_sky_explorer_collage_objects(
+            self._current_sky_explorer_visible_objects
+        )
+
+        return bool(selected_eligible or visible_eligible)
+
+    def _export_sky_explorer_collage(self) -> None:
+
+        image_path = getattr(self, "_current_sky_explorer_source_image", None)
+
+        if image_path is None or not Path(image_path).exists():
+
+            QMessageBox.information(self, "Nothing to export", "Open a Sky Explorer image before creating a collage.")
+
+            return
+
+        if self._current_sky_explorer_result is None:
+
+            QMessageBox.information(self, "Nothing to export", "Explore the field before creating a collage.")
+
+            return
+
+        wcs = self._sky_explorer_image_wcs()
+
+        if wcs is None:
+
+            QMessageBox.information(
+
+                self,
+
+                "Collage unavailable",
+
+                "Sky Explorer needs a valid WCS solution before catalog-size crops can be exported.",
+
+            )
+
+            return
+
+        selected_objects = self._selected_sky_explorer_objects()
+
+        visible_objects = tuple(self._current_sky_explorer_visible_objects)
+
+        selected_eligible, selected_skipped = partition_sky_explorer_collage_objects(selected_objects)
+
+        visible_eligible, visible_skipped = partition_sky_explorer_collage_objects(visible_objects)
+
+        if not selected_eligible and not visible_eligible:
+
+            QMessageBox.information(
+
+                self,
+
+                "No eligible objects",
+
+                "Collage export needs objects with catalog size metadata "
+
+                "(major/minor axis or catalog size). None of the selected or visible objects qualify.",
+
+            )
+
+            return
+
+        options_dialog = SkyExplorerCollageDialog(
+
+            selected_count=len(selected_objects),
+
+            selected_eligible_count=len(selected_eligible),
+
+            selected_skipped_count=len(selected_skipped),
+
+            visible_count=len(visible_objects),
+
+            visible_eligible_count=len(visible_eligible),
+
+            visible_skipped_count=len(visible_skipped),
+
+            initial_options=getattr(self, "_sky_explorer_collage_options", None),
+
+            initial_scope="selected" if selected_eligible else "all_eligible_visible",
+
+            parent=self,
+
+        )
+
+        if options_dialog.exec() != int(QDialog.DialogCode.Accepted):
+
+            return
+
+        collage_options = options_dialog.selected_options()
+
+        self._sky_explorer_collage_options = collage_options
+
+        scope = options_dialog.selected_scope()
+
+        candidate_objects = selected_objects if scope == "selected" else visible_objects
+
+        eligible_objects, skipped_objects = partition_sky_explorer_collage_objects(candidate_objects)
+
+        if not eligible_objects:
+
+            QMessageBox.information(
+
+                self,
+
+                "No eligible objects",
+
+                "The chosen collage scope has no objects with usable catalog size metadata.",
+
+            )
+
+            return
+
+        default_path = self._sky_explorer_default_collage_export_path()
+
+        default_path.parent.mkdir(parents=True, exist_ok=True)
+
+        selected_path, _selected_filter = QFileDialog.getSaveFileName(
+
+            self,
+
+            "Save Sky Explorer Collage",
+
+            str(default_path),
+
+            "PNG Files (*.png);;JPEG Files (*.jpg *.jpeg);;BMP Files (*.bmp);;All Files (*)",
+
+            "PNG Files (*.png)",
+
+        )
+
+        if not selected_path:
+
+            return
+
+        output_path = Path(selected_path)
+
+        if output_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".bmp"}:
+
+            output_path = output_path.with_suffix(".png")
+
+        try:
+
+            collage_result = build_sky_explorer_collage(
+
+                source_image_path=Path(image_path),
+
+                objects=eligible_objects,
+
+                wcs=wcs,
+
+                render_settings=self._current_sky_explorer_image_render_settings(),
+
+                options=collage_options,
+
+            )
+
+            save_sky_explorer_collage_image(collage_result.image_rgb, output_path)
+
+        except Exception as exc:
+
+            QMessageBox.warning(self, "Collage export failed", f"Could not create the Sky Explorer collage:\n{exc}")
+
+            self._append_sky_explorer_workflow_note(f"Sky Explorer collage export failed: {exc}")
+
+            return
+
+        summary = format_sky_explorer_collage_summary(
+
+            candidate_count=len(candidate_objects),
+
+            eligible_count=len(eligible_objects),
+
+            skipped_missing_size_count=len(skipped_objects),
+
+            included_count=len(collage_result.included_objects),
+
+            clipped_count=collage_result.clipped_count,
+
+            padded_count=collage_result.padded_count,
+
+            columns=collage_result.columns,
+
+            rows=collage_result.rows,
+
+            layout=collage_result.layout,
+
+            margin_fraction=collage_result.margin_fraction,
+
+            output_width=int(collage_result.image_rgb.shape[1]),
+
+            output_height=int(collage_result.image_rgb.shape[0]),
+
+        )
+
+        status_message = (
+
+            f"Saved Sky Explorer collage ({len(collage_result.included_objects)} object"
+
+            f"{'' if len(collage_result.included_objects) == 1 else 's'}) to {output_path}."
+
+        )
+
+        self.statusBar().showMessage(status_message, 6000)
+
+        self._append_sky_explorer_workflow_note(status_message)
+
+        self._append_sky_explorer_workflow_note(summary.replace("\n", " | "))
+
+        if skipped_objects or collage_result.skipped_objects:
+
+            skipped_names = ", ".join(
+
+                str(sky_object.short_label or sky_object.name or sky_object.source_id)
+
+                for sky_object in skipped_objects[:8]
+
+            )
+
+            if len(skipped_objects) > 8:
+
+                skipped_names = f"{skipped_names}, …"
+
+            if skipped_names:
+
+                self._append_sky_explorer_workflow_note(
+
+                    f"Skipped for missing catalog size ({len(skipped_objects)}): {skipped_names}"
+
+                )
 
     def _sky_explorer_default_comparison_animation_export_path(self) -> Path:
 

@@ -87,6 +87,8 @@ from photometry_app.core.settings import AppSettings, resolve_shared_parallel_wo
 
 from photometry_app.core.solar_system import estimate_visible_magnitude_limit
 
+from photometry_app.core.local_wcs import infer_metadata_wcs_seed, solve_wcs_from_metadata_and_gaia
+
 from photometry_app.core.wcs import AstrometryNetClient, AstrometrySolveHints, extract_solved_field, infer_astrometry_solve_hints, is_pixinsight_staralignment_output, validate_wcs
 
 
@@ -120,6 +122,8 @@ class _PendingAstrometrySolve:
     hints: AstrometrySolveHints | None
 
     reuse_key: tuple[str, int, int, str, float | None, float | None] | None = None
+
+    try_local_gaia: bool = False
 
 
 
@@ -1553,7 +1557,7 @@ class PhotometryPipeline:
 
                 else:
 
-                    reason = immediate_result.reasons[0] if immediate_result.reasons else "No usable celestial WCS was found."
+                    reason = immediate_result.reasons[-1] if immediate_result.reasons else "No usable celestial WCS was found."
 
                     _emit_progress(progress_callback, f"[WCS {index}/{len(files)}] Skipped {file_result.path.name}: {reason}")
 
@@ -1587,7 +1591,11 @@ class PhotometryPipeline:
 
             progress_callback,
 
-            f"Submitting {len(representative_requests)} astrometry.net solve request(s) with up to {min(_DEFAULT_ASTROMETRY_PARALLEL_SUBMISSIONS, len(representative_requests))} concurrent upload(s).",
+            (
+                f"Solving {len(representative_requests)} unresolved field(s) with metadata-seeded Gaia matching"
+                + (" and astrometry.net fallback" if settings.astrometry_api_key else "")
+                + f", using up to {min(_DEFAULT_ASTROMETRY_PARALLEL_SUBMISSIONS, len(representative_requests))} concurrent solve(s)."
+            ),
 
         )
 
@@ -1721,7 +1729,9 @@ class PhotometryPipeline:
 
 
 
-            if not settings.astrometry_api_key:
+            local_seed_available = infer_metadata_wcs_seed(header, width, height) is not None
+
+            if not local_seed_available and not settings.astrometry_api_key:
 
                 return (
 
@@ -1760,6 +1770,8 @@ class PhotometryPipeline:
                     hints=hints,
 
                     reuse_key=_aligned_frame_reuse_key(file_result, hints, settings),
+
+                    try_local_gaia=local_seed_available,
 
                 ),
 
@@ -1837,7 +1849,7 @@ class PhotometryPipeline:
 
                 else:
 
-                    reason = result.reasons[0] if result.reasons else "No usable celestial WCS was found."
+                    reason = result.reasons[-1] if result.reasons else "No usable celestial WCS was found."
 
                     _emit_progress(progress_callback, f"[WCS {request.index + 1}/{total_files}] Skipped {request.file_result.path.name}: {reason}")
 
@@ -1857,6 +1869,76 @@ class PhotometryPipeline:
 
     ) -> PlateSolveResult:
 
+        local_reasons: list[str] = []
+
+        if request.try_local_gaia:
+
+            try:
+
+                local_result = solve_wcs_from_metadata_and_gaia(
+
+                    request.file_result.path,
+
+                    solve_cache_dir / "local-gaia",
+
+                )
+
+            except Exception as exc:
+
+                local_result = PlateSolveResult(
+
+                    source_path=request.file_result.path,
+
+                    status=WcsStatus.UNSOLVED,
+
+                    solved_field=None,
+
+                    reasons=[f"Metadata-seeded Gaia WCS fallback failed: {exc}"],
+
+                )
+
+            if local_result.solved_field is not None:
+
+                return PlateSolveResult(
+
+                    source_path=request.file_result.path,
+
+                    status=local_result.status,
+
+                    solved_field=local_result.solved_field,
+
+                    reasons=_deduplicate([*request.initial_reasons, *local_result.reasons]),
+
+                )
+
+            local_reasons.extend(local_result.reasons)
+
+        if not api_key:
+
+            return PlateSolveResult(
+
+                source_path=request.file_result.path,
+
+                status=WcsStatus.UNSOLVED,
+
+                solved_field=None,
+
+                reasons=_deduplicate(
+
+                    [
+
+                        *request.initial_reasons,
+
+                        *local_reasons,
+
+                        "Astrometry.net API key not configured; no further WCS fallback is available.",
+
+                    ]
+
+                ),
+
+            )
+
         try:
 
             client = AstrometryNetClient(api_key)
@@ -1873,7 +1955,7 @@ class PhotometryPipeline:
 
                 solved_field=None,
 
-                reasons=_deduplicate([*request.initial_reasons, f"WCS resolution failed: {exc}"]),
+                reasons=_deduplicate([*request.initial_reasons, *local_reasons, f"WCS resolution failed: {exc}"]),
 
             )
 
@@ -1887,7 +1969,7 @@ class PhotometryPipeline:
 
             solved_field=result.solved_field,
 
-            reasons=_deduplicate([*request.initial_reasons, *result.reasons]),
+            reasons=_deduplicate([*request.initial_reasons, *local_reasons, *result.reasons]),
 
         )
 

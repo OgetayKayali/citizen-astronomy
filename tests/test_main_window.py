@@ -36,7 +36,7 @@ from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QImage, QMous
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtTest import QTest
 
-from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QDialog, QFrame, QGroupBox, QHeaderView, QHBoxLayout, QLabel, QLayoutItem, QMenu, QMessageBox, QProgressDialog, QPushButton, QSizePolicy, QStyle, QStyleOptionSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidgetAction
+from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QDialog, QFrame, QGroupBox, QHeaderView, QHBoxLayout, QLabel, QLayoutItem, QMenu, QMessageBox, QProgressDialog, QPushButton, QSizePolicy, QStyle, QStyleOptionSpinBox, QTableWidget, QTableWidgetItem, QTableWidgetSelectionRange, QVBoxLayout, QWidgetAction
 
 
 
@@ -82,7 +82,7 @@ from photometry_app.ui.image_view import AnnotatedImageView, ImageOverlay
 
 from photometry_app.ui.levels_dialog import CurvesDialog
 
-from photometry_app.ui.main_window import MainWindow, _AsteroidBlinkExportCanceled, _AsteroidDiscoveryContinuationState, _AstrostackOverlayLayer, _DifferentialDiscoverRunOptions, _DifferentialWorkflowDialog, _DifferentialWorkflowOptions, _HrRoiSelection, _SkyAtlasViewWidget, _SkyViewLocationDialog, _SkyViewLocationMapWidget, _SkyViewMilkyWayProjectedTileVertex, _SkyViewMilkyWayTextureLevel, _SkyVisibleObject
+from photometry_app.ui.main_window import MainWindow, _AsteroidBlinkExportCanceled, _AsteroidDiscoveryContinuationState, _AstrostackOverlayLayer, _DifferentialDiscoverRunOptions, _DifferentialWorkflowDialog, _DifferentialWorkflowOptions, _HrRoiSelection, _SKY_EXPLORER_OBJECT_ROLE, _SkyAtlasViewWidget, _SkyViewLocationDialog, _SkyViewLocationMapWidget, _SkyViewMilkyWayProjectedTileVertex, _SkyViewMilkyWayTextureLevel, _SkyVisibleObject
 from photometry_app.ui.moon_system import DEFAULT_MOON_VISUAL_SETTINGS, MoonDrawState, MoonEphemeris, MoonRendererGL, MoonState, MoonTextureLod, MoonTileDiagnostics
 from photometry_app.ui.sky_view_location import _SkyViewObservingSiteSelection
 
@@ -22946,6 +22946,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         )
         self.assertLess(
             controls_layout.indexOf(self.window._sky_explorer_mag_limit_button),
+            controls_layout.indexOf(self.window._sky_explorer_collage_button),
+        )
+        self.assertLess(
+            controls_layout.indexOf(self.window._sky_explorer_collage_button),
             controls_layout.indexOf(self.window._sky_explorer_export_image_button),
         )
 
@@ -22977,6 +22981,283 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         assert export_menu is not None
         action_texts = [action.text() for action in export_menu.actions()]
         self.assertEqual(action_texts, ["Image...", "Animation..."])
+
+    def test_sky_explorer_results_table_supports_multi_selection_for_collage(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        self.assertEqual(
+            self.window._sky_explorer_results_table.selectionMode(),
+            QTableWidget.SelectionMode.ExtendedSelection,
+        )
+        image_path = Path(self._state_dir.name) / "sky_explorer_collage_select.fits"
+        image_path.touch()
+        result = SkyExplorerResult(
+            source_path=image_path,
+            solved_field=SolvedField(
+                center_ra_deg=10.0,
+                center_dec_deg=20.0,
+                radius_deg=0.5,
+                width=16,
+                height=16,
+                wcs_path=image_path,
+            ),
+            used_astrometry_fallback=False,
+            footprint=SkyExplorerFieldFootprint(
+                center_ra_deg=10.0,
+                center_dec_deg=20.0,
+                radius_deg=0.5,
+                width_deg=1.0,
+                height_deg=0.75,
+                corners=(
+                    SkyExplorerCorner("Top Left", 9.5, 20.5),
+                    SkyExplorerCorner("Top Right", 10.5, 20.5),
+                    SkyExplorerCorner("Bottom Right", 10.5, 19.5),
+                    SkyExplorerCorner("Bottom Left", 9.5, 19.5),
+                ),
+            ),
+            objects=(
+                SkyExplorerObject(
+                    "deep_sky",
+                    "simbad",
+                    "Sized A",
+                    "Sized A",
+                    "Galaxy",
+                    10.1,
+                    20.1,
+                    4.0,
+                    5.0,
+                    11.0,
+                    1.0,
+                    "Sized A",
+                    {"catalog_type": "GX", "catalog_size_arcmin": 3.0},
+                ),
+                SkyExplorerObject(
+                    "deep_sky",
+                    "simbad",
+                    "Sized B",
+                    "Sized B",
+                    "Galaxy",
+                    10.2,
+                    20.2,
+                    8.0,
+                    9.0,
+                    12.0,
+                    2.0,
+                    "Sized B",
+                    {"catalog_type": "GX", "catalog_major_axis_arcmin": 4.0, "catalog_minor_axis_arcmin": 2.0},
+                ),
+                SkyExplorerObject(
+                    "gaia_stars",
+                    "Gaia DR3",
+                    "No Size",
+                    "No Size",
+                    "Star",
+                    10.3,
+                    20.3,
+                    6.0,
+                    7.0,
+                    13.0,
+                    3.0,
+                    "No Size",
+                    {},
+                ),
+            ),
+            layer_summaries=(SkyExplorerLayerSummary("deep_sky", "Deep Sky", 2, 2),),
+            warning_messages=(),
+            summary_text="Found 3 objects.",
+        )
+        self.window._current_sky_explorer_source_image = image_path
+        self.window._current_sky_explorer_result = result
+        self.window._refresh_sky_explorer_filtered_view(preserve_selection=False, select_first_row=False)
+        object_rows = [
+            row_index
+            for row_index in range(self.window._sky_explorer_results_table.rowCount())
+            if isinstance(
+                self.window._sky_explorer_results_table.item(row_index, 0).data(_SKY_EXPLORER_OBJECT_ROLE)
+                if self.window._sky_explorer_results_table.item(row_index, 0) is not None
+                else None,
+                SkyExplorerObject,
+            )
+        ]
+        self.assertGreaterEqual(len(object_rows), 2)
+        self.window._sky_explorer_results_table.clearSelection()
+        column_count = self.window._sky_explorer_results_table.columnCount()
+        for row_index in object_rows[:2]:
+            self.window._sky_explorer_results_table.setRangeSelected(
+                QTableWidgetSelectionRange(row_index, 0, row_index, column_count - 1),
+                True,
+            )
+        selected = self.window._selected_sky_explorer_objects()
+        self.assertEqual(len(selected), 2)
+        self.window._sky_explorer_results_table.setCurrentCell(object_rows[1], 0)
+        current_item = self.window._sky_explorer_results_table.item(object_rows[1], 0)
+        assert current_item is not None
+        current_object = current_item.data(_SKY_EXPLORER_OBJECT_ROLE)
+        assert isinstance(current_object, SkyExplorerObject)
+        self.assertEqual(self.window._selected_sky_explorer_object().source_id, current_object.source_id)
+
+    def test_sky_explorer_collage_dialog_and_export_wiring(self) -> None:
+        from photometry_app.core.sky_explorer_collage import SkyExplorerCollageOptions, SkyExplorerCollageResult
+        from photometry_app.ui.sky_explorer_collage_dialog import SkyExplorerCollageDialog
+
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        image_path = Path(self._state_dir.name) / "sky_explorer_collage_export.fits"
+        image_path.touch()
+        sized_a = SkyExplorerObject(
+            "deep_sky",
+            "simbad",
+            "Sized A",
+            "Sized A",
+            "Galaxy",
+            10.1,
+            20.1,
+            4.0,
+            5.0,
+            11.0,
+            1.0,
+            "Sized A",
+            {"catalog_type": "GX", "catalog_size_arcmin": 3.0},
+        )
+        sized_b = SkyExplorerObject(
+            "deep_sky",
+            "simbad",
+            "Sized B",
+            "Sized B",
+            "Galaxy",
+            10.2,
+            20.2,
+            8.0,
+            9.0,
+            12.0,
+            2.0,
+            "Sized B",
+            {"catalog_type": "GX", "catalog_size_arcmin": 2.0},
+        )
+        no_size = SkyExplorerObject(
+            "deep_sky",
+            "simbad",
+            "No Size",
+            "No Size",
+            "Galaxy",
+            10.3,
+            20.3,
+            6.0,
+            7.0,
+            13.0,
+            3.0,
+            "No Size",
+            {"catalog_type": "GX"},
+        )
+        result = SkyExplorerResult(
+            source_path=image_path,
+            solved_field=SolvedField(
+                center_ra_deg=10.0,
+                center_dec_deg=20.0,
+                radius_deg=0.5,
+                width=16,
+                height=16,
+                wcs_path=image_path,
+            ),
+            used_astrometry_fallback=False,
+            footprint=SkyExplorerFieldFootprint(
+                center_ra_deg=10.0,
+                center_dec_deg=20.0,
+                radius_deg=0.5,
+                width_deg=1.0,
+                height_deg=0.75,
+                corners=(
+                    SkyExplorerCorner("Top Left", 9.5, 20.5),
+                    SkyExplorerCorner("Top Right", 10.5, 20.5),
+                    SkyExplorerCorner("Bottom Right", 10.5, 19.5),
+                    SkyExplorerCorner("Bottom Left", 9.5, 19.5),
+                ),
+            ),
+            objects=(sized_a, sized_b, no_size),
+            layer_summaries=(SkyExplorerLayerSummary("deep_sky", "Deep Sky", 3, 3),),
+            warning_messages=(),
+            summary_text="Found 3 objects.",
+        )
+        self.window._current_sky_explorer_source_image = image_path
+        self.window._current_sky_explorer_result = result
+        self.window._refresh_sky_explorer_filtered_view(preserve_selection=False, select_first_row=True)
+        self.window._sync_sky_explorer_image_controls()
+
+        fake_wcs = object()
+        self.window._sky_explorer_image_wcs = lambda: fake_wcs
+        self.window._sync_sky_explorer_image_controls()
+        self.assertTrue(self.window._sky_explorer_collage_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_can_export_collage())
+
+        captured: dict[str, object] = {}
+
+        class _FakeDialog:
+            def __init__(self, **kwargs) -> None:
+                captured.update(kwargs)
+
+            def exec(self) -> int:
+                return int(QDialog.DialogCode.Accepted)
+
+            def selected_scope(self) -> str:
+                return "all_eligible_visible"
+
+            def selected_options(self) -> SkyExplorerCollageOptions:
+                return SkyExplorerCollageOptions(layout="natural", margin_fraction=0.15, show_labels=True)
+
+        output_path = Path(self._state_dir.name) / "exported_collage.png"
+        collage_rgb = np.zeros((40, 60, 3), dtype=np.uint8)
+        collage_result = SkyExplorerCollageResult(
+            image_rgb=collage_rgb,
+            included_objects=(sized_a, sized_b),
+            skipped_objects=(no_size,),
+            clipped_count=0,
+            padded_count=1,
+            columns=2,
+            rows=1,
+            layout="natural",
+            margin_fraction=0.15,
+        )
+        build_calls: list[dict[str, object]] = []
+        save_calls: list[Path] = []
+
+        def _fake_build(**kwargs):
+            build_calls.append(kwargs)
+            return collage_result
+
+        with (
+            patch("photometry_app.ui.main_window.SkyExplorerCollageDialog", _FakeDialog),
+            patch("photometry_app.ui.main_window.QFileDialog.getSaveFileName", return_value=(str(output_path), "PNG Files (*.png)")),
+            patch("photometry_app.ui.main_window.build_sky_explorer_collage", side_effect=_fake_build),
+            patch("photometry_app.ui.main_window.save_sky_explorer_collage_image", side_effect=lambda image, path: save_calls.append(Path(path))),
+        ):
+            self.window._export_sky_explorer_collage()
+
+        self.assertEqual(captured.get("visible_eligible_count"), 2)
+        self.assertEqual(captured.get("visible_skipped_count"), 1)
+        self.assertEqual(captured.get("initial_scope"), "selected")
+        self.assertEqual(len(build_calls), 1)
+        self.assertEqual([obj.source_id for obj in build_calls[0]["objects"]], ["Sized A", "Sized B"])
+        self.assertEqual(build_calls[0]["options"].layout, "natural")
+        self.assertEqual(save_calls, [output_path])
+        workflow_text = self.window._sky_explorer_steps_output.toPlainText()
+        self.assertIn("Saved Sky Explorer collage", workflow_text)
+        self.assertIn("Eligible with catalog size: 2", workflow_text)
+
+        dialog = SkyExplorerCollageDialog(
+            selected_count=1,
+            selected_eligible_count=1,
+            selected_skipped_count=0,
+            visible_count=3,
+            visible_eligible_count=2,
+            visible_skipped_count=1,
+            parent=self.window,
+        )
+        self.assertTrue(dialog._selected_scope_radio.isChecked())
+        dialog._all_visible_scope_radio.setChecked(True)
+        self.assertEqual(dialog.selected_scope(), "all_eligible_visible")
+        self.assertIn("Eligible with catalog size: 2", dialog._summary_label.text())
+        dialog._mosaic_layout_radio.setChecked(True)
+        self.assertEqual(dialog.selected_layout(), "mosaic")
+        self.assertEqual(dialog.selected_options().layout, "mosaic")
+        self.assertIn("interlocking tiles", dialog._summary_label.text())
 
     def test_sky_explorer_animation_export_requires_loaded_survey_comparison(self) -> None:
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)

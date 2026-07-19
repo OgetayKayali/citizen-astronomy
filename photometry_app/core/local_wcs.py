@@ -293,6 +293,12 @@ def _binning_multiplier(header: Header, pixel_key: str, *binning_keys: str) -> f
             comment = ""
         if "including binning" in comment or "binned pixel" in comment:
             return 1.0
+    software_name = str(header.get("SWCREATE") or header.get("CREATOR") or "").strip().casefold()
+    if "n.i.n.a" in software_name or software_name.startswith("nina"):
+        # N.I.N.A. writes XPIXSZ/YPIXSZ as the effective pixel pitch for the
+        # saved (already binned) image. Multiplying by X/YBINNING again doubles
+        # the inferred plate scale and prevents Gaia pattern matching.
+        return 1.0
     binning = _positive_header_float(header, *binning_keys)
     return float(binning) if binning is not None else 1.0
 

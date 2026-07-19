@@ -13,7 +13,7 @@ Every deep image is denser than it looks. Behind the obvious bright star or the 
 - **Compare with survey imaging.** Overlay DSS2 Blue, SHS Hα, PanSTARRS, or IPHAS Hα cutouts with an interactive divider so you can compare your frame to public survey data.
 - **Annotate by hand.** Draw circles, ellipses, and text labels; edit stroke, fill, weight, opacity, and fonts; keep automatic catalog overlays on or off.
 - **Probe magnitude reach.** **Mag Limit** marks representative Gaia stars in half-magnitude bins so you can see how deep the frame goes.
-- **Export the view.** Save still images of the annotated field, or GIF/MP4 comparison animations when a survey layer is loaded.
+- **Export the view.** Save still images of the annotated field, GIF/MP4 comparison animations when a survey layer is loaded, or a **Collage** of catalog objects that have usable angular-size metadata.
 
 ### Why this matters
 
@@ -134,6 +134,7 @@ Rows are grouped (Nebulae / ISM, Galaxies, Stars, Variable Stars, Solar System, 
 | Action | Effect |
 |--------|--------|
 | Click a row | Fills **Inspector**; highlights the object on the image |
+| Ctrl/Shift-click rows | Multi-select for **Collage...** (the current row still drives Inspector, centering, and overlay highlighting) |
 | Double-click a row | Opens the object’s catalog page in your browser (Gaia → VizieR, VSX → AAVSO, exoplanets → NASA archive, otherwise SIMBAD) |
 | **Center Object** | Pans the image so the selection sits near the view center |
 
@@ -217,6 +218,23 @@ The **Manual Annotation** dialog edits geometry (X, Y, radii, rotation), line wi
 
 **Export → Image...** saves the current view (source stretch, overlays, and survey comparison if visible) as PNG, JPEG, or BMP. Default name pattern: `{stem}_sky_explorer.png`.
 
+### Collage...
+
+**Collage...** (beside Mag Limit / Export) builds a figure from catalog objects that have usable angular-size metadata (`catalog_major_axis_arcmin`, `catalog_minor_axis_arcmin`, or `catalog_size_arcmin`). Objects without size data are skipped and counted in the dialog summary and Work Log.
+
+The collage dialog offers:
+
+| Option | Choices / default |
+|--------|-------------------|
+| **Objects** | **Selected Objects** or **All Eligible Visible Objects** |
+| **Layout** | **Uniform Tiles** (same cell size), **Natural Sizes** (each crop keeps its pixel footprint in a grid), or **Packed Mosaic** |
+| **Margin** | Extra sky margin around each catalog size; default **15%** |
+| **Labels** | Optional object-name strips under each tile |
+
+Crops use the active Sky Explorer stretch/curves/invert settings and the solved WCS so rotated or unequal pixel scales stay correct. Edge targets are padded so they remain centered in their tiles. Column count is chosen automatically. Output formats match still export: PNG, JPEG, or BMP (`{stem}_sky_explorer_collage.png` by default).
+
+**Packed Mosaic** sorts crops by catalog sky footprint from largest to smallest, then packs them into an interlocking mosaic that fills a clean rectangle. Each tile is cover-fitted into its cell with a themed gutter between neighbors, so the sections stay visually separate without black letterboxing.
+
 ### Animation...
 
 **Export → Animation...** builds a comparison animation that moves the survey divider. Requirements:
@@ -290,7 +308,7 @@ Results and solves are cached under Sky Explorer catalog / WCS / survey cache di
 4. Switch to **Advanced** or **Scientific** and re-Explore if you need stars, variables, AGN, or SSO.
 5. Turn on **Mag Limit** to judge depth; toggle **Auto** off if overlays clutter a presentation frame.
 6. Load **DSS2 Blue** or an Hα survey and scrub the divider for a before/after comparison.
-7. Add a few manual labels for teaching slides; **Export → Image...** or **Animation...**.
+7. Add a few manual labels for teaching slides; **Export → Image...** or **Animation...**. Use **Collage...** when you want a multi-object size-aware figure of galaxies/nebulae from the same frame.
 
 ---
 
@@ -333,6 +351,6 @@ Results and solves are cached under Sky Explorer catalog / WCS / survey cache di
 
 ## Conclusion
 
-Sky Explorer is the “what am I looking at?” mode. Point it at a solved image, pick the object classes that matter for your night, and let the catalogs paint the field. Use Mag Limit and survey comparison when you are teaching or planning, and export the annotated view when you want a figure that still looks like *your* data.
+Sky Explorer is the “what am I looking at?” mode. Point it at a solved image, pick the object classes that matter for your night, and let the catalogs paint the field. Use Mag Limit and survey comparison when you are teaching or planning, export the annotated view when you want a figure that still looks like *your* data, and use Collage when you want a tidy multi-object cutout board from catalog sizes.
 
 For shared shell themes and layout conventions, see [Themes, Layout, and Shared UI](themes_layout_ui.md). For the repository map, see [CODEBASE_MAP.md](../CODEBASE_MAP.md).

@@ -42,13 +42,19 @@ from photometry_app.core.models import (
 
     PhotometryMeasurement,
 
+    PlateSolveResult,
+
     ProcessingReport,
 
     RecenterMode,
 
+    SolvedField,
+
     VariableStarDesignationFamily,
 
     VariableStarLimitMode,
+
+    WcsStatus,
 
 )
 
@@ -1343,6 +1349,114 @@ class PipelineIntegrationTest(unittest.TestCase):
             self.assertEqual(len(SlowAstrometryClient.calls), 3)
 
             self.assertLess(elapsed, 0.5)
+
+    def test_resolve_summary_fields_uses_metadata_seeded_gaia_without_api_key(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            object_dir = root / "Files" / "WASP-12b"
+
+            object_dir.mkdir(parents=True)
+
+            image_path = object_dir / "nina_binned_frame.fits"
+
+            header = fits.Header()
+
+            header["DATE-OBS"] = "2026-01-20T02:11:37"
+
+            header["FILTER"] = "R"
+
+            header["EXPTIME"] = 230.0
+
+            header["OBJECT"] = "WASP-12b"
+
+            header["RA"] = 97.6344880776984
+
+            header["DEC"] = 29.6913781086925
+
+            header["FOCALLEN"] = 2939.0
+
+            header["XPIXSZ"] = 7.52
+
+            header["YPIXSZ"] = 7.52
+
+            header["XBINNING"] = 2
+
+            header["YBINNING"] = 2
+
+            header["SWCREATE"] = "N.I.N.A. 3.2.0.9001 (x64)"
+
+            fits.PrimaryHDU(data=np.ones((32, 48), dtype=np.float32), header=header).writeto(image_path)
+
+            (root / ".photometry-settings.json").write_text(
+
+                json.dumps({"cache_dir": ".photometry-cache"}),
+
+                encoding="utf-8",
+
+            )
+
+            pipeline = PhotometryPipeline()
+
+            report = pipeline.scan_workspace(root)
+
+            settings = AppSettings.from_root(root)
+
+            solved_field = SolvedField(
+
+                center_ra_deg=97.6355,
+
+                center_dec_deg=29.6727,
+
+                radius_deg=0.42,
+
+                width=48,
+
+                height=32,
+
+                wcs_path=image_path,
+
+            )
+
+            local_result = PlateSolveResult(
+
+                source_path=image_path,
+
+                status=WcsStatus.SOLVED,
+
+                solved_field=solved_field,
+
+                reasons=[],
+
+            )
+
+            with (
+
+                patch(
+
+                    "photometry_app.core.pipeline.solve_wcs_from_metadata_and_gaia",
+
+                    return_value=local_result,
+
+                ) as local_solver,
+
+                patch("photometry_app.core.pipeline.AstrometryNetClient") as astrometry_client,
+
+            ):
+
+                results = pipeline._resolve_summary_fields(report.object_summaries[0].files, settings)
+
+            local_solver.assert_called_once()
+
+            astrometry_client.assert_not_called()
+
+            self.assertEqual(len(results), 1)
+
+            self.assertIsNotNone(results[0][1].solved_field)
+
+            self.assertEqual(results[0][1].solved_field.center_ra_deg, 97.6355)
 
 
 

@@ -37,6 +37,26 @@ class AstrometryNetClientTest(unittest.TestCase):
         self.assertAlmostEqual(seed.pixel_scale_y_arcsec, 1.6946, places=3)
         self.assertEqual((seed.width, seed.height), (6248, 4176))
 
+    def test_infer_metadata_wcs_seed_does_not_double_apply_nina_binning(self) -> None:
+        header = Header()
+        header["RA"] = 97.6344880776984
+        header["DEC"] = 29.6913781086925
+        header["FOCALLEN"] = 2939.0
+        header["XPIXSZ"] = (7.52, "[um] Pixel X axis size")
+        header["YPIXSZ"] = (7.52, "[um] Pixel Y axis size")
+        header["XBINNING"] = 2
+        header["YBINNING"] = 2
+        header["SWCREATE"] = "N.I.N.A. 3.2.0.9001 (x64)"
+
+        seed = infer_metadata_wcs_seed(header, 4784, 3194)
+
+        self.assertIsNotNone(seed)
+        assert seed is not None
+        expected_scale = 206.26480624709636 * 7.52 / 2939.0
+        self.assertAlmostEqual(seed.pixel_scale_x_arcsec, expected_scale, places=4)
+        self.assertAlmostEqual(seed.pixel_scale_y_arcsec, expected_scale, places=4)
+        self.assertAlmostEqual(seed.field_radius_deg, 0.5416, places=3)
+
     def test_metadata_seeded_gaia_fit_recovers_rotation_and_parity(self) -> None:
         rng = np.random.default_rng(12345)
         width = 2000

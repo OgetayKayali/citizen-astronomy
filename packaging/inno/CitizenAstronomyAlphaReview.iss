@@ -6,7 +6,7 @@
 #define AppPublisher "Ogetay"
 #define AppURL "https://ogetay.com/citizen-astronomy-cast"
 #ifndef AppVersion
-  #define AppVersion "0.1.1-alpha.2"
+  #define AppVersion "0.1.1-alpha.3"
 #endif
 #ifndef OutputBaseFilename
   #define OutputBaseFilename "CitizenAstronomyAlphaReview-" + AppVersion + "-Setup"
