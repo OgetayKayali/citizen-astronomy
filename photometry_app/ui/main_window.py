@@ -28802,7 +28802,7 @@ class MainWindow(QMainWindow):
 
         self._asteroid_3d_button = QPushButton("Trajectory View")
 
-        self._asteroid_3d_button.setToolTip("Open a heliocentric trajectory view for the selected predicted object or selected object set using JPL Horizons state vectors around the current frame group.")
+        self._asteroid_3d_button.setToolTip("Open a heliocentric Trajectory View for selected objects, or an empty Earth-centered window you can populate with Lookup. Span can use the observation window or a custom date range.")
 
         self._asteroid_3d_button.clicked.connect(self._open_selected_asteroid_3d_view)
 
@@ -29160,11 +29160,11 @@ class MainWindow(QMainWindow):
 
         self._asteroid_functional_actions_layout = functional_actions_layout
 
-        functional_actions_layout.addWidget(self._asteroid_discover_button)
-
         functional_actions_layout.addWidget(self._asteroid_3d_button)
 
         functional_actions_layout.addWidget(self._asteroid_synthetic_track_button)
+
+        functional_actions_layout.addWidget(self._asteroid_discover_button)
 
         functional_actions_layout.addWidget(self._asteroid_trajectory_button)
 
@@ -55527,7 +55527,7 @@ class MainWindow(QMainWindow):
 
         self._asteroid_trajectory_button.setEnabled(not is_busy and self._selected_asteroid_detection() is not None)
 
-        self._asteroid_3d_button.setEnabled(not is_busy and self._selected_asteroid_detection() is not None)
+        self._asteroid_3d_button.setEnabled(not is_busy)
 
         self._asteroid_image_stretch_combo.setEnabled(not is_busy)
 
@@ -59737,7 +59737,7 @@ class MainWindow(QMainWindow):
 
         self._asteroid_trajectory_button.setEnabled(has_known_selection or has_candidate_selection)
 
-        self._asteroid_3d_button.setEnabled(has_known_selection)
+        self._asteroid_3d_button.setEnabled(not self._asteroid_task_running())
 
         self._sync_asteroid_export_controls()
 
@@ -62535,6 +62535,63 @@ class MainWindow(QMainWindow):
 
         return ((detection.designation or "").strip(), (detection.name or "").strip())
 
+    def _asteroid_orbit_context_frame_paths(self) -> list[Path]:
+
+        frame_paths = [path for path in self._asteroid_frame_paths if path.exists()]
+
+        if not frame_paths and self._current_asteroid_source_image is not None and self._current_asteroid_source_image.exists():
+
+            frame_paths = [self._current_asteroid_source_image]
+
+        return frame_paths
+
+    def _asteroid_orbit_context_measurements_for_detection(
+        self,
+        detection: SolarSystemDetection,
+    ) -> tuple[SolarSystemFrameMeasurement, ...]:
+
+        """Build prediction-only frame rows from cached metadata.
+
+        Trajectory View / Horizons only needs observation times and the selected
+        detection identity. Avoid ``measure_detections_in_frame`` here — that path
+        re-reads FITS headers (and optionally image data) for every frame and was
+        freezing the UI when many detections or frames were present.
+        """
+
+        result = self._current_asteroid_detection_result
+
+        if result is None or detection is None:
+
+            return ()
+
+        measurements: list[SolarSystemFrameMeasurement] = []
+
+        for frame_path in self._asteroid_orbit_context_frame_paths():
+
+            metadata = self._asteroid_frame_metadata.get(str(frame_path.resolve()))
+
+            midpoint_time = self._asteroid_frame_midpoint_time(metadata, result)
+
+            frame_measurement = self._build_prediction_only_asteroid_frame_measurement(
+
+                frame_path,
+
+                detection,
+
+                observation_time=midpoint_time,
+
+                reference_observation_time=result.prediction_time,
+
+                fallback_solved_field=None,
+
+            )
+
+            if frame_measurement is not None:
+
+                measurements.append(frame_measurement)
+
+        return tuple(measurements)
+
     def _available_asteroid_orbit_context_targets(
 
         self,
@@ -62557,6 +62614,11 @@ class MainWindow(QMainWindow):
 
         }
 
+        # Horizons reload for Objects-menu targets only needs observation times.
+        # Reuse the selected target's timeline instead of re-measuring every
+        # detection against every FITS frame on the UI thread.
+        shared_timeline = selected_targets[0].frame_measurements if selected_targets else ()
+
         available_targets: list[AsteroidOrbitContextTarget] = []
 
         for detection in result.detections:
@@ -62571,33 +62633,7 @@ class MainWindow(QMainWindow):
 
                 continue
 
-            frame_measurements = self._asteroid_group_measurements_for_detection(detection, allow_live_compute=False)
-
-            if not frame_measurements:
-
-                try:
-
-                    detection_index = result.detections.index(detection)
-
-                except ValueError:
-
-                    detection_index = -1
-
-                fallback_measurement = (
-
-                    self._current_asteroid_frame_measurement(detection_index, allow_live_compute=False)
-
-                    if detection_index >= 0
-
-                    else None
-
-                )
-
-                if fallback_measurement is not None:
-
-                    frame_measurements = (fallback_measurement,)
-
-            if not frame_measurements:
+            if not shared_timeline:
 
                 continue
 
@@ -62607,7 +62643,7 @@ class MainWindow(QMainWindow):
 
                     detection=detection,
 
-                    frame_measurements=frame_measurements,
+                    frame_measurements=shared_timeline,
 
                 )
 
@@ -62737,58 +62773,73 @@ class MainWindow(QMainWindow):
 
         result = self._current_asteroid_detection_result
 
-        if result is None:
+        if result is not None:
 
-            return ()
+            settings = self._settings
 
-        settings = self._settings
+            lookup_results = search_known_solar_system_objects(
 
-        lookup_results = search_known_solar_system_objects(
+                identifier,
 
-            identifier,
+                result.solved_field,
 
-            result.solved_field,
+                observation_time=result.observation_time,
 
-            observation_time=result.observation_time,
+                exposure_seconds=result.exposure_seconds,
 
-            exposure_seconds=result.exposure_seconds,
+                observer_latitude_deg=settings.observing_site_latitude_deg,
 
-            observer_latitude_deg=settings.observing_site_latitude_deg,
+                observer_longitude_deg=settings.observing_site_longitude_deg,
 
-            observer_longitude_deg=settings.observing_site_longitude_deg,
+                observer_elevation_m=settings.observing_site_elevation_m,
 
-            observer_elevation_m=settings.observing_site_elevation_m,
+                magnitude_limit=float(result.magnitude_limit),
 
-            magnitude_limit=float(result.magnitude_limit),
+                observatory_code=str(settings.observer_code or "").strip() or None,
 
-            observatory_code=str(settings.observer_code or "").strip() or None,
-
-        )
-
-        entries: list[KnownObjectOrbit3DSearchEntry] = []
-        existing_keys = {
-            self._asteroid_detection_identity_key(detection)
-            for detection in result.detections
-        }
-        for lookup_result in lookup_results:
-            detection = lookup_result.detection
-            detection_key = self._asteroid_detection_identity_key(detection)
-            if detection_key in existing_keys:
-                continue
-            frame_measurements = self._asteroid_group_measurements_for_detection(detection, allow_live_compute=False)
-            if not frame_measurements:
-                continue
-            entries.append(
-                KnownObjectOrbit3DSearchEntry(
-                    target=AsteroidOrbitContextTarget(
-                        detection=detection,
-                        frame_measurements=frame_measurements,
-                    ),
-                    angular_distance_deg=lookup_result.angular_distance_deg,
-                    is_in_image=lookup_result.is_in_image,
-                )
             )
-        return tuple(entries)
+
+            entries: list[KnownObjectOrbit3DSearchEntry] = []
+            existing_keys = {
+                self._asteroid_detection_identity_key(detection)
+                for detection in result.detections
+            }
+            for lookup_result in lookup_results:
+                detection = lookup_result.detection
+                detection_key = self._asteroid_detection_identity_key(detection)
+                if detection_key in existing_keys:
+                    continue
+                frame_measurements = self._asteroid_group_measurements_for_detection(detection, allow_live_compute=False)
+                if not frame_measurements:
+                    continue
+                entries.append(
+                    KnownObjectOrbit3DSearchEntry(
+                        target=AsteroidOrbitContextTarget(
+                            detection=detection,
+                            frame_measurements=frame_measurements,
+                        ),
+                        angular_distance_deg=lookup_result.angular_distance_deg,
+                        is_in_image=lookup_result.is_in_image,
+                    )
+                )
+            if entries:
+                return tuple(entries)
+
+        dialog = self._primary_asteroid_known_orbit_dialog()
+        if dialog is not None:
+            window_start = dialog._context.window_start
+            window_end = dialog._context.window_end
+        else:
+            center = self._default_asteroid_planner_start_time().astimezone(UTC)
+            window_start = center - timedelta(days=45)
+            window_end = center + timedelta(days=45)
+        return self._search_asteroid_planning_targets(
+            KnownObjectOrbit3DPlannerRequest(
+                identifier=identifier,
+                start_time=window_start,
+                end_time=window_end,
+            )
+        )
 
     def _default_asteroid_planner_start_time(self) -> datetime:
 
@@ -63053,7 +63104,125 @@ class MainWindow(QMainWindow):
 
         selected_detections = self._selected_asteroid_detections()
 
+        if self._asteroid_task_running():
+
+            self.statusBar().showMessage("Another asteroid/comet task is already running.", 5000)
+
+            return
+
         if not selected_detections:
+
+            self._open_empty_asteroid_3d_view()
+
+            return
+
+        primary_label = selected_detections[0].name or selected_detections[0].designation or "selected object"
+
+        loading_text = (
+
+            f"Loading 3D View for {primary_label}..."
+
+            if len(selected_detections) == 1
+
+            else f"Loading 3D View for {len(selected_detections)} selected objects..."
+
+        )
+
+        self._append_asteroid_workflow_note(loading_text)
+
+        self._asteroid_status_label.setText(loading_text)
+
+        self.statusBar().showMessage(self._asteroid_status_label.text(), 5000)
+
+        # Show the loading dialog before any per-frame measurement work so the
+        # click feels instantaneous and the user knows the app is responding.
+        progress_dialog = QProgressDialog(
+            "3D View is loading... Preparing trajectory measurements.",
+            "",
+            0,
+            0,
+            self,
+        )
+
+        progress_dialog.setWindowTitle("3D View")
+
+        progress_dialog.setMinimumDuration(0)
+
+        progress_dialog.setAutoClose(False)
+
+        progress_dialog.setAutoReset(False)
+
+        progress_dialog.setCancelButton(None)
+
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+
+        progress_dialog.show()
+
+        progress_dialog.raise_()
+
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+        self._asteroid_orbit_context_progress_dialog = progress_dialog
+
+        self._set_asteroid_detection_busy(True)
+
+        pending_detections = tuple(selected_detections)
+
+        QTimer.singleShot(0, lambda: self._continue_open_selected_asteroid_3d_view(pending_detections))
+
+    def _open_empty_asteroid_3d_view(self) -> None:
+
+        loading_text = "Loading empty Trajectory View..."
+
+        self._append_asteroid_workflow_note(loading_text)
+
+        self._asteroid_status_label.setText(loading_text)
+
+        self.statusBar().showMessage(loading_text, 5000)
+
+        progress_dialog = QProgressDialog(
+            "Trajectory View is loading... Querying heliocentric Earth context from JPL Horizons.",
+            "",
+            0,
+            0,
+            self,
+        )
+        progress_dialog.setWindowTitle("Trajectory View")
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.setAutoClose(False)
+        progress_dialog.setAutoReset(False)
+        progress_dialog.setCancelButton(None)
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.show()
+        progress_dialog.raise_()
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        self._asteroid_orbit_context_progress_dialog = progress_dialog
+        self._set_asteroid_detection_busy(True)
+
+        center_time = self._default_asteroid_planner_start_time().astimezone(UTC)
+        observation_times = (center_time,)
+        self._asteroid_orbit_context_worker = AsteroidOrbitContextWorker(
+            targets=(),
+            available_targets=(),
+            arc_padding_days=45.0,
+            sample_count=61,
+            include_major_planets=False,
+            observation_times=observation_times,
+            parent=self,
+        )
+        self._asteroid_orbit_context_worker.progress_updated.connect(self._handle_asteroid_orbit_context_progress)
+        self._asteroid_orbit_context_worker.context_completed.connect(self._handle_asteroid_orbit_context_completed)
+        self._asteroid_orbit_context_worker.context_failed.connect(self._handle_asteroid_orbit_context_failed)
+        self._asteroid_orbit_context_worker.start()
+
+    def _continue_open_selected_asteroid_3d_view(
+        self,
+        selected_detections: tuple[SolarSystemDetection, ...],
+    ) -> None:
+
+        if self._asteroid_orbit_context_progress_dialog is None:
+
+            self._set_asteroid_detection_busy(False)
 
             return
 
@@ -63063,7 +63232,8 @@ class MainWindow(QMainWindow):
 
         for detection in selected_detections:
 
-            frame_measurements = self._asteroid_group_measurements_for_detection(detection)
+            # Metadata-only prediction rows — no FITS header/image reads.
+            frame_measurements = self._asteroid_orbit_context_measurements_for_detection(detection)
 
             if not frame_measurements:
 
@@ -63085,7 +63255,15 @@ class MainWindow(QMainWindow):
 
         if not selected_targets:
 
-            QMessageBox.information(self, "3D view unavailable", "No per-frame trajectory measurements are available for the selected object in the current group.")
+            self._close_asteroid_orbit_context_progress_dialog()
+
+            self._set_asteroid_detection_busy(False)
+
+            QMessageBox.information(
+                self,
+                "3D view unavailable",
+                "No per-frame trajectory measurements are available for the selected object in the current group.",
+            )
 
             return
 
@@ -63103,6 +63281,10 @@ class MainWindow(QMainWindow):
 
             if existing_dialog is not None:
 
+                self._close_asteroid_orbit_context_progress_dialog()
+
+                self._set_asteroid_detection_busy(False)
+
                 existing_dialog.update_available_targets(available_targets=available_targets)
 
                 existing_dialog.showMaximized()
@@ -63113,25 +63295,7 @@ class MainWindow(QMainWindow):
 
                 return
 
-        if self._asteroid_task_running():
-
-            self.statusBar().showMessage("Another asteroid/comet task is already running.", 5000)
-
-            return
-
-
-
         primary_label = selected_targets[0].detection.name or selected_targets[0].detection.designation or "selected object"
-
-        loading_text = (
-
-            f"Loading 3D View for {primary_label}..."
-
-            if len(selected_targets) == 1
-
-            else f"Loading 3D View for {len(selected_targets)} selected objects..."
-
-        )
 
         status_text = (
 
@@ -63142,8 +63306,6 @@ class MainWindow(QMainWindow):
             else f"Querying JPL Horizons 3D context for {len(selected_targets)} selected objects."
 
         )
-
-        self._append_asteroid_workflow_note(loading_text)
 
         self._append_asteroid_workflow_note(status_text)
 
@@ -63161,29 +63323,9 @@ class MainWindow(QMainWindow):
 
             )
 
-        self._asteroid_status_label.setText(loading_text)
-
-        self.statusBar().showMessage(self._asteroid_status_label.text(), 5000)
-
-        progress_dialog = QProgressDialog("3D View is loading... Querying heliocentric context from JPL Horizons.", "", 0, 0, self)
-
-        progress_dialog.setWindowTitle("3D View")
-
-        progress_dialog.setMinimumDuration(0)
-
-        progress_dialog.setAutoClose(False)
-
-        progress_dialog.setAutoReset(False)
-
-        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-
-        progress_dialog.show()
-
-        QApplication.processEvents()
-
-        self._asteroid_orbit_context_progress_dialog = progress_dialog
-
-        self._set_asteroid_detection_busy(True)
+        self._handle_asteroid_orbit_context_progress(
+            "3D View is loading... Querying heliocentric context from JPL Horizons."
+        )
 
         self._asteroid_orbit_context_worker = AsteroidOrbitContextWorker(
 
@@ -63245,7 +63387,7 @@ class MainWindow(QMainWindow):
 
     ) -> None:
 
-        dialog = self._find_matching_asteroid_known_orbit_dialog(result.detection, result.frame_measurements) if allow_existing_match else None
+        dialog = self._find_matching_asteroid_known_orbit_dialog(result.detection, result.frame_measurements) if allow_existing_match and result.detection is not None else None
 
         if dialog is not None:
 
@@ -63342,7 +63484,11 @@ class MainWindow(QMainWindow):
 
         self._asteroid_orbit_context_worker = None
 
-        summary_text = f"Loaded heliocentric 3D context for {result.context.object_label}."
+        summary_text = (
+            f"Loaded heliocentric 3D context for {result.context.object_label}."
+            if result.detection is not None
+            else "Loaded empty Trajectory View. Use Lookup to add asteroids or comets."
+        )
 
         self._asteroid_status_label.setText(summary_text)
 
@@ -63352,10 +63498,10 @@ class MainWindow(QMainWindow):
 
         self._show_asteroid_orbit_context_dialog(
             result,
-            search_nearby_targets=self._search_nearby_asteroid_orbit_context_targets,
+            search_nearby_targets=self._search_nearby_asteroid_orbit_context_targets if self._current_asteroid_detection_result is not None else None,
             lookup_exact_target=self._lookup_asteroid_orbit_context_target_by_name,
             default_nearby_magnitude_limit=float(self._current_asteroid_detection_result.magnitude_limit) if self._current_asteroid_detection_result is not None else 18.0,
-            allow_existing_match=True,
+            allow_existing_match=result.detection is not None,
         )
 
     def _handle_asteroid_planner_context_completed(self, result: AsteroidOrbitContextResult) -> None:
@@ -63418,11 +63564,15 @@ class MainWindow(QMainWindow):
 
         self,
 
-        detection: SolarSystemDetection,
+        detection: SolarSystemDetection | None,
 
         frame_measurements: tuple[SolarSystemFrameMeasurement, ...],
 
     ) -> KnownObjectOrbit3DDialog | None:
+
+        if detection is None:
+
+            return None
 
         for dialog in reversed(self._asteroid_known_orbit_dialogs):
 
@@ -72498,6 +72648,8 @@ class MainWindow(QMainWindow):
 
         card_bg_hover = QColor(card_bg).lighter(106).name().lower()
 
+        card_bg_hover_strong = QColor(card_bg).lighter(122).name().lower()
+
         card_bg_pressed = QColor(card_bg).darker(104).name().lower()
 
         muted_bg = QColor(colors.get("panel_bg", "#2b2b2b")).lighter(110).name().lower()
@@ -72520,11 +72672,11 @@ class MainWindow(QMainWindow):
 
         functional_action_buttons = [
 
-            self._asteroid_discover_button,
-
             self._asteroid_3d_button,
 
             self._asteroid_synthetic_track_button,
+
+            self._asteroid_discover_button,
 
             self._asteroid_trajectory_button,
 
@@ -72608,6 +72760,8 @@ class MainWindow(QMainWindow):
 
             button.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
 
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+
             button.setStyleSheet(
 
                 "QPushButton {"
@@ -72616,7 +72770,7 @@ class MainWindow(QMainWindow):
 
                 f"color: {muted_text};"
 
-                "border: 0px;"
+                "border: 1px solid transparent;"
 
                 f"border-radius: {_MODE_TOOLBAR_BUTTON_RADIUS_PX}px;"
 
@@ -72626,15 +72780,17 @@ class MainWindow(QMainWindow):
 
                 "}"
 
-                f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; }}"
+                f"QPushButton:enabled:hover {{ background-color: {card_bg_hover_strong}; color: {muted_text}; border: 1px solid {accent_soft}; }}"
 
-                f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; }}"
+                f"QPushButton:enabled:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border: 1px solid {accent_border}; }}"
 
                 "QPushButton:disabled {"
 
                 f"background-color: transparent;"
 
                 f"color: {disabled_text};"
+
+                "border: 1px solid transparent;"
 
                 "}"
 

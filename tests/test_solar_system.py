@@ -4208,6 +4208,92 @@ class SolarSystemTest(unittest.TestCase):
 
 
 
+    def test_build_multi_known_object_heliocentric_context_allows_empty_custom_window(self) -> None:
+
+        window_start = datetime(2026, 1, 1, tzinfo=UTC)
+
+        window_end = datetime(2026, 4, 1, tzinfo=UTC)
+
+        captured_queries: list[dict[str, object]] = []
+
+
+
+        class _FakeHorizons:
+
+            def __init__(self, **kwargs: object) -> None:
+
+                self._kwargs = dict(kwargs)
+
+                captured_queries.append(self._kwargs)
+
+
+
+            def vectors(self) -> Table:
+
+                epochs = self._kwargs["epochs"]
+
+                epoch_count = len(epochs) if isinstance(epochs, list) else 1
+
+                rows = [
+
+                    (
+
+                        "Earth (399)",
+
+                        1.0 + (index * 0.01),
+
+                        0.1,
+
+                        0.0,
+
+                        0.01,
+
+                        0.02,
+
+                        0.03,
+
+                    )
+
+                    for index in range(epoch_count)
+
+                ]
+
+                return Table(rows=rows, names=("targetname", "x", "y", "z", "vx", "vy", "vz"))
+
+
+
+        with patch("photometry_app.core.solar_system.Horizons", _FakeHorizons):
+
+            context = build_multi_known_object_heliocentric_context(
+
+                (),
+
+                window_start=window_start,
+
+                window_end=window_end,
+
+                sample_count=5,
+
+            )
+
+
+
+        self.assertEqual(context.object_label, "Trajectory View")
+
+        self.assertEqual(context.resolved_target_name, "Earth only")
+
+        self.assertEqual(context.object_path_samples, ())
+
+        self.assertEqual(len(context.earth_path_samples), 5)
+
+        self.assertEqual(context.window_start, window_start)
+
+        self.assertEqual(context.window_end, window_end)
+
+        self.assertTrue(any(str(query.get("id")) == "399" for query in captured_queries))
+
+
+
     def test_altitude_deg_returns_none_when_iers_lookup_fails(self) -> None:
 
         location = EarthLocation(lat=35.0 * u.deg, lon=-105.0 * u.deg, height=1500.0 * u.m)

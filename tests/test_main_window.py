@@ -29082,11 +29082,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertLess(layout.indexOf(self.window._asteroid_workflow_separator), layout.indexOf(self.window._asteroid_functional_actions_group))
 
-        self.assertLess(functional_layout.indexOf(self.window._asteroid_discover_button), functional_layout.indexOf(self.window._asteroid_3d_button))
-
         self.assertLess(functional_layout.indexOf(self.window._asteroid_3d_button), functional_layout.indexOf(self.window._asteroid_synthetic_track_button))
 
-        self.assertLess(functional_layout.indexOf(self.window._asteroid_synthetic_track_button), functional_layout.indexOf(self.window._asteroid_trajectory_button))
+        self.assertLess(functional_layout.indexOf(self.window._asteroid_synthetic_track_button), functional_layout.indexOf(self.window._asteroid_discover_button))
+
+        self.assertLess(functional_layout.indexOf(self.window._asteroid_discover_button), functional_layout.indexOf(self.window._asteroid_trajectory_button))
 
         self.assertEqual(self.window._asteroid_trajectory_button.text(), "Plots")
 
@@ -29094,7 +29094,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIn("border: 1px solid", self.window._asteroid_functional_actions_group.styleSheet())
 
-        self.assertNotIn("border: 1px solid", self.window._asteroid_discover_button.styleSheet())
+        self.assertIn("QPushButton:enabled:hover", self.window._asteroid_discover_button.styleSheet())
+
+        self.assertEqual(self.window._asteroid_3d_button.cursor().shape(), Qt.CursorShape.PointingHandCursor)
 
         self.assertEqual(layout.indexOf(self.window._asteroid_center_object_button), -1)
 
@@ -30371,13 +30373,15 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             patch.object(self.window, "_selected_asteroid_detections", return_value=(detection,)),
 
-            patch.object(self.window, "_asteroid_group_measurements_for_detection", return_value=measurement_rows),
+            patch.object(self.window, "_asteroid_orbit_context_measurements_for_detection", return_value=measurement_rows),
 
             patch("photometry_app.ui.main_window.AsteroidOrbitContextWorker") as worker_class,
 
         ):
 
             self.window._open_selected_asteroid_3d_view()
+
+            QApplication.processEvents()
 
 
 
@@ -30397,13 +30401,131 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIs(worker_class.call_args.kwargs["parent"], self.window)
 
-        self.assertIn("Loading 3D View", self.window._asteroid_status_label.text())
-
         self.assertIsNotNone(self.window._asteroid_orbit_context_progress_dialog)
 
         self.assertIn("3D View is loading", self.window._asteroid_orbit_context_progress_dialog.labelText())
 
+        self.assertIn("3D View is loading", self.window._asteroid_status_label.text())
+
         worker_class.return_value.start.assert_called_once_with()
+
+        self.window._close_asteroid_orbit_context_progress_dialog()
+
+
+
+    def test_main_window_shows_3d_view_loading_dialog_before_preparing_measurements(self) -> None:
+
+        detection = SolarSystemDetection(
+
+            name="(1) Ceres",
+
+            designation="1",
+
+            object_type="Asteroid",
+
+            orbit_class="main-belt",
+
+            predicted_ra_deg=10.0,
+
+            predicted_dec_deg=20.0,
+
+            predicted_x=24.5,
+
+            predicted_y=30.5,
+
+            predicted_magnitude=12.3,
+
+            ra_rate_arcsec_per_hour=3.6,
+
+            dec_rate_arcsec_per_hour=0.0,
+
+            motion_rate_arcsec_per_hour=3.6,
+
+            expected_trail_length_px=1.0,
+
+            positional_uncertainty_arcsec=0.2,
+
+            altitude_deg=50.0,
+
+            likely_visible=True,
+
+            confidence_score=0.91,
+
+            status="Likely visible",
+
+        )
+
+        measurement_rows = (
+
+            SolarSystemFrameMeasurement(
+
+                source_path=Path(self._config_dir.name) / "generate_3d_view.fit",
+
+                observation_time=datetime(2025, 1, 14, 21, 13, tzinfo=UTC),
+
+                predicted_ra_deg=10.0,
+
+                predicted_dec_deg=20.0,
+
+                predicted_x=24.5,
+
+                predicted_y=30.5,
+
+                expected_trail_length_px=1.0,
+
+            ),
+
+        )
+
+        progress_seen_before_measurements = {"value": False}
+
+        measurement_calls: list[dict[str, object]] = []
+
+        def _measurements_for_detection(*_args, **kwargs):
+
+            self.assertIsNotNone(self.window._asteroid_orbit_context_progress_dialog)
+
+            self.assertTrue(self.window._asteroid_orbit_context_progress_dialog.isVisible())
+
+            progress_seen_before_measurements["value"] = True
+
+            measurement_calls.append(dict(kwargs))
+
+            return measurement_rows
+
+        with (
+
+            patch.object(self.window, "_selected_asteroid_detections", return_value=(detection,)),
+
+            patch.object(
+                self.window,
+                "_asteroid_orbit_context_measurements_for_detection",
+                side_effect=_measurements_for_detection,
+            ),
+
+            patch("photometry_app.ui.main_window.AsteroidOrbitContextWorker") as worker_class,
+
+        ):
+
+            self.window._open_selected_asteroid_3d_view()
+
+            self.assertIsNotNone(self.window._asteroid_orbit_context_progress_dialog)
+
+            self.assertTrue(self.window._asteroid_orbit_context_progress_dialog.isVisible())
+
+            self.assertIn("Preparing trajectory measurements", self.window._asteroid_orbit_context_progress_dialog.labelText())
+
+            self.assertFalse(progress_seen_before_measurements["value"])
+
+            worker_class.assert_not_called()
+
+            QApplication.processEvents()
+
+            worker_class.assert_called_once()
+
+        self.assertTrue(progress_seen_before_measurements["value"])
+
+        self.assertTrue(measurement_calls)
 
         self.window._close_asteroid_orbit_context_progress_dialog()
 
@@ -30546,7 +30668,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
                 self.window,
 
-                "_asteroid_group_measurements_for_detection",
+                "_asteroid_orbit_context_measurements_for_detection",
 
                 side_effect=[first_measurements, second_measurements],
 
@@ -30557,6 +30679,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         ):
 
             self.window._open_selected_asteroid_3d_view()
+
+            QApplication.processEvents()
 
 
 
@@ -30578,9 +30702,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(worker_available_targets, worker_targets)
 
-        self.assertIn("2 selected objects", self.window._asteroid_status_label.text())
+        self.assertIsNotNone(self.window._asteroid_orbit_context_progress_dialog)
+
+        self.assertIn("3D View is loading", self.window._asteroid_status_label.text())
 
         worker_class.return_value.start.assert_called_once_with()
+
+        self.window._close_asteroid_orbit_context_progress_dialog()
 
 
 
@@ -30816,7 +30944,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
                 self.window,
 
-                "_asteroid_group_measurements_for_detection",
+                "_asteroid_orbit_context_measurements_for_detection",
 
                 side_effect=[first_measurements, second_measurements, third_measurements],
 
@@ -30828,6 +30956,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.window._open_selected_asteroid_3d_view()
 
+            QApplication.processEvents()
+
 
 
         worker_available_targets = worker_class.call_args.kwargs["available_targets"]
@@ -30836,7 +30966,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_main_window_uses_current_frame_measurement_fallback_for_nonselected_3d_targets(self) -> None:
+    def test_main_window_reuses_selected_timeline_for_nonselected_3d_targets(self) -> None:
 
         first_detection = SolarSystemDetection(
 
@@ -30918,7 +31048,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        reference_path = Path(self._config_dir.name) / "available_targets_fallback.fit"
+        reference_path = Path(self._config_dir.name) / "available_targets_shared_timeline.fit"
 
         reference_path.write_text("placeholder", encoding="utf-8")
 
@@ -30974,31 +31104,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        fallback_measurement = SolarSystemFrameMeasurement(
-
-            source_path=reference_path,
-
-            observation_time=datetime(2025, 1, 14, 21, 13, tzinfo=UTC),
-
-            predicted_ra_deg=11.0,
-
-            predicted_dec_deg=21.0,
-
-            predicted_x=28.5,
-
-            predicted_y=36.5,
-
-            expected_trail_length_px=1.0,
-
-        )
-
         with (
 
             patch.object(self.window, "_selected_asteroid_detections", return_value=(first_detection,)),
 
-            patch.object(self.window, "_asteroid_group_measurements_for_detection", side_effect=[first_measurements, ()]),
+            patch.object(self.window, "_asteroid_orbit_context_measurements_for_detection", return_value=first_measurements),
 
-            patch.object(self.window, "_current_asteroid_frame_measurement", return_value=fallback_measurement),
+            patch.object(self.window, "_asteroid_group_measurements_for_detection") as group_measurements,
 
             patch("photometry_app.ui.main_window.AsteroidOrbitContextWorker") as worker_class,
 
@@ -31006,11 +31118,109 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.window._open_selected_asteroid_3d_view()
 
+            QApplication.processEvents()
+
         worker_available_targets = worker_class.call_args.kwargs["available_targets"]
 
         self.assertEqual([target.detection for target in worker_available_targets], [first_detection, second_detection])
 
-        self.assertEqual(worker_available_targets[1].frame_measurements, (fallback_measurement,))
+        self.assertIs(worker_available_targets[1].frame_measurements, first_measurements)
+
+        group_measurements.assert_not_called()
+
+
+
+    def test_asteroid_orbit_context_measurements_skip_fits_frame_reads(self) -> None:
+
+        detection = SolarSystemDetection(
+
+            name="(1) Ceres",
+
+            designation="1",
+
+            object_type="Asteroid",
+
+            orbit_class="main-belt",
+
+            predicted_ra_deg=10.0,
+
+            predicted_dec_deg=20.0,
+
+            predicted_x=24.5,
+
+            predicted_y=30.5,
+
+            predicted_magnitude=12.3,
+
+            ra_rate_arcsec_per_hour=3.6,
+
+            dec_rate_arcsec_per_hour=0.0,
+
+            motion_rate_arcsec_per_hour=3.6,
+
+            expected_trail_length_px=1.0,
+
+            positional_uncertainty_arcsec=0.2,
+
+            altitude_deg=50.0,
+
+            likely_visible=True,
+
+            confidence_score=0.91,
+
+            status="Likely visible",
+
+        )
+
+        reference_path = Path(self._config_dir.name) / "orbit_context_fast.fit"
+
+        reference_path.write_text("placeholder", encoding="utf-8")
+
+        self.window._current_asteroid_detection_result = SolarSystemDetectionResult(
+
+            source_path=reference_path,
+
+            solved_field=SolvedField(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, width=200, height=120, wcs_path=reference_path),
+
+            observation_time=datetime(2025, 1, 14, 21, 12, tzinfo=UTC),
+
+            prediction_time=datetime(2025, 1, 14, 21, 13, tzinfo=UTC),
+
+            exposure_seconds=120.0,
+
+            filter_name="L",
+
+            pixel_scale_arcsec_per_pixel=1.5,
+
+            field_width_deg=0.2,
+
+            field_height_deg=0.12,
+
+            magnitude_limit=18.0,
+
+            used_astrometry_fallback=False,
+
+            detections=[detection],
+
+            summary_text="1 predicted object",
+
+        )
+
+        self.window._asteroid_frame_paths = [reference_path]
+
+        self.window._asteroid_frame_metadata = {}
+
+        with patch("photometry_app.ui.main_window.measure_detections_in_frame") as measure_frame:
+
+            measurements = self.window._asteroid_orbit_context_measurements_for_detection(detection)
+
+        measure_frame.assert_not_called()
+
+        self.assertEqual(len(measurements), 1)
+
+        self.assertEqual(measurements[0].source_path, reference_path)
+
+        self.assertEqual(measurements[0].observation_time, datetime(2025, 1, 14, 21, 13, tzinfo=UTC))
 
 
 
@@ -31090,13 +31300,15 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             patch.object(self.window, "_selected_asteroid_detections", return_value=(detection,)),
 
-            patch.object(self.window, "_asteroid_group_measurements_for_detection", return_value=measurement_rows),
+            patch.object(self.window, "_asteroid_orbit_context_measurements_for_detection", return_value=measurement_rows),
 
             patch("photometry_app.ui.main_window.AsteroidOrbitContextWorker") as worker_class,
 
         ):
 
             self.window._open_selected_asteroid_3d_view()
+
+            QApplication.processEvents()
 
 
 
@@ -31554,7 +31766,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertFalse(dialog._plot_hover_label.isVisible())
 
-        self.assertEqual(dialog._right_splitter.count(), 2)
+        self.assertEqual(dialog._right_splitter.count(), 4)
 
         self.assertEqual(dialog._frame_label.text(), "2/4")
 

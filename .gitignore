@@ -85,5 +85,5 @@ docs/codebase_map_printable.*
 docs/Doc_*.md
 docs/screenshots/sky_view_milky_way_*.png
 
-# Local maintainer changelog (not for public repo)
-version.md
+# Project update log
+!version.md

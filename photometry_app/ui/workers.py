@@ -434,7 +434,7 @@ class HrStarDetailsResult:
 
 class AsteroidOrbitContextResult:
 
-    detection: SolarSystemDetection
+    detection: SolarSystemDetection | None
 
     frame_measurements: tuple[SolarSystemFrameMeasurement, ...]
 
@@ -3184,13 +3184,19 @@ class AsteroidOrbitContextWorker(QThread):
 
         include_major_planets: bool = False,
 
+        window_start: datetime | None = None,
+
+        window_end: datetime | None = None,
+
+        observation_times: tuple[datetime, ...] | None = None,
+
         parent: object | None = None,
 
     ) -> None:
 
         super().__init__(parent)
 
-        if targets:
+        if targets is not None:
 
             self._targets = tuple(targets)
 
@@ -3202,7 +3208,7 @@ class AsteroidOrbitContextWorker(QThread):
 
             self._targets = ()
 
-        self._available_targets = tuple(available_targets) if available_targets else self._targets
+        self._available_targets = tuple(available_targets) if available_targets is not None else self._targets
 
         self._arc_padding_days = float(arc_padding_days)
 
@@ -3210,27 +3216,63 @@ class AsteroidOrbitContextWorker(QThread):
 
         self._include_major_planets = bool(include_major_planets)
 
+        self._window_start = window_start
+
+        self._window_end = window_end
+
+        self._observation_times = tuple(observation_times) if observation_times is not None else None
+
 
 
     def run(self) -> None:
 
-        if not self._targets:
-
-            self.context_failed.emit("No per-frame measurements are available for the selected asteroid/comet.")
-
-            return
-
-        if any(not target.frame_measurements for target in self._targets):
-
-            self.context_failed.emit("No per-frame measurements are available for the selected asteroid/comet.")
-
-            return
-
         try:
 
-            primary_target = self._targets[0]
+            observation_times = self._resolve_observation_times()
 
-            observation_times = [measurement.observation_time for measurement in primary_target.frame_measurements]
+            if not self._targets:
+
+                context = build_multi_known_object_heliocentric_context(
+
+                    (),
+
+                    observation_times=observation_times,
+
+                    arc_padding_days=self._arc_padding_days,
+
+                    sample_count=self._sample_count,
+
+                    include_major_planets=self._include_major_planets,
+
+                    window_start=self._window_start,
+
+                    window_end=self._window_end,
+
+                    progress_callback=self.progress_updated.emit,
+
+                )
+
+                self.context_completed.emit(
+
+                    AsteroidOrbitContextResult(
+
+                        detection=None,
+
+                        frame_measurements=(),
+
+                        context=context,
+
+                        targets=(),
+
+                        available_targets=self._available_targets,
+
+                    )
+
+                )
+
+                return
+
+            primary_target = self._targets[0]
 
             if len(self._targets) == 1:
 
@@ -3245,6 +3287,10 @@ class AsteroidOrbitContextWorker(QThread):
                     sample_count=self._sample_count,
 
                     include_major_planets=self._include_major_planets,
+
+                    window_start=self._window_start,
+
+                    window_end=self._window_end,
 
                     progress_callback=self.progress_updated.emit,
 
@@ -3263,6 +3309,10 @@ class AsteroidOrbitContextWorker(QThread):
                     sample_count=self._sample_count,
 
                     include_major_planets=self._include_major_planets,
+
+                    window_start=self._window_start,
+
+                    window_end=self._window_end,
 
                     progress_callback=self.progress_updated.emit,
 
@@ -3293,6 +3343,26 @@ class AsteroidOrbitContextWorker(QThread):
             )
 
         )
+
+
+
+    def _resolve_observation_times(self) -> tuple[datetime, ...]:
+
+        if self._observation_times:
+
+            return tuple(self._observation_times)
+
+        for target in self._targets:
+
+            if target.frame_measurements:
+
+                return tuple(measurement.observation_time for measurement in target.frame_measurements)
+
+        if self._window_start is not None and self._window_end is not None:
+
+            return (self._window_start, self._window_end)
+
+        raise ValueError("No observation times are available for the Trajectory View window.")
 
 
 

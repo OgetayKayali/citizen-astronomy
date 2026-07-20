@@ -190,7 +190,7 @@ flowchart TB
 | `APP_DISPLAY_NAME` | `Citizen Astronomy (CAst)` |
 | `APP_WINDOW_TITLE_NAME` | `Citizen Astronomy` |
 | `APP_USER_MODEL_ID` | `CitizenAstronomy.CAst` |
-| `APP_VERSION` | `0.1.1-alpha.4` (runtime / About / updates) |
+| `APP_VERSION` | `0.1.1-alpha.5` (runtime / About / updates) |
 | `APP_UPDATE_CHANNEL` | `alpha` |
 | `APP_UPDATE_GITHUB_REPOSITORY` | `OgetayKayali/citizen-astronomy` |
 | `APP_UPDATE_MANIFEST_ASSET_NAME` | Legacy bootstrap manifest (`CitizenAstronomy-update.json`) |
@@ -201,7 +201,7 @@ flowchart TB
 | `application_install_path()` | EXE directory when frozen, else repo root |
 | `application_icon_path()` | First existing icon under `assets/` |
 
-**Note:** `pyproject.toml` version is `0.1.1a4` (PEP 440); runtime branding uses the hyphenated alpha string above.
+**Note:** `pyproject.toml` version is `0.1.1a5` (PEP 440); runtime branding uses the hyphenated alpha string above.
 
 ---
 

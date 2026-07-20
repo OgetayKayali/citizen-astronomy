@@ -3917,13 +3917,17 @@ def build_multi_known_object_heliocentric_context(
 
     *,
 
-    observation_times: list[datetime] | tuple[datetime, ...],
+    observation_times: list[datetime] | tuple[datetime, ...] | None = None,
 
     arc_padding_days: float = 45.0,
 
     sample_count: int = 61,
 
     include_major_planets: bool = False,
+
+    window_start: datetime | None = None,
+
+    window_end: datetime | None = None,
 
     progress_callback: Callable[[str], None] | None = None,
 
@@ -3937,17 +3941,37 @@ def build_multi_known_object_heliocentric_context(
 
     normalized_detections = tuple(detections)
 
-    if not normalized_detections:
+    explicit_window = window_start is not None and window_end is not None
 
-        raise ValueError("At least one known object is required for the 3D known-object view.")
+    if explicit_window:
+
+        resolved_window_start = _as_utc_datetime(window_start)
+
+        resolved_window_end = _as_utc_datetime(window_end)
+
+        if resolved_window_end <= resolved_window_start:
+
+            raise ValueError("Custom trajectory window end must be later than the start.")
+
+    else:
+
+        resolved_window_start = None
+
+        resolved_window_end = None
 
 
 
-    normalized_observation_times = _unique_utc_datetimes(observation_times)
+    normalized_observation_times = _unique_utc_datetimes(observation_times or ())
 
     if not normalized_observation_times:
 
-        raise ValueError("At least one observation time is required for the 3D known-object view.")
+        if not explicit_window:
+
+            raise ValueError("At least one observation time is required for the 3D known-object view.")
+
+        # Empty / custom windows without frame times still need marker epochs.
+
+        normalized_observation_times = (resolved_window_start, resolved_window_end)
 
 
 
@@ -3955,13 +3979,31 @@ def build_multi_known_object_heliocentric_context(
 
     path_sample_count = max(2, int(sample_count))
 
-    window_start = normalized_observation_times[0] - timedelta(days=window_padding_days)
+    if explicit_window:
 
-    window_end = normalized_observation_times[-1] + timedelta(days=window_padding_days)
+        window_start = resolved_window_start
 
-    if window_end <= window_start:
+        window_end = resolved_window_end
 
-        window_end = window_start + timedelta(days=max(1.0, window_padding_days * 2.0 or 1.0))
+        # Preserve a comparable half-span so Span combo sync can still estimate Local-like padding.
+
+        window_padding_days = max(
+
+            0.0,
+
+            ((window_end - window_start).total_seconds() / 86400.0) / 2.0,
+
+        )
+
+    else:
+
+        window_start = normalized_observation_times[0] - timedelta(days=window_padding_days)
+
+        window_end = normalized_observation_times[-1] + timedelta(days=window_padding_days)
+
+        if window_end <= window_start:
+
+            window_end = window_start + timedelta(days=max(1.0, window_padding_days * 2.0 or 1.0))
 
 
 
@@ -4009,7 +4051,7 @@ def build_multi_known_object_heliocentric_context(
 
 
 
-    primary_track = target_tracks[0]
+    primary_track = target_tracks[0] if target_tracks else None
 
     comparison_tracks = tuple(target_tracks[1:])
 
@@ -4043,9 +4085,9 @@ def build_multi_known_object_heliocentric_context(
 
     return KnownObjectHeliocentricContext(
 
-        object_label=primary_track.object_label,
+        object_label=primary_track.object_label if primary_track is not None else "Trajectory View",
 
-        resolved_target_name=primary_track.resolved_target_name,
+        resolved_target_name=primary_track.resolved_target_name if primary_track is not None else "Earth only",
 
         earth_target_name=earth_target_name,
 
@@ -4057,17 +4099,17 @@ def build_multi_known_object_heliocentric_context(
 
         reference_time=reference_time,
 
-        object_path_samples=primary_track.path_samples,
+        object_path_samples=primary_track.path_samples if primary_track is not None else (),
 
         earth_path_samples=earth_path_samples,
 
-        observation_object_samples=primary_track.observation_samples,
+        observation_object_samples=primary_track.observation_samples if primary_track is not None else (),
 
         observation_earth_samples=earth_observation_samples,
 
-        object_magnitude_samples=primary_track.magnitude_samples,
+        object_magnitude_samples=primary_track.magnitude_samples if primary_track is not None else (),
 
-        object_orbital_period_days=primary_track.orbital_period_days,
+        object_orbital_period_days=primary_track.orbital_period_days if primary_track is not None else None,
 
         earth_orbital_period_days=_estimate_orbital_period_days(earth_path_samples),
 
@@ -4089,13 +4131,17 @@ def build_known_object_heliocentric_context(
 
     *,
 
-    observation_times: list[datetime] | tuple[datetime, ...],
+    observation_times: list[datetime] | tuple[datetime, ...] | None = None,
 
     arc_padding_days: float = 45.0,
 
     sample_count: int = 61,
 
     include_major_planets: bool = False,
+
+    window_start: datetime | None = None,
+
+    window_end: datetime | None = None,
 
     progress_callback: Callable[[str], None] | None = None,
 
@@ -4112,6 +4158,10 @@ def build_known_object_heliocentric_context(
         sample_count=sample_count,
 
         include_major_planets=include_major_planets,
+
+        window_start=window_start,
+
+        window_end=window_end,
 
         progress_callback=progress_callback,
 

@@ -5,6 +5,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 import math
+import re
 import shutil
 from pathlib import Path
 from time import perf_counter
@@ -16,8 +17,8 @@ from matplotlib.collections import LineCollection
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 import numpy as np
-from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QPainter, QPalette, QPen, QVector3D
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QRect, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QImage, QPainter, QPalette, QPen, QVector3D
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -37,10 +38,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QMenu,
     QPlainTextEdit,
+    QProgressDialog,
     QPushButton,
+    QRadioButton,
     QSlider,
     QSplitter,
     QSpinBox,
@@ -55,7 +60,11 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
-from photometry_app.core.animation_export import resolve_astrostack_stack_export_frame_indices
+from photometry_app.core.animation_export import (
+    StreamingGifWriter,
+    StreamingMp4Writer,
+    resolve_astrostack_stack_export_frame_indices,
+)
 from photometry_app.core.catalog_filters import VARIABLE_STAR_DESIGNATION_LABELS, classify_variable_star_designation
 from photometry_app.core.calibration import CalibrationPipelineRequest
 from photometry_app.core.discovery import MissedKnownMovingObject, MovingObjectCandidate, MovingObjectDiscoveryResult, MovingObjectRecoveryResult, RecoveredKnownMovingObject, _estimate_discovery_motion_range, candidate_discovery_method_label
@@ -64,6 +73,8 @@ from photometry_app.core.models import CatalogStar, FileScanResult, ObjectScanSu
 from photometry_app.core.plotting import AnnotatedImageDisplay, AnnotatedImageRenderSettings
 from photometry_app.core.sky_explorer import SKY_EXPLORER_LAYER_ORDER, sky_explorer_object_type_group_definitions
 from photometry_app.core.settings import AppSettings, _coerce_hex_color, default_custom_theme_colors, default_settings_config_path, resolve_shared_parallel_workers, setup_pixel_scale_arcsec_per_pixel
+from photometry_app.core.sky_atlas import SkyAtlasObject, load_local_sky_atlas_objects
+from photometry_app.ui.constellation_overlay import ConstellationDataLoader
 from photometry_app.core.solar_system import HeliocentricReferenceBody, KnownObjectComparisonTrack, KnownObjectHeliocentricContext, SolarSystemDetection, SolarSystemFrameMeasurement, load_cached_major_planet_heliocentric_paths, parse_observation_time
 from photometry_app.core.synthetic_tracking import SyntheticTrackingResult, format_synthetic_tracking_summary, measure_synthetic_tracking_peak
 from photometry_app.ui.image_view import AnnotatedImageView, ImageOverlay, MotionVectorOverlay
@@ -79,6 +90,122 @@ try:
     import pyqtgraph.opengl as gl
 except Exception:
     gl = None
+
+
+# Background stars sit on a sphere far outside the trajectory data so they always
+# read as a distant backdrop, and wheel zoom is clamped so the camera can never
+# leave that sphere (or dive uselessly close to the origin).
+_KNOWN_OBJECT_3D_STARFIELD_MIN_RADIUS_AU = 50.0
+_KNOWN_OBJECT_3D_STARFIELD_EXTENT_FACTOR = 40.0
+_KNOWN_OBJECT_3D_MIN_CAMERA_DISTANCE_AU = 0.02
+_KNOWN_OBJECT_3D_MAX_ZOOM_OUT_EXTENT_FACTOR = 14.0
+# Soft-edge fade used when the span has no padded observation core (Custom / empty).
+_KNOWN_OBJECT_3D_PATH_EDGE_FADE_FRACTION = 0.18
+_KNOWN_OBJECT_3D_ECLIPTIC_OBLIQUITY_DEG = 23.4392911
+_KNOWN_OBJECT_SKY_TRACK_MIN_FIELD_RADIUS_DEG = 6.0
+_KNOWN_OBJECT_SKY_TRACK_MAX_FIELD_RADIUS_DEG = 180.0
+_KNOWN_OBJECT_SKY_TRACK_STAR_PADDING_DEG = 12.0
+_KNOWN_OBJECT_SKY_TRACK_ADAPTIVE_ERROR_DEG = 0.01
+_KNOWN_OBJECT_SKY_TRACK_ADAPTIVE_MAX_DEPTH = 8
+_KNOWN_OBJECT_SKY_TRACK_BASE_SUBDIVISIONS = 4
+_KNOWN_OBJECT_SKY_TRACK_DENSITY_LIMITS = {
+    "sparse": 1.2,
+    "medium": 2.5,
+    "dense": 6.0,
+}
+_KNOWN_OBJECT_SKY_TRACK_BAYER_LETTER_BY_GREEK = {
+    "alpha": "a",
+    "beta": "b",
+    "gamma": "g",
+    "delta": "d",
+    "epsilon": "e",
+    "zeta": "z",
+    "eta": "n",
+    "theta": "th",
+    "iota": "i",
+    "kappa": "k",
+    "lambda": "l",
+    "mu": "m",
+    "nu": "nu",
+    "xi": "x",
+    "omicron": "o",
+    "pi": "p",
+    "rho": "r",
+    "sigma": "s",
+    "tau": "t",
+    "upsilon": "u",
+    "phi": "ph",
+    "chi": "ch",
+    "psi": "ps",
+    "omega": "w",
+}
+_KNOWN_OBJECT_3D_PANEL_ORDER_DEFAULT = ("topdown", "sky_track", "magnitude", "distance")
+_KNOWN_OBJECT_3D_PANEL_KEYS = ("topdown", "sky_track", "magnitude", "distance", "data")
+_KNOWN_OBJECT_3D_PANEL_LABELS = {
+    "topdown": "Heliocentric top-down",
+    "sky_track": "Sky Track",
+    "magnitude": "Magnitude",
+    "distance": "Distance",
+    "data": "Data",
+}
+_KNOWN_OBJECT_3D_PANEL_DEFAULT_SIZES = {
+    "topdown": 240,
+    "sky_track": 200,
+    "magnitude": 180,
+    "distance": 180,
+    "data": 180,
+}
+
+if gl is not None:
+
+    class _KnownObjectOrbitGLViewWidget(gl.GLViewWidget):
+        """GLViewWidget that clamps wheel-zoom camera distance and keeps the far
+        clip plane beyond the background starfield."""
+
+        def __init__(self, parent=None) -> None:
+            super().__init__(parent)
+            self._camera_distance_minimum = _KNOWN_OBJECT_3D_MIN_CAMERA_DISTANCE_AU
+            self._camera_distance_maximum = 1.0e9
+            self._minimum_far_clip = 0.0
+
+        def set_camera_distance_limits(self, minimum: float, maximum: float, *, minimum_far_clip: float) -> None:
+            self._camera_distance_minimum = float(minimum)
+            self._camera_distance_maximum = float(max(minimum, maximum))
+            self._minimum_far_clip = float(minimum_far_clip)
+            self._clamp_camera_distance()
+
+        def _clamp_camera_distance(self) -> None:
+            distance = float(self.opts.get("distance", 0.0) or 0.0)
+            clamped = min(self._camera_distance_maximum, max(self._camera_distance_minimum, distance))
+            if clamped != distance:
+                self.opts["distance"] = clamped
+                self.update()
+
+        def wheelEvent(self, ev) -> None:
+            super().wheelEvent(ev)
+            self._clamp_camera_distance()
+
+        def projectionMatrix(self, region, viewport):
+            matrix = super().projectionMatrix(region, viewport)
+            distance = float(self.opts.get("distance", 0.0) or 0.0)
+            if distance <= 0.0:
+                return matrix
+            # pyqtgraph uses farClip = distance * 1000, which would cull the
+            # distant starfield when the camera is zoomed in close.
+            near_clip = distance * 0.001
+            far_clip = distance * 1000.0
+            if self._minimum_far_clip <= far_clip:
+                return matrix
+            far_clip = self._minimum_far_clip
+            depth_range = far_clip - near_clip
+            depth_row = matrix.row(2)
+            depth_row.setZ(-(far_clip + near_clip) / depth_range)
+            depth_row.setW(-2.0 * far_clip * near_clip / depth_range)
+            matrix.setRow(2, depth_row)
+            return matrix
+
+else:
+    _KnownObjectOrbitGLViewWidget = None
 
 
 _ASTEROID_BLINK_INTERVAL_OPTIONS_MS: tuple[int, ...] = (50, 100, 200, 350, 500, 1000, 2000)
@@ -557,6 +684,7 @@ _KNOWN_OBJECT_3D_SPAN_OPTIONS = (
     ("180d", "+/-180d", 180.0, 121),
     ("1y", "1y", 365.25, 181),
     ("5y", "5y", 365.25 * 5.0, 361),
+    ("custom", "Custom", None, None),
 )
 
 _KNOWN_OBJECT_3D_BODY_STYLES = {
@@ -2624,12 +2752,176 @@ class KnownObjectTrajectoryDialog(QDialog):
         return "-" if value is None else f"{value:.{precision}f}"
 
 
+@dataclass(frozen=True, slots=True)
+class KnownObjectOrbit3DSaveExportPlan:
+    export_format: str
+    include_info_panel: bool
+    is_animation: bool
+    frame_count: int
+    frame_duration_ms: int
+    total_duration_seconds: float
+
+
+class KnownObjectOrbit3DSaveDialog(QDialog):
+    _STILL_FORMAT_OPTIONS: tuple[tuple[str, str], ...] = (
+        ("png", "PNG image (*.png)"),
+        ("jpg", "JPG image (*.jpg)"),
+    )
+    _ANIMATION_FORMAT_OPTIONS: tuple[tuple[str, str], ...] = (
+        ("gif", "GIF animation (*.gif)"),
+        ("mp4", "MP4 video (*.mp4)"),
+    )
+    _ANIMATION_FPS: dict[str, float] = {"gif": 15.0, "mp4": 30.0}
+    _MAX_ANIMATION_FRAMES = 1800
+    _MIN_ANIMATION_FRAMES = 2
+
+    def __init__(
+        self,
+        *,
+        animation_window_seconds: float,
+        speed_seconds_per_second: float,
+        speed_label: str,
+        capture_size_provider: Callable[[bool], tuple[int, int]],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Save Trajectory View")
+        self.setMinimumWidth(420)
+        self._animation_window_seconds = max(0.0, float(animation_window_seconds))
+        self._speed_seconds_per_second = max(1.0, float(speed_seconds_per_second))
+        self._speed_label = str(speed_label).strip()
+        self._capture_size_provider = capture_size_provider
+
+        capture_group = QGroupBox("Capture area", self)
+        self._view_only_radio = QRadioButton("Trajectory view only", capture_group)
+        self._with_panel_radio = QRadioButton("Trajectory view + info panel", capture_group)
+        self._view_only_radio.setChecked(True)
+        capture_layout = QVBoxLayout()
+        capture_layout.addWidget(self._view_only_radio)
+        capture_layout.addWidget(self._with_panel_radio)
+        capture_group.setLayout(capture_layout)
+
+        self._format_combo = QComboBox(self)
+        for format_key, format_label in self._STILL_FORMAT_OPTIONS:
+            self._format_combo.addItem(format_label, format_key)
+        if self._animation_window_seconds > 0.0:
+            for format_key, format_label in self._ANIMATION_FORMAT_OPTIONS:
+                self._format_combo.addItem(format_label, format_key)
+        format_row = QHBoxLayout()
+        format_row.addWidget(QLabel("Format", self))
+        format_row.addWidget(self._format_combo, stretch=1)
+
+        self._details_label = QLabel(self)
+        self._details_label.setWordWrap(True)
+        self._details_label.setStyleSheet(
+            "background-color: rgba(14, 22, 38, 0.6);"
+            "border: 1px solid #213355;"
+            "border-radius: 4px;"
+            "padding: 6px 8px;"
+        )
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addWidget(capture_group)
+        layout.addLayout(format_row)
+        layout.addWidget(self._details_label)
+        layout.addWidget(button_box)
+        self.setLayout(layout)
+
+        self._view_only_radio.toggled.connect(self._refresh_details)
+        self._format_combo.currentIndexChanged.connect(self._refresh_details)
+        self._refresh_details()
+
+    def selected_format(self) -> str:
+        return str(self._format_combo.currentData() or "png")
+
+    def include_info_panel(self) -> bool:
+        return self._with_panel_radio.isChecked()
+
+    def export_plan(self) -> KnownObjectOrbit3DSaveExportPlan:
+        export_format = self.selected_format()
+        include_info_panel = self.include_info_panel()
+        if export_format not in self._ANIMATION_FPS:
+            return KnownObjectOrbit3DSaveExportPlan(
+                export_format=export_format,
+                include_info_panel=include_info_panel,
+                is_animation=False,
+                frame_count=1,
+                frame_duration_ms=0,
+                total_duration_seconds=0.0,
+            )
+        duration_seconds = self._animation_window_seconds / self._speed_seconds_per_second
+        frames_per_second = self._ANIMATION_FPS[export_format]
+        frame_count = int(round(duration_seconds * frames_per_second))
+        frame_count = min(self._MAX_ANIMATION_FRAMES, max(self._MIN_ANIMATION_FRAMES, frame_count))
+        frame_duration_ms = max(1, int(round(duration_seconds * 1000.0 / frame_count)))
+        return KnownObjectOrbit3DSaveExportPlan(
+            export_format=export_format,
+            include_info_panel=include_info_panel,
+            is_animation=True,
+            frame_count=frame_count,
+            frame_duration_ms=frame_duration_ms,
+            total_duration_seconds=duration_seconds,
+        )
+
+    @staticmethod
+    def _format_file_size(size_bytes: float) -> str:
+        if size_bytes >= 1024.0 * 1024.0:
+            return f"{size_bytes / (1024.0 * 1024.0):.1f} MB"
+        return f"{max(1.0, size_bytes / 1024.0):.0f} KB"
+
+    @staticmethod
+    def _format_duration(duration_seconds: float) -> str:
+        total_seconds = max(0, int(round(duration_seconds)))
+        minutes, seconds = divmod(total_seconds, 60)
+        if minutes > 0:
+            return f"{minutes} min {seconds} s"
+        return f"{seconds} s"
+
+    def _estimated_file_size_bytes(self, plan: KnownObjectOrbit3DSaveExportPlan, width: int, height: int) -> float:
+        pixel_count = float(max(1, width) * max(1, height))
+        if plan.export_format == "png":
+            return pixel_count * 3.0 * 0.35
+        if plan.export_format == "jpg":
+            return pixel_count * 3.0 * 0.10
+        if plan.export_format == "gif":
+            return pixel_count * plan.frame_count * 0.15
+        return pixel_count * plan.frame_count * 0.0125
+
+    def _refresh_details(self) -> None:
+        plan = self.export_plan()
+        width, height = self._capture_size_provider(plan.include_info_panel)
+        size_estimate = self._format_file_size(self._estimated_file_size_bytes(plan, width, height))
+        if not plan.is_animation:
+            self._details_label.setText(
+                f"Image size: {width} x {height} px\nEstimated file size: ~{size_estimate}"
+            )
+            return
+        effective_fps = plan.frame_count / plan.total_duration_seconds if plan.total_duration_seconds > 0 else 0.0
+        lines = [
+            f"One full pass of the current timeline at {self._speed_label}.",
+            f"Video length: {self._format_duration(plan.total_duration_seconds)} "
+            f"({plan.frame_count} frames at ~{effective_fps:.0f} fps).",
+            f"Frame size: {width} x {height} px.",
+            f"Estimated file size: ~{size_estimate}.",
+        ]
+        expected_frames = int(round(plan.total_duration_seconds * self._ANIMATION_FPS[plan.export_format]))
+        if expected_frames > self._MAX_ANIMATION_FRAMES:
+            lines.append(
+                f"Frame count is capped at {self._MAX_ANIMATION_FRAMES}; the frame rate was reduced to keep the full pass."
+            )
+        self._details_label.setText("\n".join(lines))
+
+
 class KnownObjectOrbit3DDialog(QDialog):
     def __init__(
         self,
         *,
-        detection: SolarSystemDetection,
-        frame_measurements: tuple[SolarSystemFrameMeasurement, ...],
+        detection: SolarSystemDetection | None = None,
+        frame_measurements: tuple[SolarSystemFrameMeasurement, ...] = (),
         context: KnownObjectHeliocentricContext,
         targets: tuple[AsteroidOrbitContextTarget, ...] | None = None,
         available_targets: tuple[AsteroidOrbitContextTarget, ...] | None = None,
@@ -2640,15 +2932,24 @@ class KnownObjectOrbit3DDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        object_label = detection.name or detection.designation or context.object_label or "Known Object"
+        object_label = (
+            (detection.name or detection.designation)
+            if detection is not None
+            else None
+        ) or context.object_label or "Trajectory View"
         self.setWindowTitle(f"3D View - {object_label}")
         self.resize(1180, 920)
         self._detection = detection
         self._frame_measurements = tuple(frame_measurements)
         self._context = context
-        visible_targets = tuple(targets) if targets else (
-            AsteroidOrbitContextTarget(detection=detection, frame_measurements=self._frame_measurements),
-        )
+        if targets is not None:
+            visible_targets = tuple(targets)
+        elif detection is not None:
+            visible_targets = (
+                AsteroidOrbitContextTarget(detection=detection, frame_measurements=self._frame_measurements),
+            )
+        else:
+            visible_targets = ()
         self._context_targets = tuple(visible_targets)
         self._available_targets = self._normalize_available_targets(self._context_targets, available_targets)
         self._search_nearby_targets = search_nearby_targets
@@ -2676,6 +2977,9 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._additional_body_current_items: dict[str, object] = {}
         self._gl_label_items: dict[str, object] = {}
         self._gl_label_offset_au = 0.08
+        self._active_span_key = "local"
+        self._custom_span_start = context.window_start.astimezone(UTC)
+        self._custom_span_end = context.window_end.astimezone(UTC)
         current_keys = {self._target_visibility_key(target.detection) for target in visible_targets}
         self._object_visibility_states = {
             self._target_visibility_key(target.detection): self._target_visibility_key(target.detection) in current_keys
@@ -2723,6 +3027,22 @@ class KnownObjectOrbit3DDialog(QDialog):
             self._span_combo.addItem(label, (key, padding_days, sample_count))
         self._sync_span_combo_to_context()
         self._span_combo.currentIndexChanged.connect(self._handle_span_changed)
+
+        self._custom_span_start_input = QLineEdit(self)
+        self._custom_span_start_input.setPlaceholderText("YYYY-MM-DD")
+        self._custom_span_start_input.setFixedWidth(110)
+        self._custom_span_start_input.setToolTip("Custom span start date (UTC).")
+        self._custom_span_end_input = QLineEdit(self)
+        self._custom_span_end_input.setPlaceholderText("YYYY-MM-DD")
+        self._custom_span_end_input.setFixedWidth(110)
+        self._custom_span_end_input.setToolTip("Custom span end date (UTC).")
+        self._custom_span_apply_button = QPushButton("Apply", self)
+        self._custom_span_apply_button.setToolTip("Reload the Trajectory View for the custom start/end dates.")
+        self._custom_span_apply_button.clicked.connect(self._handle_custom_span_apply)
+        self._custom_span_start_label = QLabel("From", self)
+        self._custom_span_end_label = QLabel("To", self)
+        self._sync_custom_span_inputs_to_state()
+        self._set_custom_span_controls_visible(False)
 
         self._show_planets_checkbox = QCheckBox("Planets", self)
         self._show_planets_checkbox.toggled.connect(self._handle_planets_toggled)
@@ -2830,6 +3150,98 @@ class KnownObjectOrbit3DDialog(QDialog):
         settings_color_row.addWidget(self._comet_color_button)
         settings_color_row.addStretch(1)
         settings_panel_layout.addLayout(settings_color_row)
+
+        settings_panel_layout.addWidget(QLabel("Sky Track", settings_panel))
+        self._sky_track_bayer_checkbox = QCheckBox("Bayer designations (a Ori, z Oph, …)", settings_panel)
+        self._sky_track_bayer_checkbox.setChecked(False)
+        self._sky_track_bayer_checkbox.setToolTip("Also label stars using Bayer-style short names from catalog aliases.")
+        self._sky_track_bayer_checkbox.toggled.connect(self._handle_sky_track_display_settings_changed)
+        settings_panel_layout.addWidget(self._sky_track_bayer_checkbox)
+
+        sky_density_row = QHBoxLayout()
+        sky_density_row.setContentsMargins(0, 0, 0, 0)
+        sky_density_row.addWidget(QLabel("Star density", settings_panel))
+        self._sky_track_density_combo = QComboBox(settings_panel)
+        self._sky_track_density_combo.addItem("Sparse", "sparse")
+        self._sky_track_density_combo.addItem("Medium", "medium")
+        self._sky_track_density_combo.addItem("Dense", "dense")
+        self._sky_track_density_combo.setCurrentIndex(1)
+        self._sky_track_density_combo.setToolTip("Controls how many background stars are drawn by magnitude limit.")
+        self._sky_track_density_combo.currentIndexChanged.connect(self._handle_sky_track_display_settings_changed)
+        sky_density_row.addWidget(self._sky_track_density_combo, stretch=1)
+        settings_panel_layout.addLayout(sky_density_row)
+
+        sky_extent_row = QHBoxLayout()
+        sky_extent_row.setContentsMargins(0, 0, 0, 0)
+        sky_extent_row.addWidget(QLabel("Star draw radius", settings_panel))
+        self._sky_track_extent_spin = QDoubleSpinBox(settings_panel)
+        self._sky_track_extent_spin.setRange(30.0, 180.0)
+        self._sky_track_extent_spin.setSingleStep(10.0)
+        self._sky_track_extent_spin.setDecimals(0)
+        self._sky_track_extent_spin.setValue(180.0)
+        self._sky_track_extent_spin.setSuffix("°")
+        self._sky_track_extent_spin.setToolTip("Angular radius around the trajectory center used for stars and constellation lines. 180° draws the entire sky.")
+        self._sky_track_extent_spin.valueChanged.connect(self._handle_sky_track_display_settings_changed)
+        sky_extent_row.addWidget(self._sky_track_extent_spin)
+        sky_extent_row.addStretch(1)
+        settings_panel_layout.addLayout(sky_extent_row)
+
+        self._sky_track_constellations_checkbox = QCheckBox("Constellation lines", settings_panel)
+        self._sky_track_constellations_checkbox.setChecked(True)
+        self._sky_track_constellations_checkbox.setToolTip("Draw stick-figure constellation lines across the Sky Track field.")
+        self._sky_track_constellations_checkbox.toggled.connect(self._handle_sky_track_display_settings_changed)
+        settings_panel_layout.addWidget(self._sky_track_constellations_checkbox)
+        sky_view_buttons = QHBoxLayout()
+        sky_view_buttons.setContentsMargins(0, 0, 0, 0)
+        self._sky_track_fit_button = QPushButton("Fit Trajectory", settings_panel)
+        self._sky_track_fit_button.setToolTip("Return Sky Track to the complete visible trajectory.")
+        self._sky_track_fit_button.clicked.connect(self._apply_sky_track_view_fit)
+        self._sky_track_all_sky_button = QPushButton("Entire Sky", settings_panel)
+        self._sky_track_all_sky_button.setToolTip("Zoom Sky Track out to the complete celestial sphere.")
+        self._sky_track_all_sky_button.clicked.connect(self._apply_sky_track_entire_sky_fit)
+        sky_view_buttons.addWidget(self._sky_track_fit_button)
+        sky_view_buttons.addWidget(self._sky_track_all_sky_button)
+        sky_view_buttons.addStretch(1)
+        settings_panel_layout.addLayout(sky_view_buttons)
+
+        settings_panel_layout.addWidget(QLabel("Info panels", settings_panel))
+        self._panel_order_list = QListWidget(settings_panel)
+        self._panel_order_list.setMinimumHeight(110)
+        self._panel_order_list.setMaximumHeight(140)
+        self._panel_order_list.setStyleSheet(
+            "QListWidget { background-color: #10182d; color: #edf4ff; border: 1px solid #2d436f; }"
+            "QListWidget::item:selected { background-color: #23406d; }"
+        )
+        settings_panel_layout.addWidget(self._panel_order_list)
+        panel_order_buttons = QHBoxLayout()
+        panel_order_buttons.setContentsMargins(0, 0, 0, 0)
+        self._panel_move_up_button = QPushButton("Move Up", settings_panel)
+        self._panel_move_up_button.clicked.connect(self._handle_panel_move_up)
+        self._panel_move_down_button = QPushButton("Move Down", settings_panel)
+        self._panel_move_down_button.clicked.connect(self._handle_panel_move_down)
+        self._panel_remove_button = QPushButton("Remove", settings_panel)
+        self._panel_remove_button.setToolTip("Hide the selected panel.")
+        self._panel_remove_button.clicked.connect(self._handle_panel_remove)
+        self._panel_reset_layout_button = QPushButton("Reset Layout", settings_panel)
+        self._panel_reset_layout_button.setToolTip("Restore the default visible panels, order, and relative heights.")
+        self._panel_reset_layout_button.clicked.connect(self._handle_panel_layout_reset)
+        panel_order_buttons.addWidget(self._panel_move_up_button)
+        panel_order_buttons.addWidget(self._panel_move_down_button)
+        panel_order_buttons.addWidget(self._panel_remove_button)
+        panel_order_buttons.addWidget(self._panel_reset_layout_button)
+        panel_order_buttons.addStretch(1)
+        settings_panel_layout.addLayout(panel_order_buttons)
+        panel_add_row = QHBoxLayout()
+        panel_add_row.setContentsMargins(0, 0, 0, 0)
+        panel_add_row.addWidget(QLabel("Add", settings_panel))
+        self._panel_add_combo = QComboBox(settings_panel)
+        self._panel_add_combo.setMinimumWidth(160)
+        self._panel_add_button = QPushButton("Add Panel", settings_panel)
+        self._panel_add_button.clicked.connect(self._handle_panel_add)
+        panel_add_row.addWidget(self._panel_add_combo, stretch=1)
+        panel_add_row.addWidget(self._panel_add_button)
+        settings_panel_layout.addLayout(panel_add_row)
+
         settings_panel.setLayout(settings_panel_layout)
 
         settings_action = QWidgetAction(self._settings_menu)
@@ -2847,6 +3259,13 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._object_lookup_button.setToolTip("Search asteroid/comet names, designations, or keywords and add the selected matches to the current 3D scene.")
         self._object_lookup_button.clicked.connect(self._handle_exact_lookup_requested)
         self._object_lookup_button.setVisible(self._lookup_exact_target is not None)
+
+        self._save_view_button = QPushButton("Save", self)
+        self._save_view_button.setToolTip(
+            "Save the trajectory view (optionally including the info panel) as a still image (PNG/JPG) "
+            "or as an animation (GIF/MP4) covering one full pass of the timeline at the selected speed."
+        )
+        self._save_view_button.clicked.connect(self._handle_save_view_requested)
 
         self._speed_combo = QComboBox(self)
         self._speed_combo.addItem("1 h/s", 3600.0)
@@ -2879,6 +3298,11 @@ class KnownObjectOrbit3DDialog(QDialog):
         controls_row.setSpacing(8)
         controls_row.addWidget(QLabel("Span", self), 0, Qt.AlignmentFlag.AlignVCenter)
         controls_row.addWidget(self._span_combo, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_row.addWidget(self._custom_span_start_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_row.addWidget(self._custom_span_start_input, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_row.addWidget(self._custom_span_end_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_row.addWidget(self._custom_span_end_input, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_row.addWidget(self._custom_span_apply_button, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_row.addSpacing(8)
         controls_row.addWidget(self._show_planets_checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_row.addWidget(self._show_periods_checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -2889,6 +3313,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         controls_row.addWidget(self._settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_row.addWidget(self._object_menu_button, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_row.addWidget(self._object_lookup_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_row.addWidget(self._save_view_button, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_row.addStretch(1)
         animation_separator = QFrame(self)
         animation_separator.setFrameShape(QFrame.Shape.VLine)
@@ -2939,6 +3364,11 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._topdown_plot = self._create_topdown_plot_widget()
         self._distance_plot = self._create_time_series_plot_widget("Distance over window", "Distance (AU)")
         self._magnitude_plot = self._create_time_series_plot_widget("Literature magnitude over window", "Mag", invert_y=True)
+        self._sky_track_plot = self._create_sky_track_plot_widget()
+        self._sky_track_playback_item = None
+        self._sky_track_text_item = None
+        self._sky_track_projected_series: list[dict[str, object]] = []
+        self._sky_track_hover_items: dict[str, object] = {}
         self._topdown_plot.viewport().installEventFilter(self)
         self._magnitude_plot.setXLink(self._distance_plot)
         self._distance_plot.viewport().installEventFilter(self)
@@ -2960,6 +3390,7 @@ class KnownObjectOrbit3DDialog(QDialog):
             slot=self._handle_magnitude_plot_mouse_moved,
         )
         self._magnitude_plot.scene().sigMouseClicked.connect(self._handle_magnitude_plot_mouse_clicked)
+        self._sky_track_plot.scene().sigMouseClicked.connect(self._handle_sky_track_plot_mouse_clicked)
 
         left_panel = self._build_gl_panel()
         self._periods_panel.setParent(left_panel)
@@ -2970,6 +3401,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         right_layout = QVBoxLayout()
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_panel.setLayout(right_layout)
+        self._info_panel = right_panel
 
         visual_splitter = QSplitter(Qt.Orientation.Horizontal, self)
         visual_splitter.addWidget(left_panel)
@@ -2978,6 +3410,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         visual_splitter.setStretchFactor(0, 5)
         visual_splitter.setStretchFactor(1, 2)
         visual_splitter.setSizes([1180, 520])
+        self._visual_splitter = visual_splitter
 
         self._table = QTableWidget(len(frame_measurements), 10, self)
         self._table.setHorizontalHeaderLabels(["Frame", "UTC", "Obj X", "Obj Y", "Obj Z", "Earth X", "Earth Y", "Earth Z", "Sun Dist", "Earth Dist"])
@@ -2992,21 +3425,25 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._table.setAlternatingRowColors(True)
         self._table.setMinimumHeight(120)
 
-        plot_panel = QWidget(self)
-        plot_layout = QVBoxLayout()
-        plot_layout.setContentsMargins(0, 0, 0, 0)
-        plot_layout.addWidget(self._topdown_plot, stretch=4)
-        plot_layout.addWidget(self._distance_plot, stretch=4)
-        plot_layout.addWidget(self._magnitude_plot, stretch=3)
-        plot_panel.setLayout(plot_layout)
+        self._topdown_plot.setMinimumHeight(120)
+        self._distance_plot.setMinimumHeight(120)
+        self._magnitude_plot.setMinimumHeight(120)
+        self._sky_track_plot.setMinimumHeight(120)
 
+        self._info_panel_widgets = {
+            "topdown": self._topdown_plot,
+            "sky_track": self._sky_track_plot,
+            "magnitude": self._magnitude_plot,
+            "distance": self._distance_plot,
+            "data": self._table,
+        }
+        self._info_panel_order = list(_KNOWN_OBJECT_3D_PANEL_ORDER_DEFAULT)
+        self._sky_track_fit_bounds: tuple[float, float, float, float] | None = None
         self._right_splitter = QSplitter(Qt.Orientation.Vertical, self)
-        self._right_splitter.addWidget(plot_panel)
-        self._right_splitter.addWidget(self._table)
         self._right_splitter.setChildrenCollapsible(False)
-        self._right_splitter.setStretchFactor(0, 5)
-        self._right_splitter.setStretchFactor(1, 1)
-        self._right_splitter.setSizes([700, 150])
+        self._apply_info_panel_layout(reset_sizes=True)
+        self._sync_panel_order_list()
+        self._sky_track_plot.viewport().installEventFilter(self)
 
         close_button = QPushButton("Close", self)
         close_button.clicked.connect(self.close)
@@ -3043,12 +3480,23 @@ class KnownObjectOrbit3DDialog(QDialog):
         }
         self._timeline_times = tuple(sample.observation_time for sample in self._timeline_samples())
         self._timeline_timestamps = np.array([sample_time.timestamp() for sample_time in self._timeline_times], dtype=float) if self._timeline_times else np.zeros(0, dtype=float)
+        self._sky_track_ra_deg, self._sky_track_dec_deg, self._sky_track_times = self._sky_track_radec_for_samples(
+            self._context.object_path_samples,
+            self._context.earth_path_samples,
+        )
+        self._sky_track_observation_ra_deg, self._sky_track_observation_dec_deg, self._sky_track_observation_times = self._sky_track_radec_for_samples(
+            self._context.observation_object_samples,
+            self._context.observation_earth_samples,
+        )
+        self._sky_track_series = self._build_sky_track_series()
 
     def matches_request(
         self,
-        detection: SolarSystemDetection,
+        detection: SolarSystemDetection | None,
         frame_measurements: tuple[SolarSystemFrameMeasurement, ...],
     ) -> bool:
+        if detection is None or self._detection is None:
+            return False
         if (self._detection.designation or "") != (detection.designation or ""):
             return False
         if (self._detection.name or "") != (detection.name or ""):
@@ -3063,7 +3511,7 @@ class KnownObjectOrbit3DDialog(QDialog):
     def update_view_context(
         self,
         *,
-        detection: SolarSystemDetection,
+        detection: SolarSystemDetection | None,
         frame_measurements: tuple[SolarSystemFrameMeasurement, ...],
         context: KnownObjectHeliocentricContext,
         targets: tuple[AsteroidOrbitContextTarget, ...] | None = None,
@@ -3075,9 +3523,14 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._detection = detection
         self._frame_measurements = tuple(frame_measurements)
         self._context = context
-        visible_targets = tuple(targets) if targets else (
-            AsteroidOrbitContextTarget(detection=detection, frame_measurements=self._frame_measurements),
-        )
+        if targets is not None:
+            visible_targets = tuple(targets)
+        elif detection is not None:
+            visible_targets = (
+                AsteroidOrbitContextTarget(detection=detection, frame_measurements=self._frame_measurements),
+            )
+        else:
+            visible_targets = ()
         self._context_targets = tuple(visible_targets)
         self._available_targets = self._normalize_available_targets(self._context_targets, available_targets or self._available_targets)
         visible_keys = {self._target_visibility_key(target.detection) for target in visible_targets}
@@ -3085,11 +3538,14 @@ class KnownObjectOrbit3DDialog(QDialog):
             self._target_visibility_key(target.detection): self._object_visibility_states.get(self._target_visibility_key(target.detection), self._target_visibility_key(target.detection) in visible_keys)
             for target in self._available_targets
         }
+        self._custom_span_start = context.window_start.astimezone(UTC)
+        self._custom_span_end = context.window_end.astimezone(UTC)
         self._sync_primary_target_state()
         self._observation_reset_time = self._default_observation_reset_time()
         self._refresh_context_arrays()
         self._rebuild_object_toggle_controls()
         self._sync_span_combo_to_context()
+        self._sync_custom_span_inputs_to_state()
         self._sync_planets_checkbox_to_context()
         self._table.setRowCount(len(self._frame_measurements))
         self._play_button.blockSignals(True)
@@ -3132,16 +3588,8 @@ class KnownObjectOrbit3DDialog(QDialog):
             self._update_plot_playback_markers()
             QTimer.singleShot(0, self._refresh_gl_after_show)
             return
-        span_data = self._span_combo.currentData()
-        if not isinstance(span_data, tuple) or len(span_data) != 3:
-            return
-        _span_key, padding_days, sample_count = span_data
         self._pending_visibility_states = previous_states
-        self._start_context_reload(
-            float(padding_days),
-            int(sample_count),
-            self._show_planets_checkbox.isChecked(),
-        )
+        self._start_context_reload_for_current_span(targets=desired_targets)
 
     def _handle_nearby_search_requested(self) -> None:
         if self._search_nearby_targets is None:
@@ -3164,18 +3612,282 @@ class KnownObjectOrbit3DDialog(QDialog):
             return
         self._apply_selected_search_entries(dialog.selected_entries())
 
+    def _capture_gl_view_image(self) -> QImage | None:
+        if self._gl_view is None:
+            return None
+        image: QImage | None = None
+        read_qimage = getattr(self._gl_view, "readQImage", None)
+        if callable(read_qimage):
+            image = read_qimage()
+        elif hasattr(self._gl_view, "grabFramebuffer"):
+            image = self._gl_view.grabFramebuffer()
+        else:
+            image = self._gl_view.grab().toImage()
+        if image is None or image.isNull():
+            return None
+        return image
+
+    @staticmethod
+    def _normalize_export_qimage(image: QImage) -> QImage:
+        normalized = image.convertToFormat(QImage.Format.Format_RGB888)
+        if normalized.isNull():
+            normalized = image.copy()
+        if float(normalized.devicePixelRatio() or 1.0) != 1.0:
+            normalized = normalized.copy()
+            normalized.setDevicePixelRatio(1.0)
+        return normalized
+
+    @staticmethod
+    def _compose_side_by_side_export_image(left_image: QImage, right_image: QImage) -> QImage:
+        height = max(left_image.height(), right_image.height())
+        left_scaled = left_image
+        right_scaled = right_image
+        if left_image.height() != height:
+            left_scaled = left_image.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
+        if right_image.height() != height:
+            right_scaled = right_image.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
+        composed = QImage(
+            max(1, left_scaled.width() + right_scaled.width()),
+            max(1, height),
+            QImage.Format.Format_RGB888,
+        )
+        composed.fill(QColor("#060816"))
+        painter = QPainter(composed)
+        try:
+            painter.drawImage(0, 0, left_scaled)
+            painter.drawImage(left_scaled.width(), 0, right_scaled)
+        finally:
+            painter.end()
+        return composed
+
+    def _capture_info_panel_image(self) -> QImage | None:
+        info_panel = getattr(self, "_info_panel", None)
+        if info_panel is None and self._visual_splitter is not None:
+            info_panel = self._visual_splitter.widget(1)
+        if info_panel is None:
+            return None
+        # Offscreen render avoids depending on what is currently covering the
+        # panel on-screen (e.g. a progress dialog), so animation export does not
+        # need to hide/show windows each frame.
+        ratio = max(1.0, float(info_panel.devicePixelRatio() or 1.0))
+        width = max(1, int(round(info_panel.width() * ratio)))
+        height = max(1, int(round(info_panel.height() * ratio)))
+        if width <= 1 or height <= 1:
+            return None
+        image = QImage(width, height, QImage.Format.Format_RGB888)
+        image.setDevicePixelRatio(ratio)
+        image.fill(QColor("#09101f"))
+        painter = QPainter(image)
+        try:
+            info_panel.render(
+                painter,
+                QPoint(0, 0),
+                renderFlags=(
+                    QWidget.RenderFlag.DrawWindowBackground
+                    | QWidget.RenderFlag.DrawChildren
+                ),
+            )
+        finally:
+            painter.end()
+        if image.isNull():
+            return None
+        return image
+
+    def _capture_export_image(self, include_info_panel: bool) -> QImage | None:
+        gl_image = self._capture_gl_view_image()
+        if gl_image is None or gl_image.isNull():
+            if self._gl_panel_container is not None:
+                gl_image = self._gl_panel_container.grab().toImage()
+            if gl_image is None or gl_image.isNull():
+                return None
+        gl_image = self._normalize_export_qimage(gl_image)
+        if not include_info_panel:
+            return gl_image
+
+        # Grab the GL framebuffer and info panel separately, then stitch them.
+        # A single splitter.grab() is unreliable with OpenGL children.
+        info_image = self._capture_info_panel_image()
+        if info_image is None or info_image.isNull():
+            raise ValueError(
+                "The info panel could not be captured. Try saving again after the "
+                "3D view is fully visible, or choose Trajectory view only."
+            )
+        info_image = self._normalize_export_qimage(info_image)
+        return self._compose_side_by_side_export_image(gl_image, info_image)
+
+    def _export_capture_size(self, include_info_panel: bool) -> tuple[int, int]:
+        if include_info_panel:
+            left_widget = self._gl_view if self._gl_view is not None else self._gl_panel_container
+            right_widget = getattr(self, "_info_panel", None)
+            if right_widget is None and self._visual_splitter is not None:
+                right_widget = self._visual_splitter.widget(1)
+            if left_widget is None or right_widget is None:
+                return (0, 0)
+            left_ratio = float(left_widget.devicePixelRatio() or 1.0)
+            right_ratio = float(right_widget.devicePixelRatio() or 1.0)
+            left_width = max(1, int(round(left_widget.width() * left_ratio)))
+            left_height = max(1, int(round(left_widget.height() * left_ratio)))
+            right_width = max(1, int(round(right_widget.width() * right_ratio)))
+            right_height = max(1, int(round(right_widget.height() * right_ratio)))
+            return (left_width + right_width, max(left_height, right_height))
+        widget = self._gl_view if self._gl_view is not None else self._gl_panel_container
+        if widget is None:
+            return (0, 0)
+        ratio = float(widget.devicePixelRatio() or 1.0)
+        return (max(1, int(round(widget.width() * ratio))), max(1, int(round(widget.height() * ratio))))
+
+    def _default_export_file_stem(self) -> str:
+        object_label = self._detection.name or self._detection.designation or self._context.object_label or "trajectory"
+        sanitized = re.sub(r"[^\w\-]+", "_", str(object_label)).strip("_") or "trajectory"
+        return f"{sanitized}_trajectory"
+
+    def _handle_save_view_requested(self) -> None:
+        if self._play_button.isChecked():
+            self._play_button.setChecked(False)
+        window_start, window_end = self._playback_window_bounds()
+        window_seconds = max(0.0, (window_end - window_start).total_seconds())
+        options_dialog = KnownObjectOrbit3DSaveDialog(
+            animation_window_seconds=window_seconds,
+            speed_seconds_per_second=float(self._speed_combo.currentData() or 86400.0),
+            speed_label=self._speed_combo.currentText(),
+            capture_size_provider=self._export_capture_size,
+            parent=self,
+        )
+        if options_dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return
+        plan = options_dialog.export_plan()
+        filter_labels = {
+            "png": "PNG image (*.png)",
+            "jpg": "JPG image (*.jpg *.jpeg)",
+            "gif": "GIF animation (*.gif)",
+            "mp4": "MP4 video (*.mp4)",
+        }
+        default_name = f"{self._default_export_file_stem()}.{plan.export_format}"
+        path_text, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save Trajectory View",
+            default_name,
+            filter_labels[plan.export_format],
+        )
+        if not path_text:
+            return
+        output_path = Path(path_text)
+        allowed_suffixes = {".jpg", ".jpeg"} if plan.export_format == "jpg" else {f".{plan.export_format}"}
+        if output_path.suffix.lower() not in allowed_suffixes:
+            output_path = output_path.with_suffix(f".{plan.export_format}")
+        if plan.is_animation:
+            self._export_trajectory_animation(output_path, plan)
+        else:
+            self._export_trajectory_still(output_path, plan)
+
+    def _export_trajectory_still(self, output_path: Path, plan: KnownObjectOrbit3DSaveExportPlan) -> None:
+        try:
+            image = self._capture_export_image(plan.include_info_panel)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Save Failed", str(exc))
+            return
+        if image is None or image.isNull():
+            QMessageBox.warning(self, "Save Failed", "The trajectory view could not be captured.")
+            return
+        if plan.export_format == "jpg":
+            saved = image.save(str(output_path), "JPG", 95)
+        else:
+            saved = image.save(str(output_path))
+        if not saved:
+            QMessageBox.warning(self, "Save Failed", f"The image could not be written to {output_path}.")
+            return
+        QMessageBox.information(
+            self,
+            "View Saved",
+            f"Saved {image.width()} x {image.height()} px image to:\n{output_path}",
+        )
+
+    def _export_trajectory_animation(self, output_path: Path, plan: KnownObjectOrbit3DSaveExportPlan) -> None:
+        window_start, window_end = self._playback_window_bounds()
+        window_seconds = max(0.0, (window_end - window_start).total_seconds())
+        if window_seconds <= 0.0 or plan.frame_count < 2:
+            QMessageBox.warning(self, "Save Failed", "The current timeline is too short to export an animation.")
+            return
+        original_time = self._current_playback_time()
+        update_camera = self._camera_mode_requires_tracking()
+        writer_factory = StreamingGifWriter if plan.export_format == "gif" else StreamingMp4Writer
+        progress = QProgressDialog("Rendering trajectory animation...", "Cancel", 0, plan.frame_count, self)
+        progress.setWindowModality(Qt.WindowModality.NonModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.show()
+        cancelled = False
+        try:
+            with writer_factory(output_path, frame_duration_ms=plan.frame_duration_ms) as writer:
+                for frame_index in range(plan.frame_count):
+                    frame_time = window_start + timedelta(seconds=window_seconds * frame_index / plan.frame_count)
+                    self._set_playback_time(frame_time, update_camera=update_camera)
+                    QApplication.processEvents()
+                    image = self._capture_export_image(plan.include_info_panel)
+                    if image is None or image.isNull():
+                        raise ValueError("The trajectory view could not be captured.")
+                    writer.append_qimage(image)
+                    progress.setValue(frame_index + 1)
+                    if progress.wasCanceled():
+                        cancelled = True
+                        break
+        except ValueError as exc:
+            progress.close()
+            self._set_playback_time(original_time, update_camera=update_camera)
+            output_path.unlink(missing_ok=True)
+            QMessageBox.warning(self, "Animation Export Failed", str(exc))
+            return
+        finally:
+            progress.close()
+            self._set_playback_time(original_time, update_camera=update_camera)
+        if cancelled:
+            output_path.unlink(missing_ok=True)
+            return
+        file_size_text = ""
+        try:
+            file_size_mb = output_path.stat().st_size / (1024.0 * 1024.0)
+            file_size_text = f"\nFile size: {file_size_mb:.1f} MB"
+        except OSError:
+            pass
+        QMessageBox.information(
+            self,
+            "Animation Saved",
+            f"Saved {plan.frame_count} frames "
+            f"({KnownObjectOrbit3DSaveDialog._format_duration(plan.total_duration_seconds)}) to:\n"
+            f"{output_path}{file_size_text}",
+        )
+
     def _sync_span_combo_to_context(self) -> None:
+        if getattr(self, "_active_span_key", "local") == "custom":
+            custom_index = next(
+                (
+                    index
+                    for index in range(self._span_combo.count())
+                    if isinstance(self._span_combo.itemData(index), tuple) and self._span_combo.itemData(index)[0] == "custom"
+                ),
+                0,
+            )
+            self._span_combo.blockSignals(True)
+            self._span_combo.setCurrentIndex(custom_index)
+            self._span_combo.blockSignals(False)
+            self._set_custom_span_controls_visible(True)
+            return
         target_padding_days = float(getattr(self._context, "arc_padding_days", 45.0))
         best_index = 0
         best_delta = float("inf")
-        for index, (_key, _label, padding_days, _sample_count) in enumerate(_KNOWN_OBJECT_3D_SPAN_OPTIONS):
+        for index, (key, _label, padding_days, _sample_count) in enumerate(_KNOWN_OBJECT_3D_SPAN_OPTIONS):
+            if key == "custom" or padding_days is None:
+                continue
             delta = abs(float(padding_days) - target_padding_days)
             if delta < best_delta:
                 best_delta = delta
                 best_index = index
+                self._active_span_key = key
         self._span_combo.blockSignals(True)
         self._span_combo.setCurrentIndex(best_index)
         self._span_combo.blockSignals(False)
+        self._set_custom_span_controls_visible(False)
 
     def _sync_planets_checkbox_to_context(self) -> None:
         checked = bool(getattr(self._context, "include_major_planets", False))
@@ -3227,7 +3939,7 @@ class KnownObjectOrbit3DDialog(QDialog):
             self._gl_view.deleteLater()
             self._gl_view = None
         self._reset_gl_shader_program_caches()
-        self._gl_view = gl.GLViewWidget(self._gl_panel_container)
+        self._gl_view = _KnownObjectOrbitGLViewWidget(self._gl_panel_container)
         self._gl_view.setBackgroundColor(QColor("#040713"))
         self._gl_view.setMinimumHeight(440)
         self._gl_view.opts["fov"] = 58
@@ -3282,6 +3994,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         focus_points = self._trajectory_focus_points()
         focus_extent = max(0.5, float(np.max(np.linalg.norm(focus_points, axis=1)))) if focus_points.size else 0.5
         self._gl_label_offset_au = min(0.08, max(0.02, focus_extent * 0.015))
+        self._apply_gl_camera_distance_limits(scene_extent)
         self._add_gl_starfield(scene_extent)
         primary_style = self._primary_target_style()
         if self._is_target_visible(0):
@@ -3448,15 +4161,219 @@ class KnownObjectOrbit3DDialog(QDialog):
         object_label = self._primary_target_label()
         span_label = self._span_combo.currentText() if hasattr(self, "_span_combo") else "Local"
         planets_label = "On" if getattr(self._context, "include_major_planets", False) else "Off"
-        target_count = max(1, sum(1 for checked in self._object_visibility_states.values() if checked))
-        target_summary = object_label if target_count == 1 else f"{object_label} + {target_count - 1} more"
+        target_count = sum(1 for checked in self._object_visibility_states.values() if checked)
+        if target_count <= 0:
+            target_summary = "No objects"
+            horizons_label = "Earth only"
+        elif target_count == 1:
+            target_summary = object_label
+            horizons_label = self._context.resolved_target_name
+        else:
+            target_summary = f"{object_label} + {target_count - 1} more"
+            horizons_label = self._context.resolved_target_name
         return (
-            f"{target_summary} | Targets: {target_count} | Horizons target: {self._context.resolved_target_name} | Frames: {len(self._frame_measurements)} | "
+            f"{target_summary} | Targets: {target_count} | Horizons target: {horizons_label} | Frames: {len(self._frame_measurements)} | "
             f"Span: {span_label} | Planets: {planets_label} | Window: {self._context.window_start.date().isoformat()} to {self._context.window_end.date().isoformat()}"
         )
 
     def _comparison_tracks(self) -> tuple[KnownObjectComparisonTrack, ...]:
         return tuple(getattr(self._context, "comparison_tracks", ()))
+
+    def _info_panel_widget_for_key(self, panel_key: str) -> QWidget | None:
+        return getattr(self, "_info_panel_widgets", {}).get(panel_key)
+
+    def _current_info_panel_sizes(self) -> dict[str, int]:
+        sizes = list(self._right_splitter.sizes()) if hasattr(self, "_right_splitter") else []
+        mapped: dict[str, int] = {}
+        for index, panel_key in enumerate(getattr(self, "_info_panel_order", [])):
+            if index < len(sizes):
+                mapped[panel_key] = max(1, int(sizes[index]))
+        return mapped
+
+    def _apply_info_panel_layout(self, *, reset_sizes: bool = False) -> None:
+        if not hasattr(self, "_right_splitter") or not hasattr(self, "_info_panel_widgets"):
+            return
+        previous_sizes = {} if reset_sizes else self._current_info_panel_sizes()
+        while self._right_splitter.count():
+            widget = self._right_splitter.widget(0)
+            if widget is not None:
+                widget.setParent(None)
+        ordered_keys = [key for key in self._info_panel_order if key in self._info_panel_widgets]
+        if not ordered_keys:
+            ordered_keys = list(_KNOWN_OBJECT_3D_PANEL_ORDER_DEFAULT)
+            self._info_panel_order = list(ordered_keys)
+        for index, panel_key in enumerate(ordered_keys):
+            widget = self._info_panel_widgets[panel_key]
+            self._right_splitter.addWidget(widget)
+            self._right_splitter.setStretchFactor(index, 1)
+            widget.show()
+        for panel_key, widget in self._info_panel_widgets.items():
+            if panel_key not in ordered_keys:
+                widget.hide()
+                widget.setParent(self)
+        self._info_panel_order = ordered_keys
+        if reset_sizes:
+            sizes = [_KNOWN_OBJECT_3D_PANEL_DEFAULT_SIZES.get(key, 180) for key in ordered_keys]
+        else:
+            sizes = [
+                previous_sizes.get(key, _KNOWN_OBJECT_3D_PANEL_DEFAULT_SIZES.get(key, 180))
+                for key in ordered_keys
+            ]
+        self._right_splitter.setSizes(sizes)
+        if "sky_track" in ordered_keys:
+            QTimer.singleShot(0, self._apply_sky_track_view_fit)
+
+    def _hidden_info_panel_keys(self) -> list[str]:
+        visible = set(getattr(self, "_info_panel_order", ()))
+        return [key for key in _KNOWN_OBJECT_3D_PANEL_KEYS if key not in visible]
+
+    def _sync_panel_add_combo(self) -> None:
+        if not hasattr(self, "_panel_add_combo"):
+            return
+        hidden_keys = self._hidden_info_panel_keys()
+        self._panel_add_combo.blockSignals(True)
+        self._panel_add_combo.clear()
+        for panel_key in hidden_keys:
+            self._panel_add_combo.addItem(_KNOWN_OBJECT_3D_PANEL_LABELS.get(panel_key, panel_key), panel_key)
+        self._panel_add_combo.blockSignals(False)
+        has_hidden = bool(hidden_keys)
+        self._panel_add_combo.setEnabled(has_hidden)
+        if hasattr(self, "_panel_add_button"):
+            self._panel_add_button.setEnabled(has_hidden)
+
+    def _sync_panel_order_list(self) -> None:
+        if not hasattr(self, "_panel_order_list"):
+            return
+        selected_key = None
+        current_item = self._panel_order_list.currentItem()
+        if current_item is not None:
+            selected_key = current_item.data(Qt.ItemDataRole.UserRole)
+        self._panel_order_list.clear()
+        for panel_key in self._info_panel_order:
+            item = QListWidgetItem(_KNOWN_OBJECT_3D_PANEL_LABELS.get(panel_key, panel_key))
+            item.setData(Qt.ItemDataRole.UserRole, panel_key)
+            self._panel_order_list.addItem(item)
+            if panel_key == selected_key:
+                self._panel_order_list.setCurrentItem(item)
+        if self._panel_order_list.currentRow() < 0 and self._panel_order_list.count() > 0:
+            self._panel_order_list.setCurrentRow(0)
+        self._sync_panel_add_combo()
+
+    def _move_info_panel(self, delta: int) -> None:
+        current_row = self._panel_order_list.currentRow() if hasattr(self, "_panel_order_list") else -1
+        if current_row < 0:
+            return
+        target_row = current_row + int(delta)
+        if target_row < 0 or target_row >= len(self._info_panel_order):
+            return
+        order = list(self._info_panel_order)
+        order[current_row], order[target_row] = order[target_row], order[current_row]
+        self._info_panel_order = order
+        self._apply_info_panel_layout(reset_sizes=False)
+        self._sync_panel_order_list()
+        if hasattr(self, "_panel_order_list"):
+            self._panel_order_list.setCurrentRow(target_row)
+
+    def _handle_panel_move_up(self) -> None:
+        self._move_info_panel(-1)
+
+    def _handle_panel_move_down(self) -> None:
+        self._move_info_panel(1)
+
+    def _handle_panel_remove(self) -> None:
+        if not hasattr(self, "_panel_order_list"):
+            return
+        current_row = self._panel_order_list.currentRow()
+        if current_row < 0 or current_row >= len(self._info_panel_order):
+            return
+        if len(self._info_panel_order) <= 1:
+            QMessageBox.information(self, "3D view", "Keep at least one info panel visible.")
+            return
+        order = list(self._info_panel_order)
+        order.pop(current_row)
+        self._info_panel_order = order
+        self._apply_info_panel_layout(reset_sizes=False)
+        self._sync_panel_order_list()
+        if self._panel_order_list.count() > 0:
+            self._panel_order_list.setCurrentRow(min(current_row, self._panel_order_list.count() - 1))
+
+    def _handle_panel_add(self) -> None:
+        if not hasattr(self, "_panel_add_combo"):
+            return
+        panel_key = self._panel_add_combo.currentData()
+        if not panel_key or panel_key in self._info_panel_order:
+            return
+        self._info_panel_order = list(self._info_panel_order) + [str(panel_key)]
+        self._apply_info_panel_layout(reset_sizes=False)
+        self._sync_panel_order_list()
+        if hasattr(self, "_panel_order_list"):
+            self._panel_order_list.setCurrentRow(self._panel_order_list.count() - 1)
+
+    def _handle_panel_layout_reset(self) -> None:
+        self._info_panel_order = list(_KNOWN_OBJECT_3D_PANEL_ORDER_DEFAULT)
+        self._apply_info_panel_layout(reset_sizes=True)
+        self._sync_panel_order_list()
+
+    def _build_sky_track_series(self) -> list[dict[str, object]]:
+        series: list[dict[str, object]] = []
+        if self._context.object_path_samples:
+            series.append(
+                {
+                    "target_index": 0,
+                    "label": self._primary_target_label(),
+                    "ra_deg": self._sky_track_ra_deg,
+                    "dec_deg": self._sky_track_dec_deg,
+                    "times": self._sky_track_times,
+                    "observation_ra_deg": self._sky_track_observation_ra_deg,
+                    "observation_dec_deg": self._sky_track_observation_dec_deg,
+                    "observation_times": self._sky_track_observation_times,
+                    "object_samples": tuple(self._context.object_path_samples),
+                    "earth_samples": tuple(self._context.earth_path_samples),
+                }
+            )
+        earth_path = self._context.earth_path_samples
+        earth_obs = self._context.observation_earth_samples
+        for comparison_index, track in enumerate(self._comparison_tracks()):
+            target_index = comparison_index + 1
+            ra_deg, dec_deg, times = self._sky_track_radec_for_samples(track.path_samples, earth_path)
+            observation_ra_deg, observation_dec_deg, observation_times = self._sky_track_radec_for_samples(
+                track.observation_samples,
+                earth_obs,
+            )
+            if target_index < len(self._context_targets):
+                detection = self._context_targets[target_index].detection
+                label = detection.name or detection.designation or track.object_label
+            else:
+                label = track.object_label
+            series.append(
+                {
+                    "target_index": target_index,
+                    "label": label,
+                    "ra_deg": ra_deg,
+                    "dec_deg": dec_deg,
+                    "times": times,
+                    "observation_ra_deg": observation_ra_deg,
+                    "observation_dec_deg": observation_dec_deg,
+                    "observation_times": observation_times,
+                    "object_samples": tuple(track.path_samples),
+                    "earth_samples": tuple(earth_path),
+                }
+            )
+        return series
+
+    def _visible_sky_track_series(self) -> list[dict[str, object]]:
+        return [
+            entry
+            for entry in getattr(self, "_sky_track_series", [])
+            if self._is_target_visible(int(entry["target_index"]))
+            and np.asarray(entry["ra_deg"]).size > 0
+            and np.asarray(entry["dec_deg"]).size > 0
+        ]
+
+    def _sky_track_style_for_target(self, target_index: int) -> dict[str, object]:
+        if target_index <= 0:
+            return self._primary_target_style()
+        return self._comparison_track_style(target_index - 1)
 
     @staticmethod
     def _target_visibility_key(detection: SolarSystemDetection) -> str:
@@ -3538,7 +4455,7 @@ class KnownObjectOrbit3DDialog(QDialog):
             add_action.triggered.connect(self._handle_nearby_search_requested)
         selected_count = sum(1 for checked in self._object_visibility_states.values() if checked)
         total_count = len(self._available_targets)
-        self._object_menu_button.setText(f"Objects ({selected_count}/{max(1, total_count)})")
+        self._object_menu_button.setText(f"Objects ({selected_count}/{total_count})")
         self._object_menu_button.setEnabled(total_count > 0 or self._search_nearby_targets is not None)
 
     def _current_label_font(self) -> QFont:
@@ -3615,6 +4532,333 @@ class KnownObjectOrbit3DDialog(QDialog):
 
     def _object_magnitude_samples(self):
         return tuple(getattr(self._context, "object_magnitude_samples", ()))
+
+    @staticmethod
+    def _radec_unit_vector(ra_deg: float, dec_deg: float) -> np.ndarray:
+        ra_rad = math.radians(float(ra_deg))
+        dec_rad = math.radians(float(dec_deg))
+        cos_dec = math.cos(dec_rad)
+        return np.array([
+            cos_dec * math.cos(ra_rad),
+            cos_dec * math.sin(ra_rad),
+            math.sin(dec_rad),
+        ], dtype=float)
+
+    @staticmethod
+    def _unit_vector_to_radec(vector: np.ndarray) -> tuple[float, float] | None:
+        norm = float(np.linalg.norm(vector))
+        if norm <= 0.0 or not np.isfinite(norm):
+            return None
+        unit = vector / norm
+        ra_deg = math.degrees(math.atan2(float(unit[1]), float(unit[0]))) % 360.0
+        dec_deg = math.degrees(math.asin(max(-1.0, min(1.0, float(unit[2])))))
+        return (ra_deg, dec_deg)
+
+    @staticmethod
+    def _ecliptic_vector_to_equatorial(vector: np.ndarray) -> np.ndarray:
+        obliquity_rad = math.radians(_KNOWN_OBJECT_3D_ECLIPTIC_OBLIQUITY_DEG)
+        cos_eps = math.cos(obliquity_rad)
+        sin_eps = math.sin(obliquity_rad)
+        return np.array([
+            float(vector[0]),
+            float(vector[1]) * cos_eps - float(vector[2]) * sin_eps,
+            float(vector[1]) * sin_eps + float(vector[2]) * cos_eps,
+        ], dtype=float)
+
+    @classmethod
+    def _geocentric_radec_from_positions(cls, object_position: np.ndarray, earth_position: np.ndarray) -> tuple[float, float] | None:
+        geocentric_vector = np.array(object_position, dtype=float) - np.array(earth_position, dtype=float)
+        return cls._unit_vector_to_radec(cls._ecliptic_vector_to_equatorial(geocentric_vector))
+
+    @classmethod
+    def _sky_track_radec_for_samples(cls, object_samples, earth_samples) -> tuple[np.ndarray, np.ndarray, tuple[datetime, ...]]:
+        ra_values: list[float] = []
+        dec_values: list[float] = []
+        times: list[datetime] = []
+        for object_sample, earth_sample in zip(object_samples, earth_samples):
+            radec = cls._geocentric_radec_from_positions(
+                np.array([object_sample.x_au, object_sample.y_au, object_sample.z_au], dtype=float),
+                np.array([earth_sample.x_au, earth_sample.y_au, earth_sample.z_au], dtype=float),
+            )
+            if radec is None:
+                continue
+            ra_deg, dec_deg = radec
+            ra_values.append(float(ra_deg))
+            dec_values.append(float(dec_deg))
+            times.append(object_sample.observation_time)
+        return (np.array(ra_values, dtype=float), np.array(dec_values, dtype=float), tuple(times))
+
+    @staticmethod
+    def _state_sample_position(sample) -> np.ndarray:
+        return np.array([sample.x_au, sample.y_au, sample.z_au], dtype=float)
+
+    @staticmethod
+    def _state_sample_velocity(sample) -> np.ndarray:
+        return np.array(
+            [
+                getattr(sample, "vx_au_per_day", 0.0),
+                getattr(sample, "vy_au_per_day", 0.0),
+                getattr(sample, "vz_au_per_day", 0.0),
+            ],
+            dtype=float,
+        )
+
+    @classmethod
+    def _interpolate_state_vector_position(cls, samples, observation_time: datetime) -> np.ndarray | None:
+        """Interpolate a state-vector series with position and velocity continuity."""
+        samples = tuple(samples)
+        if not samples:
+            return None
+        if len(samples) == 1:
+            return cls._state_sample_position(samples[0])
+        timestamps = np.array([sample.observation_time.timestamp() for sample in samples], dtype=float)
+        target_timestamp = float(observation_time.timestamp())
+        if target_timestamp <= float(timestamps[0]):
+            return cls._state_sample_position(samples[0])
+        if target_timestamp >= float(timestamps[-1]):
+            return cls._state_sample_position(samples[-1])
+        upper_index = int(np.searchsorted(timestamps, target_timestamp, side="right"))
+        lower_index = max(0, upper_index - 1)
+        upper_index = min(len(samples) - 1, upper_index)
+        lower_sample = samples[lower_index]
+        upper_sample = samples[upper_index]
+        interval_seconds = float(timestamps[upper_index] - timestamps[lower_index])
+        if interval_seconds <= 0.0:
+            return cls._state_sample_position(lower_sample)
+        fraction = min(1.0, max(0.0, (target_timestamp - float(timestamps[lower_index])) / interval_seconds))
+        lower_position = cls._state_sample_position(lower_sample)
+        upper_position = cls._state_sample_position(upper_sample)
+        lower_velocity = cls._state_sample_velocity(lower_sample)
+        upper_velocity = cls._state_sample_velocity(upper_sample)
+        if not np.all(np.isfinite(np.concatenate((lower_position, upper_position, lower_velocity, upper_velocity)))):
+            return lower_position + ((upper_position - lower_position) * fraction)
+        interval_days = interval_seconds / 86400.0
+        fraction_squared = fraction * fraction
+        fraction_cubed = fraction_squared * fraction
+        lower_position_weight = (2.0 * fraction_cubed) - (3.0 * fraction_squared) + 1.0
+        lower_velocity_weight = fraction_cubed - (2.0 * fraction_squared) + fraction
+        upper_position_weight = (-2.0 * fraction_cubed) + (3.0 * fraction_squared)
+        upper_velocity_weight = fraction_cubed - fraction_squared
+        return (
+            (lower_position_weight * lower_position)
+            + (lower_velocity_weight * interval_days * lower_velocity)
+            + (upper_position_weight * upper_position)
+            + (upper_velocity_weight * interval_days * upper_velocity)
+        )
+
+    @classmethod
+    def _sky_track_radec_at_time(cls, entry: Mapping[str, object], observation_time: datetime) -> tuple[float, float] | None:
+        object_position = cls._interpolate_state_vector_position(entry.get("object_samples", ()), observation_time)
+        earth_position = cls._interpolate_state_vector_position(entry.get("earth_samples", ()), observation_time)
+        if object_position is None or earth_position is None:
+            return None
+        return cls._geocentric_radec_from_positions(object_position, earth_position)
+
+    @staticmethod
+    def _angular_separation_deg(ra_a_deg: float, dec_a_deg: float, ra_b_deg: float, dec_b_deg: float) -> float:
+        vector_a = KnownObjectOrbit3DDialog._radec_unit_vector(ra_a_deg, dec_a_deg)
+        vector_b = KnownObjectOrbit3DDialog._radec_unit_vector(ra_b_deg, dec_b_deg)
+        dot = max(-1.0, min(1.0, float(np.dot(vector_a, vector_b))))
+        return math.degrees(math.acos(dot))
+
+    @staticmethod
+    def _sky_track_projection_center(ra_values: np.ndarray, dec_values: np.ndarray) -> tuple[float, float]:
+        if ra_values.size == 0 or dec_values.size == 0:
+            return (0.0, 0.0)
+        vectors = np.array([
+            KnownObjectOrbit3DDialog._radec_unit_vector(float(ra_deg), float(dec_deg))
+            for ra_deg, dec_deg in zip(ra_values, dec_values)
+        ], dtype=float)
+        mean_vector = np.mean(vectors, axis=0)
+        if float(np.linalg.norm(mean_vector)) <= 1.0e-6:
+            mid_index = int(len(vectors) // 2)
+            mean_vector = vectors[mid_index]
+        radec = KnownObjectOrbit3DDialog._unit_vector_to_radec(mean_vector)
+        return radec if radec is not None else (float(ra_values[0]), float(dec_values[0]))
+
+    @staticmethod
+    def _project_sky_radec(
+        ra_values: np.ndarray,
+        dec_values: np.ndarray,
+        center_ra_deg: float,
+        center_dec_deg: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Project sky coordinates with a trajectory-centered azimuthal equidistant map."""
+        if ra_values.size == 0 or dec_values.size == 0:
+            return (np.zeros(0, dtype=float), np.zeros(0, dtype=float), np.zeros(0, dtype=bool))
+        center_ra_rad = math.radians(float(center_ra_deg))
+        center_dec_rad = math.radians(float(center_dec_deg))
+        ra_radians = np.radians(np.asarray(ra_values, dtype=float))
+        dec_radians = np.radians(np.asarray(dec_values, dtype=float))
+        delta_ra = ((ra_radians - center_ra_rad + math.pi) % (2.0 * math.pi)) - math.pi
+        sin_center_dec = math.sin(center_dec_rad)
+        cos_center_dec = math.cos(center_dec_rad)
+        sin_dec = np.sin(dec_radians)
+        cos_dec = np.cos(dec_radians)
+        cos_distance = np.clip(
+            (sin_center_dec * sin_dec) + (cos_center_dec * cos_dec * np.cos(delta_ra)),
+            -1.0,
+            1.0,
+        )
+        angular_distance = np.arccos(cos_distance)
+        sin_distance = np.sin(angular_distance)
+        scale = np.ones_like(angular_distance)
+        ordinary = np.abs(sin_distance) > 1.0e-10
+        scale[ordinary] = angular_distance[ordinary] / sin_distance[ordinary]
+        x_radians = scale * cos_dec * np.sin(delta_ra)
+        y_radians = scale * (
+            (cos_center_dec * sin_dec)
+            - (sin_center_dec * cos_dec * np.cos(delta_ra))
+        )
+        x_values = np.degrees(x_radians)
+        y_values = np.degrees(y_radians)
+        valid = (
+            np.isfinite(x_values)
+            & np.isfinite(y_values)
+            & np.isfinite(angular_distance)
+            & (angular_distance < math.pi - 1.0e-8)
+        )
+        return (x_values.astype(float), y_values.astype(float), valid)
+
+    @staticmethod
+    def _point_to_segment_distance(
+        point: tuple[float, float],
+        start: tuple[float, float],
+        end: tuple[float, float],
+    ) -> float:
+        point_vector = np.array(point, dtype=float)
+        start_vector = np.array(start, dtype=float)
+        segment_vector = np.array(end, dtype=float) - start_vector
+        denominator = float(np.dot(segment_vector, segment_vector))
+        if denominator <= 1.0e-18:
+            return float(np.linalg.norm(point_vector - start_vector))
+        fraction = max(0.0, min(1.0, float(np.dot(point_vector - start_vector, segment_vector)) / denominator))
+        return float(np.linalg.norm(point_vector - (start_vector + (fraction * segment_vector))))
+
+    @classmethod
+    def _projected_sky_track_point(
+        cls,
+        entry: Mapping[str, object],
+        observation_time: datetime,
+        center_ra_deg: float,
+        center_dec_deg: float,
+    ) -> tuple[float, float] | None:
+        radec = cls._sky_track_radec_at_time(entry, observation_time)
+        if radec is None:
+            return None
+        x_values, y_values, valid = cls._project_sky_radec(
+            np.array([radec[0]], dtype=float),
+            np.array([radec[1]], dtype=float),
+            center_ra_deg,
+            center_dec_deg,
+        )
+        if x_values.size == 0 or y_values.size == 0 or not bool(valid[0]):
+            return None
+        return (float(x_values[0]), float(y_values[0]))
+
+    @classmethod
+    def _adaptive_projected_sky_track(
+        cls,
+        entry: Mapping[str, object],
+        center_ra_deg: float,
+        center_dec_deg: float,
+    ) -> tuple[np.ndarray, np.ndarray, tuple[datetime, ...]]:
+        base_times = tuple(entry.get("times", ()))
+        if not base_times:
+            return (np.zeros(0, dtype=float), np.zeros(0, dtype=float), ())
+        cache: dict[float, tuple[float, float] | None] = {}
+
+        def evaluate(observation_time: datetime) -> tuple[float, float] | None:
+            timestamp = float(observation_time.timestamp())
+            if timestamp not in cache:
+                cache[timestamp] = cls._projected_sky_track_point(
+                    entry,
+                    observation_time,
+                    center_ra_deg,
+                    center_dec_deg,
+                )
+            return cache[timestamp]
+
+        first_point = evaluate(base_times[0])
+        if first_point is None:
+            return (np.zeros(0, dtype=float), np.zeros(0, dtype=float), ())
+        samples: list[tuple[datetime, float, float]] = [(base_times[0], first_point[0], first_point[1])]
+
+        def append_interval(
+            start_time: datetime,
+            start_point: tuple[float, float],
+            end_time: datetime,
+            end_point: tuple[float, float],
+            depth: int,
+        ) -> None:
+            midpoint_time = start_time + ((end_time - start_time) / 2)
+            midpoint = evaluate(midpoint_time)
+            if midpoint is None:
+                samples.append((end_time, end_point[0], end_point[1]))
+                return
+            deviation = cls._point_to_segment_distance(midpoint, start_point, end_point)
+            if deviation > _KNOWN_OBJECT_SKY_TRACK_ADAPTIVE_ERROR_DEG and depth < _KNOWN_OBJECT_SKY_TRACK_ADAPTIVE_MAX_DEPTH:
+                append_interval(start_time, start_point, midpoint_time, midpoint, depth + 1)
+                append_interval(midpoint_time, midpoint, end_time, end_point, depth + 1)
+                return
+            samples.append((end_time, end_point[0], end_point[1]))
+
+        for interval_start, interval_end in zip(base_times, base_times[1:]):
+            interval_duration = interval_end - interval_start
+            subdivision_times = [
+                interval_start + (interval_duration * (index / _KNOWN_OBJECT_SKY_TRACK_BASE_SUBDIVISIONS))
+                for index in range(_KNOWN_OBJECT_SKY_TRACK_BASE_SUBDIVISIONS + 1)
+            ]
+            for start_time, end_time in zip(subdivision_times, subdivision_times[1:]):
+                start_point = evaluate(start_time)
+                end_point = evaluate(end_time)
+                if start_point is None or end_point is None:
+                    continue
+                if samples[-1][0] != start_time:
+                    samples.append((start_time, start_point[0], start_point[1]))
+                append_interval(start_time, start_point, end_time, end_point, 0)
+        if not samples:
+            return (np.zeros(0, dtype=float), np.zeros(0, dtype=float), ())
+        return (
+            np.array([sample[1] for sample in samples], dtype=float),
+            np.array([sample[2] for sample in samples], dtype=float),
+            tuple(sample[0] for sample in samples),
+        )
+
+    def _create_sky_track_plot_widget(self):
+        plot_widget = pg.PlotWidget(background="#08101d")
+        plot_widget.setMinimumHeight(170)
+        plot_item = plot_widget.getPlotItem()
+        plot_item.showGrid(x=True, y=True, alpha=0.18)
+        plot_item.setMenuEnabled(False)
+        plot_item.setLabel("bottom", "East offset (deg)", color="#edf4ff")
+        plot_item.setLabel("left", "North offset (deg)", color="#edf4ff")
+        plot_item.setTitle("Sky Track", color="#f6fbff")
+        plot_item.getViewBox().setMouseEnabled(x=True, y=True)
+        plot_item.getViewBox().setAspectLocked(lock=True)
+        for axis_name in ("bottom", "left"):
+            axis = plot_item.getAxis(axis_name)
+            axis.setTextPen(pg.mkPen("#dbe7ff"))
+            axis.setPen(pg.mkPen("#425a82"))
+        return plot_widget
+
+    def _reset_sky_track_plot(self):
+        plot_item = self._sky_track_plot.getPlotItem()
+        legend = getattr(plot_item, "legend", None)
+        if legend is not None and legend.scene() is not None:
+            legend.scene().removeItem(legend)
+            plot_item.legend = None
+        plot_item.clear()
+        plot_item.showGrid(x=True, y=True, alpha=0.18)
+        plot_item.setLabel("bottom", "East offset (deg)", color="#edf4ff")
+        plot_item.setLabel("left", "North offset (deg)", color="#edf4ff")
+        plot_item.getViewBox().setMouseEnabled(x=True, y=True)
+        plot_item.getViewBox().setAspectLocked(lock=True)
+        for axis_name in ("bottom", "left"):
+            axis = plot_item.getAxis(axis_name)
+            axis.setTextPen(pg.mkPen("#dbe7ff"))
+            axis.setPen(pg.mkPen("#425a82"))
+        return plot_item
 
     def _create_topdown_plot_widget(self):
         plot_widget = pg.PlotWidget(background="#08101d")
@@ -3705,6 +4949,13 @@ class KnownObjectOrbit3DDialog(QDialog):
     def eventFilter(self, watched: object, event: object) -> bool:
         if watched is self._gl_panel_container and isinstance(event, QEvent) and event.type() == QEvent.Type.Resize:
             self._position_periods_panel()
+        if (
+            hasattr(self, "_sky_track_plot")
+            and watched is self._sky_track_plot.viewport()
+            and isinstance(event, QEvent)
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._apply_sky_track_view_fit()
         if isinstance(event, QEvent) and event.type() in {QEvent.Type.Leave, QEvent.Type.Hide}:
             if watched is self._topdown_plot.viewport():
                 self._handle_plot_hover_leave(None)
@@ -3977,6 +5228,26 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._jump_playback_to_time_series_x("magnitude", float(mouse_point.x()))
         event.accept()
 
+    def _handle_sky_track_plot_mouse_clicked(self, event) -> None:
+        if event is None or event.button() != Qt.MouseButton.LeftButton:
+            return
+        view_box = self._sky_track_plot.getPlotItem().getViewBox()
+        scene_position = event.scenePos()
+        if not view_box.sceneBoundingRect().contains(scene_position):
+            return
+        x_values = getattr(self, "_sky_track_projected_x", np.zeros(0, dtype=float))
+        y_values = getattr(self, "_sky_track_projected_y", np.zeros(0, dtype=float))
+        track_times = tuple(getattr(self, "_sky_track_projected_times", ()))
+        if x_values.size == 0 or y_values.size == 0 or not track_times:
+            return
+        mouse_point = view_box.mapSceneToView(scene_position)
+        distances = np.hypot(x_values - float(mouse_point.x()), y_values - float(mouse_point.y()))
+        nearest_index = int(np.argmin(distances))
+        if nearest_index < 0 or nearest_index >= len(track_times):
+            return
+        self._set_playback_time(track_times[nearest_index], update_camera=self._camera_mode_requires_tracking())
+        event.accept()
+
     def _handle_topdown_plot_mouse_moved(self, event) -> None:
         if not event:
             return
@@ -4039,20 +5310,24 @@ class KnownObjectOrbit3DDialog(QDialog):
         return f"{period_days:.1f} d"
 
     def _period_entries(self) -> list[tuple[str, str, str]]:
-        entries_with_order = [
-            (
-                self._primary_target_label(),
-                self._format_orbital_period(self._context.object_orbital_period_days),
-                str(self._primary_target_style()["hex"]),
-                self._context.object_orbital_period_days,
-            ),
+        entries_with_order: list[tuple[str, str, str, float | None]] = []
+        if self._context_targets and self._is_target_visible(0):
+            entries_with_order.append(
+                (
+                    self._primary_target_label(),
+                    self._format_orbital_period(self._context.object_orbital_period_days),
+                    str(self._primary_target_style()["hex"]),
+                    self._context.object_orbital_period_days,
+                )
+            )
+        entries_with_order.append(
             (
                 "Earth",
                 self._format_orbital_period(self._context.earth_orbital_period_days),
                 str(self._body_style("earth")["hex"]),
                 self._context.earth_orbital_period_days,
-            ),
-        ]
+            )
+        )
         for comparison_index, track in enumerate(self._comparison_tracks(), start=1):
             if not self._is_target_visible(comparison_index):
                 continue
@@ -4150,7 +5425,7 @@ class KnownObjectOrbit3DDialog(QDialog):
     def _primary_target(self) -> AsteroidOrbitContextTarget | None:
         return self._context_targets[0] if self._context_targets else None
 
-    def _primary_target_detection(self) -> SolarSystemDetection:
+    def _primary_target_detection(self) -> SolarSystemDetection | None:
         primary_target = self._primary_target()
         if primary_target is not None:
             return primary_target.detection
@@ -4158,7 +5433,9 @@ class KnownObjectOrbit3DDialog(QDialog):
 
     def _primary_target_label(self) -> str:
         detection = self._primary_target_detection()
-        return detection.name or detection.designation or self._context.object_label or "Known Object"
+        if detection is not None:
+            return detection.name or detection.designation or self._context.object_label or "Known Object"
+        return self._context.object_label or "Trajectory View"
 
     def _sync_primary_target_state(self) -> None:
         primary_target = self._primary_target()
@@ -4232,14 +5509,14 @@ class KnownObjectOrbit3DDialog(QDialog):
 
     def _populate_table(self) -> None:
         self._table.clearContents()
-        for row_index, (measurement, object_sample, earth_sample) in enumerate(
-            zip(
-                self._frame_measurements,
-                self._context.observation_object_samples,
-                self._context.observation_earth_samples,
-                strict=True,
-            )
-        ):
+        object_samples = tuple(self._context.observation_object_samples)
+        earth_samples = tuple(self._context.observation_earth_samples)
+        row_count = min(len(self._frame_measurements), len(object_samples), len(earth_samples))
+        self._table.setRowCount(row_count)
+        for row_index in range(row_count):
+            measurement = self._frame_measurements[row_index]
+            object_sample = object_samples[row_index]
+            earth_sample = earth_samples[row_index]
             sun_distance_au = self._vector_norm(object_sample.x_au, object_sample.y_au, object_sample.z_au)
             earth_distance_au = self._vector_norm(
                 object_sample.x_au - earth_sample.x_au,
@@ -4264,6 +5541,570 @@ class KnownObjectOrbit3DDialog(QDialog):
     def _draw_plots(self) -> None:
         self._draw_topdown_plot()
         self._draw_time_series_plots()
+        self._draw_sky_track_plot()
+
+    def _draw_sky_track_plot(self) -> None:
+        plot_item = self._reset_sky_track_plot()
+        self._sky_track_playback_item = None
+        self._sky_track_text_item = None
+        self._sky_track_projected_series = []
+        self._sky_track_projected_x = np.zeros(0, dtype=float)
+        self._sky_track_projected_y = np.zeros(0, dtype=float)
+        self._sky_track_projected_times: tuple[datetime, ...] = ()
+        self._sky_track_projection_center_deg = None
+        visible_series = self._visible_sky_track_series()
+        if not visible_series:
+            empty_item = pg.TextItem("No sky-track context available.", anchor=(0.5, 0.5), color="#dbe7ff")
+            empty_item.setPos(0.0, 0.0)
+            plot_item.addItem(empty_item)
+            plot_item.getViewBox().setRange(xRange=(-1.0, 1.0), yRange=(-1.0, 1.0), padding=0.0)
+            return
+
+        combined_ra = np.concatenate([np.asarray(entry["ra_deg"], dtype=float) for entry in visible_series])
+        combined_dec = np.concatenate([np.asarray(entry["dec_deg"], dtype=float) for entry in visible_series])
+        center_ra_deg, center_dec_deg = self._sky_track_projection_center(combined_ra, combined_dec)
+        self._sky_track_projection_center_deg = (center_ra_deg, center_dec_deg)
+
+        projected_series: list[dict[str, object]] = []
+        all_x: list[np.ndarray] = []
+        all_y: list[np.ndarray] = []
+        all_times: list[datetime] = []
+        track_radius = _KNOWN_OBJECT_SKY_TRACK_MIN_FIELD_RADIUS_DEG
+        for entry in visible_series:
+            path_x, path_y, path_times = self._adaptive_projected_sky_track(
+                entry,
+                center_ra_deg,
+                center_dec_deg,
+            )
+            obs_ra = np.asarray(entry["observation_ra_deg"], dtype=float)
+            obs_dec = np.asarray(entry["observation_dec_deg"], dtype=float)
+            obs_x = np.zeros(0, dtype=float)
+            obs_y = np.zeros(0, dtype=float)
+            if obs_ra.size and obs_dec.size:
+                obs_x_all, obs_y_all, obs_valid = self._project_sky_radec(obs_ra, obs_dec, center_ra_deg, center_dec_deg)
+                obs_x = obs_x_all[obs_valid]
+                obs_y = obs_y_all[obs_valid]
+            if path_x.size:
+                track_radius = max(track_radius, float(np.nanmax(np.hypot(path_x, path_y))) * 1.25)
+                all_x.append(path_x)
+                all_y.append(path_y)
+                all_times.extend(path_times)
+            if obs_x.size:
+                track_radius = max(track_radius, float(np.nanmax(np.hypot(obs_x, obs_y))) * 1.25)
+            style = self._sky_track_style_for_target(int(entry["target_index"]))
+            projected_series.append(
+                {
+                    "target_index": int(entry["target_index"]),
+                    "label": str(entry["label"]),
+                    "color_hex": str(style["hex"]),
+                    "projected_x": path_x,
+                    "projected_y": path_y,
+                    "projected_times": path_times,
+                    "observation_x": obs_x,
+                    "observation_y": obs_y,
+                    "source_entry": entry,
+                }
+            )
+
+        if not all_x:
+            empty_item = pg.TextItem("Sky track is too wide for this compact view.", anchor=(0.5, 0.5), color="#dbe7ff")
+            empty_item.setPos(0.0, 0.0)
+            plot_item.addItem(empty_item)
+            plot_item.getViewBox().setRange(xRange=(-1.0, 1.0), yRange=(-1.0, 1.0), padding=0.0)
+            return
+
+        track_radius = min(_KNOWN_OBJECT_SKY_TRACK_MAX_FIELD_RADIUS_DEG, track_radius)
+        self._sky_track_projected_series = projected_series
+        self._sky_track_projected_x = np.concatenate(all_x)
+        self._sky_track_projected_y = np.concatenate(all_y)
+        self._sky_track_projected_times = tuple(all_times)
+
+        if len(projected_series) > 1:
+            plot_item.addLegend(
+                offset=(8, 8),
+                labelTextColor="#eef5ff",
+                brush=pg.mkBrush(13, 20, 36, 235),
+                pen=pg.mkPen("#314669"),
+            )
+
+        combined_x = np.concatenate(all_x)
+        combined_y = np.concatenate(all_y)
+        for projected in projected_series:
+            obs_x = np.asarray(projected["observation_x"], dtype=float)
+            obs_y = np.asarray(projected["observation_y"], dtype=float)
+            if obs_x.size:
+                combined_x = np.concatenate([combined_x, obs_x])
+                combined_y = np.concatenate([combined_y, obs_y])
+        x_min = float(np.nanmin(combined_x))
+        x_max = float(np.nanmax(combined_x))
+        y_min = float(np.nanmin(combined_y))
+        y_max = float(np.nanmax(combined_y))
+        margin = max(0.35, 0.08 * track_radius)
+        fit_bounds = (x_min - margin, x_max + margin, y_min - margin, y_max + margin)
+        self._sky_track_fit_bounds = fit_bounds
+        star_field_radius = self._sky_track_star_draw_radius_deg()
+
+        self._draw_sky_track_all_sky_boundary(plot_item)
+        if self._sky_track_constellations_enabled():
+            self._draw_sky_track_constellation_lines(plot_item, center_ra_deg, center_dec_deg, star_field_radius)
+        self._draw_sky_track_stars(plot_item, center_ra_deg, center_dec_deg, star_field_radius)
+        for projected in projected_series:
+            path_x = np.asarray(projected["projected_x"], dtype=float)
+            path_y = np.asarray(projected["projected_y"], dtype=float)
+            color_hex = str(projected["color_hex"])
+            pen_width = 2.4 if int(projected["target_index"]) == 0 else 1.8
+            if path_x.size:
+                plot_item.plot(
+                    path_x,
+                    path_y,
+                    pen=pg.mkPen(color_hex, width=pen_width),
+                    name=str(projected["label"]),
+                )
+            obs_x = np.asarray(projected["observation_x"], dtype=float)
+            obs_y = np.asarray(projected["observation_y"], dtype=float)
+            if obs_x.size:
+                plot_item.addItem(
+                    pg.ScatterPlotItem(
+                        x=obs_x,
+                        y=obs_y,
+                        size=8 if int(projected["target_index"]) == 0 else 7,
+                        pen=pg.mkPen("#f8fbff", width=0.8),
+                        brush=pg.mkBrush(color_hex),
+                        pxMode=True,
+                    )
+                )
+
+        self._sky_track_playback_item = pg.ScatterPlotItem(
+            x=[],
+            y=[],
+            size=13,
+            pen=pg.mkPen("#ffffff", width=1.2),
+            brush=pg.mkBrush("#ffef9a"),
+            pxMode=True,
+        )
+        plot_item.addItem(self._sky_track_playback_item)
+        self._sky_track_text_item = pg.TextItem("", anchor=(0.0, 1.0), color="#f8fbff")
+        plot_item.addItem(self._sky_track_text_item)
+        center_text = f"Center RA {self._format_ra_hours(center_ra_deg)}, Dec {center_dec_deg:+.1f} deg"
+        plot_item.setTitle(f"Sky Track - {center_text}", color="#f6fbff")
+        self._apply_sky_track_view_fit()
+        QTimer.singleShot(0, self._apply_sky_track_view_fit)
+
+    def _sky_track_widget_aspect(self) -> float:
+        if not hasattr(self, "_sky_track_plot"):
+            return 1.6
+        view_box = self._sky_track_plot.getPlotItem().getViewBox()
+        width = float(max(1.0, view_box.width()))
+        height = float(max(1.0, view_box.height()))
+        return max(0.35, min(8.0, width / height))
+
+    def _apply_sky_track_view_fit(self) -> None:
+        bounds = getattr(self, "_sky_track_fit_bounds", None)
+        if bounds is None or not hasattr(self, "_sky_track_plot"):
+            return
+        self._set_sky_track_view_bounds(bounds, padding=0.02)
+
+    def _apply_sky_track_entire_sky_fit(self) -> None:
+        if not hasattr(self, "_sky_track_plot"):
+            return
+        sky_radius = _KNOWN_OBJECT_SKY_TRACK_MAX_FIELD_RADIUS_DEG
+        self._set_sky_track_view_bounds(
+            (-sky_radius, sky_radius, -sky_radius, sky_radius),
+            padding=0.01,
+        )
+
+    def _set_sky_track_view_bounds(
+        self,
+        bounds: tuple[float, float, float, float],
+        *,
+        padding: float,
+    ) -> None:
+        x_min, x_max, y_min, y_max = bounds
+        x_span = max(_KNOWN_OBJECT_SKY_TRACK_MIN_FIELD_RADIUS_DEG * 0.5, float(x_max) - float(x_min))
+        y_span = max(_KNOWN_OBJECT_SKY_TRACK_MIN_FIELD_RADIUS_DEG * 0.5, float(y_max) - float(y_min))
+        center_x = 0.5 * (float(x_min) + float(x_max))
+        center_y = 0.5 * (float(y_min) + float(y_max))
+        widget_aspect = self._sky_track_widget_aspect()
+        data_aspect = x_span / y_span
+        if widget_aspect >= data_aspect:
+            target_y_span = y_span
+            target_x_span = target_y_span * widget_aspect
+        else:
+            target_x_span = x_span
+            target_y_span = target_x_span / widget_aspect
+        plot_item = self._sky_track_plot.getPlotItem()
+        plot_item.getViewBox().setRange(
+            xRange=(center_x - (0.5 * target_x_span), center_x + (0.5 * target_x_span)),
+            yRange=(center_y - (0.5 * target_y_span), center_y + (0.5 * target_y_span)),
+            padding=padding,
+        )
+
+    @staticmethod
+    def _draw_sky_track_all_sky_boundary(plot_item) -> None:
+        angles = np.linspace(0.0, 2.0 * math.pi, 361, dtype=float)
+        radius = _KNOWN_OBJECT_SKY_TRACK_MAX_FIELD_RADIUS_DEG
+        plot_item.plot(
+            radius * np.cos(angles),
+            radius * np.sin(angles),
+            pen=pg.mkPen(QColor(115, 139, 178, 105), width=1.0),
+        )
+
+    def _draw_sky_track_stars(self, plot_item, center_ra_deg: float, center_dec_deg: float, field_radius_deg: float) -> None:
+        magnitude_limit = self._sky_track_magnitude_limit()
+        star_objects = [
+            sky_object
+            for sky_object in load_local_sky_atlas_objects()
+            if str(getattr(sky_object, "object_type", "")).casefold() == "star"
+            and getattr(sky_object, "magnitude", None) is not None
+            and float(sky_object.magnitude) <= magnitude_limit
+        ]
+        if self._sky_track_density_key() == "dense":
+            star_objects = self._augment_sky_track_stars_with_constellation_endpoints(star_objects)
+        if not star_objects:
+            return
+        visible_stars = [
+            sky_object
+            for sky_object in star_objects
+            if self._angular_separation_deg(
+                float(getattr(sky_object, "ra_deg", 0.0)),
+                float(getattr(sky_object, "dec_deg", 0.0)),
+                center_ra_deg,
+                center_dec_deg,
+            )
+            <= field_radius_deg + _KNOWN_OBJECT_SKY_TRACK_STAR_PADDING_DEG
+        ]
+        if not visible_stars:
+            return
+        star_ra = np.array([float(star.ra_deg) for star in visible_stars], dtype=float)
+        star_dec = np.array([float(star.dec_deg) for star in visible_stars], dtype=float)
+        star_x_all, star_y_all, star_valid = self._project_sky_radec(star_ra, star_dec, center_ra_deg, center_dec_deg)
+        points: list[dict[str, object]] = []
+        for sky_object, x_value, y_value, is_valid in zip(visible_stars, star_x_all, star_y_all, star_valid):
+            if not is_valid:
+                continue
+            magnitude = float(sky_object.magnitude) if sky_object.magnitude is not None else magnitude_limit
+            if abs(float(x_value)) > field_radius_deg * 1.25 or abs(float(y_value)) > field_radius_deg * 1.25:
+                continue
+            size = max(2.5, min(10.0, 8.0 - (magnitude * 1.1)))
+            color = QColor(str(getattr(sky_object, "color", "#edf4ff")))
+            color.setAlpha(150)
+            points.append(
+                {
+                    "pos": (float(x_value), float(y_value)),
+                    "size": size,
+                    "pen": None,
+                    "brush": pg.mkBrush(color),
+                    "data": sky_object.name,
+                }
+            )
+        if points:
+            plot_item.addItem(pg.ScatterPlotItem(spots=points, pxMode=True))
+
+        include_bayer = self._sky_track_bayer_labels_enabled()
+        label_candidates: list[tuple[float, str, float, float]] = []
+        for star, x_value, y_value, is_valid in zip(visible_stars, star_x_all, star_y_all, star_valid):
+            if not is_valid or abs(float(x_value)) > field_radius_deg or abs(float(y_value)) > field_radius_deg:
+                continue
+            magnitude = float(star.magnitude) if star.magnitude is not None else magnitude_limit
+            if magnitude <= 2.2 and self._sky_track_is_proper_star_name(star.name):
+                label_candidates.append((magnitude, str(star.name), float(x_value), float(y_value)))
+            elif include_bayer:
+                bayer_label = self._sky_track_bayer_label_for_object(star)
+                if bayer_label and magnitude <= min(3.5, magnitude_limit):
+                    label_candidates.append((magnitude + 0.05, bayer_label, float(x_value), float(y_value)))
+        label_candidates = sorted(label_candidates, key=lambda item: item[0])[:36 if include_bayer else 24]
+        label_offset = min(0.8, max(0.12, field_radius_deg * 0.004))
+        for _magnitude, label_text, x_value, y_value in label_candidates:
+            label = pg.TextItem(label_text, anchor=(0.0, 1.0), color="#dbe7ff")
+            label.setPos(x_value + label_offset, y_value - label_offset)
+            plot_item.addItem(label)
+
+    def _draw_sky_track_constellation_lines(
+        self,
+        plot_item,
+        center_ra_deg: float,
+        center_dec_deg: float,
+        field_radius_deg: float,
+    ) -> None:
+        try:
+            segments = self._sky_track_constellation_segments()
+        except Exception:
+            return
+        if not segments:
+            return
+        line_x: list[float] = []
+        line_y: list[float] = []
+        for segment in segments:
+            start_sep = self._angular_separation_deg(
+                float(segment.start_ra_deg),
+                float(segment.start_dec_deg),
+                center_ra_deg,
+                center_dec_deg,
+            )
+            end_sep = self._angular_separation_deg(
+                float(segment.end_ra_deg),
+                float(segment.end_dec_deg),
+                center_ra_deg,
+                center_dec_deg,
+            )
+            if min(start_sep, end_sep) > field_radius_deg + _KNOWN_OBJECT_SKY_TRACK_STAR_PADDING_DEG:
+                continue
+            segment_ra, segment_dec = self._great_circle_radec_samples(
+                np.asarray(segment.start_unit_vector, dtype=float),
+                np.asarray(segment.end_unit_vector, dtype=float),
+            )
+            x_values, y_values, valid = self._project_sky_radec(
+                segment_ra,
+                segment_dec,
+                center_ra_deg,
+                center_dec_deg,
+            )
+            previous_point: tuple[float, float] | None = None
+            for x_value, y_value, is_valid in zip(x_values, y_values, valid):
+                point = (float(x_value), float(y_value))
+                within_radius = math.hypot(*point) <= field_radius_deg + _KNOWN_OBJECT_SKY_TRACK_STAR_PADDING_DEG
+                if not bool(is_valid) or not within_radius:
+                    if line_x and not math.isnan(line_x[-1]):
+                        line_x.append(float("nan"))
+                        line_y.append(float("nan"))
+                    previous_point = None
+                    continue
+                if previous_point is not None and math.hypot(point[0] - previous_point[0], point[1] - previous_point[1]) > 35.0:
+                    line_x.append(float("nan"))
+                    line_y.append(float("nan"))
+                line_x.append(point[0])
+                line_y.append(point[1])
+                previous_point = point
+            if line_x and not math.isnan(line_x[-1]):
+                line_x.append(float("nan"))
+                line_y.append(float("nan"))
+        if line_x:
+            plot_item.plot(
+                np.asarray(line_x, dtype=float),
+                np.asarray(line_y, dtype=float),
+                connect="finite",
+                pen=pg.mkPen(QColor(180, 198, 230, 110), width=1.0),
+            )
+
+    @classmethod
+    def _great_circle_radec_samples(
+        cls,
+        start_vector: np.ndarray,
+        end_vector: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        start_norm = float(np.linalg.norm(start_vector))
+        end_norm = float(np.linalg.norm(end_vector))
+        if start_norm <= 0.0 or end_norm <= 0.0:
+            return (np.zeros(0, dtype=float), np.zeros(0, dtype=float))
+        start_unit = start_vector / start_norm
+        end_unit = end_vector / end_norm
+        dot = max(-1.0, min(1.0, float(np.dot(start_unit, end_unit))))
+        angular_distance = math.acos(dot)
+        sample_count = max(2, int(math.ceil(math.degrees(angular_distance) / 4.0)) + 1)
+        fractions = np.linspace(0.0, 1.0, sample_count, dtype=float)
+        if angular_distance <= 1.0e-9:
+            vectors = np.repeat(start_unit[np.newaxis, :], sample_count, axis=0)
+        else:
+            sin_distance = math.sin(angular_distance)
+            vectors = np.array(
+                [
+                    (
+                        (math.sin((1.0 - fraction) * angular_distance) / sin_distance) * start_unit
+                        + (math.sin(fraction * angular_distance) / sin_distance) * end_unit
+                    )
+                    for fraction in fractions
+                ],
+                dtype=float,
+            )
+        radec = [cls._unit_vector_to_radec(vector) for vector in vectors]
+        valid_radec = [entry if entry is not None else (float("nan"), float("nan")) for entry in radec]
+        return (
+            np.array([entry[0] for entry in valid_radec], dtype=float),
+            np.array([entry[1] for entry in valid_radec], dtype=float),
+        )
+
+    def _handle_sky_track_display_settings_changed(self, *_args) -> None:
+        if not hasattr(self, "_sky_track_plot"):
+            return
+        self._draw_sky_track_plot()
+        self._update_plot_playback_markers()
+
+    def _sky_track_density_key(self) -> str:
+        if not hasattr(self, "_sky_track_density_combo"):
+            return "medium"
+        value = self._sky_track_density_combo.currentData()
+        return str(value or "medium")
+
+    def _sky_track_magnitude_limit(self) -> float:
+        return float(_KNOWN_OBJECT_SKY_TRACK_DENSITY_LIMITS.get(self._sky_track_density_key(), 2.5))
+
+    def _sky_track_star_draw_radius_deg(self) -> float:
+        if not hasattr(self, "_sky_track_extent_spin"):
+            return _KNOWN_OBJECT_SKY_TRACK_MAX_FIELD_RADIUS_DEG
+        return min(
+            _KNOWN_OBJECT_SKY_TRACK_MAX_FIELD_RADIUS_DEG,
+            max(1.0, float(self._sky_track_extent_spin.value())),
+        )
+
+    def _sky_track_bayer_labels_enabled(self) -> bool:
+        return bool(getattr(self, "_sky_track_bayer_checkbox", None) and self._sky_track_bayer_checkbox.isChecked())
+
+    def _sky_track_constellations_enabled(self) -> bool:
+        return bool(getattr(self, "_sky_track_constellations_checkbox", None) and self._sky_track_constellations_checkbox.isChecked())
+
+    def _sky_track_constellation_loader(self) -> ConstellationDataLoader:
+        loader = getattr(self, "_sky_track_constellation_data_loader", None)
+        if loader is None:
+            loader = ConstellationDataLoader()
+            self._sky_track_constellation_data_loader = loader
+        return loader
+
+    def _sky_track_constellation_segments(self):
+        return self._sky_track_constellation_loader().load().line_segments
+
+    def _sky_track_constellation_abbreviation_map(self) -> dict[str, str]:
+        cached = getattr(self, "_sky_track_constellation_abbrev_map", None)
+        if cached is not None:
+            return cached
+        mapping: dict[str, str] = {}
+        try:
+            labels = self._sky_track_constellation_loader().load().labels
+        except Exception:
+            labels = ()
+        for label in labels:
+            abbreviation = str(label.abbreviation or label.constellation_id).strip()
+            if not abbreviation:
+                continue
+            for candidate in (label.name, label.abbreviation, label.constellation_id):
+                key = re.sub(r"\s+", " ", str(candidate or "").replace("\u2005", " ")).strip().casefold()
+                if key:
+                    mapping[key] = abbreviation
+            # Common genitive/stem forms used in Bayer aliases ("Orionis", "Ophiuchi").
+            stem = re.sub(r"(is|ae|i|us|um)$", "", abbreviation.casefold())
+            if stem:
+                mapping[stem] = abbreviation
+        # Extra stems for common Bayer aliases not covered by abbreviation alone.
+        mapping.update(
+            {
+                "orionis": "Ori",
+                "ophiuchi": "Oph",
+                "canis majoris": "CMa",
+                "canis minoris": "CMi",
+                "ursa majoris": "UMa",
+                "ursa minoris": "UMi",
+                "bootis": "Boo",
+                "boötis": "Boo",
+                "tauri": "Tau",
+                "scorpii": "Sco",
+                "virginis": "Vir",
+                "leonis": "Leo",
+                "geminorum": "Gem",
+                "aquilae": "Aql",
+                "lyrae": "Lyr",
+                "cygni": "Cyg",
+                "eridani": "Eri",
+                "centauri": "Cen",
+                "crucis": "Cru",
+                "carinae": "Car",
+                "aurigae": "Aur",
+                "andromedae": "And",
+                "cassiopeiae": "Cas",
+                "draconis": "Dra",
+                "herculis": "Her",
+                "pegasi": "Peg",
+                "perseii": "Per",
+                "persei": "Per",
+                "piscis austrini": "PsA",
+            }
+        )
+        self._sky_track_constellation_abbrev_map = mapping
+        return mapping
+
+    @staticmethod
+    def _sky_track_is_proper_star_name(name: str) -> bool:
+        normalized = str(name or "").strip()
+        if not normalized:
+            return False
+        if re.fullmatch(r"[a-z]{1,2}\s+[A-Z][A-Za-z]{1,2}", normalized):
+            return False
+        if normalized.casefold().startswith(("hip ", "hd ", "hr ", "sao ", "tyc ")):
+            return False
+        return any(character.isalpha() for character in normalized)
+
+    @classmethod
+    def _sky_track_bayer_label_from_alias(cls, alias: str, abbreviation_map: dict[str, str]) -> str | None:
+        normalized = re.sub(r"\s+", " ", str(alias or "").replace("\u2005", " ").strip())
+        if not normalized:
+            return None
+        match = re.fullmatch(
+            r"(?i)(alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|omicron|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega)\s+(.+)",
+            normalized,
+        )
+        if match is None:
+            return None
+        greek = match.group(1).casefold()
+        constellation_key = match.group(2).strip().casefold()
+        letter = _KNOWN_OBJECT_SKY_TRACK_BAYER_LETTER_BY_GREEK.get(greek)
+        abbreviation = abbreviation_map.get(constellation_key)
+        if letter is None or not abbreviation:
+            return None
+        return f"{letter} {abbreviation}"
+
+    def _sky_track_bayer_label_for_object(self, sky_object) -> str | None:
+        abbreviation_map = self._sky_track_constellation_abbreviation_map()
+        for alias in (sky_object.name, *tuple(getattr(sky_object, "aliases", ()))):
+            label = self._sky_track_bayer_label_from_alias(str(alias), abbreviation_map)
+            if label:
+                return label
+        return None
+
+    def _augment_sky_track_stars_with_constellation_endpoints(self, star_objects: list) -> list:
+        existing = {
+            (round(float(star.ra_deg), 3), round(float(star.dec_deg), 3))
+            for star in star_objects
+        }
+        augmented = list(star_objects)
+        try:
+            segments = self._sky_track_constellation_segments()
+        except Exception:
+            return augmented
+
+        for segment in segments:
+            for ra_deg, dec_deg in (
+                (float(segment.start_ra_deg), float(segment.start_dec_deg)),
+                (float(segment.end_ra_deg), float(segment.end_dec_deg)),
+            ):
+                key = (round(ra_deg % 360.0, 3), round(dec_deg, 3))
+                if key in existing:
+                    continue
+                existing.add(key)
+                augmented.append(
+                    SkyAtlasObject(
+                        name="",
+                        object_type="Star",
+                        ra_deg=ra_deg % 360.0,
+                        dec_deg=dec_deg,
+                        magnitude=4.8,
+                        catalog="Constellation",
+                        aliases=(),
+                        color="#c9d7ef",
+                        constellation=str(segment.constellation_id),
+                        label_visible=False,
+                        searchable=False,
+                        selectable=False,
+                    )
+                )
+        return augmented
+
+    @staticmethod
+    def _format_ra_hours(ra_deg: float) -> str:
+        total_hours = (float(ra_deg) % 360.0) / 15.0
+        hours = int(total_hours)
+        minutes = int(round((total_hours - hours) * 60.0))
+        if minutes >= 60:
+            hours = (hours + 1) % 24
+            minutes = 0
+        return f"{hours:02d}h {minutes:02d}m"
 
     def _draw_topdown_plot(self) -> None:
         plot_item = self._reset_topdown_plot()
@@ -4834,6 +6675,73 @@ class KnownObjectOrbit3DDialog(QDialog):
                 self._magnitude_playback_item.hide()
                 self._magnitude_playback_item.setData([], [])
 
+    def _update_sky_track_playback_marker(self, object_position: np.ndarray | None, earth_position: np.ndarray | None) -> None:
+        if self._sky_track_playback_item is None:
+            return
+        center = getattr(self, "_sky_track_projection_center_deg", None)
+        if center is None or earth_position is None:
+            self._sky_track_playback_item.hide()
+            self._sky_track_playback_item.setData([], [])
+            if self._sky_track_text_item is not None:
+                self._sky_track_text_item.hide()
+            return
+
+        playback_time = self._current_playback_time()
+        marker_x: list[float] = []
+        marker_y: list[float] = []
+        marker_brushes: list[object] = []
+        marker_sizes: list[int] = []
+        label_anchor: tuple[float, float, float, float] | None = None
+        for projected in getattr(self, "_sky_track_projected_series", []):
+            target_index = int(projected["target_index"])
+            source_entry = projected.get("source_entry")
+            if not isinstance(source_entry, Mapping):
+                continue
+            radec = self._sky_track_radec_at_time(source_entry, playback_time)
+            if radec is None:
+                continue
+            ra_deg, dec_deg = radec
+            x_values, y_values, valid = self._project_sky_radec(
+                np.array([ra_deg], dtype=float),
+                np.array([dec_deg], dtype=float),
+                float(center[0]),
+                float(center[1]),
+            )
+            if x_values.size == 0 or y_values.size == 0 or not bool(valid[0]):
+                continue
+            x_value = float(x_values[0])
+            y_value = float(y_values[0])
+            marker_x.append(x_value)
+            marker_y.append(y_value)
+            marker_brushes.append(pg.mkBrush(str(projected["color_hex"])))
+            marker_sizes.append(14 if target_index == 0 else 11)
+            if label_anchor is None or target_index == 0:
+                label_anchor = (x_value, y_value, ra_deg, dec_deg)
+
+        if not marker_x:
+            self._sky_track_playback_item.hide()
+            self._sky_track_playback_item.setData([], [])
+            if self._sky_track_text_item is not None:
+                self._sky_track_text_item.hide()
+            return
+
+        self._sky_track_playback_item.setData(
+            x=marker_x,
+            y=marker_y,
+            brush=marker_brushes,
+            size=marker_sizes,
+            pen=pg.mkPen("#ffffff", width=1.2),
+        )
+        self._sky_track_playback_item.show()
+        if self._sky_track_text_item is not None and label_anchor is not None:
+            x_value, y_value, ra_deg, dec_deg = label_anchor
+            self._sky_track_text_item.setText(
+                f"{self._format_playback_time_text(playback_time)}\n"
+                f"RA {self._format_ra_hours(ra_deg)}  Dec {dec_deg:+.2f} deg"
+            )
+            self._sky_track_text_item.setPos(x_value + 0.15, y_value - 0.15)
+            self._sky_track_text_item.show()
+
     def _update_plot_playback_markers(self) -> None:
         if not hasattr(self, "_topdown_plot"):
             return
@@ -4848,9 +6756,11 @@ class KnownObjectOrbit3DDialog(QDialog):
             if self._magnitude_playback_item is not None:
                 self._magnitude_playback_item.hide()
                 self._magnitude_playback_item.setData([], [])
+            self._update_sky_track_playback_marker(None, None)
             return
         self._update_topdown_playback_artists(object_position, earth_position)
         self._update_time_series_playback_markers(object_position, earth_position)
+        self._update_sky_track_playback_marker(object_position, earth_position)
 
     def _update_gl_playback_state(self) -> None:
         if (
@@ -4977,15 +6887,6 @@ class KnownObjectOrbit3DDialog(QDialog):
         previous_states = dict(self._object_visibility_states)
         self._object_visibility_states[key] = bool(checked)
         desired_targets = self._desired_context_targets()
-        if not desired_targets:
-            self._object_visibility_states = previous_states
-            action = self._object_visibility_actions.get(key)
-            if action is not None:
-                action.blockSignals(True)
-                action.setChecked(bool(previous_states.get(key, False)))
-                action.blockSignals(False)
-            QMessageBox.information(self, "3D view", "Keep at least one object enabled in the 3D view.")
-            return
         desired_keys = {self._target_visibility_key(target.detection) for target in desired_targets}
         if desired_keys.issubset(self._current_target_keys()):
             self._rebuild_object_toggle_controls()
@@ -4993,18 +6894,9 @@ class KnownObjectOrbit3DDialog(QDialog):
             self._update_plot_playback_markers()
             QTimer.singleShot(0, self._refresh_gl_after_show)
             return
-        span_data = self._span_combo.currentData()
-        if not isinstance(span_data, tuple) or len(span_data) != 3:
-            return
-        _span_key, padding_days, sample_count = span_data
         self._pending_visibility_states = previous_states
         self._rebuild_object_toggle_controls()
-        self._start_context_reload(
-            float(padding_days),
-            int(sample_count),
-            self._show_planets_checkbox.isChecked(),
-            targets=desired_targets,
-        )
+        self._start_context_reload_for_current_span(targets=desired_targets)
 
     def _handle_span_changed(self) -> None:
         if self._context_reload_worker is not None:
@@ -5012,11 +6904,49 @@ class KnownObjectOrbit3DDialog(QDialog):
         span_data = self._span_combo.currentData()
         if not isinstance(span_data, tuple) or len(span_data) != 3:
             return
-        _span_key, padding_days, sample_count = span_data
-        current_padding_days = float(getattr(self._context, "arc_padding_days", 45.0))
-        if math.isclose(current_padding_days, float(padding_days), rel_tol=0.0, abs_tol=1e-6):
+        span_key, padding_days, sample_count = span_data
+        if span_key == "custom":
+            self._active_span_key = "custom"
+            self._custom_span_start = self._context.window_start.astimezone(UTC)
+            self._custom_span_end = self._context.window_end.astimezone(UTC)
+            self._sync_custom_span_inputs_to_state()
+            self._set_custom_span_controls_visible(True)
             return
-        self._start_context_reload(float(padding_days), int(sample_count), self._show_planets_checkbox.isChecked())
+        was_custom = self._active_span_key == "custom"
+        self._set_custom_span_controls_visible(False)
+        self._active_span_key = str(span_key)
+        current_padding_days = float(getattr(self._context, "arc_padding_days", 45.0))
+        if (
+            not was_custom
+            and padding_days is not None
+            and math.isclose(current_padding_days, float(padding_days), rel_tol=0.0, abs_tol=1e-6)
+        ):
+            return
+        self._start_context_reload(
+            float(padding_days),
+            int(sample_count),
+            self._show_planets_checkbox.isChecked(),
+        )
+
+    def _handle_custom_span_apply(self) -> None:
+        if self._context_reload_worker is not None:
+            return
+        try:
+            window_start, window_end = self._parse_custom_span_inputs()
+        except ValueError as exc:
+            QMessageBox.information(self, "Custom span", str(exc))
+            return
+        self._active_span_key = "custom"
+        self._custom_span_start = window_start
+        self._custom_span_end = window_end
+        sample_count = self._sample_count_for_custom_window(window_start, window_end)
+        self._start_context_reload(
+            0.0,
+            sample_count,
+            self._show_planets_checkbox.isChecked(),
+            window_start=window_start,
+            window_end=window_end,
+        )
 
     def _handle_planets_toggled(self, checked: bool) -> None:
         if self._context_reload_worker is not None:
@@ -5031,11 +6961,42 @@ class KnownObjectOrbit3DDialog(QDialog):
         if cached_bodies is not None:
             self._apply_planet_context_update(replace(self._context, additional_bodies=cached_bodies, include_major_planets=True))
             return
+        self._start_context_reload_for_current_span(include_major_planets=True)
+
+    def _start_context_reload_for_current_span(
+        self,
+        *,
+        targets: tuple[AsteroidOrbitContextTarget, ...] | None = None,
+        include_major_planets: bool | None = None,
+    ) -> None:
+        planets = self._show_planets_checkbox.isChecked() if include_major_planets is None else bool(include_major_planets)
         span_data = self._span_combo.currentData()
         if not isinstance(span_data, tuple) or len(span_data) != 3:
             return
-        _span_key, padding_days, sample_count = span_data
-        self._start_context_reload(float(padding_days), int(sample_count), bool(checked))
+        span_key, padding_days, sample_count = span_data
+        if span_key == "custom" or self._active_span_key == "custom":
+            window_start = self._custom_span_start
+            window_end = self._custom_span_end
+            try:
+                parsed_start, parsed_end = self._parse_custom_span_inputs()
+                window_start, window_end = parsed_start, parsed_end
+                self._custom_span_start = window_start
+                self._custom_span_end = window_end
+            except ValueError:
+                window_start = self._context.window_start.astimezone(UTC)
+                window_end = self._context.window_end.astimezone(UTC)
+            self._start_context_reload(
+                0.0,
+                self._sample_count_for_custom_window(window_start, window_end),
+                planets,
+                targets=targets,
+                window_start=window_start,
+                window_end=window_end,
+            )
+            return
+        if padding_days is None or sample_count is None:
+            return
+        self._start_context_reload(float(padding_days), int(sample_count), planets, targets=targets)
 
     def _start_context_reload(
         self,
@@ -5044,6 +7005,8 @@ class KnownObjectOrbit3DDialog(QDialog):
         include_major_planets: bool,
         *,
         targets: tuple[AsteroidOrbitContextTarget, ...] | None = None,
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
     ) -> None:
         if self._context_reload_worker is not None:
             return
@@ -5056,13 +7019,17 @@ class KnownObjectOrbit3DDialog(QDialog):
         if include_major_planets:
             loading_label += " with planets"
         self._set_context_loading(True, loading_label + "...")
-        reload_targets = tuple(targets) if targets else self._desired_context_targets() or self._context_targets
+        reload_targets = tuple(targets) if targets is not None else self._desired_context_targets()
+        observation_times = self._observation_times_for_reload(reload_targets, window_start=window_start, window_end=window_end)
         self._context_reload_worker = AsteroidOrbitContextWorker(
             targets=reload_targets,
             available_targets=self._available_targets,
             arc_padding_days=arc_padding_days,
             sample_count=sample_count,
             include_major_planets=include_major_planets,
+            window_start=window_start,
+            window_end=window_end,
+            observation_times=observation_times,
         )
         self._context_reload_worker.finished.connect(self._context_reload_worker.deleteLater)
         self._context_reload_worker.progress_updated.connect(self._handle_context_reload_progress)
@@ -5070,8 +7037,66 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._context_reload_worker.context_failed.connect(self._handle_context_reload_failed)
         self._context_reload_worker.start()
 
+    def _observation_times_for_reload(
+        self,
+        targets: tuple[AsteroidOrbitContextTarget, ...],
+        *,
+        window_start: datetime | None,
+        window_end: datetime | None,
+    ) -> tuple[datetime, ...]:
+        for target in targets:
+            if target.frame_measurements:
+                return tuple(measurement.observation_time for measurement in target.frame_measurements)
+        if self._frame_measurements:
+            return tuple(measurement.observation_time for measurement in self._frame_measurements)
+        start = (window_start or self._context.window_start).astimezone(UTC)
+        end = (window_end or self._context.window_end).astimezone(UTC)
+        return (start, end)
+
+    @staticmethod
+    def _sample_count_for_custom_window(window_start: datetime, window_end: datetime) -> int:
+        total_days = max(1.0, (window_end - window_start).total_seconds() / 86400.0)
+        return min(361, max(61, int(round(total_days)) + 1))
+
+    @staticmethod
+    def _format_custom_span_date(value: datetime) -> str:
+        return value.astimezone(UTC).strftime("%Y-%m-%d")
+
+    def _sync_custom_span_inputs_to_state(self) -> None:
+        if not hasattr(self, "_custom_span_start_input"):
+            return
+        self._custom_span_start_input.setText(self._format_custom_span_date(self._custom_span_start))
+        self._custom_span_end_input.setText(self._format_custom_span_date(self._custom_span_end))
+
+    def _set_custom_span_controls_visible(self, visible: bool) -> None:
+        for widget in (
+            getattr(self, "_custom_span_start_label", None),
+            getattr(self, "_custom_span_start_input", None),
+            getattr(self, "_custom_span_end_label", None),
+            getattr(self, "_custom_span_end_input", None),
+            getattr(self, "_custom_span_apply_button", None),
+        ):
+            if widget is not None:
+                widget.setVisible(bool(visible))
+
+    def _parse_custom_span_inputs(self) -> tuple[datetime, datetime]:
+        start_time = KnownObjectOrbit3DPlannerDialog._parse_midnight_utc_date(
+            self._custom_span_start_input.text(),
+            label="Start date",
+        )
+        end_time = KnownObjectOrbit3DPlannerDialog._parse_midnight_utc_date(
+            self._custom_span_end_input.text(),
+            label="End date",
+        )
+        if end_time <= start_time:
+            raise ValueError("End date must be later than start date.")
+        return start_time, end_time
+
     def _set_context_loading(self, is_loading: bool, message: str | None = None) -> None:
         self._span_combo.setEnabled(not is_loading)
+        self._custom_span_start_input.setEnabled(not is_loading)
+        self._custom_span_end_input.setEnabled(not is_loading)
+        self._custom_span_apply_button.setEnabled(not is_loading)
         self._show_planets_checkbox.setEnabled(not is_loading)
         self._camera_mode_combo.setEnabled(not is_loading)
         self._play_button.setEnabled((not is_loading) and len(self._timeline_times) > 1)
@@ -5093,12 +7118,16 @@ class KnownObjectOrbit3DDialog(QDialog):
     def _handle_context_reload_completed(self, result) -> None:
         previous_playback_time = self._current_playback_time()
         self._context_reload_worker = None
-        reload_targets = tuple(getattr(result, "targets", self._context_targets)) or self._context_targets
+        reload_targets = tuple(getattr(result, "targets", ()))
         self._pending_visibility_states = None
         result_available_targets = tuple(getattr(result, "available_targets", ()))
         self._context_targets = tuple(reload_targets)
         self._available_targets = self._normalize_available_targets(self._context_targets, result_available_targets or self._available_targets)
         self._context = result.context
+        if self._active_span_key == "custom":
+            self._custom_span_start = self._context.window_start.astimezone(UTC)
+            self._custom_span_end = self._context.window_end.astimezone(UTC)
+            self._sync_custom_span_inputs_to_state()
         self._sync_primary_target_state()
         self._observation_reset_time = self._default_observation_reset_time()
         self._refresh_context_arrays()
@@ -5207,10 +7236,27 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._gl_view.addItem(glow)
         self._gl_view.addItem(core)
 
+    @staticmethod
+    def _starfield_radius(scene_extent: float) -> float:
+        return max(_KNOWN_OBJECT_3D_STARFIELD_MIN_RADIUS_AU, float(scene_extent) * _KNOWN_OBJECT_3D_STARFIELD_EXTENT_FACTOR)
+
+    @staticmethod
+    def _max_camera_distance(scene_extent: float) -> float:
+        return float(scene_extent) * _KNOWN_OBJECT_3D_MAX_ZOOM_OUT_EXTENT_FACTOR
+
+    def _apply_gl_camera_distance_limits(self, scene_extent: float) -> None:
+        if self._gl_view is None or not hasattr(self._gl_view, "set_camera_distance_limits"):
+            return
+        self._gl_view.set_camera_distance_limits(
+            _KNOWN_OBJECT_3D_MIN_CAMERA_DISTANCE_AU,
+            self._max_camera_distance(scene_extent),
+            minimum_far_clip=self._starfield_radius(scene_extent) * 1.2,
+        )
+
     def _add_gl_starfield(self, scene_extent: float) -> None:
         if self._gl_view is None:
             return
-        radius = max(2.5, scene_extent * 2.8)
+        radius = self._starfield_radius(scene_extent)
         rng = np.random.default_rng(20260411)
         star_count = 220
         phi_values = rng.uniform(0.0, 2.0 * math.pi, star_count)
@@ -5233,20 +7279,67 @@ class KnownObjectOrbit3DDialog(QDialog):
         sample_count = len(samples)
         if sample_count <= 0:
             return np.zeros((0,), dtype=float)
+        window_start = self._context.window_start
+        window_end = self._context.window_end
+        window_seconds = max(1.0, (window_end - window_start).total_seconds())
         observed_samples = self._context.observation_object_samples
-        if not observed_samples:
-            return np.full(sample_count, peak_alpha, dtype=float)
-        observed_start = observed_samples[0].observation_time
-        observed_end = observed_samples[-1].observation_time
-        fade_before_seconds = max(1.0, (observed_start - self._context.window_start).total_seconds())
-        fade_after_seconds = max(1.0, (self._context.window_end - observed_end).total_seconds())
-        alpha_values = np.empty(sample_count, dtype=float)
+        use_window_edge_fade = getattr(self, "_active_span_key", "local") == "custom" or not observed_samples
+        if not use_window_edge_fade and observed_samples:
+            observed_start = observed_samples[0].observation_time
+            observed_end = observed_samples[-1].observation_time
+            fade_before_seconds = (observed_start - window_start).total_seconds()
+            fade_after_seconds = (window_end - observed_end).total_seconds()
+            # Custom-like windows where "observations" already fill the span leave no
+            # padded fade region; fall back to a proportional soft edge.
+            if fade_before_seconds < window_seconds * 0.02 and fade_after_seconds < window_seconds * 0.02:
+                use_window_edge_fade = True
+            else:
+                fade_before_seconds = max(1.0, fade_before_seconds)
+                fade_after_seconds = max(1.0, fade_after_seconds)
+                return self._opacity_profile_for_bright_core(
+                    samples,
+                    bright_start=observed_start,
+                    bright_end=observed_end,
+                    fade_before_seconds=fade_before_seconds,
+                    fade_after_seconds=fade_after_seconds,
+                    peak_alpha=peak_alpha,
+                    base_alpha=base_alpha,
+                )
+        fade_seconds = max(1.0, window_seconds * _KNOWN_OBJECT_3D_PATH_EDGE_FADE_FRACTION)
+        bright_start = window_start + timedelta(seconds=fade_seconds)
+        bright_end = window_end - timedelta(seconds=fade_seconds)
+        if bright_end <= bright_start:
+            midpoint = window_start + (window_end - window_start) / 2
+            bright_start = midpoint
+            bright_end = midpoint
+        return self._opacity_profile_for_bright_core(
+            samples,
+            bright_start=bright_start,
+            bright_end=bright_end,
+            fade_before_seconds=fade_seconds,
+            fade_after_seconds=fade_seconds,
+            peak_alpha=peak_alpha,
+            base_alpha=base_alpha,
+        )
+
+    @staticmethod
+    def _opacity_profile_for_bright_core(
+        samples,
+        *,
+        bright_start: datetime,
+        bright_end: datetime,
+        fade_before_seconds: float,
+        fade_after_seconds: float,
+        peak_alpha: float,
+        base_alpha: float,
+    ) -> np.ndarray:
+        alpha_values = np.empty(len(samples), dtype=float)
         for index, sample in enumerate(samples):
             sample_time = sample.observation_time
-            if sample_time < observed_start:
-                distance_ratio = (observed_start - sample_time).total_seconds() / fade_before_seconds
-            elif sample_time > observed_end:
-                distance_ratio = (sample_time - observed_end).total_seconds() / fade_after_seconds
+            if sample_time < bright_start:
+                distance_ratio = (bright_start - sample_time).total_seconds() / fade_before_seconds
+            elif sample_time > bright_end:
+                distance_ratio = (sample_time - bright_end).total_seconds() / fade_after_seconds
             else:
                 distance_ratio = 0.0
             fade_strength = max(0.0, 1.0 - min(1.0, distance_ratio))
@@ -5303,6 +7396,10 @@ class KnownObjectOrbit3DDialog(QDialog):
             return self._context.object_path_samples
         if self._context.observation_object_samples:
             return self._context.observation_object_samples
+        if self._context.earth_path_samples:
+            return self._context.earth_path_samples
+        if self._context.observation_earth_samples:
+            return self._context.observation_earth_samples
         return ()
 
     def _playback_window_bounds(self) -> tuple[datetime, datetime]:
@@ -5365,11 +7462,15 @@ class KnownObjectOrbit3DDialog(QDialog):
             return self._frame_measurements[0].observation_time
         if self._context.observation_object_samples:
             return self._context.observation_object_samples[0].observation_time
+        if self._context.observation_earth_samples:
+            return self._context.observation_earth_samples[0].observation_time
         return self._context.reference_time
 
     def _current_major_planet_query_times(self) -> tuple[datetime, ...]:
         if self._context.object_path_samples:
             return tuple(sample.observation_time for sample in self._context.object_path_samples)
+        if self._context.earth_path_samples:
+            return tuple(sample.observation_time for sample in self._context.earth_path_samples)
         if self._timeline_times:
             return self._timeline_times
         return (self._context.reference_time,)
