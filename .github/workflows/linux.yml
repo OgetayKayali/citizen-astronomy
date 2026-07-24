@@ -1,0 +1,31 @@
+name: Linux
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  source-smoke:
+    runs-on: ubuntu-24.04
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install application and test dependencies
+        run: python -m pip install -e . pytest
+      - name: Run Linux regression tests
+        run: >-
+          python -m pytest
+          tests/test_linux_support.py
+          tests/test_main.py
+          tests/test_app_updates.py
+          tests/test_settings.py
+          tests/test_runtime_dependencies.py
+          -q
+      - name: Start Qt in headless mode
+        run: python -m photometry_app.main --about-dialog-smoke

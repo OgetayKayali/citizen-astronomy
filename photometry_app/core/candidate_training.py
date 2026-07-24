@@ -19,6 +19,7 @@ from photometry_app.core.discovery import MovingObjectCandidate
 from photometry_app.core.models import CatalogStar, FileScanResult, LightCurveSeries, PhotometryMeasurement
 from photometry_app.core.settings import AppSettings
 from photometry_app.core.transient import TransientCandidate
+from photometry_app.platform_paths import application_data_dir
 
 
 TRAINING_MODE_TRANSIENT = "transient"
@@ -59,10 +60,7 @@ def default_training_database_path() -> Path:
     override = os.getenv("CITIZEN_PHOTOMETRY_TRAINING_DB")
     if override:
         return Path(override).expanduser()
-    local_app_data = os.getenv("LOCALAPPDATA")
-    if local_app_data:
-        return Path(local_app_data) / "CitizenPhotometry" / "candidate-training.sqlite3"
-    return Path.home() / ".citizen-photometry" / "candidate-training.sqlite3"
+    return application_data_dir() / "candidate-training.sqlite3"
 
 
 def transient_candidate_training_key(root_path: Path, candidate: TransientCandidate) -> str:

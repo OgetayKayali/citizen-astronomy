@@ -39,7 +39,7 @@ Last aligned with the repository layout for **CAst 0.1.1-alpha.1**.
 | Product name | Citizen Astronomy (CAst) |
 | Package name | `citizen-photometry` (`pyproject.toml`) |
 | Python package | `photometry_app` |
-| Platform | Windows desktop (PySide6 / Qt) |
+| Platform | Windows and Linux desktop (PySide6 / Qt) |
 | License | CC BY-NC-ND 4.0 |
 | GitHub | `OgetayKayali/citizen-astronomy` |
 | Status | Alpha review |
@@ -136,7 +136,7 @@ flowchart TB
 | `CODEBASE_MAP.md` | This map |
 | `CONTRIBUTING.md` | Contribution / copyright policy |
 | `LICENSE` | CC BY-NC-ND 4.0 |
-| `build.md` | Windows EXE + Inno build guide |
+| `build.md` | Windows installer + Linux AppImage build guide |
 | `pyproject.toml` | Package metadata, deps, `citizen-photometry` console script |
 | `CitizenAstronomyAlphaReview.spec` | Canonical PyInstaller one-folder release |
 | `CitizenPhotometryDebug.spec` | Debug/console PyInstaller build |
@@ -156,7 +156,7 @@ flowchart TB
 |------|----------|
 | Module | `python -m photometry_app.main` |
 | Console script | `citizen-photometry` → `photometry_app.main:main` (`pyproject.toml`) |
-| Frozen EXE | `CitizenAstronomyAlphaReview.exe` (PyInstaller COLLECT folder) |
+| Frozen bundle | `CitizenAstronomyAlphaReview.exe` on Windows; `CitizenAstronomyAlphaReview` inside the Linux AppImage |
 
 ### `main()` sequence (`photometry_app/main.py`)
 
@@ -167,7 +167,7 @@ flowchart TB
 5. Set Windows AppUserModelID (`CitizenAstronomy.CAst`).
 6. Create `QApplication`, Fusion style, icon, version metadata.
 7. Construct `MainWindow`, `showMaximized()`, `app.exec()`.
-8. On failure: write `%LOCALAPPDATA%\CitizenAstronomy\startup-error.log` and show a critical `QMessageBox`.
+8. On failure: write a startup log under LocalAppData (Windows) or XDG state (Linux) and show a critical `QMessageBox`.
 
 ### CLI smoke flags (same EXE / module)
 
@@ -260,9 +260,9 @@ flowchart TB
 
 | Store | Typical path |
 |-------|----------------|
-| Settings | `%LOCALAPPDATA%\CitizenAstronomy\settings.json` (also project `.photometry-settings.json` for some workflows) |
-| UI state | `%LOCALAPPDATA%\CitizenAstronomy\state.json` |
-| Science cache | Configurable `cache_dir` (often under LocalAppData or project) |
+| Settings | `%LOCALAPPDATA%\CitizenPhotometry\settings.json` (Windows) or `~/.config/citizen-astronomy/settings.json` (Linux) |
+| UI state | `%LOCALAPPDATA%\CitizenPhotometry\state.json` (Windows) or `~/.local/state/citizen-astronomy/state.json` (Linux) |
+| Science cache | Configurable `cache_dir`; platform caches use LocalAppData or XDG cache |
 
 ### Settings domains (non-exhaustive but complete by concern)
 
@@ -700,6 +700,7 @@ packaging/publish_github_update.ps1  →  signed GitHub prerelease assets
 | `packaging/inno/CitizenAstronomyVelopackBootstrap.iss` | One-time legacy Inno → Velopack migration wrapper |
 | `packaging/inno/CitizenAstronomyAlphaReview.iss` | Retained legacy full installer (pre-Velopack only) |
 | `packaging/publish_github_update.ps1` | Clean-tree gate → fixtures → PyInstaller → tests/smokes → signed Velopack full/delta → GitHub |
+| `packaging/build_linux_appimage.sh` | PyInstaller → Linux smokes → Velopack AppImage and update feed |
 | `packaging/validate_two_version_update.ps1` | Legacy install → bootstrap migration → delta reconstruction/apply contract |
 | `packaging/run_clean_machine_smoke.ps1` | Clean-machine smoke orchestration |
 | `packaging/generate_smoke_fixtures.py` | Tiny FITS/XISF/PNG/WebP fixtures |
@@ -710,8 +711,8 @@ packaging/publish_github_update.ps1  →  signed GitHub prerelease assets
 
 | Piece | Detail |
 |-------|--------|
-| Feed | Velopack `releases.alpha.json` on GitHub prereleases |
-| Assets | Signed Setup, full `.nupkg`, delta `.nupkg`; full is always retained as fallback |
+| Feed | Velopack `releases.alpha.json` (Windows) or `releases.alpha-linux.json` (Linux) on GitHub prereleases |
+| Assets | Windows Setup or Linux AppImage, full `.nupkg`, delta `.nupkg`; full is retained as fallback |
 | Flow | `UpdateCheckWorker` → `GithubSource` / `UpdateManager` → selected delta chain or full → `UpdateDownloadWorker` → external `Update.exe` apply/restart |
 | Integrity | Velopack package SHA-256 verification and reconstruction; Authenticode-signed executables |
 | Legacy bridge | Schema-v1 `CitizenAstronomy-update.json` is emitted only for the first migration release |
@@ -810,6 +811,10 @@ Publisher smoke subset includes updater contract tests, selected main-window upd
 | `%LOCALAPPDATA%\CitizenAstronomy.CAst\` | Velopack launcher, `current`, package cache, and `Update.exe` |
 | `%LOCALAPPDATA%\CitizenPhotometry\` | Settings, state, training data, and science caches |
 | `%LOCALAPPDATA%\CitizenAstronomy\` | Startup log and legacy update cache |
+| `$XDG_CONFIG_HOME/citizen-astronomy/` | Linux settings |
+| `$XDG_STATE_HOME/citizen-astronomy/` | Linux UI state and startup log |
+| `$XDG_DATA_HOME/citizen-astronomy/` | Linux candidate-training data |
+| `$XDG_CACHE_HOME/citizen-astronomy/` | Linux scientific caches |
 | `CITIZEN_PHOTOMETRY_ASTROMETRY_API_KEY` | Astrometry.net API key override |
 | SPICE-related env (see `assets/spice/README.md`) | Optional lunar orientation provider |
 | Project `.photometry-settings.json` | Local developer settings snapshot |
@@ -832,7 +837,7 @@ From `pyproject.toml` (Python ≥ 3.11):
 | `pyqtgraph`, `PyOpenGL`, `PyOpenGL-accelerate` | GL / interactive plots |
 | `scikit-learn` | Candidate training helpers |
 | `requests` | HTTP (updates, etc.) |
-| `velopack==1.2.0` | Managed Windows install, GitHub alpha feed, delta/full updates |
+| `velopack==1.2.0` | Windows installer, Linux AppImage, GitHub feeds, delta/full updates |
 | optional `cupy-cuda11x` (`gpu` extra) | GPU array backend |
 
 ---
