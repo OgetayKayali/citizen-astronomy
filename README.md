@@ -2,7 +2,7 @@
 
 Every clear night, amateur telescopes around the world capture photons that professional observatories never will -- the right patch of sky, at the right moment, with enough patience to notice something change. Citizen Astronomy turns those images into science.
 
-**CAst** is a Windows desktop application that takes folders of FITS and XISF images and gives you the tools to measure variable stars, discover moving asteroids, build Hertzsprung-Russell diagrams, and explore the sky -- all from one guided interface, no command-line scripting required.
+**CAst** is a Windows and Linux desktop application that takes folders of FITS and XISF images and gives you the tools to measure variable stars, discover moving asteroids, build Hertzsprung-Russell diagrams, and explore the sky -- all from one guided interface, no command-line scripting required.
 
 ![CAst mode launcher](guides/images/entry_screen.jpg)
 
@@ -94,14 +94,27 @@ Images can be plate-solved beforehand or solved on the fly through astrometry.ne
 
 ## Installation
 
-**For alpha reviewers:** Download the Setup executable from the [Releases](../../releases) page. After installation, use **File > Check for Updates**. CAst downloads a small delta for compatible hotfixes and automatically falls back to a verified full package when required.
+**Windows alpha reviewers:** Download the Setup executable from the [Releases](../../releases) page. After installation, use **File > Check for Updates**. CAst downloads a small delta for compatible hotfixes and automatically falls back to a verified full package when required.
 
-**For developers:**
+**Linux users:** Download the AppImage when one is attached to a release, make it executable, and start it:
 
-```powershell
+```bash
+chmod +x CitizenAstronomy.CAst-*.AppImage
+./CitizenAstronomy.CAst-*.AppImage
+```
+
+The AppImage is portable and uses the standard XDG config, state, data, and cache directories. It has its own `alpha-linux` update channel so Windows packages are never offered to Linux users.
+
+**Developers on Windows or Linux:**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Linux
 python -m pip install -e .
 python -m photometry_app.main
 ```
+
+On Windows, activate the environment with `.venv\Scripts\activate` instead. Linux AppImage build instructions are in [`build.md`](build.md#linux-appimage).
 
 Requires Python 3.11+. See the full dependency list in `pyproject.toml`.
 

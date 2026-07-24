@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
 
@@ -65,7 +66,6 @@ hiddenimports = [
     "pyqtgraph.opengl",
     "OpenGL",
     "OpenGL.GL",
-    "OpenGL.platform.win32",
     "OpenGL_accelerate",
     "astroquery.vizier",
     "astroquery.simbad",
@@ -94,6 +94,11 @@ hiddenimports = [
     "imageio_ffmpeg",
     "matplotlib.backends.backend_qtagg",
 ]
+
+if sys.platform.startswith("win"):
+    hiddenimports.append("OpenGL.platform.win32")
+elif sys.platform.startswith("linux"):
+    hiddenimports.append("OpenGL.platform.glx")
 
 for package_name in ("lz4", "zstandard", "pyqtgraph", "imageio_ffmpeg", "velopack"):
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package_name)

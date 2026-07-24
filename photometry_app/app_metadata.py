@@ -43,3 +43,10 @@ def application_icon_path() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def application_update_channel(platform_name: str | None = None) -> str:
+    resolved_platform = platform_name or sys.platform
+    if resolved_platform.startswith("linux"):
+        return f"{APP_UPDATE_CHANNEL}-linux"
+    return APP_UPDATE_CHANNEL

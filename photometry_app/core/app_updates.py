@@ -6,9 +6,9 @@ import re
 from typing import NoReturn, Protocol
 
 from photometry_app.app_metadata import (
-    APP_UPDATE_CHANNEL,
     APP_UPDATE_GITHUB_REPOSITORY,
     APP_VERSION,
+    application_update_channel,
 )
 
 
@@ -135,7 +135,7 @@ def _repository_url(repository: str) -> str:
 def _create_update_manager(
     *,
     repository: str = APP_UPDATE_GITHUB_REPOSITORY,
-    channel: str = APP_UPDATE_CHANNEL,
+    channel: str | None = None,
 ) -> _VelopackManager:
     try:
         from velopack import GithubSource, UpdateManager, UpdateOptions
@@ -144,7 +144,7 @@ def _create_update_manager(
             "The Velopack runtime is missing from this Citizen Astronomy build."
         ) from exc
 
-    normalized_channel = str(channel or "").strip().lower()
+    normalized_channel = str(channel or application_update_channel()).strip().lower()
     if not normalized_channel:
         raise UpdateConfigurationError("The application update channel is not configured.")
 
@@ -170,6 +170,7 @@ def check_for_updates(
 ) -> UpdateCheckResult:
     """Check the configured GitHub release channel through Velopack."""
 
+    channel = application_update_channel()
     try:
         manager = (manager_factory or _create_update_manager)()
     except AppUpdateError:
@@ -185,13 +186,13 @@ def check_for_updates(
     if update_info is None:
         return UpdateCheckResult(
             current_version=current_version,
-            channel=APP_UPDATE_CHANNEL,
+            channel=channel,
             available_update=None,
         )
 
     return UpdateCheckResult(
         current_version=current_version,
-        channel=APP_UPDATE_CHANNEL,
+        channel=channel,
         available_update=_available_update(update_info),
     )
 

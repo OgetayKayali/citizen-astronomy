@@ -16,20 +16,14 @@ from pathlib import Path
 
 
 from photometry_app.app_metadata import APP_DISPLAY_NAME, APP_USER_MODEL_ID, APP_VERSION, APP_WINDOW_TITLE_NAME, application_icon_path
+from photometry_app.platform_paths import application_log_dir
 
 
 
 
 
 def _startup_log_path() -> Path:
-
-    local_app_data = os.getenv("LOCALAPPDATA")
-
-    if local_app_data:
-
-        return Path(local_app_data) / "CitizenAstronomy" / "startup-error.log"
-
-    return Path.home() / ".citizen-astronomy" / "startup-error.log"
+    return application_log_dir() / "startup-error.log"
 
 
 
@@ -298,4 +292,3 @@ def main() -> int:
 if __name__ == "__main__":
 
     raise SystemExit(main())
-

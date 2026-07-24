@@ -16,6 +16,7 @@ from photometry_app.core.app_updates import (
     check_for_updates,
     download_update_package,
 )
+from photometry_app.app_metadata import application_update_channel
 
 
 _SHA256 = "a" * 64
@@ -92,7 +93,7 @@ class VelopackUpdateCheckTest(unittest.TestCase):
         result = check_for_updates(manager_factory=lambda: manager)
 
         self.assertEqual(result.current_version, "0.1.1-alpha.3")
-        self.assertEqual(result.channel, "alpha")
+        self.assertEqual(result.channel, application_update_channel())
         self.assertFalse(result.update_available)
         self.assertIsNone(result.available_update)
 
@@ -166,7 +167,7 @@ class VelopackUpdateCheckTest(unittest.TestCase):
             access_token=None,
             prerelease=True,
         )
-        options_type.assert_called_once_with(False, 10, "alpha")
+        options_type.assert_called_once_with(False, 10, application_update_channel())
         manager_type.assert_called_once_with(source, "options")
 
     def test_check_failure_is_presented_as_network_error(self) -> None:
