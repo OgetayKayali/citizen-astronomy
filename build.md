@@ -263,7 +263,8 @@ binaries.
 ### Prerequisites
 
 - Python 3.11+ and a project virtual environment
-- The large runtime assets listed in the Windows prerequisites above
+- The large runtime assets listed in the Windows prerequisites above for a
+  full-fidelity release. Linux test builds warn and continue without them.
 - PyInstaller
 - .NET SDK and Velopack CLI 1.2.0
 - `squashfs-tools` (`mksquashfs`)
@@ -277,6 +278,9 @@ python -m pip install --upgrade pip
 python -m pip install -e . pyinstaller pytest
 dotnet tool install --global vpk --version 1.2.0
 ```
+
+Fish users should activate with `source .venv/bin/activate.fish`, or skip
+activation and replace `python` with `.venv/bin/python`.
 
 Install `squashfs-tools` with your distribution package manager, for example
 `sudo apt install squashfs-tools` on Ubuntu/Debian or
@@ -302,6 +306,12 @@ PYTHON=/path/to/python \
 OUTPUT_DIR=/path/to/output \
 ./packaging/build_linux_appimage.sh
 ```
+
+On rolling distributions, a PySide6 image-format plugin can require a
+compatibility library that the host no longer ships (for example
+`libtiff.so.5`). Put the required `.so` files in one directory and pass it as
+`LINUX_COMPAT_LIB_DIR=/path/to/compat-libs`; the build script copies them into
+the private AppImage runtime before smoke testing.
 
 Run the result:
 

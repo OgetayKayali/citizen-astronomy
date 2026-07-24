@@ -8,6 +8,7 @@ python_path="${PYTHON:-$project_root/.venv/bin/python}"
 output_dir="${OUTPUT_DIR:-$project_root/packaging/dist/velopack-linux}"
 bundle_dir="$project_root/_tmp_alpha_review_dist_linux/CitizenAstronomyAlphaReview"
 icon_path="$project_root/_tmp_linux_package/citizen_astronomy.png"
+compatibility_library_dir="${LINUX_COMPAT_LIB_DIR:-}"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
     echo "This build must run on Linux." >&2
@@ -60,6 +61,14 @@ fi
     --workpath "$project_root/_tmp_alpha_review_build_linux" \
     "$project_root/CitizenAstronomyAlphaReview.spec"
 
+if [[ -n "$compatibility_library_dir" ]]; then
+    if [[ ! -d "$compatibility_library_dir" ]]; then
+        echo "LINUX_COMPAT_LIB_DIR is not a directory: $compatibility_library_dir" >&2
+        exit 1
+    fi
+    cp -L "$compatibility_library_dir"/*.so* "$bundle_dir/_internal/"
+fi
+
 QT_QPA_PLATFORM=offscreen "$bundle_dir/CitizenAstronomyAlphaReview" \
     --about-dialog-smoke
 QT_QPA_PLATFORM=offscreen "$bundle_dir/CitizenAstronomyAlphaReview" \
@@ -79,7 +88,7 @@ vpk pack \
     --delta BestSize \
     --icon "$icon_path" \
     --categories "Education;Science;Astronomy" \
-    --compression xz \
+    --compression gzip \
     --outputDir "$output_dir"
 
 echo "Linux AppImage and update packages written to $output_dir"

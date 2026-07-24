@@ -109,12 +109,13 @@ The AppImage is portable and uses the standard XDG config, state, data, and cach
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Linux
+source .venv/bin/activate       # Bash/Zsh
+source .venv/bin/activate.fish  # Fish
 python -m pip install -e .
 python -m photometry_app.main
 ```
 
-On Windows, activate the environment with `.venv\Scripts\activate` instead. Linux AppImage build instructions are in [`build.md`](build.md#linux-appimage).
+Activation is optional; `.venv/bin/python -m photometry_app.main` works in every Linux shell. On Windows, activate the environment with `.venv\Scripts\activate` instead. Linux AppImage build instructions are in [`build.md`](build.md#linux-appimage).
 
 Requires Python 3.11+. See the full dependency list in `pyproject.toml`.
 
