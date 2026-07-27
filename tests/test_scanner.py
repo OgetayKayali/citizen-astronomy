@@ -244,6 +244,37 @@ class ScannerTest(unittest.TestCase):
             self.assertEqual(summary.files[0].metadata.height, 32)
             self.assertEqual(summary.solved_count, 1)
 
+    def test_scan_fits_tree_excludes_jpg_and_png_with_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            object_dir = root / "Files" / "M42"
+            object_dir.mkdir(parents=True)
+            self._write_fits(object_dir / "frame_001.fits", solved=True)
+            (object_dir / "preview.jpg").write_bytes(b"fake-jpg")
+            (object_dir / "preview.jpeg").write_bytes(b"fake-jpeg")
+            (object_dir / "plate.png").write_bytes(b"fake-png")
+            (object_dir / "notes.txt").write_text("ignore", encoding="utf-8")
+
+            report = scan_fits_tree(root)
+
+            self.assertEqual(len(report.object_summaries), 1)
+            self.assertEqual(len(report.object_summaries[0].files), 1)
+            self.assertEqual(report.object_summaries[0].files[0].path.name, "frame_001.fits")
+            self.assertEqual(report.excluded_unsuitable_image_counts, (("JPG", 2), ("PNG", 1)))
+
+    def test_format_excluded_unsuitable_images_message(self) -> None:
+        from photometry_app.core.scanner import format_excluded_unsuitable_images_message
+
+        self.assertIsNone(format_excluded_unsuitable_images_message(()))
+        self.assertEqual(
+            format_excluded_unsuitable_images_message((("JPG", 1),)),
+            "1 JPG image has been excluded because it is not suitable for differential photometry.",
+        )
+        self.assertEqual(
+            format_excluded_unsuitable_images_message((("JPG", 3), ("PNG", 2))),
+            "3 JPG images and 2 PNG images have been excluded because they are not suitable for differential photometry.",
+        )
+
     def test_scan_fits_tree_uses_timezone_aware_xisf_observation_time_over_naive_date_obs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

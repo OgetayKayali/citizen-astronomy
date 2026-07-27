@@ -463,6 +463,70 @@ def resolve_light_curve_theme_colors(theme: str, custom_colors: dict[str, str] |
 
         }
 
+    if normalized_theme == "crimson":
+
+        return {
+
+            "background_color": "#120c0e",
+
+            "axis_color": "#f2e8ea",
+
+            "grid_alpha": "0.28",
+
+            "grid_color": "#3d2428",
+
+            "empty_text_color": "#d4b8be",
+
+            "error_bar_color": "#fb7185",
+
+            "point_pen": "#fb7185",
+
+            "point_brush": "#e11d48",
+
+            "hover_pen": "#fda4af",
+
+            "hover_brush": "#fda4af",
+
+            "fit_curve_color": "#fbbf24",
+
+            "selection_color": "#ff4d6d",
+
+            "hover_style": "background-color: #1a1214; color: #f2e8ea; border: 1px solid #e11d48; padding: 4px 6px; border-radius: 3px;",
+
+        }
+
+    if normalized_theme == "blood-moon":
+
+        return {
+
+            "background_color": "#1a0c10",
+
+            "axis_color": "#f5d0d6",
+
+            "grid_alpha": "0.28",
+
+            "grid_color": "#5c3038",
+
+            "empty_text_color": "#e8b4bc",
+
+            "error_bar_color": "#f87171",
+
+            "point_pen": "#f87171",
+
+            "point_brush": "#ef4444",
+
+            "hover_pen": "#fdba74",
+
+            "hover_brush": "#fdba74",
+
+            "fit_curve_color": "#fb923c",
+
+            "selection_color": "#c45c26",
+
+            "hover_style": "background-color: #2a1418; color: #f5d0d6; border: 1px solid #c45c26; padding: 4px 6px; border-radius: 3px;",
+
+        }
+
     if normalized_theme == "custom":
 
         palette = default_custom_theme_colors()

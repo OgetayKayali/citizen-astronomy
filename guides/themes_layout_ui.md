@@ -90,6 +90,8 @@ CAst ships dark themes plus a default **Normal** look and a **Customize** editor
 - Catppuccin
 - Solarized Dark
 - One Dark
+- Crimson
+- Blood Moon
 - Customize
 
 Open theme controls from Settings / theme UI in the application (see **Settings > Open Settings** and the theme picker in the UI).
@@ -135,6 +137,7 @@ Use **Settings > Open Settings** for options that affect many modes. Common entr
 | Alignment assumption | Treat a stack as already aligned so one solve can serve many frames |
 | Observatory | Telescope, camera, focal length, pixel size, site, Bortle class (written into science exports) |
 | Parallelism | Worker counts for photometry, period search, discovery, and related jobs |
+| Mode memory | **Keep mode memory when switching** (off by default): when off, leaving a mode clears its loaded images/results/caches to free RAM; when on, returning to a mode restores previous work |
 
 Mode-specific knobs (Discover thresholds, HR source caps, Sky Atlas display, and so on) live in the same Settings dialog or in mode panels — see the mode guides for those.
 

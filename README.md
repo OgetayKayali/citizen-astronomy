@@ -4,6 +4,8 @@ Every clear night, amateur telescopes around the world capture photons that prof
 
 **CAst** is a Windows desktop application that takes folders of FITS and XISF images and gives you the tools to measure variable stars, discover moving asteroids, build Hertzsprung-Russell diagrams, and explore the sky -- all from one guided interface, no command-line scripting required.
 
+Project docs: [Updates](UPDATES.md) · [Contributing](CONTRIBUTING.md) · [License](LICENSE)
+
 ![CAst mode launcher](guides/images/entry_screen.jpg)
 
 CAst is organized around dedicated **modes**, each built for a different kind of observing or exploration. Choose a science workflow when you want measurements and exports, or open a visualization tool when you want to understand a field, the sky, or a stack. The sections below introduce each mode; follow the linked guides for step-by-step detail.
@@ -109,7 +111,7 @@ Requires Python 3.11+. See the full dependency list in `pyproject.toml`.
 
 - **Astrometry.net API key:** Set in the app Settings dialog, or via the environment variable `CITIZEN_PHOTOMETRY_ASTROMETRY_API_KEY`.
 - **Observatory setup:** Telescope, camera, focal length, pixel size, location, and Bortle class can be configured in Settings and are written into exported science reports.
-- **Themes:** Eight built-in dark themes (Gruvbox, Nord, Dracula, Tokyo Night, Catppuccin, Solarized Dark, One Dark, and Dark), plus custom theme editing with import/export.
+- **Themes:** Ten built-in dark themes (Gruvbox, Nord, Dracula, Tokyo Night, Catppuccin, Solarized Dark, One Dark, Crimson, Blood Moon, and Dark), plus custom theme editing with import/export.
 
 ## Outputs
 
@@ -129,7 +131,7 @@ Mode guides live under [`guides/`](guides/): [Differential Photometry](guides/di
 
 Shared shell details — themes, folder layout, and common UI panels — are in [Themes, Layout, and Shared UI](guides/themes_layout_ui.md).
 
-For a detailed map of the repository layout, modules, modes, workers, packaging, and tests, see [CODEBASE_MAP.md](CODEBASE_MAP.md).
+Release notes by version are in [Updates](UPDATES.md). For a detailed map of the repository layout, modules, modes, workers, packaging, and tests, see [CODEBASE_MAP.md](CODEBASE_MAP.md).
 
 ## Status
 

@@ -19,6 +19,12 @@ DATE_FORMATS = (
 _MIN_UTC_DATETIME = datetime.min.replace(tzinfo=UTC)
 
 SUPPORTED_FITS_SUFFIXES = {".fit", ".fits", ".xisf"}
+DIFFERENTIAL_PHOTOMETRY_EXCLUDED_SUFFIXES = {".png", ".jpg", ".jpeg"}
+_EXCLUDED_IMAGE_TYPE_LABELS = {
+    ".png": "PNG",
+    ".jpg": "JPG",
+    ".jpeg": "JPG",
+}
 
 FILENAME_METADATA_PATTERN = re.compile(
     r"(?P<frame_type>[A-Za-z]+)_(?P<object_name>.+?)_(?P<exposure_seconds>\d+(?:\.\d+)?)s_(?P<binning>Bin\d+)_(?P<filter_name>[^_]+)_(?P<date>\d{8})-(?P<time>\d{6})_(?P<sequence>\d+)",
@@ -28,10 +34,53 @@ FILENAME_METADATA_PATTERN = re.compile(
 _DATE_OBS_TIMEZONE_PATTERN = re.compile(r"(?:Z|[+-]\d{2}:?\d{2})$", re.IGNORECASE)
 
 
+def is_differential_photometry_image_path(path: Path) -> bool:
+    """Return True for image types accepted by Differential Photometry scans."""
+
+    if not is_supported_image_path(path):
+        return False
+    return path.suffix.lower() not in DIFFERENTIAL_PHOTOMETRY_EXCLUDED_SUFFIXES
+
+
+def differential_photometry_excluded_type_label(path: Path) -> str | None:
+    """Return a display label for an excluded raster type, or None if not excluded."""
+
+    if not is_supported_image_path(path):
+        return None
+    return _EXCLUDED_IMAGE_TYPE_LABELS.get(path.suffix.lower())
+
+
+def format_excluded_unsuitable_images_message(counts: tuple[tuple[str, int], ...] | dict[str, int]) -> str | None:
+    """Build the user-facing exclusion notice for JPG/PNG files skipped by DP."""
+
+    if isinstance(counts, dict):
+        items = tuple(sorted((str(label), int(count)) for label, count in counts.items() if int(count) > 0))
+    else:
+        items = tuple((str(label), int(count)) for label, count in counts if int(count) > 0)
+    if not items:
+        return None
+    parts: list[str] = []
+    for label, count in items:
+        noun = "image" if count == 1 else "images"
+        parts.append(f"{count} {label} {noun}")
+    if len(parts) == 1 and items[0][1] == 1:
+        return (
+            f"{parts[0]} has been excluded because it is not suitable for differential photometry."
+        )
+    if len(parts) == 1:
+        subject = parts[0]
+    elif len(parts) == 2:
+        subject = f"{parts[0]} and {parts[1]}"
+    else:
+        subject = ", ".join(parts[:-1]) + f", and {parts[-1]}"
+    return f"{subject} have been excluded because they are not suitable for differential photometry."
+
+
 def scan_fits_tree(root_path: Path, observation_timezone: str = "UTC") -> ScanReport:
     object_map: dict[str, list[FileScanResult]] = defaultdict(list)
+    discovered_paths, excluded_counts = _discover_candidate_paths(root_path)
 
-    for object_folder, fits_path in _discover_candidate_paths(root_path):
+    for object_folder, fits_path in discovered_paths:
         result = inspect_fits_file(fits_path, object_folder, observation_timezone=observation_timezone)
         object_map[object_folder].append(result)
 
@@ -39,35 +88,52 @@ def scan_fits_tree(root_path: Path, observation_timezone: str = "UTC") -> ScanRe
         ObjectScanSummary(object_name=name, files=sorted(results, key=_scan_sort_key))
         for name, results in sorted(object_map.items())
     ]
-    return ScanReport(root_path=root_path, object_summaries=object_summaries)
+    return ScanReport(
+        root_path=root_path,
+        object_summaries=object_summaries,
+        excluded_unsuitable_image_counts=tuple(sorted(excluded_counts.items())),
+    )
 
 
-def _discover_candidate_paths(root_path: Path) -> list[tuple[str, Path]]:
+def _discover_candidate_paths(root_path: Path) -> tuple[list[tuple[str, Path]], dict[str, int]]:
     files_root = root_path / "Files"
     if files_root.exists():
-        discovered = _discover_from_collection_root(files_root)
-        if discovered:
-            return discovered
+        discovered, excluded_counts = _discover_from_collection_root(files_root)
+        if discovered or excluded_counts:
+            return discovered, excluded_counts
 
-    discovered = _discover_from_collection_root(root_path)
-    if discovered:
-        return discovered
+    discovered, excluded_counts = _discover_from_collection_root(root_path)
+    if discovered or excluded_counts:
+        return discovered, excluded_counts
 
-    direct_files = sorted(
-        path for path in root_path.iterdir() if path.is_file() and is_supported_image_path(path)
-    )
-    return [(root_path.name, path) for path in direct_files]
+    direct_files, excluded_counts = _list_differential_photometry_files(root_path)
+    return [(root_path.name, path) for path in direct_files], excluded_counts
 
 
-def _discover_from_collection_root(collection_root: Path) -> list[tuple[str, Path]]:
+def _discover_from_collection_root(collection_root: Path) -> tuple[list[tuple[str, Path]], dict[str, int]]:
     discovered: list[tuple[str, Path]] = []
+    excluded_counts: dict[str, int] = defaultdict(int)
     for object_dir in sorted(path for path in collection_root.iterdir() if path.is_dir()):
-        for fits_path in sorted(
-            path for path in object_dir.iterdir() if path.is_file() and is_supported_image_path(path)
-        ):
+        object_files, object_excluded = _list_differential_photometry_files(object_dir)
+        for fits_path in object_files:
             discovered.append((object_dir.name, fits_path))
-    return discovered
+        for label, count in object_excluded.items():
+            excluded_counts[label] += count
+    return discovered, dict(excluded_counts)
 
+
+def _list_differential_photometry_files(directory: Path) -> tuple[list[Path], dict[str, int]]:
+    included: list[Path] = []
+    excluded_counts: dict[str, int] = defaultdict(int)
+    for path in sorted(path for path in directory.iterdir() if path.is_file()):
+        if not is_supported_image_path(path):
+            continue
+        excluded_label = differential_photometry_excluded_type_label(path)
+        if excluded_label is not None:
+            excluded_counts[excluded_label] += 1
+            continue
+        included.append(path)
+    return included, dict(excluded_counts)
 
 def inspect_fits_file(path: Path, object_folder: str, observation_timezone: str = "UTC") -> FileScanResult:
     reasons: list[str] = []

@@ -93,8 +93,12 @@ def roi_bounds_to_cropped_data_space(
 
 
 def format_astrostack_metric_value(metric_kind: str, value: float) -> str:
-    del metric_kind
     numeric = float(value)
     if not np.isfinite(numeric):
         numeric = 0.0
+    normalized_kind = str(metric_kind or "").strip().lower()
+    if normalized_kind == "moon_illumination":
+        return f"{max(0.0, min(100.0, numeric)):.1f}%"
+    if normalized_kind == "moonlight_impact":
+        return f"{max(0.0, numeric):.1f}"
     return f"{max(0.0, numeric):.3e}"

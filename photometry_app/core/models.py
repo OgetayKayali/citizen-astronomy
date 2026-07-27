@@ -107,6 +107,7 @@ class ObjectScanSummary:
 class ScanReport:
     root_path: Path
     object_summaries: list[ObjectScanSummary]
+    excluded_unsuitable_image_counts: tuple[tuple[str, int], ...] = ()
 
     @property
     def total_files(self) -> int:

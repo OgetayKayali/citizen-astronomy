@@ -1067,6 +1067,26 @@ class DistanceMapPanel(QWidget):
         self._sync_apply_limits_enabled()
         self._refresh_field_image_view()
 
+    def clear_loaded_work(self) -> None:
+        self.set_source_image_path(None)
+        self._current_result = None
+        self._cluster_member_indices = frozenset()
+        self._display_member_indices = frozenset()
+        self._cluster_result = None
+        self._image_display_cache.clear()
+        self._results_table.setRowCount(0)
+        self._map_view.clear()
+        self._map_view.clear_tomography()
+        self._field_image_view.set_message("Open an image to preview the field.")
+        self._only_cluster_checkbox.blockSignals(True)
+        self._only_cluster_checkbox.setChecked(False)
+        self._only_cluster_checkbox.blockSignals(False)
+        self._sync_cluster_controls()
+        self._disable_tomography(reset_button=True)
+        self._sync_interactive_controls(is_busy=False)
+        self._sync_apply_limits_enabled()
+        self._refresh_field_image_view()
+
     def source_image_path(self) -> Path | None:
         if self._source_image_path is None:
             return None

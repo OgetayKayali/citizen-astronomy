@@ -14,6 +14,7 @@ In the current UI, this mode may still appear as **Deep Stack**. This guide uses
 - **Align solved image sequences.** If your source frames are not already aligned, CAst can reproject them onto a common WCS grid before stacking.
 - **Crop to the interesting region.** Define a crop on the reference frame so the exported stack focuses on the target field.
 - **Measure stack quality live.** Plot or label running values such as **Signal**, **Noise**, **SNR**, **FWHM**, **Frame count**, and **Total integration time**.
+- **Review lunar conditions.** Plot **Moon Illumination** (%) and a **Moonlight Impact** score/category from each frame’s observation time, your observing site, and the image target. These are informational only and do not change stacking weights.
 - **Annotate the export.** Add shapes, text, and plot overlays, then save or reload those layouts as presets.
 - **Compare processing choices quickly.** Fast mode can subsample the exported animation frames so you can iterate without waiting for every cumulative frame to be written.
 
@@ -158,6 +159,11 @@ For each cumulative stack step, CAst can measure:
 - **Noise**
 - **SNR**
 
+Separately, AstroStack can plot per-frame lunar context (not used for stacking weights):
+
+- **Moon Illumination** — illuminated fraction as a percentage from each frame’s mid-exposure time
+- **Moonlight Impact** — relative score and category (**Low**, **Moderate**, **High**, **Severe**) from the Krisciunas–Schaefer scattered-moonlight model using Moon altitude, target–Moon separation, target altitude, atmospheric extinction, and Earth–Moon distance. The score is zero when the Moon is below the horizon. Requires an observing site in Settings and a plate-solved reference frame for the target position.
+
 If you define both signal and background measurement regions, signal/noise are based on those ROIs. Otherwise CAst falls back to global image statistics, using bright-end and background heuristics. That makes the metric overlays informative, but they should not be confused with full science-grade aperture photometry.
 
 ### 5. Render overlays and write the animation
@@ -185,6 +191,8 @@ AstroStack supports live metric labels and plots using:
 - **SNR**
 - **Signal**
 - **Noise**
+- **Moon Illumination**
+- **Moonlight Impact**
 
 Default plot labels include:
 
@@ -194,6 +202,8 @@ Default plot labels include:
 - `SNR`
 - `Signal`
 - `Noise`
+- `Moon illumination (%)`
+- `Moonlight impact score`
 
 ### Annotation controls
 
@@ -241,7 +251,7 @@ Presets can store:
 - background region
 - plot styling
 
-Modern presets normalize geometry to a reference image size so they can be restored on different-sized images more robustly.
+Modern presets store geometry as relative fractions of the visible canvas (and crop as fractions of the source image), so the same layout can be shared across different image sizes and crop aspect ratios.
 
 ---
 
@@ -318,7 +328,7 @@ Output size scales from a fraction of the stacked frame to full size. Very small
 - `Fast mode` still performs the core work; it only writes fewer output frames.
 - MP4 export depends on FFmpeg support.
 - FWHM is a heuristic quality indicator derived from a bright peak, not a full PSF analysis pipeline.
-- Saving or loading normalized presets without an open AstroStack image folder is blocked because the geometry is image-relative.
+- Saving or loading relative presets without an open AstroStack image folder is blocked because the geometry is image-relative.
 
 ### Naming note
 

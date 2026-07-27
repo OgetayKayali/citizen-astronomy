@@ -396,8 +396,13 @@ This is the heliocentric orbit theater for one or more selected known objects.
 - JPL Horizons **heliocentric state vectors** for the selected objects plus Earth
 - A GPU-backed OpenGL scene (soft-fails gracefully if OpenGL is unavailable)
 - Major-planet context, orbital arcs, and object labels
+- Optional **Meteor Stream** overlay for known shower parents (for example Perseids from 109P/Swift-Tuttle): an illustrative debris tube filling the parent's osculating orbit, with Earth-crossing regions highlighted
 - Side scientific plots and a frame / time table
 - Playback through the observed window and extended spans
+
+The Meteor Stream toggle appears when a visible target matches a known parent body. It is a co-orbital teaching model (debris along the parent's osculating ellipse, spaced evenly by path length for a uniform ribbon; the guide orbit still resolves Earth-node crossings on high-eccentricity orbits), not a full dynamical dust-trail forecast with radiation pressure or planetary perturbations.
+
+Trajectory View **Settings → Meteor Stream** controls numeric point density, trail thickness, Glow (soft comet-colored aura around the path, bright on the line and fading outward), the orbit guide line, and **Animate debris** (drifts only during timeline playback; occasional points flash out and respawn). Drift speed defaults to 1× for the gentle playback pace.
 
 ### Camera and Span
 

@@ -660,9 +660,63 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertEqual(dialog._close_button.objectName(), "workflowGenerateButton")
 
+            self.assertEqual(dialog._close_button.text(), "Close")
+
             self.assertEqual(dialog._tip_label.full_text(), "✓ Results are ready. Review the Source Results table.")
 
             self.assertIn("#22c55e", dialog._tip_label.styleSheet())
+
+        finally:
+
+            dialog.close()
+
+
+
+    def test_differential_workflow_dialog_busy_state_shows_terminate_button(self) -> None:
+
+        choose_folder = MagicMock()
+
+        generate = MagicMock()
+
+        terminate = MagicMock()
+
+        dialog = _DifferentialWorkflowDialog(
+
+            self.window,
+
+            choose_folder,
+
+            generate,
+
+            terminate_callback=terminate,
+
+        )
+
+        try:
+
+            dialog.set_busy("generating light curves", "Measuring sources...")
+
+            self.assertTrue(dialog._is_busy)
+
+            self.assertEqual(dialog._close_button.text(), "Terminate")
+
+            self.assertEqual(dialog._close_button.objectName(), "workflowTerminateButton")
+
+            self.assertIn("QPushButton#workflowTerminateButton", dialog.styleSheet())
+
+            dialog._close_button.click()
+
+            self._app.processEvents()
+
+            terminate.assert_called_once_with()
+
+            dialog.set_failed("Workflow terminated by user.")
+
+            self.assertFalse(dialog._is_busy)
+
+            self.assertEqual(dialog._close_button.text(), "Close")
+
+            self.assertEqual(dialog._close_button.objectName(), "workflowSecondaryButton")
 
         finally:
 
@@ -855,6 +909,40 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(manual_config.mode, ObjectPhotometryMode.AUTO)
 
         self.assertEqual([source.source_id for source in manual_config.sources], ["manual-target-1", "manual-comp-1"])
+
+
+
+    def test_scan_completed_notifies_excluded_jpg_and_png_images(self) -> None:
+
+        root_path = Path(self._config_dir.name)
+
+        report = ScanReport(
+
+            root_path=root_path,
+
+            object_summaries=[ObjectScanSummary(object_name="Alpha", files=[])],
+
+            excluded_unsuitable_image_counts=(("JPG", 3), ("PNG", 1)),
+
+        )
+
+        with (
+
+            patch.object(self.window, "_show_scan_results_summary_dialog"),
+
+            patch("photometry_app.ui.main_window.QMessageBox.information") as information,
+
+        ):
+
+            self.window._handle_scan_completed(report)
+
+        expected = (
+            "3 JPG images and 1 PNG image have been excluded because they are not suitable for differential photometry."
+        )
+        information.assert_called_once()
+        self.assertEqual(information.call_args.args[1], "Images excluded")
+        self.assertEqual(information.call_args.args[2], expected)
+        self.assertIn(expected, self.window._work_log_output.toPlainText())
 
 
 
@@ -22957,6 +23045,190 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
+    def test_mode_switch_purges_sky_explorer_result_by_default(self) -> None:
+
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_purge.fits"
+
+        image_path.touch()
+
+        self.window._current_sky_explorer_source_image = image_path
+
+        self.window._current_sky_explorer_result = SkyExplorerResult(
+
+            source_path=image_path,
+
+            solved_field=SolvedField(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.5,
+
+                width=16,
+
+                height=16,
+
+                wcs_path=image_path,
+
+            ),
+
+            used_astrometry_fallback=False,
+
+            footprint=SkyExplorerFieldFootprint(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.5,
+
+                width_deg=1.0,
+
+                height_deg=0.75,
+
+                corners=(
+
+                    SkyExplorerCorner("Top Left", 9.5, 20.5),
+
+                    SkyExplorerCorner("Top Right", 10.5, 20.5),
+
+                    SkyExplorerCorner("Bottom Right", 10.5, 19.5),
+
+                    SkyExplorerCorner("Bottom Left", 9.5, 19.5),
+
+                ),
+
+            ),
+
+            objects=(),
+
+            layer_summaries=(),
+
+            summary_text="Found 0 objects.",
+
+        )
+
+        self.assertFalse(self.window._settings.keep_mode_state_on_switch)
+
+        self.window._handle_app_mode_changed(AppMode.DIFFERENTIAL_PHOTOMETRY)
+
+        self.assertIsNone(self.window._current_sky_explorer_result)
+
+        self.assertIsNone(self.window._current_sky_explorer_source_image)
+
+
+
+    def test_mode_switch_preserves_sky_explorer_result_when_keep_memory_enabled(self) -> None:
+
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_keep.fits"
+
+        image_path.touch()
+
+        result = SkyExplorerResult(
+
+            source_path=image_path,
+
+            solved_field=SolvedField(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.5,
+
+                width=16,
+
+                height=16,
+
+                wcs_path=image_path,
+
+            ),
+
+            used_astrometry_fallback=False,
+
+            footprint=SkyExplorerFieldFootprint(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.5,
+
+                width_deg=1.0,
+
+                height_deg=0.75,
+
+                corners=(
+
+                    SkyExplorerCorner("Top Left", 9.5, 20.5),
+
+                    SkyExplorerCorner("Top Right", 10.5, 20.5),
+
+                    SkyExplorerCorner("Bottom Right", 10.5, 19.5),
+
+                    SkyExplorerCorner("Bottom Left", 9.5, 19.5),
+
+                ),
+
+            ),
+
+            objects=(),
+
+            layer_summaries=(),
+
+            summary_text="Found 0 objects.",
+
+        )
+
+        self.window._current_sky_explorer_source_image = image_path
+
+        self.window._current_sky_explorer_result = result
+
+        self.window._settings.keep_mode_state_on_switch = True
+
+        self.window._handle_app_mode_changed(AppMode.DIFFERENTIAL_PHOTOMETRY)
+
+        self.assertIs(self.window._current_sky_explorer_result, result)
+
+        self.assertEqual(self.window._current_sky_explorer_source_image, image_path)
+
+
+
+    def test_mode_switch_purges_sky_view_catalog_loaded_flag_by_default(self) -> None:
+
+        scientific_objects = (
+            SkyAtlasObject(
+                name="HIP 32349",
+                object_type="Star",
+                ra_deg=101.2875,
+                dec_deg=-16.7161,
+                magnitude=-1.46,
+                catalog="Hipparcos",
+                searchable=False,
+                label_visible=False,
+            ),
+        )
+
+        with (
+            patch("photometry_app.ui.main_window.load_sky_atlas_objects", return_value=scientific_objects),
+            patch.object(self.window, "showMaximized"),
+        ):
+
+            self.window._handle_app_mode_changed(AppMode.SKY_VIEW)
+
+        self.assertTrue(self.window._sky_view_scientific_catalog_loaded)
+
+        self.window._handle_app_mode_changed(AppMode.DIFFERENTIAL_PHOTOMETRY)
+
+        self.assertFalse(self.window._sky_view_scientific_catalog_loaded)
+
+
+
     def test_open_file_action_routes_to_sky_explorer_browser(self) -> None:
 
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
@@ -22994,14 +23266,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         )
         self.assertLess(
             controls_layout.indexOf(self.window._sky_explorer_center_object_button),
-            controls_layout.indexOf(self.window._sky_explorer_mag_limit_button),
+            controls_layout.indexOf(self.window._sky_explorer_show_auto_annotations_button),
         )
         self.assertLess(
-            controls_layout.indexOf(self.window._sky_explorer_mag_limit_button),
-            controls_layout.indexOf(self.window._sky_explorer_collage_button),
-        )
-        self.assertLess(
-            controls_layout.indexOf(self.window._sky_explorer_collage_button),
+            controls_layout.indexOf(self.window._sky_explorer_show_auto_annotations_button),
             controls_layout.indexOf(self.window._sky_explorer_export_image_button),
         )
 
@@ -23236,7 +23504,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         fake_wcs = object()
         self.window._sky_explorer_image_wcs = lambda: fake_wcs
         self.window._sync_sky_explorer_image_controls()
-        self.assertTrue(self.window._sky_explorer_collage_button.isEnabled())
+        self.assertTrue(self.window._tools_create_collage_action.isEnabled())
         self.assertTrue(self.window._sky_explorer_can_export_collage())
 
         captured: dict[str, object] = {}
@@ -24418,11 +24686,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        self.window._sky_explorer_mag_limit_button.blockSignals(True)
-
-        self.window._sky_explorer_mag_limit_button.setChecked(True)
-
-        self.window._sky_explorer_mag_limit_button.blockSignals(False)
+        self.window._set_sky_explorer_mag_limit_active(True)
 
         self.window._ensure_settings().sky_explorer_mag_limit_examples_per_bin = 1
 
@@ -24487,11 +24751,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         settings.sky_explorer_mag_limit_text_size = 12.0
 
-        self.window._sky_explorer_mag_limit_button.blockSignals(True)
-
-        self.window._sky_explorer_mag_limit_button.setChecked(True)
-
-        self.window._sky_explorer_mag_limit_button.blockSignals(False)
+        self.window._set_sky_explorer_mag_limit_active(True)
 
 
         overlays = [overlay for overlay in self.window._current_sky_explorer_image_overlays() if overlay.source_id.startswith("mag-limit:")]
@@ -24538,7 +24798,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         ):
 
-            self.window._sky_explorer_mag_limit_button.setChecked(True)
+            self.window._apply_sky_explorer_mag_limit_options(
+                self.window._sky_explorer_mag_limit_options_from_settings()
+            )
 
 
         worker_class.assert_called_once()
@@ -24606,11 +24868,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.window._current_sky_explorer_result = existing_result
 
-        self.window._sky_explorer_mag_limit_button.blockSignals(True)
-
-        self.window._sky_explorer_mag_limit_button.setChecked(True)
-
-        self.window._sky_explorer_mag_limit_button.blockSignals(False)
+        self.window._set_sky_explorer_mag_limit_active(True)
 
 
         with patch.object(self.window, "_refresh_sky_explorer_image_view"), patch.object(self.window, "_sync_sky_explorer_image_controls"):
@@ -24657,11 +24915,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_mag_limit_query_signature()
 
-        self.window._sky_explorer_mag_limit_button.blockSignals(True)
-
-        self.window._sky_explorer_mag_limit_button.setChecked(True)
-
-        self.window._sky_explorer_mag_limit_button.blockSignals(False)
+        self.window._set_sky_explorer_mag_limit_active(True)
 
 
         mag_limit_labels = [overlay.name for overlay in self.window._current_sky_explorer_image_overlays() if overlay.source_id.startswith("mag-limit:")]
@@ -24704,7 +24958,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         with patch.object(self.window, "_refresh_sky_explorer_image_view"), patch.object(self.window, "_start_sky_explorer_mag_limit_query") as start_query:
 
-            self.window._sky_explorer_mag_limit_button.setChecked(True)
+            self.window._apply_sky_explorer_mag_limit_options(
+                self.window._sky_explorer_mag_limit_options_from_settings()
+            )
 
 
         start_query.assert_called_once()
@@ -24743,7 +24999,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         with patch.object(self.window, "_refresh_sky_explorer_image_view"), patch.object(self.window, "_start_sky_explorer_mag_limit_query") as start_query:
 
-            self.window._sky_explorer_mag_limit_button.setChecked(True)
+            self.window._apply_sky_explorer_mag_limit_options(
+                self.window._sky_explorer_mag_limit_options_from_settings()
+            )
 
 
         start_query.assert_called_once()
@@ -24809,11 +25067,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        self.window._sky_explorer_mag_limit_button.blockSignals(True)
-
-        self.window._sky_explorer_mag_limit_button.setChecked(True)
-
-        self.window._sky_explorer_mag_limit_button.blockSignals(False)
+        self.window._set_sky_explorer_mag_limit_active(True)
 
 
         overlays = self.window._current_sky_explorer_image_overlays()
@@ -24853,11 +25107,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        self.window._sky_explorer_mag_limit_button.blockSignals(True)
-
-        self.window._sky_explorer_mag_limit_button.setChecked(True)
-
-        self.window._sky_explorer_mag_limit_button.blockSignals(False)
+        self.window._set_sky_explorer_mag_limit_active(True)
 
         mag_limit_result = SkyExplorerResult(
 
@@ -24970,11 +25220,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_mag_limit_query_signature()
 
-        self.window._sky_explorer_mag_limit_button.blockSignals(True)
-
-        self.window._sky_explorer_mag_limit_button.setChecked(True)
-
-        self.window._sky_explorer_mag_limit_button.blockSignals(False)
+        self.window._set_sky_explorer_mag_limit_active(True)
 
         with patch.object(self.window, "_refresh_sky_explorer_image_view"), patch.object(self.window, "_sync_sky_explorer_image_controls"):
 
@@ -25035,11 +25281,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_mag_limit_query_signature()
 
-        self.window._sky_explorer_mag_limit_button.blockSignals(True)
-
-        self.window._sky_explorer_mag_limit_button.setChecked(True)
-
-        self.window._sky_explorer_mag_limit_button.blockSignals(False)
+        self.window._set_sky_explorer_mag_limit_active(True)
 
         self.window._sky_explorer_center_object_button.setChecked(True)
 
@@ -28397,6 +28639,39 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(fwhm_series, (3.1, 2.9, 2.7))
 
+    def test_astrostack_plot_metric_series_uses_moon_illumination_and_impact(self) -> None:
+
+        self.window._astrostack_existing_frame_paths = MagicMock(
+            return_value=[Path("a.fits"), Path("b.fits"), Path("c.fits")]
+        )
+
+        self.window._astrostack_snr_frame_indices = (1, 2, 3)
+
+        self.window._ensure_astrostack_moonlight_series = MagicMock(
+            return_value=(
+                (12.5, 48.0, 91.0),
+                (8.0, 35.0, 72.0),
+                ("Low", "Moderate", "Severe"),
+            )
+        )
+
+        self.assertEqual(
+            self.window._astrostack_plot_metric_series("moon_illumination"),
+            (12.5, 48.0, 91.0),
+        )
+
+        self.assertEqual(
+            self.window._astrostack_plot_metric_series("moonlight_impact"),
+            (8.0, 35.0, 72.0),
+        )
+
+        self.window._astrostack_snr_highlight_index = 1
+
+        self.assertEqual(
+            self.window._astrostack_plot_metric_axis_label("moonlight_impact", ""),
+            "Moonlight impact (Moderate)",
+        )
+
     def test_astrostack_plot_metric_series_preview_uses_only_first_frame_measurement(self) -> None:
 
         self.window._astrostack_frame_paths = [Path("a.fits"), Path("b.fits"), Path("c.fits")]
@@ -28574,6 +28849,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             patch.object(self.window, "_astrostack_reference_image_dimensions", return_value=(100, 100)),
 
+            patch.object(self.window, "_astrostack_canvas_dimensions", return_value=(100, 100)),
+
             patch("photometry_app.ui.main_window.QFileDialog.getSaveFileName", return_value=(str(preset_path), ASTROSTACK_PRESET_FILE_FILTER)),
 
             patch("photometry_app.ui.main_window.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes),
@@ -28596,11 +28873,27 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(self.window._astrostack_overlay_layers[1].shape, "plot")
 
-        self.assertNotEqual(self.window._astrostack_overlay_layers[0].layer_id, "layer-1")
+        self.assertAlmostEqual(self.window._astrostack_overlay_layers[0].x, 10.0)
+
+        self.assertAlmostEqual(self.window._astrostack_overlay_layers[0].y, 20.0)
+
+        self.assertAlmostEqual(self.window._astrostack_overlay_layers[1].x, 30.0)
+
+        self.assertAlmostEqual(self.window._astrostack_overlay_layers[1].y, 40.0)
 
         self.assertEqual(len(self.window._astrostack_roi_selections), 1)
 
         self.assertAlmostEqual(self.window._astrostack_roi_selections[0].x0, 5.0)
+
+        payload = json.loads(preset_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["version"], 3)
+
+        self.assertEqual(payload["coordinate_space"], "canvas")
+
+        self.assertAlmostEqual(payload["layers"][0]["x"], 0.1)
+
+        self.assertAlmostEqual(payload["layers"][0]["y"], 0.2)
 
     def test_astrostack_toolbar_uses_crop_and_display_menu(self) -> None:
 
@@ -44823,7 +45116,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_asteroid_overlays_can_hide_known_objects_entirely(self) -> None:
+    def test_asteroid_overlays_use_configured_marker_style(self) -> None:
 
         source_path = Path(self._config_dir.name) / "known_hidden.fit"
 
@@ -44869,11 +45162,15 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        self.window._settings.asteroid_visual_show_known_objects = False
+        self.window._settings.asteroid_visual_show_known_objects = True
 
-        self.window._settings.asteroid_visual_show_object_markers = False
+        self.window._settings.asteroid_visual_show_object_markers = True
 
         self.window._settings.asteroid_visual_label_all_objects = False
+
+        self.window._settings.asteroid_visual_marker_style = "brackets"
+
+        self.window._settings.asteroid_visual_show_target_marker = True
 
         self.window._current_asteroid_source_image = source_path
 
@@ -44907,13 +45204,21 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
+        self.window._selected_asteroid_detection_index = 0
+
         overlays = self.window._current_asteroid_image_overlays()
 
-        self.assertEqual(overlays, [])
+        self.assertEqual(len(overlays), 1)
+
+        self.assertEqual(overlays[0].marker_style, "brackets")
+
+        self.assertTrue(overlays[0].show_marker)
+
+        self.assertFalse(overlays[0].show_center_dot)
 
 
 
-    def test_asteroid_overlays_can_show_labels_without_markers(self) -> None:
+    def test_asteroid_overlays_always_show_markers_with_labels(self) -> None:
 
         source_path = Path(self._config_dir.name) / "known_labels_only.fit"
 
@@ -44959,11 +45264,15 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        self.window._settings.asteroid_visual_show_known_objects = False
+        self.window._settings.asteroid_visual_show_known_objects = True
 
-        self.window._settings.asteroid_visual_show_object_markers = False
+        self.window._settings.asteroid_visual_show_object_markers = True
 
         self.window._settings.asteroid_visual_label_all_objects = True
+
+        self.window._settings.asteroid_visual_show_all_crosshairs = False
+
+        self.window._settings.asteroid_visual_marker_style = "circle"
 
         self.window._current_asteroid_source_image = source_path
 
@@ -45005,9 +45314,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(len(overlays), 1)
 
-        self.assertFalse(overlays[0].show_marker)
+        self.assertTrue(overlays[0].show_marker)
 
         self.assertTrue(overlays[0].show_label)
+
+        self.assertEqual(overlays[0].marker_style, "circle")
+
+        self.assertFalse(overlays[0].show_center_dot)
 
 
 
@@ -46031,6 +46344,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.window._asteroid_results_table.selectRow(0)
 
         settings = self.window._ensure_settings()
+        settings.asteroid_visual_marker_style = "circle"
+        settings.asteroid_visual_show_target_marker = False
         settings.asteroid_target_marker_line_color = "#aa1122"
         settings.asteroid_target_marker_accent_color = "#33cc88"
         settings.asteroid_target_marker_text_color = "#fef3c7"
@@ -46043,15 +46358,17 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.window._asteroid_target_marker_button.setChecked(True)
 
         self.assertTrue(settings.asteroid_visual_show_target_marker)
+        self.assertEqual(settings.asteroid_visual_marker_style, "circle")
 
         overlay = next(overlay for overlay in self.window._current_asteroid_image_overlays() if overlay.source_id == "solar:0:predicted")
-        self.assertEqual(overlay.marker_style, "target")
+        self.assertEqual(overlay.marker_style, "circle")
         self.assertEqual(overlay.color, "#aa1122")
         self.assertEqual(overlay.accent_color, "#33cc88")
         self.assertEqual(overlay.text_color, "#fef3c7")
         self.assertEqual(overlay.outline_color, "#123456")
         self.assertEqual(overlay.pen_width, 5.5)
-        self.assertTrue(overlay.show_center_dot)
+        self.assertFalse(overlay.show_center_dot)
+        self.assertEqual(settings.asteroid_visual_marker_style, "circle")
 
     def test_toggling_asteroid_invert_stops_blink_playback_first(self) -> None:
 
@@ -46075,7 +46392,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         refresh_image.assert_called_once_with(reset_view=False)
 
-    def test_selected_asteroid_target_marker_shows_when_general_markers_are_hidden(self) -> None:
+    def test_selected_asteroid_target_marker_uses_configured_style_only_for_selected(self) -> None:
 
         source_path = Path(self._config_dir.name) / "asteroid_target_without_markers.fit"
 
@@ -46125,9 +46442,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         ]
 
         settings = self.window._ensure_settings()
-        settings.asteroid_visual_show_known_objects = False
-        settings.asteroid_visual_show_object_markers = False
+        settings.asteroid_visual_show_known_objects = True
+        settings.asteroid_visual_show_object_markers = True
         settings.asteroid_visual_label_all_objects = False
+        settings.asteroid_visual_show_all_crosshairs = False
+        settings.asteroid_visual_marker_style = "target"
         settings.asteroid_visual_show_target_marker = True
         self.window._current_asteroid_source_image = source_path
         self.window._current_asteroid_detection_result = SolarSystemDetectionResult(
@@ -46157,10 +46476,12 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         overlays = self.window._current_asteroid_image_overlays()
 
         self.assertEqual(len(overlays), 1)
-        self.assertEqual(overlays[0].source_id, "solar:1:predicted")
-        self.assertEqual(overlays[0].marker_style, "target")
-        self.assertTrue(overlays[0].show_marker)
-        self.assertFalse(overlays[0].show_label)
+        selected = overlays[0]
+        self.assertEqual(selected.source_id, "solar:1:predicted")
+        self.assertEqual(selected.marker_style, "target")
+        self.assertTrue(selected.show_marker)
+        self.assertFalse(selected.show_center_dot)
+        self.assertFalse(selected.show_label)
 
     def test_selected_discovery_overlay_uses_configured_target_marker_style(self) -> None:
 
@@ -50109,13 +50430,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._asteroid_search_parallel_workers_input.setValue(5)
 
-            dialog._asteroid_visual_show_known_objects_input.setChecked(False)
-
             dialog._asteroid_visual_show_potential_discoveries_input.setChecked(False)
 
             dialog._asteroid_visual_label_all_objects_input.setChecked(False)
-
-            dialog._asteroid_visual_show_all_crosshairs_input.setChecked(False)
 
             dialog._asteroid_visual_highlight_selected_object_input.setChecked(False)
 
@@ -50145,15 +50462,15 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertEqual(updated_settings.asteroid_search_parallel_workers, 5)
 
-            self.assertFalse(updated_settings.asteroid_visual_show_known_objects)
+            self.assertTrue(updated_settings.asteroid_visual_show_known_objects)
 
-            self.assertFalse(updated_settings.asteroid_visual_show_object_markers)
+            self.assertTrue(updated_settings.asteroid_visual_show_object_markers)
 
             self.assertFalse(updated_settings.asteroid_visual_show_potential_discoveries)
 
             self.assertFalse(updated_settings.asteroid_visual_label_all_objects)
 
-            self.assertFalse(updated_settings.asteroid_visual_show_all_crosshairs)
+            self.assertEqual(updated_settings.asteroid_visual_marker_style, "target")
 
             self.assertFalse(updated_settings.asteroid_visual_highlight_selected_object)
 
@@ -50491,7 +50808,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertTrue(updated_settings.asteroid_visual_label_all_objects)
 
-            self.assertTrue(updated_settings.asteroid_visual_show_all_crosshairs)
+            self.assertEqual(updated_settings.asteroid_visual_marker_style, "target")
 
             self.assertTrue(updated_settings.asteroid_visual_highlight_selected_object)
 
@@ -55487,6 +55804,38 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(self.window._processing_progress_bar.minimum(), 0)
 
         self.assertEqual(self.window._processing_progress_bar.maximum(), 0)
+
+
+    def test_terminate_differential_workflow_stops_progress_bar_and_logs_termination(self) -> None:
+
+        self.window._reset_processing_progress_state("Demo")
+
+        self.window._handle_process_progress("[WCS 3/6] Inspecting demo_03.fits.")
+
+        self.assertEqual(self.window._processing_progress_bar.maximum(), 0)
+
+
+
+        self.window._terminate_differential_workflow()
+
+
+
+        self.assertIsNone(self.window._processing_started_monotonic)
+
+        self.assertEqual(self.window._processing_progress_bar.maximum(), 1)
+
+        self.assertEqual(self.window._processing_progress_bar.value(), 0)
+
+        self.assertIn("terminated by user", self.window._work_log_output.toPlainText())
+
+
+
+        # A late progress message must not re-activate the top progress bar.
+
+        self.window._handle_process_progress("[Photometry 2/10] Measuring demo_04.fits.")
+
+        self.assertEqual(self.window._processing_progress_bar.maximum(), 1)
+
 
 
     def test_processing_progress_bar_sits_above_app_mode_stack(self) -> None:

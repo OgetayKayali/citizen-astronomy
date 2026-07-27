@@ -1503,6 +1503,94 @@ class SettingsTest(unittest.TestCase):
 
 
 
+    def test_settings_round_trip_preserves_keep_mode_state_on_switch(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            settings = AppSettings(
+
+                astrometry_api_key=None,
+
+                cache_dir=root / ".photometry-cache",
+
+                config_path=root / ".photometry-settings.json",
+
+                assume_aligned_images=False,
+
+                nearby_reference_count=5,
+
+                photometry_aperture_mode=PhotometryApertureMode.FWHM_SCALED,
+
+                aperture_radius_pixels=5.0,
+
+                annulus_inner_radius_pixels=8.0,
+
+                annulus_outer_radius_pixels=12.0,
+
+                aperture_radius_fwhm_scale=1.6,
+
+                annulus_inner_radius_fwhm_scale=3.0,
+
+                annulus_outer_radius_fwhm_scale=4.5,
+
+                variable_star_limit_mode=VariableStarLimitMode.PERCENT,
+
+                variable_star_limit_value=25,
+
+                variable_star_designation_filters=[VariableStarDesignationFamily.NAMED],
+
+                keep_mode_state_on_switch=True,
+
+            )
+
+
+
+            settings.save(root)
+
+            loaded = AppSettings.from_root(root)
+
+
+
+            self.assertTrue(loaded.keep_mode_state_on_switch)
+
+            self.assertFalse(AppSettings(
+
+                astrometry_api_key=None,
+
+                cache_dir=root / ".photometry-cache",
+
+                config_path=root / ".photometry-settings-default.json",
+
+                assume_aligned_images=False,
+
+                nearby_reference_count=5,
+
+                photometry_aperture_mode=PhotometryApertureMode.FWHM_SCALED,
+
+                aperture_radius_pixels=5.0,
+
+                annulus_inner_radius_pixels=8.0,
+
+                annulus_outer_radius_pixels=12.0,
+
+                aperture_radius_fwhm_scale=1.6,
+
+                annulus_inner_radius_fwhm_scale=3.0,
+
+                annulus_outer_radius_fwhm_scale=4.5,
+
+                variable_star_limit_mode=VariableStarLimitMode.PERCENT,
+
+                variable_star_limit_value=25,
+
+                variable_star_designation_filters=[VariableStarDesignationFamily.NAMED],
+
+            ).keep_mode_state_on_switch)
+
+
+
     def test_settings_round_trip_preserves_saturation_filter_toggle(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2001,7 +2089,7 @@ class SettingsTest(unittest.TestCase):
 
                 variable_star_designation_filters=[VariableStarDesignationFamily.NAMED],
 
-                theme="tokyo-night",
+                theme="crimson",
 
             )
 
@@ -2013,7 +2101,7 @@ class SettingsTest(unittest.TestCase):
 
 
 
-            self.assertEqual(loaded.theme, "tokyo-night")
+            self.assertEqual(loaded.theme, "crimson")
 
 
 

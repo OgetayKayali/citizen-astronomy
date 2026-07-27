@@ -540,6 +540,10 @@ class _VisibleLimitEstimateOptions:
 
     annotate_lowest_mag_stars: bool
 
+    step_magnitude: float = _VISIBLE_LIMIT_STEP_MAG
+
+    annotate_all_visible_stars: bool = False
+
 
 
 
@@ -1827,9 +1831,13 @@ def estimate_visible_magnitude_limit(
 
     catalog_service: CatalogService | None = None,
 
+    options: _VisibleLimitEstimateOptions | None = None,
+
 ) -> SolarSystemVisibilityEstimateResult:
 
-    options = _visible_limit_estimate_options(settings)
+    options = options or _visible_limit_estimate_options(settings)
+
+    step_magnitude = max(0.1, float(options.step_magnitude))
 
     solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=progress_callback)
 
@@ -1871,7 +1879,7 @@ def estimate_visible_magnitude_limit(
 
         progress_callback(
 
-            f"Projected {len(projected_stars)} Gaia star(s) into the image and sampling them in {_VISIBLE_LIMIT_STEP_MAG:.1f} mag steps starting at {options.start_magnitude:.1f} mag."
+            f"Projected {len(projected_stars)} Gaia star(s) into the image and sampling them in {step_magnitude:.1f} mag steps starting at {options.start_magnitude:.1f} mag."
 
         )
 
@@ -1907,7 +1915,7 @@ def estimate_visible_magnitude_limit(
 
             f"{chosen_result.visible_count}/{chosen_result.tested_count} visible star(s) in the "
 
-            f"{chosen_result.bin_start_magnitude:.1f}-{chosen_result.bin_start_magnitude + _VISIBLE_LIMIT_STEP_MAG:.1f} mag bin "
+            f"{chosen_result.bin_start_magnitude:.1f}-{chosen_result.bin_start_magnitude + step_magnitude:.1f} mag bin "
 
             f"(median SNR {chosen_result.median_visible_snr:.1f})."
 
@@ -1929,7 +1937,7 @@ def estimate_visible_magnitude_limit(
 
             f"{chosen_result.visible_count}/{chosen_result.tested_count} visible star(s) in the "
 
-            f"{chosen_result.bin_start_magnitude:.1f}-{chosen_result.bin_start_magnitude + _VISIBLE_LIMIT_STEP_MAG:.1f} mag bin."
+            f"{chosen_result.bin_start_magnitude:.1f}-{chosen_result.bin_start_magnitude + step_magnitude:.1f} mag bin."
 
         )
 
@@ -1942,6 +1950,10 @@ def estimate_visible_magnitude_limit(
             sorted(chosen_result.visible_stars, key=lambda item: item.magnitude, reverse=True)[: options.required_visible_count]
 
         )
+
+    elif options.annotate_all_visible_stars:
+
+        annotated_stars = tuple(sorted(chosen_result.visible_stars, key=lambda item: item.magnitude, reverse=True))
 
     return SolarSystemVisibilityEstimateResult(
 
@@ -3255,7 +3267,7 @@ def _measure_local_match(
 
     if image_data.ndim != 2 or image_data.size == 0:
 
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
 
     search_radius = max(5, min(18, int(math.ceil(5.0 + min(expected_trail_length_px or 0.0, 10.0)))))
 
@@ -3401,6 +3413,56 @@ def _visible_limit_estimate_options(settings: AppSettings) -> _VisibleLimitEstim
 
         annotate_lowest_mag_stars=bool(settings.asteroid_estimate_annotate_lowest_mag_stars),
 
+        step_magnitude=_VISIBLE_LIMIT_STEP_MAG,
+
+        annotate_all_visible_stars=False,
+
+    )
+
+
+
+
+
+def build_visible_limit_estimate_options(
+
+    *,
+
+    snr_threshold: float,
+
+    start_magnitude: float,
+
+    stars_per_bin: int,
+
+    required_visible_count: int,
+
+    annotate_lowest_mag_stars: bool = False,
+
+    step_magnitude: float = _VISIBLE_LIMIT_STEP_MAG,
+
+    annotate_all_visible_stars: bool = False,
+
+) -> _VisibleLimitEstimateOptions:
+
+    resolved_stars_per_bin = max(2, int(stars_per_bin))
+
+    resolved_required = min(max(1, int(required_visible_count)), resolved_stars_per_bin - 1)
+
+    return _VisibleLimitEstimateOptions(
+
+        snr_threshold=min(100.0, max(0.1, float(snr_threshold))),
+
+        start_magnitude=min(30.0, max(-5.0, float(start_magnitude))),
+
+        stars_per_bin=resolved_stars_per_bin,
+
+        required_visible_count=resolved_required,
+
+        annotate_lowest_mag_stars=bool(annotate_lowest_mag_stars),
+
+        step_magnitude=max(0.1, float(step_magnitude)),
+
+        annotate_all_visible_stars=bool(annotate_all_visible_stars),
+
     )
 
 
@@ -3477,13 +3539,15 @@ def _probe_visible_limit_bins(
 
         return []
 
+    step_magnitude = max(0.1, float(options.step_magnitude))
+
     available_bin_starts = sorted(
 
         {
 
             options.start_magnitude
 
-            + (math.floor((float(item.star.magnitude or options.start_magnitude) - options.start_magnitude) / _VISIBLE_LIMIT_STEP_MAG) * _VISIBLE_LIMIT_STEP_MAG)
+            + (math.floor((float(item.star.magnitude or options.start_magnitude) - options.start_magnitude) / step_magnitude) * step_magnitude)
 
             for item in projected_stars
 
@@ -3499,7 +3563,7 @@ def _probe_visible_limit_bins(
 
     for bin_start in available_bin_starts:
 
-        bin_end = bin_start + _VISIBLE_LIMIT_STEP_MAG
+        bin_end = bin_start + step_magnitude
 
         bin_candidates = [
 
@@ -3521,7 +3585,7 @@ def _probe_visible_limit_bins(
 
         if len(bin_candidates) >= options.required_visible_count:
 
-            bin_candidates.sort(key=lambda item: abs(float(item.star.magnitude or bin_start) - (bin_start + (_VISIBLE_LIMIT_STEP_MAG / 2.0))))
+            bin_candidates.sort(key=lambda item: abs(float(item.star.magnitude or bin_start) - (bin_start + (step_magnitude / 2.0))))
 
             visible_stars: list[SolarSystemVisibilityEstimateStar] = []
 

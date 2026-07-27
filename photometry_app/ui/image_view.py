@@ -2859,6 +2859,76 @@ class AnnotatedImageView(QWidget):
 
             return
 
+        if overlay.marker_style == "brackets":
+
+            half = max(6.0, float(overlay.aperture_radius))
+
+            arm = max(4.0, min(half * 0.5, half - 1.5))
+
+            corners = (
+
+                (overlay.x - half, overlay.y - half, arm, arm, 1, 1),
+
+                (overlay.x + half, overlay.y - half, arm, arm, -1, 1),
+
+                (overlay.x - half, overlay.y + half, arm, arm, 1, -1),
+
+                (overlay.x + half, overlay.y + half, arm, arm, -1, -1),
+
+            )
+
+            def draw_brackets(active_painter: QPainter) -> None:
+
+                for cx, cy, arm_x, arm_y, sx, sy in corners:
+
+                    active_painter.drawLine(QPointF(cx, cy), QPointF(cx + sx * arm_x, cy))
+
+                    active_painter.drawLine(QPointF(cx, cy), QPointF(cx, cy + sy * arm_y))
+
+            if outline_pen is not None:
+
+                painter.setPen(outline_pen)
+
+                draw_brackets(painter)
+
+            painter.setPen(pen)
+
+            draw_brackets(painter)
+
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+
+            return
+
+        if overlay.marker_style == "crosshair":
+
+            half = max(8.0, float(overlay.aperture_radius) * 1.35)
+
+            gap = max(3.0, min(half * 0.4, half - 2.0))
+
+            def draw_crosshair(active_painter: QPainter) -> None:
+
+                active_painter.drawLine(QPointF(overlay.x - half, overlay.y), QPointF(overlay.x - gap, overlay.y))
+
+                active_painter.drawLine(QPointF(overlay.x + gap, overlay.y), QPointF(overlay.x + half, overlay.y))
+
+                active_painter.drawLine(QPointF(overlay.x, overlay.y - half), QPointF(overlay.x, overlay.y - gap))
+
+                active_painter.drawLine(QPointF(overlay.x, overlay.y + gap), QPointF(overlay.x, overlay.y + half))
+
+            if outline_pen is not None:
+
+                painter.setPen(outline_pen)
+
+                draw_crosshair(painter)
+
+            painter.setPen(pen)
+
+            draw_crosshair(painter)
+
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+
+            return
+
         if overlay.marker_style == "target":
 
             half_box = max(4.0, float(overlay.aperture_radius))

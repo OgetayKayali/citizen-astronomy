@@ -109,7 +109,7 @@ _DEFAULT_CUSTOM_THEME_COLORS = {
 
 
 
-_VALID_THEME_NAMES = {"normal", "dark", "dracula", "nord", "tokyo-night", "gruvbox", "catppuccin", "solarized-dark", "one-dark", "custom"}
+_VALID_THEME_NAMES = {"normal", "dark", "dracula", "nord", "tokyo-night", "gruvbox", "catppuccin", "solarized-dark", "one-dark", "crimson", "blood-moon", "custom"}
 _DEFAULT_THEME = "gruvbox"
 
 _APP_STATE_FILE_NAME = "state.json"
@@ -453,6 +453,20 @@ class AppSettings:
 
     sky_explorer_mag_limit_examples_per_bin: int = 1
 
+    sky_explorer_mag_limit_bin_size_mag: float = 0.5
+
+    sky_explorer_mag_limit_mark_only_faintest: bool = False
+
+    sky_explorer_mag_limit_auto_stars_per_bin: int = 10
+
+    sky_explorer_mag_limit_auto_required_visible_stars: int = 7
+
+    sky_explorer_mag_limit_auto_start_magnitude: float = 12.0
+
+    sky_explorer_mag_limit_auto_step_magnitude: float = 0.5
+
+    sky_explorer_mag_limit_auto_snr_threshold: float = 5.0
+
     sky_explorer_mag_limit_marker_color: str = "#3d8bfd"
 
     sky_explorer_mag_limit_marker_stroke_color: str = "#111827"
@@ -578,6 +592,8 @@ class AppSettings:
     asteroid_visual_label_all_objects: bool = True
 
     asteroid_visual_show_target_marker: bool = False
+
+    asteroid_visual_marker_style: str = "target"
 
     asteroid_visual_show_all_crosshairs: bool = True
 
@@ -718,6 +734,8 @@ class AppSettings:
     interface_tips_enabled: bool = True
 
     show_mode_launcher_on_startup: bool = True
+
+    keep_mode_state_on_switch: bool = False
 
     app_mode: AppMode = AppMode.DIFFERENTIAL_PHOTOMETRY
 
@@ -1752,6 +1770,16 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         sky_explorer_gaia_hard_cap_enabled=bool(payload.get("sky_explorer_gaia_hard_cap_enabled", False)),
         sky_explorer_gaia_hard_cap_rows=_coerce_sky_explorer_gaia_hard_cap_rows(payload.get("sky_explorer_gaia_hard_cap_rows", 1000)),
         sky_explorer_mag_limit_examples_per_bin=_coerce_sky_explorer_mag_limit_examples_per_bin(payload.get("sky_explorer_mag_limit_examples_per_bin", 1)),
+        sky_explorer_mag_limit_bin_size_mag=_coerce_sky_explorer_mag_limit_bin_size_mag(payload.get("sky_explorer_mag_limit_bin_size_mag", 0.5)),
+        sky_explorer_mag_limit_mark_only_faintest=bool(payload.get("sky_explorer_mag_limit_mark_only_faintest", False)),
+        sky_explorer_mag_limit_auto_stars_per_bin=_coerce_sky_explorer_mag_limit_auto_stars_per_bin(payload.get("sky_explorer_mag_limit_auto_stars_per_bin", 10)),
+        sky_explorer_mag_limit_auto_required_visible_stars=_coerce_sky_explorer_mag_limit_auto_required_visible_stars(
+            payload.get("sky_explorer_mag_limit_auto_required_visible_stars", 7),
+            stars_per_bin=_coerce_sky_explorer_mag_limit_auto_stars_per_bin(payload.get("sky_explorer_mag_limit_auto_stars_per_bin", 10)),
+        ),
+        sky_explorer_mag_limit_auto_start_magnitude=_coerce_sky_explorer_mag_limit_auto_start_magnitude(payload.get("sky_explorer_mag_limit_auto_start_magnitude", 12.0)),
+        sky_explorer_mag_limit_auto_step_magnitude=_coerce_sky_explorer_mag_limit_bin_size_mag(payload.get("sky_explorer_mag_limit_auto_step_magnitude", 0.5)),
+        sky_explorer_mag_limit_auto_snr_threshold=_coerce_sky_explorer_mag_limit_auto_snr_threshold(payload.get("sky_explorer_mag_limit_auto_snr_threshold", 5.0)),
         sky_explorer_mag_limit_marker_color=_coerce_hex_color(payload.get("sky_explorer_mag_limit_marker_color"), default="#3d8bfd"),
         sky_explorer_mag_limit_marker_stroke_color=_coerce_hex_color(payload.get("sky_explorer_mag_limit_marker_stroke_color"), default="#111827"),
         sky_explorer_mag_limit_marker_stroke_width=_coerce_sky_explorer_mag_limit_marker_stroke_width(payload.get("sky_explorer_mag_limit_marker_stroke_width", 2.0)),
@@ -1841,6 +1869,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         asteroid_visual_label_all_objects=asteroid_visual_label_all_objects,
 
         asteroid_visual_show_target_marker=asteroid_visual_show_target_marker,
+
+        asteroid_visual_marker_style=_coerce_asteroid_visual_marker_style(payload.get("asteroid_visual_marker_style")),
 
         asteroid_track_object_position_mode=asteroid_track_object_position_mode,
 
@@ -1983,6 +2013,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         interface_tips_enabled=bool(payload.get("interface_tips_enabled", True)),
 
         show_mode_launcher_on_startup=bool(payload.get("show_mode_launcher_on_startup", True)),
+
+        keep_mode_state_on_switch=bool(payload.get("keep_mode_state_on_switch", False)),
 
         app_mode=app_mode,
 
@@ -2296,6 +2328,16 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "sky_explorer_gaia_hard_cap_enabled": bool(settings.sky_explorer_gaia_hard_cap_enabled),
         "sky_explorer_gaia_hard_cap_rows": _coerce_sky_explorer_gaia_hard_cap_rows(settings.sky_explorer_gaia_hard_cap_rows),
         "sky_explorer_mag_limit_examples_per_bin": _coerce_sky_explorer_mag_limit_examples_per_bin(settings.sky_explorer_mag_limit_examples_per_bin),
+        "sky_explorer_mag_limit_bin_size_mag": _coerce_sky_explorer_mag_limit_bin_size_mag(settings.sky_explorer_mag_limit_bin_size_mag),
+        "sky_explorer_mag_limit_mark_only_faintest": bool(settings.sky_explorer_mag_limit_mark_only_faintest),
+        "sky_explorer_mag_limit_auto_stars_per_bin": _coerce_sky_explorer_mag_limit_auto_stars_per_bin(settings.sky_explorer_mag_limit_auto_stars_per_bin),
+        "sky_explorer_mag_limit_auto_required_visible_stars": _coerce_sky_explorer_mag_limit_auto_required_visible_stars(
+            settings.sky_explorer_mag_limit_auto_required_visible_stars,
+            stars_per_bin=_coerce_sky_explorer_mag_limit_auto_stars_per_bin(settings.sky_explorer_mag_limit_auto_stars_per_bin),
+        ),
+        "sky_explorer_mag_limit_auto_start_magnitude": _coerce_sky_explorer_mag_limit_auto_start_magnitude(settings.sky_explorer_mag_limit_auto_start_magnitude),
+        "sky_explorer_mag_limit_auto_step_magnitude": _coerce_sky_explorer_mag_limit_bin_size_mag(settings.sky_explorer_mag_limit_auto_step_magnitude),
+        "sky_explorer_mag_limit_auto_snr_threshold": _coerce_sky_explorer_mag_limit_auto_snr_threshold(settings.sky_explorer_mag_limit_auto_snr_threshold),
         "sky_explorer_mag_limit_marker_color": _coerce_hex_color(settings.sky_explorer_mag_limit_marker_color, default="#3d8bfd"),
         "sky_explorer_mag_limit_marker_stroke_color": _coerce_hex_color(settings.sky_explorer_mag_limit_marker_stroke_color, default="#111827"),
         "sky_explorer_mag_limit_marker_stroke_width": _coerce_sky_explorer_mag_limit_marker_stroke_width(settings.sky_explorer_mag_limit_marker_stroke_width),
@@ -2391,6 +2433,8 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "asteroid_visual_label_all_objects": bool(settings.asteroid_visual_label_all_objects),
 
         "asteroid_visual_show_target_marker": bool(settings.asteroid_visual_show_target_marker),
+
+        "asteroid_visual_marker_style": _coerce_asteroid_visual_marker_style(settings.asteroid_visual_marker_style),
 
         "asteroid_track_object_position_mode": _coerce_asteroid_track_object_position_mode(settings.asteroid_track_object_position_mode),
 
@@ -2553,6 +2597,8 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "interface_tips_enabled": bool(settings.interface_tips_enabled),
 
         "show_mode_launcher_on_startup": bool(settings.show_mode_launcher_on_startup),
+
+        "keep_mode_state_on_switch": bool(settings.keep_mode_state_on_switch),
 
         "app_mode": settings.app_mode.value,
 
@@ -2867,6 +2913,20 @@ def _synthetic_tracking_legacy_combine_mode(integration_mode: object, rejection_
     return "mean"
 
 
+
+def _coerce_asteroid_visual_marker_style(value: object) -> str:
+    key = str(value or "target").strip().lower()
+    allowed = {"target", "circle", "brackets", "crosshair"}
+    if key in {"square", "aim", "square-aim", "square_aim"}:
+        return "target"
+    if key in {"open_cross", "open-cross", "open_crosshair"}:
+        return "crosshair"
+    if key in {"corner", "corner_brackets", "corner-brackets"}:
+        return "brackets"
+    if key == "diamond":
+        return "target"
+    return key if key in allowed else "target"
+
 def _coerce_asteroid_track_object_position_mode(value: object) -> str:
 
     normalized = str(value or "predicted").strip().lower()
@@ -3001,10 +3061,44 @@ def _coerce_sky_explorer_gaia_hard_cap_rows(value: object) -> int:
 
 def _coerce_sky_explorer_mag_limit_examples_per_bin(value: object) -> int:
     try:
-        numeric = int(value)
+        return max(1, min(20, int(value)))
     except (TypeError, ValueError):
         return 1
-    return min(10, max(1, numeric))
+
+
+def _coerce_sky_explorer_mag_limit_bin_size_mag(value: object) -> float:
+    try:
+        return max(0.1, min(5.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def _coerce_sky_explorer_mag_limit_auto_stars_per_bin(value: object) -> int:
+    try:
+        return max(2, min(50, int(value)))
+    except (TypeError, ValueError):
+        return 10
+
+
+def _coerce_sky_explorer_mag_limit_auto_required_visible_stars(value: object, *, stars_per_bin: int) -> int:
+    try:
+        return min(max(1, int(value)), max(1, int(stars_per_bin) - 1))
+    except (TypeError, ValueError):
+        return min(7, max(1, int(stars_per_bin) - 1))
+
+
+def _coerce_sky_explorer_mag_limit_auto_start_magnitude(value: object) -> float:
+    try:
+        return max(-5.0, min(30.0, float(value)))
+    except (TypeError, ValueError):
+        return 12.0
+
+
+def _coerce_sky_explorer_mag_limit_auto_snr_threshold(value: object) -> float:
+    try:
+        return max(0.1, min(100.0, float(value)))
+    except (TypeError, ValueError):
+        return 5.0
 
 
 def _coerce_sky_explorer_mag_limit_target_size(value: object) -> float:

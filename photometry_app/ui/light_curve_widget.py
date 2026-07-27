@@ -250,7 +250,7 @@ class LightCurvePlotWidget(QWidget):
 
         normalized_theme = str(theme).strip().lower()
 
-        if normalized_theme not in {"normal", "dark", "dracula", "nord", "tokyo-night", "gruvbox", "catppuccin", "solarized-dark", "one-dark", "custom"}:
+        if normalized_theme not in {"normal", "dark", "dracula", "nord", "tokyo-night", "gruvbox", "catppuccin", "solarized-dark", "one-dark", "crimson", "blood-moon", "custom"}:
 
             normalized_theme = "normal"
 
@@ -470,7 +470,7 @@ class LightCurvePlotWidget(QWidget):
 
     def _is_dark_theme(self) -> bool:
 
-        return self._theme in {"dark", "dracula", "nord", "tokyo-night", "gruvbox", "catppuccin", "solarized-dark", "one-dark"}
+        return self._theme in {"dark", "dracula", "nord", "tokyo-night", "gruvbox", "catppuccin", "solarized-dark", "one-dark", "crimson", "blood-moon"}
 
 
 

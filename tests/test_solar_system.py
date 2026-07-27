@@ -3674,6 +3674,16 @@ class SolarSystemTest(unittest.TestCase):
 
             settings = AppSettings.from_root(root_path)
 
+            settings.asteroid_estimate_snr_threshold = 4.0
+
+            settings.asteroid_estimate_start_magnitude = 15.0
+
+            settings.asteroid_estimate_stars_per_bin = 6
+
+            settings.asteroid_estimate_required_visible_stars = 3
+
+            settings.asteroid_estimate_annotate_lowest_mag_stars = False
+
             source_path = root_path / "demo.fits"
 
             source_path.write_bytes(b"demo")
@@ -3848,6 +3858,8 @@ class SolarSystemTest(unittest.TestCase):
 
                         1000.0,
 
+                        2.5,
+
                     ),
 
                 ),
@@ -3883,6 +3895,16 @@ class SolarSystemTest(unittest.TestCase):
             root_path = Path(temp_dir)
 
             settings = AppSettings.from_root(root_path)
+
+            settings.asteroid_estimate_snr_threshold = 4.0
+
+            settings.asteroid_estimate_start_magnitude = 15.0
+
+            settings.asteroid_estimate_stars_per_bin = 6
+
+            settings.asteroid_estimate_required_visible_stars = 3
+
+            settings.asteroid_estimate_annotate_lowest_mag_stars = False
 
             source_path = root_path / "demo.fits"
 
@@ -4003,6 +4025,8 @@ class SolarSystemTest(unittest.TestCase):
                         200.0,
 
                         1000.0,
+
+                        2.5,
 
                     ),
 
@@ -4164,13 +4188,13 @@ class SolarSystemTest(unittest.TestCase):
 
                 if predicted_x < 31.0:
 
-                    return predicted_x, predicted_y, 0.5, 6.3, 200.0, 1000.0
+                    return predicted_x, predicted_y, 0.5, 6.3, 200.0, 1000.0, 2.5
 
                 if predicted_x < 33.0:
 
-                    return predicted_x, predicted_y, 0.7, 6.1, 190.0, 900.0
+                    return predicted_x, predicted_y, 0.7, 6.1, 190.0, 900.0, 2.5
 
-                return predicted_x, predicted_y, 0.8, 5.4, 180.0, 850.0
+                return predicted_x, predicted_y, 0.8, 5.4, 180.0, 850.0, 2.5
 
 
 

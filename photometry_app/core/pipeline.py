@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 
 from collections.abc import Callable
 
@@ -20,6 +20,10 @@ from hashlib import sha256
 from pathlib import Path
 
 import numpy as np
+
+
+class PipelineCancelled(RuntimeError):
+    """Raised when differential photometry processing is terminated by the user."""
 
 
 
@@ -480,7 +484,15 @@ class PhotometryPipeline:
 
         progress_callback: Callable[[str], None] | None = None,
 
+        cancel_requested: Callable[[], bool] | None = None,
+
     ) -> VariableSelectionPreview:
+
+        raw_progress = progress_callback
+
+        def progress_callback(message: str) -> None:
+
+            _emit_progress(raw_progress, message, cancel_requested=cancel_requested)
 
         settings = AppSettings.from_root(root_path)
 
@@ -764,7 +776,15 @@ class PhotometryPipeline:
 
         progress_callback: Callable[[str], None] | None = None,
 
+        cancel_requested: Callable[[], bool] | None = None,
+
     ) -> ProcessingReport:
+
+        raw_progress = progress_callback
+
+        def progress_callback(message: str) -> None:
+
+            _emit_progress(raw_progress, message, cancel_requested=cancel_requested)
 
         settings = settings_override if settings_override is not None else AppSettings.from_root(root_path)
 
@@ -1309,27 +1329,45 @@ class PhotometryPipeline:
 
                 }
 
-                for future in as_completed(future_map):
+                pending_futures = set(future_map)
 
-                    task = future_map[future]
+                while pending_futures:
 
-                    result = future.result()
+                    if cancel_requested is not None and cancel_requested():
 
-                    ordered_measurements[result.index] = result.measurements
+                        for future in pending_futures:
 
-                    if result.note:
+                            future.cancel()
 
-                        file_notes[task.file_result.path.name] = [*file_notes.get(task.file_result.path.name, []), result.note]
+                        raise PipelineCancelled("Differential photometry processing was terminated.")
 
-                        _emit_progress(progress_callback, f"[Photometry {task.index + 1}/{len(measurable_files)}] {result.note}")
+                    done, pending_futures = wait(pending_futures, timeout=0.25, return_when=FIRST_COMPLETED)
 
-                    _emit_progress(
+                    if not done:
 
-                        progress_callback,
+                        continue
 
-                        f"[Photometry {task.index + 1}/{len(measurable_files)}] Measured {len(result.measurements)} source rows in {task.file_result.path.name}.",
+                    for future in done:
 
-                    )
+                        task = future_map[future]
+
+                        result = future.result()
+
+                        ordered_measurements[result.index] = result.measurements
+
+                        if result.note:
+
+                            file_notes[task.file_result.path.name] = [*file_notes.get(task.file_result.path.name, []), result.note]
+
+                            _emit_progress(progress_callback, f"[Photometry {task.index + 1}/{len(measurable_files)}] {result.note}")
+
+                        _emit_progress(
+
+                            progress_callback,
+
+                            f"[Photometry {task.index + 1}/{len(measurable_files)}] Measured {len(result.measurements)} source rows in {task.file_result.path.name}.",
+
+                        )
 
 
 
@@ -2754,7 +2792,27 @@ def _stable_file_key(path: Path) -> str:
 
 
 
-def _emit_progress(progress_callback: Callable[[str], None] | None, message: str) -> None:
+def _raise_if_cancelled(cancel_requested: Callable[[], bool] | None) -> None:
+
+    if cancel_requested is not None and cancel_requested():
+
+        raise PipelineCancelled("Differential photometry processing was terminated.")
+
+
+
+
+
+def _emit_progress(
+
+    progress_callback: Callable[[str], None] | None,
+
+    message: str,
+
+    cancel_requested: Callable[[], bool] | None = None,
+
+) -> None:
+
+    _raise_if_cancelled(cancel_requested)
 
     if progress_callback is not None:
 

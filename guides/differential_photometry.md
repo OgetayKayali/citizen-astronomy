@@ -28,7 +28,7 @@ Your images already contain these signals. This tool helps you extract them.
 
 ### Step 1: Image Scanning and Metadata Extraction
 
-When you open a folder, CAst recursively scans for `.fit`, `.fits`, and `.xisf` files. For each frame it reads:
+When you open a folder, CAst scans for `.fit`, `.fits`, `.xisf`, and TIFF frames. JPG and PNG files in the folder are ignored, and CAst shows how many of each type were excluded because they are not suitable for differential photometry. For each accepted frame it reads:
 
 - **Observation timestamp** from `DATE-OBS` (or PixInsight's `Observation:Time:Start` / `Observation:Time:End` UTC properties when available). Naive timestamps without timezone information are interpreted using the configured Image Timestamp Timezone setting.
 - **Exposure time** from `EXPTIME`, `EXPOSURE`, `EXPOSURE_TIME`, `DARKTIME`, or `EXPOSUREMS` (milliseconds, scaled by 0.001).

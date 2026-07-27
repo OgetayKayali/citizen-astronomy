@@ -53,6 +53,7 @@ _MAX_HYPERLEDA_GALAXIES = 2000
 _MAX_SHARPLESS_OBJECTS = 256
 _MAX_BARNARD_OBJECTS = 256
 _MAX_VDB_OBJECTS = 256
+_MAX_HASH_PN_OBJECTS = 512
 _SIMBAD_TIMEOUT_SECONDS = 12
 _SIMBAD_SEARCH_RADIUS_EXPANSION = 1.05
 _SIMBAD_TILED_DEEP_SKY_RADIUS = 20.0 * u.arcmin
@@ -65,7 +66,39 @@ _HYPERLEDA_PGC_CATALOG = "VII/237/pgc"
 _SHARPLESS_CATALOG = "VII/20"
 _BARNARD_CATALOG = "VII/220A"
 _VDB_CATALOG = "VII/21/catalog"
+_HASH_PN_CATALOG = "V/163/pnmain"
 _MIN_HYPERLEDA_MAJOR_AXIS_ARCMIN = 0.2
+_HASH_PN_DIAMETER_SENTINEL_ARCSEC = 99999.0
+_HASH_PN_POSITION_ANGLE_SENTINEL_DEG = 999.0
+_HASH_PN_STATUS_OBJECT_TYPES: dict[str, tuple[str, str]] = {
+    "T": ("Planetary Nebula", "PN"),
+    "L": ("Planetary Nebula", "PN"),
+    "P": ("Planetary Nebula", "PN"),
+    "C": ("Planetary Nebula", "PN"),
+    "A": ("Planetary Nebula", "PN"),
+    "B": ("Planetary Nebula", "PN"),
+    "HII": ("HII Region", "HII"),
+    "SNR": ("Supernova Remnant", "SNR"),
+    "SR?": ("Supernova Remnant", "SNR"),
+    "RNE": ("Reflection Nebula", "RNe"),
+    "G": ("Galaxy", "G"),
+    "G?": ("Galaxy", "G"),
+    "STAR": ("Star", "*"),
+    "EM*": ("Emission-Line Star", "Em*"),
+    "?EM*": ("Emission-Line Star", "Em*"),
+    "EMO": ("Emission Nebula", "EmO"),
+    "WD*": ("White Dwarf", "WD*"),
+    "Y*O": ("Young Stellar Object", "Y*O"),
+    "Y*?": ("Young Stellar Object", "Y*O"),
+    "CL*": ("Open Cluster", "Cl*"),
+    "SY*": ("Emission-Line Star", "Em*"),
+    "SY?": ("Emission-Line Star", "Em*"),
+    "HH": ("Nebula", "HH"),
+    "HH?": ("Nebula", "HH"),
+    "CIR": ("Nebula", "cir"),
+    "AGB": ("Star", "*"),
+    "AGB?": ("Star", "*"),
+}
 _STAR_LIKE_SIMBAD_TYPES = (
     "star",
     "variable",
@@ -922,6 +955,186 @@ def sky_explorer_query_layers_for_object_types(selected_object_type_keys: Sequen
     return tuple(ordered_layers)
 
 
+def sky_explorer_normalized_object_type_keys(selected_object_type_keys: Sequence[str] | None) -> frozenset[str]:
+    return frozenset(
+        _sky_explorer_selection_key(str(type_key or ""))
+        for type_key in (selected_object_type_keys or ())
+        if str(type_key or "").strip()
+    )
+
+
+def sky_explorer_simbad_otype_codes_for_object_types(
+    selected_object_type_keys: Sequence[str] | None,
+    *,
+    layer_key: str,
+) -> tuple[str, ...]:
+    selected_keys = sky_explorer_normalized_object_type_keys(selected_object_type_keys)
+    if not selected_keys:
+        return tuple(code for code, _description, query_layers in _SKY_EXPLORER_SIMBAD_ADVANCED_ROWS if layer_key in query_layers)
+
+    include_all_for_layer = (
+        (layer_key == "deep_sky" and "other_deep_sky" in selected_keys)
+        or (layer_key == "general_objects" and "general_object" in selected_keys)
+    )
+    matched_codes: list[str] = []
+    for code, _description, query_layers in _SKY_EXPLORER_SIMBAD_ADVANCED_ROWS:
+        if layer_key not in query_layers:
+            continue
+        if include_all_for_layer or selected_keys.intersection(_object_type_keys_for_simbad_code(code, layer_key=layer_key)):
+            matched_codes.append(code)
+    return tuple(matched_codes)
+
+
+def sky_explorer_supplement_catalogs_for_object_types(selected_object_type_keys: Sequence[str] | None) -> frozenset[str]:
+    selected_keys = sky_explorer_normalized_object_type_keys(selected_object_type_keys)
+    if not selected_keys:
+        return frozenset(_SKY_EXPLORER_DEEP_SKY_SUPPLEMENT_CATALOGS)
+    enabled: set[str] = set()
+    for catalog_name, type_keys in _SKY_EXPLORER_DEEP_SKY_SUPPLEMENT_TYPE_KEYS.items():
+        if selected_keys.intersection(type_keys):
+            enabled.add(catalog_name)
+    return frozenset(enabled)
+
+
+def merge_sky_explorer_results(existing: SkyExplorerResult, additional: SkyExplorerResult) -> SkyExplorerResult:
+    merged_objects = list(existing.objects)
+    seen_keys = {_sky_object_identity_key(item) for item in merged_objects}
+    seen_position_keys = {_sky_object_position_key(item) for item in merged_objects}
+    seen_designation_keys = {
+        designation_key for item in merged_objects for designation_key in _sky_object_designation_keys(item)
+    }
+    deep_sky_bucket = [item for item in merged_objects if item.layer_key == "deep_sky"]
+    non_deep_sky = [item for item in merged_objects if item.layer_key != "deep_sky"]
+    deep_sky_seen_keys = {_sky_object_identity_key(item) for item in deep_sky_bucket}
+    deep_sky_seen_positions = {_sky_object_position_key(item) for item in deep_sky_bucket}
+    deep_sky_seen_designations = {
+        designation_key for item in deep_sky_bucket for designation_key in _sky_object_designation_keys(item)
+    }
+
+    additional_deep_sky = [item for item in additional.objects if item.layer_key == "deep_sky"]
+    additional_other = [item for item in additional.objects if item.layer_key != "deep_sky"]
+    _append_unique_deep_sky_objects(
+        deep_sky_bucket,
+        additional_deep_sky,
+        seen_keys=deep_sky_seen_keys,
+        seen_position_keys=deep_sky_seen_positions,
+        seen_designation_keys=deep_sky_seen_designations,
+    )
+    for sky_object in additional_other:
+        object_key = _sky_object_identity_key(sky_object)
+        if object_key in seen_keys:
+            continue
+        non_deep_sky.append(sky_object)
+        seen_keys.add(object_key)
+        seen_position_keys.add(_sky_object_position_key(sky_object))
+        seen_designation_keys.update(_sky_object_designation_keys(sky_object))
+
+    merged_objects = deep_sky_bucket + non_deep_sky
+    ordered_objects = tuple(sorted(merged_objects, key=_sky_explorer_object_sort_key))
+    summary_by_layer = {summary.layer_key: summary for summary in existing.layer_summaries}
+    for summary in additional.layer_summaries:
+        previous = summary_by_layer.get(summary.layer_key)
+        if previous is None:
+            summary_by_layer[summary.layer_key] = summary
+            continue
+        summary_by_layer[summary.layer_key] = SkyExplorerLayerSummary(
+            layer_key=summary.layer_key,
+            title=summary.title or previous.title,
+            returned_count=int(previous.returned_count) + int(summary.returned_count),
+            displayed_count=sum(1 for item in ordered_objects if item.layer_key == summary.layer_key),
+            note=summary.note or previous.note,
+        )
+    for layer_key, summary in list(summary_by_layer.items()):
+        summary_by_layer[layer_key] = SkyExplorerLayerSummary(
+            layer_key=summary.layer_key,
+            title=summary.title,
+            returned_count=summary.returned_count,
+            displayed_count=sum(1 for item in ordered_objects if item.layer_key == layer_key),
+            note=summary.note,
+        )
+    layer_summaries = tuple(
+        summary_by_layer[layer_key] for layer_key in SKY_EXPLORER_LAYER_ORDER if layer_key in summary_by_layer
+    )
+    warning_messages = tuple(dict.fromkeys((*existing.warning_messages, *additional.warning_messages)))
+    return SkyExplorerResult(
+        source_path=existing.source_path,
+        solved_field=existing.solved_field,
+        used_astrometry_fallback=bool(existing.used_astrometry_fallback or additional.used_astrometry_fallback),
+        footprint=existing.footprint,
+        objects=ordered_objects,
+        layer_summaries=layer_summaries,
+        warning_messages=warning_messages,
+        summary_text=_summary_text(
+            solved_field=existing.solved_field,
+            layer_summaries=layer_summaries,
+            used_astrometry_fallback=bool(existing.used_astrometry_fallback or additional.used_astrometry_fallback),
+        ),
+    )
+
+
+def _object_type_keys_for_simbad_code(code: str, *, layer_key: str) -> frozenset[str]:
+    keys: set[str] = {_sky_explorer_selection_key(code)}
+    keys.add(sky_explorer_object_type_key_for_catalog_type(code, layer_key=layer_key))
+    for parent_code in _SKY_EXPLORER_OBJECT_TYPE_PARENT_CODES.get(code, ()):
+        keys.add(_sky_explorer_selection_key(parent_code))
+        keys.add(sky_explorer_object_type_key_for_catalog_type(parent_code, layer_key=layer_key))
+    for simple_key in _SKY_EXPLORER_SIMPLE_CATEGORY_KEYS_BY_CODE.get(code, ()):
+        keys.add(_sky_explorer_selection_key(simple_key))
+    return frozenset(key for key in keys if key)
+
+
+_SKY_EXPLORER_DEEP_SKY_SUPPLEMENT_CATALOGS: tuple[str, ...] = (
+    "hyperleda",
+    "sharpless",
+    "barnard",
+    "vdb",
+    "hash_pn",
+    "ngc2000",
+)
+
+_SKY_EXPLORER_DEEP_SKY_SUPPLEMENT_TYPE_KEYS: dict[str, frozenset[str]] = {
+    "hyperleda": frozenset(
+        {
+            "galaxy",
+            "galaxy_pair",
+            "galaxy_group",
+            "galaxy_cluster",
+            "seyfert_galaxy",
+            "active_galactic_nucleus",
+            "quasar",
+            "blazar",
+            "other_deep_sky",
+        }
+    ),
+    "sharpless": frozenset({"hii_region", "emission_nebula", "nebula", "star_forming_region", "other_deep_sky"}),
+    "barnard": frozenset({"dark_nebula", "nebula", "molecular_cloud", "other_deep_sky"}),
+    "vdb": frozenset({"reflection_nebula", "nebula", "other_deep_sky"}),
+    "hash_pn": frozenset(
+        {
+            "planetary_nebula",
+            "emission_nebula",
+            "nebula",
+            "hii_region",
+            "supernova_remnant",
+            "other_deep_sky",
+        }
+    ),
+    "ngc2000": frozenset(
+        {
+            "galaxy",
+            "open_cluster",
+            "globular_cluster",
+            "planetary_nebula",
+            "emission_nebula",
+            "nebula",
+            "cluster_with_nebulosity",
+            "asterism",
+            "other_deep_sky",
+        }
+    ),
+}
+
+
 def sky_explorer_object_type_definitions_for_mode(mode: str | None) -> tuple[SkyExplorerObjectTypeDefinition, ...]:
     normalized_mode = _sky_explorer_selection_key(str(mode or ""))
     return _SKY_EXPLORER_OBJECT_TYPE_DEFINITIONS_BY_MODE.get(normalized_mode, _SKY_EXPLORER_SIMPLE_OBJECT_TYPE_DEFINITIONS)
@@ -1086,12 +1299,14 @@ def explore_sky_image(
     *,
     settings: AppSettings,
     selected_layers: Sequence[str] | None = None,
+    selected_object_type_keys: Sequence[str] | None = None,
     gaia_object_limit: int = _MAX_GAIA_STARS,
     include_dense_galaxy_catalog: bool = False,
     ignore_gaia_hard_cap: bool = False,
     progress_callback: Callable[[str], None] | None = None,
 ) -> SkyExplorerResult:
     normalized_layers = _normalize_layers(selected_layers)
+    selected_type_keys = sky_explorer_normalized_object_type_keys(selected_object_type_keys)
 
     if progress_callback is not None:
         progress_callback("Checking the image WCS and field footprint.")
@@ -1178,6 +1393,7 @@ def explore_sky_image(
             wcs=wcs,
             field_center=field_center,
             selected_layers=normalized_layers,
+            selected_object_type_keys=selected_type_keys,
             include_dense_galaxy_catalog=include_dense_galaxy_catalog,
             maximum_stellar_magnitude=settings.sky_explorer_gaia_max_magnitude,
         )
@@ -1227,6 +1443,12 @@ def explore_sky_image(
                 )
             )
 
+    if selected_type_keys:
+        objects = [
+            sky_object
+            for sky_object in objects
+            if selected_type_keys.intersection(sky_explorer_object_type_keys_for_object(sky_object))
+        ]
     filtered_objects = _filter_sky_explorer_objects_by_magnitude(
         objects,
         maximum_magnitude=settings.sky_explorer_gaia_max_magnitude,
@@ -1458,6 +1680,7 @@ def _query_simbad_objects(
     wcs: WCS,
     field_center: SkyCoord,
     selected_layers: Sequence[str],
+    selected_object_type_keys: Sequence[str] | None = None,
     include_dense_galaxy_catalog: bool = False,
     maximum_stellar_magnitude: float | None = None,
 ) -> tuple[list[SkyExplorerObject], list[SkyExplorerLayerSummary]]:
@@ -1466,13 +1689,20 @@ def _query_simbad_objects(
     simbad_deep_sky_seen_keys: set[tuple[str, str, int, int]] = set()
     simbad_deep_sky_seen_position_keys: set[tuple[str, int, int]] = set()
     simbad_deep_sky_seen_designation_keys: set[tuple[str, str]] = set()
+    selected_type_keys = sky_explorer_normalized_object_type_keys(selected_object_type_keys)
+    enabled_supplements = sky_explorer_supplement_catalogs_for_object_types(selected_type_keys)
 
     center = SkyCoord(solved_field.center_ra_deg * u.deg, solved_field.center_dec_deg * u.deg)
     radius = max(float(solved_field.radius_deg) * _SIMBAD_SEARCH_RADIUS_EXPANSION, 0.01) * u.deg
     for layer_key in ("deep_sky", "general_objects"):
         if layer_key not in selected_layers:
             continue
-        result_rows = _query_simbad_region_rows(center, radius=radius, layer_key=layer_key)
+        result_rows = _query_simbad_region_rows(
+            center,
+            radius=radius,
+            layer_key=layer_key,
+            selected_object_type_keys=selected_type_keys,
+        )
         if len(result_rows) == 0:
             continue
         for row in result_rows:
@@ -1502,13 +1732,6 @@ def _query_simbad_objects(
                     layer_buckets[layer_key].append(sky_object)
 
     if "deep_sky" in selected_layers:
-        hyperleda_objects, hyperleda_count = _query_hyperleda_galaxy_objects(
-            solved_field,
-            wcs=wcs,
-            field_center=field_center,
-            require_named_alias=False,
-        )
-        total_counts["deep_sky"] += hyperleda_count
         seen_keys = {_sky_object_identity_key(item) for item in layer_buckets["deep_sky"]}
         seen_position_keys = {_sky_object_position_key(item) for item in layer_buckets["deep_sky"]}
         seen_designation_keys = {
@@ -1516,66 +1739,92 @@ def _query_simbad_objects(
             for item in layer_buckets["deep_sky"]
             for designation_key in _sky_object_designation_keys(item)
         }
-        _append_unique_deep_sky_objects(
-            layer_buckets["deep_sky"],
-            hyperleda_objects,
-            seen_keys=seen_keys,
-            seen_position_keys=seen_position_keys,
-            seen_designation_keys=seen_designation_keys,
-            allow_new_object=None if include_dense_galaxy_catalog else _hyperleda_object_has_named_alias,
-        )
-        sharpless_objects, sharpless_count = _query_sharpless_objects(
-            solved_field,
-            wcs=wcs,
-            field_center=field_center,
-        )
-        total_counts["deep_sky"] += sharpless_count
-        _append_unique_deep_sky_objects(
-            layer_buckets["deep_sky"],
-            sharpless_objects,
-            seen_keys=seen_keys,
-            seen_position_keys=seen_position_keys,
-            seen_designation_keys=seen_designation_keys,
-        )
-        barnard_objects, barnard_count = _query_barnard_objects(
-            solved_field,
-            wcs=wcs,
-            field_center=field_center,
-        )
-        total_counts["deep_sky"] += barnard_count
-        _append_unique_deep_sky_objects(
-            layer_buckets["deep_sky"],
-            barnard_objects,
-            seen_keys=seen_keys,
-            seen_position_keys=seen_position_keys,
-            seen_designation_keys=seen_designation_keys,
-        )
-        vdb_objects, vdb_count = _query_vdb_objects(
-            solved_field,
-            wcs=wcs,
-            field_center=field_center,
-        )
-        total_counts["deep_sky"] += vdb_count
-        _append_unique_deep_sky_objects(
-            layer_buckets["deep_sky"],
-            vdb_objects,
-            seen_keys=seen_keys,
-            seen_position_keys=seen_position_keys,
-            seen_designation_keys=seen_designation_keys,
-        )
-        ngc2000_objects, ngc2000_count = _query_ngc2000_objects(
-            solved_field,
-            wcs=wcs,
-            field_center=field_center,
-        )
-        total_counts["deep_sky"] += ngc2000_count
-        _append_unique_deep_sky_objects(
-            layer_buckets["deep_sky"],
-            ngc2000_objects,
-            seen_keys=seen_keys,
-            seen_position_keys=seen_position_keys,
-            seen_designation_keys=seen_designation_keys,
-        )
+        if "hyperleda" in enabled_supplements:
+            hyperleda_objects, hyperleda_count = _query_hyperleda_galaxy_objects(
+                solved_field,
+                wcs=wcs,
+                field_center=field_center,
+                require_named_alias=False,
+            )
+            total_counts["deep_sky"] += hyperleda_count
+            _append_unique_deep_sky_objects(
+                layer_buckets["deep_sky"],
+                hyperleda_objects,
+                seen_keys=seen_keys,
+                seen_position_keys=seen_position_keys,
+                seen_designation_keys=seen_designation_keys,
+                allow_new_object=None if include_dense_galaxy_catalog else _hyperleda_object_has_named_alias,
+            )
+        if "sharpless" in enabled_supplements:
+            sharpless_objects, sharpless_count = _query_sharpless_objects(
+                solved_field,
+                wcs=wcs,
+                field_center=field_center,
+            )
+            total_counts["deep_sky"] += sharpless_count
+            _append_unique_deep_sky_objects(
+                layer_buckets["deep_sky"],
+                sharpless_objects,
+                seen_keys=seen_keys,
+                seen_position_keys=seen_position_keys,
+                seen_designation_keys=seen_designation_keys,
+            )
+        if "barnard" in enabled_supplements:
+            barnard_objects, barnard_count = _query_barnard_objects(
+                solved_field,
+                wcs=wcs,
+                field_center=field_center,
+            )
+            total_counts["deep_sky"] += barnard_count
+            _append_unique_deep_sky_objects(
+                layer_buckets["deep_sky"],
+                barnard_objects,
+                seen_keys=seen_keys,
+                seen_position_keys=seen_position_keys,
+                seen_designation_keys=seen_designation_keys,
+            )
+        if "vdb" in enabled_supplements:
+            vdb_objects, vdb_count = _query_vdb_objects(
+                solved_field,
+                wcs=wcs,
+                field_center=field_center,
+            )
+            total_counts["deep_sky"] += vdb_count
+            _append_unique_deep_sky_objects(
+                layer_buckets["deep_sky"],
+                vdb_objects,
+                seen_keys=seen_keys,
+                seen_position_keys=seen_position_keys,
+                seen_designation_keys=seen_designation_keys,
+            )
+        if "hash_pn" in enabled_supplements:
+            hash_pn_objects, hash_pn_count = _query_hash_pn_objects(
+                solved_field,
+                wcs=wcs,
+                field_center=field_center,
+            )
+            total_counts["deep_sky"] += hash_pn_count
+            _append_unique_deep_sky_objects(
+                layer_buckets["deep_sky"],
+                hash_pn_objects,
+                seen_keys=seen_keys,
+                seen_position_keys=seen_position_keys,
+                seen_designation_keys=seen_designation_keys,
+            )
+        if "ngc2000" in enabled_supplements:
+            ngc2000_objects, ngc2000_count = _query_ngc2000_objects(
+                solved_field,
+                wcs=wcs,
+                field_center=field_center,
+            )
+            total_counts["deep_sky"] += ngc2000_count
+            _append_unique_deep_sky_objects(
+                layer_buckets["deep_sky"],
+                ngc2000_objects,
+                seen_keys=seen_keys,
+                seen_position_keys=seen_position_keys,
+                seen_designation_keys=seen_designation_keys,
+            )
 
     objects: list[SkyExplorerObject] = []
     summaries: list[SkyExplorerLayerSummary] = []
@@ -1595,7 +1844,13 @@ def _query_simbad_objects(
     return objects, summaries
 
 
-def _query_simbad_region_rows(center: SkyCoord, *, radius: u.Quantity, layer_key: str):
+def _query_simbad_region_rows(
+    center: SkyCoord,
+    *,
+    radius: u.Quantity,
+    layer_key: str,
+    selected_object_type_keys: Sequence[str] | None = None,
+):
     simbad = Simbad()
     simbad.TIMEOUT = _SIMBAD_TIMEOUT_SECONDS
     simbad.ROW_LIMIT = _MAX_SIMBAD_DEEP_SKY_OBJECTS if layer_key == "deep_sky" else _MAX_SIMBAD_GENERAL_OBJECTS
@@ -1605,7 +1860,9 @@ def _query_simbad_region_rows(center: SkyCoord, *, radius: u.Quantity, layer_key
         simbad.add_votable_fields("ids", "otype", "V", "B", "ra(d)", "dec(d)")
     rows: list[Row] = []
     seen_signatures: set[tuple[str, str, int, int]] = set()
-    criteria = _simbad_layer_criteria(layer_key)
+    criteria = _simbad_layer_criteria(layer_key, selected_object_type_keys=selected_object_type_keys)
+    if selected_object_type_keys and criteria is None:
+        return rows
     deadline = time.monotonic() + _SIMBAD_LAYER_QUERY_BUDGET_SECONDS
     for query_center, query_radius in _simbad_query_regions(center, radius=radius, layer_key=layer_key):
         if time.monotonic() >= deadline:
@@ -1628,12 +1885,17 @@ def _query_simbad_region_rows(center: SkyCoord, *, radius: u.Quantity, layer_key
     return rows
 
 
-def _simbad_layer_criteria(layer_key: str) -> str | None:
-    type_codes = tuple(
-        code
-        for code, _description, query_layers in _SKY_EXPLORER_SIMBAD_ADVANCED_ROWS
-        if layer_key in query_layers
+def _simbad_layer_criteria(
+    layer_key: str,
+    *,
+    selected_object_type_keys: Sequence[str] | None = None,
+) -> str | None:
+    type_codes = sky_explorer_simbad_otype_codes_for_object_types(
+        selected_object_type_keys,
+        layer_key=layer_key,
     )
+    if selected_object_type_keys and not type_codes:
+        return None
     if not type_codes:
         return None
     quoted_codes = ",".join("'{}'".format(str(code).replace("'", "''")) for code in type_codes)
@@ -1874,6 +2136,38 @@ def _query_vdb_objects(
     return objects, row_count
 
 
+def _query_hash_pn_objects(
+    solved_field: SolvedField,
+    *,
+    wcs: WCS,
+    field_center: SkyCoord,
+) -> tuple[list[SkyExplorerObject], int]:
+    center = SkyCoord(solved_field.center_ra_deg * u.deg, solved_field.center_dec_deg * u.deg)
+    radius = max(float(solved_field.radius_deg) * _SIMBAD_SEARCH_RADIUS_EXPANSION, 0.01) * u.deg
+    vizier = Vizier(columns=["**"], row_limit=_MAX_HASH_PN_OBJECTS)
+    try:
+        tables = vizier.query_region(center, radius=radius, catalog=_HASH_PN_CATALOG)
+    except Exception:
+        return [], 0
+    if not tables:
+        return [], 0
+
+    objects: list[SkyExplorerObject] = []
+    row_count = 0
+    for table in tables:
+        for row in table:
+            row_count += 1
+            sky_object = _sky_explorer_object_from_hash_pn_row(
+                row,
+                field_center=field_center,
+                solved_field=solved_field,
+                wcs=wcs,
+            )
+            if sky_object is not None:
+                objects.append(sky_object)
+    return objects, row_count
+
+
 def _query_hyperleda_galaxy_objects(
     solved_field: SolvedField,
     *,
@@ -2088,6 +2382,212 @@ def _sky_explorer_object_from_vdb_row(
             "catalog_description": _normalize_identifier(_row_text(row, "Type") or "Reflection Nebula"),
         },
     )
+
+
+def _sky_explorer_object_from_hash_pn_row(
+    row: Row,
+    *,
+    field_center: SkyCoord,
+    solved_field: SolvedField,
+    wcs: WCS,
+) -> SkyExplorerObject | None:
+    ra_deg = _row_float_any(row, "RAJ2000", "RAdeg", "_RAJ2000", "_RA")
+    dec_deg = _row_float_any(row, "DEJ2000", "DEdeg", "_DEJ2000", "_DE")
+    hash_id = _hash_pn_identifier(row)
+    if ra_deg is None or dec_deg is None or hash_id is None:
+        return None
+    pixel_position = _pixel_position_for_coordinates(ra_deg, dec_deg, solved_field=solved_field, wcs=wcs)
+    if pixel_position is None:
+        return None
+    pixel_x, pixel_y = pixel_position
+
+    status_code = _hash_pn_status_code(row)
+    object_type, catalog_type = _hash_pn_object_type_for_status(status_code)
+    object_name = _hash_pn_display_name(row, hash_id=hash_id)
+    png_name = _hash_pn_png_name(row)
+    usual_name = _normalize_identifier(_row_text_any(row, "Name") or "")
+    simbad_id = _normalize_identifier(_row_text_any(row, "SimbadID") or "")
+    source_catalog = _normalize_identifier(_row_text_any(row, "Catalogue", "Catalog") or "")
+    morphology_main = _normalize_identifier(_row_text_any(row, "MorphMainCl") or "")
+    morphology_sub = _normalize_identifier(_row_text_any(row, "MorphSubCl") or "")
+    morphology_comment = _normalize_identifier(_row_text_any(row, "MorphCom") or "")
+    comment = _normalize_identifier(_row_text_any(row, "Com") or "")
+    spectrum_available = _hash_pn_flag_true(_row_text_any(row, "spectrum"))
+    hash_link = _normalize_identifier(_row_text_any(row, "HASH-link", "HASH_link") or "")
+    major_axis_arcmin = _hash_pn_diameter_arcmin(row, "MajDiam")
+    minor_axis_arcmin = _hash_pn_diameter_arcmin(row, "MinDiam")
+    position_angle_deg = _hash_pn_position_angle_deg(row)
+    geometry_metadata = _catalog_geometry_metadata(
+        major_axis_arcmin=major_axis_arcmin,
+        minor_axis_arcmin=minor_axis_arcmin,
+        position_angle_deg=position_angle_deg,
+    )
+    status_label = _hash_pn_status_label(status_code)
+    description_parts = [part for part in (status_label, morphology_main, morphology_sub, source_catalog) if part]
+    identifiers = " | ".join(
+        part
+        for part in (
+            object_name,
+            usual_name if usual_name and usual_name != object_name else "",
+            png_name,
+            simbad_id,
+            f"HASH {hash_id}",
+        )
+        if part
+    )
+    angular_distance_arcmin = float(field_center.separation(SkyCoord(ra_deg * u.deg, dec_deg * u.deg)).deg) * 60.0
+    metadata: dict[str, object] = {
+        "catalog_type": catalog_type,
+        "catalog_description": " · ".join(description_parts) or "HASH PN via VizieR V/163",
+        "hash_id": hash_id,
+        "hash_pn_status": status_code or "",
+        "hash_pn_status_label": status_label,
+        "hash_png": png_name,
+        "hash_source_catalog": source_catalog,
+        "hash_spectrum_available": spectrum_available,
+        "identifiers": identifiers,
+        "vizier_catalog": _HASH_PN_CATALOG,
+    }
+    if morphology_main:
+        metadata["catalog_morphology"] = morphology_main if not morphology_sub else f"{morphology_main}/{morphology_sub}"
+    if morphology_comment:
+        metadata["hash_morphology_comment"] = morphology_comment
+    if comment:
+        metadata["hash_comment"] = comment
+    if hash_link:
+        metadata["hash_object_page"] = hash_link
+    metadata.update(geometry_metadata)
+    return SkyExplorerObject(
+        layer_key="deep_sky",
+        catalog="hash_pn",
+        source_id=f"HASH {hash_id}",
+        name=object_name,
+        object_type=object_type,
+        ra_deg=float(ra_deg),
+        dec_deg=float(dec_deg),
+        pixel_x=pixel_x,
+        pixel_y=pixel_y,
+        magnitude=None,
+        angular_distance_arcmin=angular_distance_arcmin,
+        short_label=_short_label_for_name(object_name, fallback=f"HASH {hash_id}"),
+        metadata=metadata,
+    )
+
+
+def _hash_pn_identifier(row: Row) -> str | None:
+    hash_value = _row_float_any(row, "HASH", "idPNMain")
+    if hash_value is not None:
+        return str(int(round(hash_value)))
+    text_value = _row_text_any(row, "HASH", "idPNMain")
+    if text_value is None:
+        return None
+    digits = re.sub(r"[^\d]", "", text_value)
+    return digits or None
+
+
+def _hash_pn_status_code(row: Row) -> str:
+    return _normalize_identifier(_row_text_any(row, "PNstat") or "").upper()
+
+
+def _hash_pn_object_type_for_status(status_code: str) -> tuple[str, str]:
+    mapped = _HASH_PN_STATUS_OBJECT_TYPES.get(status_code)
+    if mapped is not None:
+        return mapped
+    if status_code:
+        return (f"HASH Object ({status_code})", status_code)
+    return ("Planetary Nebula", "PN")
+
+
+def _hash_pn_status_label(status_code: str) -> str:
+    labels = {
+        "T": "True PN",
+        "L": "Likely PN",
+        "P": "Possible PN",
+        "C": "New candidate",
+        "A": "PAGB / Pre-PN",
+        "B": "Possible Pre-PN",
+        "X": "Not PN",
+        "N": "Not PN (check)",
+        "Q": "Artefact",
+        "OOUN": "Object of unknown nature",
+        "S": "Object to check",
+        "O": "Interesting object",
+        "TEST": "Test object",
+        "K": "Transition object",
+        "E": "RCrB / eHe / LTP",
+        "R": "RV Tau",
+        "CIR": "Circumstellar matter",
+        "CGB": "Cometary globule",
+        "IISM": "Ionized ISM",
+        "EV?": "Possible variable",
+        "NS": "Not specified",
+    }
+    if status_code in labels:
+        return labels[status_code]
+    mapped = _HASH_PN_STATUS_OBJECT_TYPES.get(status_code)
+    if mapped is not None:
+        return mapped[0]
+    return status_code or "HASH object"
+
+
+def _hash_pn_display_name(row: Row, *, hash_id: str) -> str:
+    usual_name = _normalize_identifier(_row_text_any(row, "Name") or "")
+    if usual_name:
+        designation = _catalog_designation_key(usual_name)
+        if designation is not None:
+            return _display_name_from_designation_key(designation)
+        return usual_name
+    png_name = _hash_pn_png_name(row)
+    if png_name:
+        return png_name
+    simbad_id = _normalize_identifier(_row_text_any(row, "SimbadID") or "")
+    if simbad_id:
+        designation = _catalog_designation_key(simbad_id)
+        if designation is not None:
+            return _display_name_from_designation_key(designation)
+        return simbad_id
+    return f"HASH {hash_id}"
+
+
+def _hash_pn_png_name(row: Row) -> str:
+    png_value = _normalize_identifier(_row_text_any(row, "PNG") or "")
+    if not png_value:
+        return ""
+    compact = png_value.upper().replace(" ", "")
+    if compact.startswith("PNG"):
+        compact = compact[3:]
+    if not compact:
+        return ""
+    return f"PN G{compact}"
+
+
+def _hash_pn_diameter_arcmin(row: Row, key: str) -> float | None:
+    diameter_arcsec = _row_float(row, key)
+    if diameter_arcsec is None or diameter_arcsec >= _HASH_PN_DIAMETER_SENTINEL_ARCSEC or diameter_arcsec <= 0.0:
+        return None
+    return float(diameter_arcsec) / 60.0
+
+
+def _hash_pn_position_angle_deg(row: Row) -> float | None:
+    position_angle = _row_float_any(row, "EPA")
+    if position_angle is None or position_angle >= _HASH_PN_POSITION_ANGLE_SENTINEL_DEG:
+        return None
+    if position_angle < 0.0 or position_angle > 180.0:
+        return None
+    return float(position_angle)
+
+
+def _hash_pn_flag_true(value: str | None) -> bool:
+    normalized = _normalize_identifier(value or "").casefold()
+    return normalized in {"y", "yes", "true", "1"}
+
+
+def _row_text_any(row: Row, *keys: str) -> str | None:
+    for key in keys:
+        value = _row_text(row, key)
+        if value is not None:
+            return value
+    return None
 
 
 def _sky_explorer_object_from_hyperleda_row(

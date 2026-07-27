@@ -26,6 +26,7 @@ from photometry_app.core.sky_explorer import (
     _sky_explorer_object_from_barnard_row,
     _ngc2000_type_label,
     _sky_explorer_summaries_for_filtered_objects,
+    _sky_explorer_object_from_hash_pn_row,
     _sky_explorer_object_from_sharpless_row,
     _sky_explorer_object_from_hyperleda_row,
     _sky_explorer_object_from_ngc2000_row,
@@ -34,10 +35,14 @@ from photometry_app.core.sky_explorer import (
     _simbad_query_regions,
     _solar_system_object_from_result,
     explore_sky_image,
+    merge_sky_explorer_results,
+    SkyExplorerResult,
     sky_explorer_object_type_key_for_object,
     sky_explorer_object_type_key_for_catalog_type,
     sky_explorer_object_type_keys_for_object,
     sky_explorer_query_layers_for_object_types,
+    sky_explorer_simbad_otype_codes_for_object_types,
+    sky_explorer_supplement_catalogs_for_object_types,
 )
 
 
@@ -222,6 +227,103 @@ class SkyExplorerTest(unittest.TestCase):
             sky_explorer_query_layers_for_object_types(("sy1", "xb*", "asteroid_comet", "star")),
             ("deep_sky", "general_objects", "solar_system", "gaia_stars"),
         )
+
+    def test_simbad_otype_codes_narrow_to_selected_planetary_nebula(self) -> None:
+        codes = sky_explorer_simbad_otype_codes_for_object_types(("planetary_nebula",), layer_key="deep_sky")
+        self.assertIn("PN", codes)
+        self.assertNotIn("G", codes)
+        self.assertNotIn("HII", codes)
+        self.assertNotIn("OpC", codes)
+
+    def test_simbad_otype_codes_expand_simple_emission_nebula(self) -> None:
+        codes = sky_explorer_simbad_otype_codes_for_object_types(("emission_nebula",), layer_key="deep_sky")
+        self.assertIn("PN", codes)
+        self.assertIn("HII", codes)
+        self.assertIn("EmO", codes)
+        self.assertNotIn("G", codes)
+
+    def test_supplement_catalogs_follow_selected_object_types(self) -> None:
+        pn_supplements = sky_explorer_supplement_catalogs_for_object_types(("planetary_nebula",))
+        self.assertIn("hash_pn", pn_supplements)
+        self.assertIn("ngc2000", pn_supplements)
+        self.assertNotIn("hyperleda", pn_supplements)
+        self.assertNotIn("barnard", pn_supplements)
+
+        galaxy_supplements = sky_explorer_supplement_catalogs_for_object_types(("galaxy",))
+        self.assertIn("hyperleda", galaxy_supplements)
+        self.assertIn("ngc2000", galaxy_supplements)
+        self.assertNotIn("hash_pn", galaxy_supplements)
+
+    def test_merge_sky_explorer_results_keeps_existing_and_adds_new(self) -> None:
+        solved_field = SolvedField(
+            center_ra_deg=10.0,
+            center_dec_deg=20.0,
+            radius_deg=0.5,
+            width=1000,
+            height=800,
+            wcs_path=Path("field.fits"),
+        )
+        footprint = SkyExplorerFieldFootprint(
+            center_ra_deg=10.0,
+            center_dec_deg=20.0,
+            radius_deg=0.5,
+            width_deg=None,
+            height_deg=None,
+            corners=(),
+        )
+        existing_object = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="hash_pn",
+            source_id="HASH 501",
+            name="NGC 6853",
+            object_type="Planetary Nebula",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            pixel_x=100.0,
+            pixel_y=100.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="NGC 6853",
+        )
+        new_object = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="hyperleda",
+            source_id="PGC 1",
+            name="NGC 1",
+            object_type="Galaxy",
+            ra_deg=10.1,
+            dec_deg=20.1,
+            pixel_x=120.0,
+            pixel_y=110.0,
+            magnitude=12.0,
+            angular_distance_arcmin=1.0,
+            short_label="NGC 1",
+        )
+        existing = SkyExplorerResult(
+            source_path=Path("image.fits"),
+            solved_field=solved_field,
+            used_astrometry_fallback=False,
+            footprint=footprint,
+            objects=(existing_object,),
+            layer_summaries=(
+                SkyExplorerLayerSummary(layer_key="deep_sky", title="Deep Sky", returned_count=1, displayed_count=1),
+            ),
+        )
+        additional = SkyExplorerResult(
+            source_path=Path("image.fits"),
+            solved_field=solved_field,
+            used_astrometry_fallback=False,
+            footprint=footprint,
+            objects=(new_object,),
+            layer_summaries=(
+                SkyExplorerLayerSummary(layer_key="deep_sky", title="Deep Sky", returned_count=1, displayed_count=1),
+            ),
+        )
+
+        merged = merge_sky_explorer_results(existing, additional)
+
+        self.assertEqual({item.source_id for item in merged.objects}, {"HASH 501", "PGC 1"})
+        self.assertEqual(merged.layer_summaries[0].displayed_count, 2)
 
     def test_simbad_classifier_maps_supernova_remnant_type(self) -> None:
         sky_object = SkyExplorerObject(
@@ -544,6 +646,167 @@ class SkyExplorerTest(unittest.TestCase):
         self.assertEqual(sky_object.name, "VdB 1")
         self.assertEqual(sky_object.object_type, "Reflection Nebula")
         self.assertAlmostEqual(sky_object.metadata["catalog_size_arcmin"], 8.6)
+
+    def test_hash_pn_row_projects_true_planetary_nebula(self) -> None:
+        table = Table(
+            rows=[
+                (
+                    501,
+                    "060.8-03.6",
+                    299.90158,
+                    22.72111,
+                    "NGC 6853",
+                    "T",
+                    "B",
+                    "m",
+                    475.0,
+                    340.0,
+                    129,
+                    "y",
+                    "SECGPN",
+                    "PN NGC 6853",
+                    "http://example.test/hash/501",
+                )
+            ],
+            names=(
+                "HASH",
+                "PNG",
+                "RAJ2000",
+                "DEJ2000",
+                "Name",
+                "PNstat",
+                "MorphMainCl",
+                "MorphSubCl",
+                "MajDiam",
+                "MinDiam",
+                "EPA",
+                "spectrum",
+                "Catalogue",
+                "SimbadID",
+                "HASH-link",
+            ),
+        )
+        solved_field = SolvedField(
+            center_ra_deg=299.9,
+            center_dec_deg=22.7,
+            radius_deg=0.5,
+            width=1000,
+            height=800,
+            wcs_path=Path("field.fits"),
+        )
+        field_center = SkyCoord(299.9 * u.deg, 22.7 * u.deg)
+        wcs = SimpleNamespace(world_to_pixel_values=lambda ra_deg, dec_deg: (500.0, 400.0))
+
+        sky_object = _sky_explorer_object_from_hash_pn_row(
+            table[0],
+            field_center=field_center,
+            solved_field=solved_field,
+            wcs=wcs,
+        )
+
+        self.assertIsNotNone(sky_object)
+        assert sky_object is not None
+        self.assertEqual(sky_object.catalog, "hash_pn")
+        self.assertEqual(sky_object.source_id, "HASH 501")
+        self.assertEqual(sky_object.name, "NGC 6853")
+        self.assertEqual(sky_object.object_type, "Planetary Nebula")
+        self.assertEqual(sky_explorer_object_type_key_for_object(sky_object), "planetary_nebula")
+        self.assertAlmostEqual(float(sky_object.metadata["catalog_major_axis_arcmin"]), 475.0 / 60.0)
+        self.assertAlmostEqual(float(sky_object.metadata["catalog_minor_axis_arcmin"]), 340.0 / 60.0)
+        self.assertEqual(float(sky_object.metadata["catalog_position_angle_deg"]), 129.0)
+        self.assertEqual(sky_object.metadata["hash_pn_status"], "T")
+        self.assertEqual(sky_object.metadata["hash_pn_status_label"], "True PN")
+        self.assertEqual(sky_object.metadata["hash_png"], "PN G060.8-03.6")
+        self.assertTrue(sky_object.metadata["hash_spectrum_available"])
+        self.assertEqual(sky_object.metadata["vizier_catalog"], "V/163/pnmain")
+        self.assertIn("HASH 501", str(sky_object.metadata["identifiers"]))
+
+    def test_hash_pn_row_maps_mimic_status_and_ignores_sentinel_sizes(self) -> None:
+        table = Table(
+            rows=[
+                (
+                    17477,
+                    "161.9-44.0",
+                    40.19729,
+                    10.35069,
+                    "Fr 2-2",
+                    "HII",
+                    99999.9,
+                    99999.9,
+                    999,
+                    "n",
+                )
+            ],
+            names=(
+                "HASH",
+                "PNG",
+                "RAJ2000",
+                "DEJ2000",
+                "Name",
+                "PNstat",
+                "MajDiam",
+                "MinDiam",
+                "EPA",
+                "spectrum",
+            ),
+        )
+        solved_field = SolvedField(
+            center_ra_deg=40.2,
+            center_dec_deg=10.35,
+            radius_deg=0.4,
+            width=1000,
+            height=800,
+            wcs_path=Path("field.fits"),
+        )
+        field_center = SkyCoord(40.2 * u.deg, 10.35 * u.deg)
+        wcs = SimpleNamespace(world_to_pixel_values=lambda ra_deg, dec_deg: (510.0, 390.0))
+
+        sky_object = _sky_explorer_object_from_hash_pn_row(
+            table[0],
+            field_center=field_center,
+            solved_field=solved_field,
+            wcs=wcs,
+        )
+
+        self.assertIsNotNone(sky_object)
+        assert sky_object is not None
+        self.assertEqual(sky_object.name, "Fr 2-2")
+        self.assertEqual(sky_object.object_type, "HII Region")
+        self.assertEqual(sky_explorer_object_type_key_for_object(sky_object), "hii_region")
+        self.assertEqual(sky_object.metadata["hash_pn_status"], "HII")
+        self.assertNotIn("catalog_size_arcmin", sky_object.metadata)
+        self.assertNotIn("catalog_position_angle_deg", sky_object.metadata)
+        self.assertFalse(sky_object.metadata["hash_spectrum_available"])
+        self.assertEqual(sky_object.metadata["hash_png"], "PN G161.9-44.0")
+
+    def test_hash_pn_row_falls_back_to_png_name(self) -> None:
+        table = Table(
+            rows=[(22331, "175.0-46.0", 46.15417, 2.95, "", "c")],
+            names=("HASH", "PNG", "RAdeg", "DEdeg", "Name", "PNstat"),
+        )
+        solved_field = SolvedField(
+            center_ra_deg=46.15,
+            center_dec_deg=2.95,
+            radius_deg=0.3,
+            width=800,
+            height=600,
+            wcs_path=Path("field.fits"),
+        )
+        field_center = SkyCoord(46.15 * u.deg, 2.95 * u.deg)
+        wcs = SimpleNamespace(world_to_pixel_values=lambda ra_deg, dec_deg: (400.0, 300.0))
+
+        sky_object = _sky_explorer_object_from_hash_pn_row(
+            table[0],
+            field_center=field_center,
+            solved_field=solved_field,
+            wcs=wcs,
+        )
+
+        self.assertIsNotNone(sky_object)
+        assert sky_object is not None
+        self.assertEqual(sky_object.name, "PN G175.0-46.0")
+        self.assertEqual(sky_object.object_type, "Planetary Nebula")
+        self.assertEqual(sky_object.metadata["hash_pn_status_label"], "New candidate")
 
     def test_simbad_row_with_sexagesimal_coordinates_is_projected_into_sky_object(self) -> None:
         table = Table(
@@ -1121,6 +1384,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1195,6 +1459,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1260,6 +1525,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
         ):
             _query_simbad_objects(
@@ -1320,6 +1586,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1391,6 +1658,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_hyperleda_galaxy_objects", return_value=([supplemental_galaxy], 1)),
         ):
@@ -1456,6 +1724,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([duplicate_ngc2000_object], 1)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1519,6 +1788,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([duplicate_ngc2000_object], 1)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1582,6 +1852,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([sharpless_duplicate], 1)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1662,6 +1933,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1718,6 +1990,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1770,6 +2043,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1836,6 +2110,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([], 0)),
         ):
             objects, _summaries = _query_simbad_objects(
@@ -1916,6 +2191,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([sparse_ngc2000_object], 1)),
         ):
             objects, summaries = _query_simbad_objects(
@@ -1995,6 +2271,7 @@ class SkyExplorerTest(unittest.TestCase):
             patch("photometry_app.core.sky_explorer._query_sharpless_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_barnard_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_vdb_objects", return_value=([], 0)),
+            patch("photometry_app.core.sky_explorer._query_hash_pn_objects", return_value=([], 0)),
             patch("photometry_app.core.sky_explorer._query_ngc2000_objects", return_value=([ngc4258_object], 1)),
         ):
             objects, summaries = _query_simbad_objects(

@@ -32,13 +32,60 @@ from photometry_app.core.settings import AppSettings
 
 from photometry_app.core.plotting import FitPeriodInferenceResult
 
-from photometry_app.ui.workers import AsteroidDiscoveryWorker, CalculatePeriodWorker, DiscoverBatchResult, DiscoverSourcesWorker, ImageDisplayPreloadWorker, LiteraturePeriodWorker, OptimizeComparisonFitWorker, SkyExplorerSurveyWorker, UpdateCheckWorker, UpdateDownloadWorker
+from photometry_app.ui.workers import AsteroidDiscoveryWorker, CalculatePeriodWorker, DiscoverBatchResult, DiscoverSourcesWorker, ImageDisplayPreloadWorker, LiteraturePeriodWorker, OptimizeComparisonFitWorker, ProcessWorker, SkyExplorerSurveyWorker, UpdateCheckWorker, UpdateDownloadWorker
+from photometry_app.core.pipeline import PipelineCancelled
 
 
 
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+
+
+
+class ProcessWorkerCancelTest(unittest.TestCase):
+
+    def test_process_worker_request_cancel_emits_terminated_failure(self) -> None:
+
+        from PySide6.QtCore import QCoreApplication
+
+        app = QCoreApplication.instance()
+
+        if app is None:
+
+            app = QCoreApplication([])
+
+        worker = ProcessWorker(root_path=Path("."), object_name="Demo")
+
+        failures: list[str] = []
+
+        worker.process_failed.connect(failures.append)
+
+        def fake_process_object(*_args, **kwargs):
+
+            cancel_requested = kwargs.get("cancel_requested")
+
+            progress_callback = kwargs.get("progress_callback")
+
+            worker.request_cancel()
+
+            if progress_callback is not None:
+
+                progress_callback("starting")
+
+            if cancel_requested is not None and cancel_requested():
+
+                raise PipelineCancelled("Differential photometry processing was terminated.")
+
+            raise AssertionError("cancel was not observed")
+
+        with patch.object(worker._pipeline, "process_object", side_effect=fake_process_object):
+
+            worker.run()
+
+        self.assertEqual(failures, ["Differential photometry processing was terminated."])
 
 
 

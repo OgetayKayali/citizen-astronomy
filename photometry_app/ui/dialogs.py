@@ -75,6 +75,16 @@ from photometry_app.core.sky_explorer import SKY_EXPLORER_LAYER_ORDER, sky_explo
 from photometry_app.core.settings import AppSettings, _coerce_hex_color, default_custom_theme_colors, default_settings_config_path, resolve_shared_parallel_workers, setup_pixel_scale_arcsec_per_pixel
 from photometry_app.core.sky_atlas import SkyAtlasObject, load_local_sky_atlas_objects
 from photometry_app.ui.constellation_overlay import ConstellationDataLoader
+from photometry_app.core.meteor_stream import (
+    MeteorStreamOverlay,
+    build_meteor_stream_overlay_from_samples,
+    build_orbit_soft_glow_mesh,
+    effective_meteor_stream_tube_radius_au,
+    format_meteor_stream_label,
+    match_meteor_shower_parents,
+    polyline_indices_from_path_fractions,
+    resample_closed_polyline_even_arc_length,
+)
 from photometry_app.core.solar_system import HeliocentricReferenceBody, KnownObjectComparisonTrack, KnownObjectHeliocentricContext, SolarSystemDetection, SolarSystemFrameMeasurement, load_cached_major_planet_heliocentric_paths, parse_observation_time
 from photometry_app.core.synthetic_tracking import SyntheticTrackingResult, format_synthetic_tracking_summary, measure_synthetic_tracking_peak
 from photometry_app.ui.image_view import AnnotatedImageView, ImageOverlay, MotionVectorOverlay
@@ -699,6 +709,12 @@ _KNOWN_OBJECT_3D_BODY_STYLES = {
 
 _KNOWN_OBJECT_3D_OBJECT_STYLE = {"line": (1.0, 0.70, 0.25), "glow": (1.0, 0.62, 0.10), "hex": "#ffb340"}
 _KNOWN_OBJECT_3D_COMET_STYLE = {"line": (0.38, 0.90, 0.95), "glow": (0.22, 0.76, 0.84), "hex": "#61e5f2"}
+_KNOWN_OBJECT_3D_METEOR_STREAM_DENSITY_DEFAULT = 480
+_KNOWN_OBJECT_3D_METEOR_STREAM_DENSITY_MIN = 100
+_KNOWN_OBJECT_3D_METEOR_STREAM_DENSITY_MAX = 8000
+_KNOWN_OBJECT_3D_METEOR_STREAM_FLASHES_PER_SEC = 1.2
+# UI 1× matches the former gentle 0.10× pace (~900 s/orbit at the old scale).
+_KNOWN_OBJECT_3D_METEOR_STREAM_ORBIT_SECONDS_AT_1X = 9000.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -3048,6 +3064,31 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._show_planets_checkbox.toggled.connect(self._handle_planets_toggled)
         self._sync_planets_checkbox_to_context()
 
+        self._show_meteor_stream_checkbox = QCheckBox("Meteor Stream", self)
+        self._show_meteor_stream_checkbox.setToolTip(
+            "Illustrative co-orbital debris tube for known shower parents "
+            "(e.g. Perseids from 109P/Swift-Tuttle). Particles fill the parent's "
+            "osculating orbit; Earth-crossing regions are highlighted. Not a full "
+            "dynamical dust-trail forecast."
+        )
+        self._show_meteor_stream_checkbox.toggled.connect(self._handle_meteor_stream_toggled)
+        self._meteor_stream_overlays: tuple[tuple[str, MeteorStreamOverlay], ...] = ()
+        self._meteor_stream_user_disabled = False
+        self._meteor_drift_timer = QTimer(self)
+        self._meteor_drift_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._meteor_drift_timer.setInterval(33)
+        self._meteor_drift_timer.timeout.connect(self._advance_meteor_stream_animation)
+        self._meteor_stream_particle_item = None
+        self._meteor_anim_orbit: np.ndarray | None = None
+        self._meteor_anim_tube_radius: float = 0.03
+        self._meteor_anim_path_fractions: np.ndarray | None = None
+        self._meteor_anim_offsets: np.ndarray | None = None
+        self._meteor_anim_base_colors: np.ndarray | None = None
+        self._meteor_anim_flash: np.ndarray | None = None
+        self._meteor_flash_accumulator = 0.0
+        self._meteor_drift_last_tick_seconds: float | None = None
+        self._meteor_anim_rng = np.random.default_rng(109_445_021)
+
         self._show_periods_checkbox = QCheckBox("Periods", self)
         self._show_periods_checkbox.toggled.connect(self._handle_show_periods_toggled)
 
@@ -3150,6 +3191,83 @@ class KnownObjectOrbit3DDialog(QDialog):
         settings_color_row.addWidget(self._comet_color_button)
         settings_color_row.addStretch(1)
         settings_panel_layout.addLayout(settings_color_row)
+
+        settings_panel_layout.addWidget(QLabel("Meteor Stream", settings_panel))
+        meteor_density_row = QHBoxLayout()
+        meteor_density_row.setContentsMargins(0, 0, 0, 0)
+        meteor_density_row.addWidget(QLabel("Point density", settings_panel))
+        self._meteor_stream_density_spin = QSpinBox(settings_panel)
+        self._meteor_stream_density_spin.setRange(
+            _KNOWN_OBJECT_3D_METEOR_STREAM_DENSITY_MIN,
+            _KNOWN_OBJECT_3D_METEOR_STREAM_DENSITY_MAX,
+        )
+        self._meteor_stream_density_spin.setSingleStep(50)
+        self._meteor_stream_density_spin.setValue(_KNOWN_OBJECT_3D_METEOR_STREAM_DENSITY_DEFAULT)
+        self._meteor_stream_density_spin.setToolTip(
+            "Number of debris points drawn along the parent orbit. Higher values fill long orbits like 109P."
+        )
+        self._meteor_stream_density_spin.valueChanged.connect(self._handle_meteor_stream_visual_settings_changed)
+        meteor_density_row.addWidget(self._meteor_stream_density_spin)
+        meteor_density_row.addStretch(1)
+        settings_panel_layout.addLayout(meteor_density_row)
+
+        meteor_thickness_row = QHBoxLayout()
+        meteor_thickness_row.setContentsMargins(0, 0, 0, 0)
+        meteor_thickness_row.addWidget(QLabel("Trail thickness", settings_panel))
+        self._meteor_stream_thickness_spin = QDoubleSpinBox(settings_panel)
+        self._meteor_stream_thickness_spin.setRange(0.5, 3.0)
+        self._meteor_stream_thickness_spin.setSingleStep(0.1)
+        self._meteor_stream_thickness_spin.setDecimals(1)
+        self._meteor_stream_thickness_spin.setValue(1.0)
+        self._meteor_stream_thickness_spin.setSuffix("×")
+        self._meteor_stream_thickness_spin.setToolTip(
+            "Scales the debris tube radius, glow width, and orbit guide line."
+        )
+        self._meteor_stream_thickness_spin.valueChanged.connect(self._handle_meteor_stream_visual_settings_changed)
+        meteor_thickness_row.addWidget(self._meteor_stream_thickness_spin)
+        meteor_thickness_row.addStretch(1)
+        settings_panel_layout.addLayout(meteor_thickness_row)
+
+        self._meteor_stream_orbit_guide_checkbox = QCheckBox("Orbit guide line", settings_panel)
+        self._meteor_stream_orbit_guide_checkbox.setChecked(True)
+        self._meteor_stream_orbit_guide_checkbox.setToolTip("Draw the osculating-orbit guide under the debris points.")
+        self._meteor_stream_orbit_guide_checkbox.toggled.connect(self._handle_meteor_stream_display_toggled)
+        settings_panel_layout.addWidget(self._meteor_stream_orbit_guide_checkbox)
+
+        self._meteor_stream_glow_checkbox = QCheckBox("Glow", settings_panel)
+        self._meteor_stream_glow_checkbox.setChecked(True)
+        self._meteor_stream_glow_checkbox.setToolTip(
+            "Soft comet-colored glow around the stream path: brightest on the line, "
+            "fading outward. Width follows Trail thickness."
+        )
+        self._meteor_stream_glow_checkbox.toggled.connect(self._handle_meteor_stream_display_toggled)
+        settings_panel_layout.addWidget(self._meteor_stream_glow_checkbox)
+
+        self._meteor_stream_animate_checkbox = QCheckBox("Animate debris", settings_panel)
+        self._meteor_stream_animate_checkbox.setChecked(True)
+        self._meteor_stream_animate_checkbox.setToolTip(
+            "While timeline playback is running, debris drifts slowly along the orbit. "
+            "Occasionally a point flashes out and a new one appears elsewhere."
+        )
+        self._meteor_stream_animate_checkbox.toggled.connect(self._handle_meteor_stream_animation_toggled)
+        settings_panel_layout.addWidget(self._meteor_stream_animate_checkbox)
+
+        meteor_drift_row = QHBoxLayout()
+        meteor_drift_row.setContentsMargins(0, 0, 0, 0)
+        meteor_drift_row.addWidget(QLabel("Drift speed", settings_panel))
+        self._meteor_stream_drift_spin = QDoubleSpinBox(settings_panel)
+        self._meteor_stream_drift_spin.setRange(0.25, 5.0)
+        self._meteor_stream_drift_spin.setSingleStep(0.25)
+        self._meteor_stream_drift_spin.setDecimals(2)
+        self._meteor_stream_drift_spin.setValue(1.0)
+        self._meteor_stream_drift_spin.setSuffix("×")
+        self._meteor_stream_drift_spin.setToolTip(
+            "Debris drift rate during playback. 1× is the default gentle pace; lower or raise from there."
+        )
+        self._meteor_stream_drift_spin.valueChanged.connect(self._handle_meteor_stream_animation_toggled)
+        meteor_drift_row.addWidget(self._meteor_stream_drift_spin)
+        meteor_drift_row.addStretch(1)
+        settings_panel_layout.addLayout(meteor_drift_row)
 
         settings_panel_layout.addWidget(QLabel("Sky Track", settings_panel))
         self._sky_track_bayer_checkbox = QCheckBox("Bayer designations (a Ori, z Oph, …)", settings_panel)
@@ -3305,6 +3423,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         controls_row.addWidget(self._custom_span_apply_button, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_row.addSpacing(8)
         controls_row.addWidget(self._show_planets_checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls_row.addWidget(self._show_meteor_stream_checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_row.addWidget(self._show_periods_checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
         controls_row.addSpacing(8)
         controls_row.addWidget(QLabel("Camera", self), 0, Qt.AlignmentFlag.AlignVCenter)
@@ -3462,6 +3581,8 @@ class KnownObjectOrbit3DDialog(QDialog):
 
         self._populate_table()
         self._update_periods_label()
+        self._refresh_meteor_stream_overlays()
+        self._sync_meteor_stream_checkbox_state(prefer_enable=True)
         self._draw_plots()
         self._update_playback_timer_interval()
         self._sync_playback_controls_to_context(preferred_time=self._context.reference_time, update_camera=True)
@@ -3489,6 +3610,7 @@ class KnownObjectOrbit3DDialog(QDialog):
             self._context.observation_earth_samples,
         )
         self._sky_track_series = self._build_sky_track_series()
+        self._refresh_meteor_stream_overlays()
 
     def matches_request(
         self,
@@ -3547,6 +3669,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._sync_span_combo_to_context()
         self._sync_custom_span_inputs_to_state()
         self._sync_planets_checkbox_to_context()
+        self._sync_meteor_stream_checkbox_state(prefer_enable=not self._meteor_stream_user_disabled)
         self._table.setRowCount(len(self._frame_measurements))
         self._play_button.blockSignals(True)
         self._play_button.setChecked(False)
@@ -3584,6 +3707,9 @@ class KnownObjectOrbit3DDialog(QDialog):
         desired_keys = {self._target_visibility_key(target.detection) for target in desired_targets}
         self._rebuild_object_toggle_controls()
         if desired_keys.issubset(self._current_target_keys()):
+            self._refresh_meteor_stream_overlays()
+            self._sync_meteor_stream_checkbox_state(prefer_enable=not self._meteor_stream_user_disabled)
+            self._summary_label.setText(self._summary_text())
             self._draw_plots()
             self._update_plot_playback_markers()
             QTimer.singleShot(0, self._refresh_gl_after_show)
@@ -3925,7 +4051,7 @@ class KnownObjectOrbit3DDialog(QDialog):
             return
         # pyqtgraph caches compiled shader program IDs globally, but those IDs
         # are bound to the OpenGL context that created them.
-        for item_name in ("GLScatterPlotItem", "GLLinePlotItem"):
+        for item_name in ("GLScatterPlotItem", "GLLinePlotItem", "GLMeshItem"):
             item_class = getattr(gl, item_name, None)
             if item_class is not None and hasattr(item_class, "_shaderProgram"):
                 setattr(item_class, "_shaderProgram", None)
@@ -3955,6 +4081,7 @@ class KnownObjectOrbit3DDialog(QDialog):
     def _clear_gl_scene(self) -> None:
         if self._gl_view is None:
             return
+        self._stop_meteor_stream_animation(clear_item_ref=False)
         for item in self._gl_scene_items:
             try:
                 self._gl_view.removeItem(item)
@@ -3968,6 +4095,8 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._comparison_current_items = []
         self._additional_body_current_items = {}
         self._gl_label_items = {}
+        self._meteor_stream_particle_item = None
+        self._clear_meteor_stream_animation_state()
 
     def _scene_points(self) -> np.ndarray:
         point_groups = [self._earth_path_points, self._observed_earth_points, *self._additional_body_points.values()]
@@ -3979,6 +4108,16 @@ class KnownObjectOrbit3DDialog(QDialog):
         for comparison_index, comparison_points in enumerate(self._comparison_observed_points, start=1):
             if self._is_target_visible(comparison_index):
                 point_groups.append(comparison_points)
+        if self._meteor_stream_visible():
+            for _label, overlay in self._meteor_stream_overlays:
+                if overlay.orbit_polyline_au.size:
+                    point_groups.append(overlay.orbit_polyline_au)
+                if overlay.particle_positions_au.size:
+                    # Subsample for camera extent so huge particle clouds stay cheap.
+                    particles = overlay.particle_positions_au
+                    if len(particles) > 120:
+                        particles = particles[:: max(1, len(particles) // 120)]
+                    point_groups.append(particles)
         point_groups = [points for points in point_groups if points.size]
         if not point_groups:
             return np.zeros((1, 3), dtype=float)
@@ -4127,6 +4266,25 @@ class KnownObjectOrbit3DDialog(QDialog):
         for body in self._context.additional_bodies:
             style = self._body_style(body.key)
             self._add_gl_label(f"planet-{body.key}", body.label, (0.0, 0.0, 0.0), str(style["hex"]))
+        if self._meteor_stream_visible():
+            for stream_index, (stream_label, overlay) in enumerate(self._meteor_stream_overlays):
+                self._add_gl_meteor_stream(overlay)
+                label_position = overlay.crossing_position_au
+                if label_position is None and overlay.orbit_polyline_au.size:
+                    mid = len(overlay.orbit_polyline_au) // 2
+                    point = overlay.orbit_polyline_au[mid]
+                    label_position = (float(point[0]), float(point[1]), float(point[2]))
+                if label_position is not None:
+                    stream_style = self._meteor_stream_style()
+                    self._add_gl_label(
+                        f"meteor-stream-{stream_index}",
+                        stream_label,
+                        label_position,
+                        str(stream_style["hex"]),
+                    )
+            self._sync_meteor_stream_animation()
+        else:
+            self._stop_meteor_stream_animation(clear_item_ref=True)
 
     def _refresh_gl_after_show(self) -> None:
         if gl is None or not self.isVisible():
@@ -4161,6 +4319,11 @@ class KnownObjectOrbit3DDialog(QDialog):
         object_label = self._primary_target_label()
         span_label = self._span_combo.currentText() if hasattr(self, "_span_combo") else "Local"
         planets_label = "On" if getattr(self._context, "include_major_planets", False) else "Off"
+        stream_label = "Off"
+        if self._meteor_stream_visible() and self._meteor_stream_overlays:
+            stream_label = ", ".join(label for label, _overlay in self._meteor_stream_overlays)
+        elif self._meteor_stream_overlays:
+            stream_label = "Available"
         target_count = sum(1 for checked in self._object_visibility_states.values() if checked)
         if target_count <= 0:
             target_summary = "No objects"
@@ -4173,7 +4336,8 @@ class KnownObjectOrbit3DDialog(QDialog):
             horizons_label = self._context.resolved_target_name
         return (
             f"{target_summary} | Targets: {target_count} | Horizons target: {horizons_label} | Frames: {len(self._frame_measurements)} | "
-            f"Span: {span_label} | Planets: {planets_label} | Window: {self._context.window_start.date().isoformat()} to {self._context.window_end.date().isoformat()}"
+            f"Span: {span_label} | Planets: {planets_label} | Meteor stream: {stream_label} | "
+            f"Window: {self._context.window_start.date().isoformat()} to {self._context.window_end.date().isoformat()}"
         )
 
     def _comparison_tracks(self) -> tuple[KnownObjectComparisonTrack, ...]:
@@ -6843,6 +7007,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         else:
             self._playback_timer.stop()
             self._playback_last_tick_seconds = None
+        self._sync_meteor_stream_animation()
 
     def _update_playback_timer_interval(self) -> None:
         self._playback_timer.setInterval(16)
@@ -6852,6 +7017,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         if sample_count <= 1:
             self._playback_timer.stop()
             self._playback_last_tick_seconds = None
+            self._sync_meteor_stream_animation()
             return
         current_tick_seconds = perf_counter()
         elapsed_seconds = self._playback_timer.interval() / 1000.0
@@ -6873,6 +7039,543 @@ class KnownObjectOrbit3DDialog(QDialog):
     def _handle_show_periods_toggled(self, _checked: bool) -> None:
         self._update_periods_label()
 
+    def _handle_meteor_stream_toggled(self, checked: bool) -> None:
+        self._meteor_stream_user_disabled = not bool(checked)
+        self._summary_label.setText(self._summary_text())
+        self._sync_meteor_stream_settings_enabled()
+        QTimer.singleShot(0, self._refresh_gl_after_show)
+
+    def _handle_meteor_stream_visual_settings_changed(self, *_args) -> None:
+        self._refresh_meteor_stream_overlays()
+        self._sync_meteor_stream_checkbox_state(prefer_enable=not self._meteor_stream_user_disabled)
+        self._summary_label.setText(self._summary_text())
+        QTimer.singleShot(0, self._refresh_gl_after_show)
+
+    def _handle_meteor_stream_display_toggled(self, *_args) -> None:
+        QTimer.singleShot(0, self._refresh_gl_after_show)
+
+    def _handle_meteor_stream_animation_toggled(self, *_args) -> None:
+        self._sync_meteor_stream_animation()
+
+    def _meteor_stream_particle_count(self) -> int:
+        spin = getattr(self, "_meteor_stream_density_spin", None)
+        if spin is None:
+            return int(_KNOWN_OBJECT_3D_METEOR_STREAM_DENSITY_DEFAULT)
+        return max(
+            _KNOWN_OBJECT_3D_METEOR_STREAM_DENSITY_MIN,
+            min(_KNOWN_OBJECT_3D_METEOR_STREAM_DENSITY_MAX, int(spin.value())),
+        )
+
+    def _meteor_stream_thickness_scale(self) -> float:
+        spin = getattr(self, "_meteor_stream_thickness_spin", None)
+        if spin is None:
+            return 1.0
+        return max(0.5, min(3.0, float(spin.value())))
+
+    def _meteor_stream_orbit_guide_enabled(self) -> bool:
+        checkbox = getattr(self, "_meteor_stream_orbit_guide_checkbox", None)
+        return bool(checkbox is None or checkbox.isChecked())
+
+    def _meteor_stream_glow_enabled(self) -> bool:
+        checkbox = getattr(self, "_meteor_stream_glow_checkbox", None)
+        return bool(checkbox is not None and checkbox.isChecked())
+
+    def _meteor_stream_animation_enabled(self) -> bool:
+        checkbox = getattr(self, "_meteor_stream_animate_checkbox", None)
+        return bool(checkbox is not None and checkbox.isChecked())
+
+    def _meteor_stream_drift_scale(self) -> float:
+        spin = getattr(self, "_meteor_stream_drift_spin", None)
+        if spin is None:
+            return 1.0
+        return max(0.25, min(5.0, float(spin.value())))
+
+    def _meteor_stream_style(self) -> dict[str, object]:
+        # Shower parents are comets; keep stream/debris tied to the Comets color picker.
+        return self._style_from_hex(self._comet_color_hex)
+
+    def _playback_is_running(self) -> bool:
+        return bool(self._play_button.isChecked() and self._playback_timer.isActive())
+
+    def _sync_meteor_stream_settings_enabled(self) -> None:
+        available = bool(self._meteor_stream_overlays)
+        stream_on = available and self._show_meteor_stream_checkbox.isChecked()
+        for widget in (
+            getattr(self, "_meteor_stream_density_spin", None),
+            getattr(self, "_meteor_stream_thickness_spin", None),
+            getattr(self, "_meteor_stream_orbit_guide_checkbox", None),
+            getattr(self, "_meteor_stream_glow_checkbox", None),
+            getattr(self, "_meteor_stream_animate_checkbox", None),
+            getattr(self, "_meteor_stream_drift_spin", None),
+        ):
+            if widget is not None:
+                widget.setEnabled(stream_on)
+
+    def _meteor_stream_visible(self) -> bool:
+        checkbox = getattr(self, "_show_meteor_stream_checkbox", None)
+        if checkbox is None or not checkbox.isChecked() or not checkbox.isEnabled():
+            return False
+        return bool(self._meteor_stream_overlays)
+
+    def _sync_meteor_stream_checkbox_state(self, *, prefer_enable: bool = False) -> None:
+        checkbox = getattr(self, "_show_meteor_stream_checkbox", None)
+        if checkbox is None:
+            return
+        available = bool(self._meteor_stream_overlays)
+        checkbox.setEnabled(available)
+        checkbox.blockSignals(True)
+        if not available:
+            checkbox.setChecked(False)
+        elif prefer_enable and not self._meteor_stream_user_disabled:
+            checkbox.setChecked(True)
+        elif self._meteor_stream_user_disabled:
+            checkbox.setChecked(False)
+        checkbox.blockSignals(False)
+        self._sync_meteor_stream_settings_enabled()
+        if available:
+            tip_lines = [
+                "Illustrative co-orbital debris along the parent's osculating orbit.",
+                "Earth-crossing regions are highlighted. Not a full dynamical dust-trail forecast.",
+            ]
+            for label, overlay in self._meteor_stream_overlays:
+                tip_lines.append(
+                    f"{label}: a={overlay.semi_major_axis_au:.2f} AU, e={overlay.eccentricity:.3f}, "
+                    f"P={overlay.orbital_period_days / 365.25:.1f} y"
+                    + (
+                        f", Earth approach ≈ {overlay.closest_approach_au:.3f} AU"
+                        if math.isfinite(overlay.closest_approach_au)
+                        else ""
+                    )
+                    + "."
+                )
+            checkbox.setToolTip("\n".join(tip_lines))
+        else:
+            checkbox.setToolTip(
+                "Meteor Stream is available when a known shower parent is visible "
+                "(e.g. 109P/Swift-Tuttle → Perseids, 1P/Halley → Orionids / η Aquariids)."
+            )
+            self._stop_meteor_stream_animation(clear_item_ref=True)
+
+    def _refresh_meteor_stream_overlays(self) -> None:
+        overlays: list[tuple[str, MeteorStreamOverlay]] = []
+        candidates: list[tuple[str, object, tuple[object, ...]]] = []
+        if self._is_target_visible(0) and self._context.object_path_samples:
+            detection = self._detection
+            identity_bits = (
+                getattr(detection, "name", None) if detection is not None else None,
+                getattr(detection, "designation", None) if detection is not None else None,
+                self._context.object_label,
+                self._context.resolved_target_name,
+            )
+            showers = match_meteor_shower_parents(*identity_bits)
+            if showers:
+                candidates.append((format_meteor_stream_label(showers), showers[0], self._context.object_path_samples))
+        for comparison_index, track in enumerate(self._comparison_tracks()):
+            target_index = comparison_index + 1
+            if not self._is_target_visible(target_index) or not track.path_samples:
+                continue
+            showers = match_meteor_shower_parents(track.object_label, track.resolved_target_name)
+            if not showers:
+                continue
+            candidates.append((format_meteor_stream_label(showers), showers[0], track.path_samples))
+
+        thickness = self._meteor_stream_thickness_scale()
+        particle_count = self._meteor_stream_particle_count()
+        tube_radius = 0.03 * thickness
+        seen_labels: set[str] = set()
+        for label, shower, path_samples in candidates:
+            if label in seen_labels:
+                continue
+            overlay = build_meteor_stream_overlay_from_samples(
+                shower=shower,
+                object_samples=path_samples,
+                earth_samples=self._context.earth_path_samples,
+                particle_count=particle_count,
+                tube_radius_au=tube_radius,
+            )
+            if overlay is None:
+                continue
+            overlays.append((label, overlay))
+            seen_labels.add(label)
+        self._meteor_stream_overlays = tuple(overlays)
+
+    def _add_gl_meteor_stream(self, overlay: MeteorStreamOverlay) -> None:
+        if self._gl_view is None:
+            return
+        thickness = self._meteor_stream_thickness_scale()
+        style = self._meteor_stream_style()
+        line_rgb = tuple(float(value) for value in style["line"])  # type: ignore[arg-type]
+        glow_rgb = tuple(float(value) for value in style["glow"])  # type: ignore[arg-type]
+        orbit = overlay.orbit_polyline_au
+        # Even arc-length centerline keeps guide/glow thickness uniform on high-e orbits.
+        display_orbit = (
+            resample_closed_polyline_even_arc_length(orbit, sample_count=480)
+            if orbit.size
+            else orbit
+        )
+        tube_radius = effective_meteor_stream_tube_radius_au(orbit, thickness_scale=thickness)
+        if display_orbit.size and self._meteor_stream_glow_enabled():
+            self._add_gl_meteor_stream_glow(
+                display_orbit,
+                glow_rgb=glow_rgb,
+                core_radius_au=tube_radius,
+            )
+        if display_orbit.size and self._meteor_stream_orbit_guide_enabled():
+            glow_line = gl.GLLinePlotItem(
+                pos=display_orbit,
+                color=(*glow_rgb, 0.18),
+                width=max(2.0, 4.0 * thickness),
+                antialias=True,
+                mode="line_strip",
+            )
+            main_line = gl.GLLinePlotItem(
+                pos=display_orbit,
+                color=(*line_rgb, 0.7),
+                width=max(1.0, 1.35 * thickness),
+                antialias=True,
+                mode="line_strip",
+            )
+            self._gl_scene_items.extend([glow_line, main_line])
+            self._gl_view.addItem(glow_line)
+            self._gl_view.addItem(main_line)
+
+        particles = overlay.particle_positions_au
+        if particles.size:
+            offset_magnitudes = None
+            if (
+                overlay.particle_radial_offsets_au is not None
+                and overlay.particle_normal_offsets_au is not None
+                and overlay.particle_binormal_offsets_au is not None
+                and len(overlay.particle_radial_offsets_au) == len(particles)
+            ):
+                offset_magnitudes = np.linalg.norm(
+                    np.column_stack(
+                        [
+                            overlay.particle_radial_offsets_au,
+                            overlay.particle_normal_offsets_au,
+                            overlay.particle_binormal_offsets_au,
+                        ]
+                    ),
+                    axis=1,
+                )
+            colors, sizes = self._meteor_stream_particle_style_arrays(
+                base_colors=None,
+                near_mask=np.asarray(overlay.near_earth_mask, dtype=bool),
+                flash=None,
+                particle_count=len(particles),
+                offset_magnitudes=offset_magnitudes,
+                tube_radius_au=tube_radius,
+            )
+            # World-space sizes (AU) keep foreshortening consistent; no tip sprite pile-up.
+            particle_item = gl.GLScatterPlotItem(pos=particles, color=colors, size=sizes, pxMode=False)
+            self._gl_scene_items.append(particle_item)
+            self._gl_view.addItem(particle_item)
+            self._meteor_stream_particle_item = particle_item
+            self._seed_meteor_stream_animation_state(overlay, base_colors=colors)
+
+        if overlay.crossing_position_au is not None:
+            crossing = np.array([overlay.crossing_position_au], dtype=float)
+            crossing_rgb = tuple(min(1.0, channel * 1.15 + 0.08) for channel in line_rgb)
+            crossing_size = max(0.04, 0.35 * tube_radius)
+            crossing_item = gl.GLScatterPlotItem(
+                pos=crossing,
+                color=np.array([[crossing_rgb[0], crossing_rgb[1], crossing_rgb[2], 0.95]], dtype=float),
+                size=crossing_size,
+                pxMode=False,
+            )
+            self._gl_scene_items.append(crossing_item)
+            self._gl_view.addItem(crossing_item)
+
+    def _add_gl_meteor_stream_glow(
+        self,
+        orbit_polyline_au: np.ndarray,
+        *,
+        glow_rgb: tuple[float, float, float],
+        core_radius_au: float,
+    ) -> None:
+        if self._gl_view is None or gl is None:
+            return
+        mesh_data_cls = getattr(gl, "MeshData", None)
+        mesh_item_cls = getattr(gl, "GLMeshItem", None)
+        if mesh_data_cls is None or mesh_item_cls is None:
+            return
+        vertexes, faces, vertex_colors = build_orbit_soft_glow_mesh(
+            orbit_polyline_au,
+            radius_au=max(1.0e-4, float(core_radius_au) * 1.35),
+            rgb=glow_rgb,
+            path_samples=420,
+            peak_alpha=0.34,
+        )
+        if len(vertexes) == 0 or len(faces) == 0:
+            return
+        mesh = mesh_data_cls(vertexes=vertexes, faces=faces)
+        mesh.setVertexColors(vertex_colors)
+        glow_item = mesh_item_cls(
+            meshdata=mesh,
+            smooth=False,
+            drawEdges=False,
+            computeNormals=False,
+            shader=None,
+            glOptions="additive",
+        )
+        self._gl_scene_items.append(glow_item)
+        self._gl_view.addItem(glow_item)
+
+    def _meteor_stream_particle_style_arrays(
+        self,
+        *,
+        particle_count: int,
+        near_mask: np.ndarray | None,
+        base_colors: np.ndarray | None,
+        flash: np.ndarray | None,
+        offset_magnitudes: np.ndarray | None = None,
+        tube_radius_au: float | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        thickness = self._meteor_stream_thickness_scale()
+        style = self._meteor_stream_style()
+        line_rgb = tuple(float(value) for value in style["line"])  # type: ignore[arg-type]
+        tube_radius = (
+            float(tube_radius_au)
+            if tube_radius_au is not None
+            else max(0.02, 0.03 * thickness)
+        )
+        # Size is in AU (pxMode=False): small relative to the tube so debris reads as grit, not blobs.
+        base_size = max(0.01, 0.22 * tube_radius)
+        if base_colors is not None and len(base_colors) == particle_count:
+            colors = np.array(base_colors, dtype=float, copy=True)
+        else:
+            particle_alpha = 0.55
+            colors = np.tile(
+                np.array([[line_rgb[0], line_rgb[1], line_rgb[2], particle_alpha]], dtype=float),
+                (particle_count, 1),
+            )
+            if self._meteor_stream_glow_enabled() and offset_magnitudes is not None and len(offset_magnitudes) == particle_count:
+                # Bright near the centerline, fainter toward the tube edge.
+                falloff = np.exp(-((offset_magnitudes / max(1.0e-4, tube_radius * 0.85)) ** 2))
+                colors[:, 3] = particle_alpha * (0.22 + 0.78 * falloff)
+                colors[:, 0:3] = np.clip(
+                    np.asarray(line_rgb, dtype=float)[None, :] * (0.72 + 0.28 * falloff[:, None]),
+                    0.0,
+                    1.0,
+                )
+            if near_mask is not None and near_mask.shape == (particle_count,) and bool(np.any(near_mask)):
+                near_rgb = tuple(min(1.0, channel * 1.12 + 0.06) for channel in line_rgb)
+                colors[near_mask] = np.array(
+                    [[near_rgb[0], near_rgb[1], near_rgb[2], 0.92]],
+                    dtype=float,
+                )
+        sizes = np.full(particle_count, base_size, dtype=float)
+        if flash is not None and len(flash) == particle_count:
+            active = flash > 0.0
+            if bool(np.any(active)):
+                # 0→0.55 rise, 0.55→1 fade out.
+                phase = flash[active]
+                strength = np.where(phase < 0.55, phase / 0.55, np.clip((1.0 - phase) / 0.45, 0.0, 1.0))
+                flash_rgb = np.array(
+                    [min(1.0, line_rgb[0] * 0.55 + 0.45), min(1.0, line_rgb[1] * 0.55 + 0.45), min(1.0, line_rgb[2] * 0.55 + 0.45)],
+                    dtype=float,
+                )
+                colors[active, 0:3] = (1.0 - strength[:, None]) * colors[active, 0:3] + strength[:, None] * flash_rgb
+                colors[active, 3] = np.minimum(1.0, colors[active, 3] * (1.0 - 0.2 * strength) + 0.9 * strength)
+                fading = phase >= 0.55
+                if bool(np.any(fading)):
+                    fade = np.clip((1.0 - phase[fading]) / 0.45, 0.0, 1.0)
+                    # Map fading subset back carefully:
+                    active_indices = np.where(active)[0]
+                    fade_indices = active_indices[fading]
+                    colors[fade_indices, 3] *= fade
+                sizes[active] = base_size * (1.0 + 1.6 * strength)
+        return colors, sizes
+
+    def _primary_meteor_stream_overlay(self) -> MeteorStreamOverlay | None:
+        if not self._meteor_stream_overlays:
+            return None
+        return self._meteor_stream_overlays[0][1]
+
+    def _clear_meteor_stream_animation_state(self) -> None:
+        self._meteor_anim_orbit = None
+        self._meteor_anim_tube_radius = 0.03
+        self._meteor_anim_path_fractions = None
+        self._meteor_anim_offsets = None
+        self._meteor_anim_base_colors = None
+        self._meteor_anim_flash = None
+        self._meteor_flash_accumulator = 0.0
+        self._meteor_drift_last_tick_seconds = None
+
+    def _stop_meteor_stream_animation(self, *, clear_item_ref: bool) -> None:
+        self._meteor_drift_timer.stop()
+        self._meteor_drift_last_tick_seconds = None
+        if clear_item_ref:
+            self._meteor_stream_particle_item = None
+            self._clear_meteor_stream_animation_state()
+
+    def _seed_meteor_stream_animation_state(
+        self,
+        overlay: MeteorStreamOverlay,
+        *,
+        base_colors: np.ndarray,
+    ) -> None:
+        orbit = np.asarray(overlay.orbit_polyline_au, dtype=float)
+        if len(orbit) < 4 or overlay.particle_positions_au.size == 0:
+            self._clear_meteor_stream_animation_state()
+            return
+        # Drop closed duplicate endpoint for modular indexing.
+        if np.allclose(orbit[0], orbit[-1]):
+            orbit = orbit[:-1]
+        if len(orbit) < 3:
+            self._clear_meteor_stream_animation_state()
+            return
+
+        count = len(overlay.particle_positions_au)
+        thickness = self._meteor_stream_thickness_scale()
+        tube_radius = effective_meteor_stream_tube_radius_au(orbit, thickness_scale=thickness)
+        if overlay.particle_path_fractions is not None and len(overlay.particle_path_fractions) == count:
+            path_fractions = np.mod(np.asarray(overlay.particle_path_fractions, dtype=float), 1.0)
+        elif overlay.particle_true_anomalies is not None and len(overlay.particle_true_anomalies) == count:
+            # Legacy fallback only; prefer path fractions for even ribbon density.
+            path_fractions = np.mod(
+                np.asarray(overlay.particle_true_anomalies, dtype=float) / (2.0 * math.pi),
+                1.0,
+            )
+        else:
+            path_fractions = (
+                np.linspace(0.0, 1.0, count, endpoint=False)
+                + self._meteor_anim_rng.uniform(0.0, 1.0 / max(1, count), count)
+            ) % 1.0
+        # Keep the authored ribbon offsets when available; otherwise small Cartesian jitter.
+        if (
+            overlay.particle_radial_offsets_au is not None
+            and overlay.particle_normal_offsets_au is not None
+            and overlay.particle_binormal_offsets_au is not None
+            and len(overlay.particle_radial_offsets_au) == count
+        ):
+            offsets = np.column_stack(
+                [
+                    overlay.particle_radial_offsets_au,
+                    overlay.particle_normal_offsets_au,
+                    overlay.particle_binormal_offsets_au,
+                ]
+            ).astype(float, copy=True)
+        else:
+            offsets = self._meteor_anim_rng.normal(0.0, tube_radius, size=(count, 3))
+        self._meteor_anim_orbit = orbit
+        self._meteor_anim_tube_radius = float(tube_radius)
+        self._meteor_anim_path_fractions = path_fractions.astype(float, copy=False)
+        self._meteor_anim_offsets = offsets
+        self._meteor_anim_base_colors = np.array(base_colors, dtype=float, copy=True)
+        self._meteor_anim_flash = np.zeros(count, dtype=float)
+        self._meteor_flash_accumulator = 0.0
+
+    def _sync_meteor_stream_animation(self) -> None:
+        should_run = (
+            self._meteor_stream_visible()
+            and self._meteor_stream_animation_enabled()
+            and self._playback_is_running()
+            and self._gl_view is not None
+            and self._meteor_stream_particle_item is not None
+            and self._meteor_anim_orbit is not None
+            and self._meteor_anim_path_fractions is not None
+        )
+        if not should_run:
+            self._meteor_drift_timer.stop()
+            self._meteor_drift_last_tick_seconds = None
+            return
+        self._meteor_drift_last_tick_seconds = perf_counter()
+        if not self._meteor_drift_timer.isActive():
+            self._meteor_drift_timer.start()
+
+    def _meteor_stream_positions_from_path_fractions(self) -> np.ndarray:
+        orbit = self._meteor_anim_orbit
+        fractions = self._meteor_anim_path_fractions
+        offsets = self._meteor_anim_offsets
+        assert orbit is not None and fractions is not None and offsets is not None
+        indices = polyline_indices_from_path_fractions(orbit, fractions)
+        point_count = len(orbit)
+        wrapped = np.mod(indices, point_count)
+        lower = np.floor(wrapped).astype(np.int64)
+        upper = (lower + 1) % point_count
+        frac = (wrapped - lower).reshape(-1, 1)
+        return orbit[lower] * (1.0 - frac) + orbit[upper] * frac + offsets
+
+    def _respawn_meteor_stream_particle(self, index: int) -> None:
+        assert self._meteor_anim_orbit is not None
+        assert self._meteor_anim_path_fractions is not None
+        assert self._meteor_anim_offsets is not None
+        assert self._meteor_anim_base_colors is not None
+        assert self._meteor_anim_flash is not None
+        tube_radius = float(getattr(self, "_meteor_anim_tube_radius", 0.03) or 0.03)
+        self._meteor_anim_path_fractions[index] = float(self._meteor_anim_rng.uniform(0.0, 1.0))
+        self._meteor_anim_offsets[index] = self._meteor_anim_rng.normal(0.0, tube_radius, size=3)
+        self._meteor_anim_flash[index] = 0.0
+        style = self._meteor_stream_style()
+        line_rgb = tuple(float(value) for value in style["line"])  # type: ignore[arg-type]
+        alpha = 0.55
+        if self._meteor_stream_glow_enabled():
+            offset_mag = float(np.linalg.norm(self._meteor_anim_offsets[index]))
+            falloff = math.exp(-((offset_mag / max(1.0e-4, tube_radius * 0.85)) ** 2))
+            alpha = 0.55 * (0.22 + 0.78 * falloff)
+            line_rgb = tuple(min(1.0, channel * (0.72 + 0.28 * falloff)) for channel in line_rgb)
+        self._meteor_anim_base_colors[index, 0:3] = line_rgb
+        self._meteor_anim_base_colors[index, 3] = max(0.2, alpha)
+
+    def _advance_meteor_stream_animation(self) -> None:
+        if (
+            not self._meteor_stream_visible()
+            or not self._meteor_stream_animation_enabled()
+            or not self._playback_is_running()
+            or self._gl_view is None
+            or self._meteor_stream_particle_item is None
+            or self._meteor_anim_orbit is None
+            or self._meteor_anim_path_fractions is None
+            or self._meteor_anim_offsets is None
+            or self._meteor_anim_base_colors is None
+            or self._meteor_anim_flash is None
+        ):
+            self._meteor_drift_timer.stop()
+            self._meteor_drift_last_tick_seconds = None
+            return
+
+        now = perf_counter()
+        dt = (
+            0.033
+            if self._meteor_drift_last_tick_seconds is None
+            else max(0.001, min(0.08, now - self._meteor_drift_last_tick_seconds))
+        )
+        self._meteor_drift_last_tick_seconds = now
+
+        # Advance by orbit fraction so spacing stays even on high-e polylines.
+        fraction_speed = self._meteor_stream_drift_scale() / _KNOWN_OBJECT_3D_METEOR_STREAM_ORBIT_SECONDS_AT_1X
+        self._meteor_anim_path_fractions = np.mod(
+            self._meteor_anim_path_fractions + fraction_speed * dt,
+            1.0,
+        )
+
+        # Rare flashes: about one event / second, independent of particle count.
+        self._meteor_flash_accumulator += _KNOWN_OBJECT_3D_METEOR_STREAM_FLASHES_PER_SEC * dt
+        idle = np.where(self._meteor_anim_flash <= 0.0)[0]
+        while self._meteor_flash_accumulator >= 1.0 and idle.size:
+            pick = int(idle[int(self._meteor_anim_rng.integers(0, len(idle)))])
+            self._meteor_anim_flash[pick] = 1.0e-3
+            self._meteor_flash_accumulator -= 1.0
+            idle = np.where(self._meteor_anim_flash <= 0.0)[0]
+
+        active = self._meteor_anim_flash > 0.0
+        if bool(np.any(active)):
+            self._meteor_anim_flash[active] += dt / 0.45
+            finished = np.where(self._meteor_anim_flash >= 1.0)[0]
+            for index in finished:
+                self._respawn_meteor_stream_particle(int(index))
+
+        positions = self._meteor_stream_positions_from_path_fractions()
+        colors, sizes = self._meteor_stream_particle_style_arrays(
+            particle_count=len(positions),
+            near_mask=None,
+            base_colors=self._meteor_anim_base_colors,
+            flash=self._meteor_anim_flash,
+            tube_radius_au=float(getattr(self, "_meteor_anim_tube_radius", 0.03) or 0.03),
+        )
+        self._meteor_stream_particle_item.setData(pos=positions, color=colors, size=sizes)
+
     def _handle_label_style_changed(self, *_args) -> None:
         self._draw_plots()
         self._update_plot_playback_markers()
@@ -6890,6 +7593,9 @@ class KnownObjectOrbit3DDialog(QDialog):
         desired_keys = {self._target_visibility_key(target.detection) for target in desired_targets}
         if desired_keys.issubset(self._current_target_keys()):
             self._rebuild_object_toggle_controls()
+            self._refresh_meteor_stream_overlays()
+            self._sync_meteor_stream_checkbox_state(prefer_enable=not self._meteor_stream_user_disabled)
+            self._summary_label.setText(self._summary_text())
             self._draw_plots()
             self._update_plot_playback_markers()
             QTimer.singleShot(0, self._refresh_gl_after_show)
@@ -7098,6 +7804,8 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._custom_span_end_input.setEnabled(not is_loading)
         self._custom_span_apply_button.setEnabled(not is_loading)
         self._show_planets_checkbox.setEnabled(not is_loading)
+        meteor_available = bool(getattr(self, "_meteor_stream_overlays", ()))
+        self._show_meteor_stream_checkbox.setEnabled((not is_loading) and meteor_available)
         self._camera_mode_combo.setEnabled(not is_loading)
         self._play_button.setEnabled((not is_loading) and len(self._timeline_times) > 1)
         self._reset_time_button.setEnabled(not is_loading)
@@ -7134,6 +7842,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._rebuild_object_toggle_controls()
         self._sync_span_combo_to_context()
         self._sync_planets_checkbox_to_context()
+        self._sync_meteor_stream_checkbox_state(prefer_enable=not self._meteor_stream_user_disabled)
         self._populate_table()
         self._update_periods_label()
         self._draw_plots()
@@ -7551,6 +8260,7 @@ class KnownObjectOrbit3DDialog(QDialog):
     def closeEvent(self, event) -> None:
         self._playback_timer.stop()
         self._playback_last_tick_seconds = None
+        self._stop_meteor_stream_animation(clear_item_ref=True)
         self._context_reload_worker = None
         super().closeEvent(event)
 
@@ -10868,21 +11578,27 @@ class SettingsDialog(QDialog):
         self._asteroid_estimate_required_visible_stars_input.setValue(settings.asteroid_estimate_required_visible_stars)
         self._asteroid_estimate_annotate_lowest_mag_stars_input = QCheckBox("Annotate the faintest confirmed stars after Estimate")
         self._asteroid_estimate_annotate_lowest_mag_stars_input.setChecked(settings.asteroid_estimate_annotate_lowest_mag_stars)
-        self._asteroid_visual_show_known_objects_input = QCheckBox("Show asteroid/comet markers on the main image")
-        self._asteroid_visual_show_known_objects_input.setChecked(settings.asteroid_visual_show_known_objects)
         self._asteroid_visual_show_potential_discoveries_input = QCheckBox("Show marked potential discoveries on the main image")
         self._asteroid_visual_show_potential_discoveries_input.setChecked(settings.asteroid_visual_show_potential_discoveries)
         self._asteroid_visual_label_all_objects_input = QCheckBox("Show asteroid/comet name labels on the main image")
         self._asteroid_visual_label_all_objects_input.setChecked(settings.asteroid_visual_label_all_objects)
-        self._asteroid_visual_show_target_marker_input = QCheckBox("Use target marker for the selected asteroid/comet on the main image")
-        self._asteroid_visual_show_target_marker_input.setChecked(settings.asteroid_visual_show_target_marker)
+        self._asteroid_visual_marker_style_input = QComboBox()
+        self._asteroid_visual_marker_style_input.addItem("Square aim", "target")
+        self._asteroid_visual_marker_style_input.addItem("Circle", "circle")
+        self._asteroid_visual_marker_style_input.addItem("Corner brackets", "brackets")
+        self._asteroid_visual_marker_style_input.addItem("Open crosshair", "crosshair")
+        marker_style_index = self._asteroid_visual_marker_style_input.findData(
+            str(getattr(settings, "asteroid_visual_marker_style", "target") or "target")
+        )
+        self._asteroid_visual_marker_style_input.setCurrentIndex(marker_style_index if marker_style_index >= 0 else 0)
+        self._asteroid_visual_marker_style_input.setToolTip(
+            "Marker shape used for the selected object when Target Marker is on. Only one target marker is shown."
+        )
         self._asteroid_track_object_position_mode_input = QComboBox()
         self._asteroid_track_object_position_mode_input.addItem("Known / predicted position", "predicted")
         self._asteroid_track_object_position_mode_input.addItem("Detected local match", "measured")
         asteroid_track_position_index = self._asteroid_track_object_position_mode_input.findData(settings.asteroid_track_object_position_mode)
         self._asteroid_track_object_position_mode_input.setCurrentIndex(asteroid_track_position_index if asteroid_track_position_index >= 0 else 0)
-        self._asteroid_visual_show_all_crosshairs_input = QCheckBox("Show prediction crosshairs for every detected object")
-        self._asteroid_visual_show_all_crosshairs_input.setChecked(settings.asteroid_visual_show_all_crosshairs)
         self._asteroid_visual_highlight_selected_object_input = QCheckBox("Highlight the selected asteroid/comet with distinct colors")
         self._asteroid_visual_highlight_selected_object_input.setChecked(settings.asteroid_visual_highlight_selected_object)
         self._asteroid_visual_invert_annotation_colors_input = QCheckBox("Invert also swaps asteroid/comet annotation and text colors")
@@ -10971,6 +11687,12 @@ class SettingsDialog(QDialog):
         self._interface_tips_enabled_input.setChecked(bool(getattr(settings, "interface_tips_enabled", True)))
         self._show_mode_launcher_on_startup_input = QCheckBox("Show mode picker on startup")
         self._show_mode_launcher_on_startup_input.setChecked(bool(getattr(settings, "show_mode_launcher_on_startup", True)))
+        self._keep_mode_state_on_switch_input = QCheckBox("Keep mode memory when switching")
+        self._keep_mode_state_on_switch_input.setChecked(bool(getattr(settings, "keep_mode_state_on_switch", False)))
+        self._keep_mode_state_on_switch_input.setToolTip(
+            "When off (default), leaving a mode clears its loaded images, results, and caches to free memory. "
+            "When on, returning to a mode restores your previous work."
+        )
         self._reference_star_magnitude_range_enabled_input = QCheckBox("Use reference-star magnitude range")
         self._reference_star_magnitude_range_enabled_input.setChecked(
             settings.reference_star_min_magnitude is not None or settings.reference_star_max_magnitude is not None
@@ -11128,6 +11850,7 @@ class SettingsDialog(QDialog):
         form_layout.addRow("Settings Location Mode", self._use_default_settings_location_input)
         form_layout.addRow("Interface Tips", self._interface_tips_enabled_input)
         form_layout.addRow("Mode Picker", self._show_mode_launcher_on_startup_input)
+        form_layout.addRow("", self._keep_mode_state_on_switch_input)
         image_display_layout = QHBoxLayout()
         image_display_layout.addWidget(self._image_display_stretch_mode_input)
         image_display_layout.addWidget(QLabel("Brightness"))
@@ -11467,19 +12190,20 @@ class SettingsDialog(QDialog):
 
         asteroid_visual_group = QGroupBox("Visuals")
         asteroid_visual_layout = QVBoxLayout()
-        asteroid_visual_layout.addWidget(self._asteroid_visual_show_known_objects_input)
         asteroid_visual_layout.addWidget(self._asteroid_visual_show_potential_discoveries_input)
         asteroid_visual_layout.addWidget(self._asteroid_visual_label_all_objects_input)
-        asteroid_visual_layout.addWidget(self._asteroid_visual_show_target_marker_input)
+        asteroid_marker_style_row = QHBoxLayout()
+        asteroid_marker_style_row.addWidget(QLabel("Marker style"))
+        asteroid_marker_style_row.addWidget(self._asteroid_visual_marker_style_input, stretch=1)
+        asteroid_visual_layout.addLayout(asteroid_marker_style_row)
         asteroid_track_object_group = QGroupBox("Tracking")
         asteroid_track_object_layout = QFormLayout()
         asteroid_track_object_layout.addRow("Track Object Anchor", self._asteroid_track_object_position_mode_input)
         asteroid_track_object_group.setLayout(asteroid_track_object_layout)
         asteroid_visual_layout.addWidget(asteroid_track_object_group)
-        asteroid_visual_layout.addWidget(self._asteroid_visual_show_all_crosshairs_input)
         asteroid_visual_layout.addWidget(self._asteroid_visual_highlight_selected_object_input)
         asteroid_visual_layout.addWidget(self._asteroid_visual_invert_annotation_colors_input)
-        asteroid_target_marker_group = QGroupBox("Target Marker Style")
+        asteroid_target_marker_group = QGroupBox("Marker Appearance")
         asteroid_target_marker_layout = QFormLayout()
         asteroid_target_marker_layout.addRow("Line Color", self._asteroid_target_marker_line_color_button)
         asteroid_target_marker_layout.addRow("Accent Color", self._asteroid_target_marker_accent_color_button)
@@ -11942,6 +12666,7 @@ class SettingsDialog(QDialog):
             config_path=self._settings.config_path,
             interface_tips_enabled=self._interface_tips_enabled_input.isChecked(),
             show_mode_launcher_on_startup=self._show_mode_launcher_on_startup_input.isChecked(),
+            keep_mode_state_on_switch=self._keep_mode_state_on_switch_input.isChecked(),
             nearby_reference_count=self._nearby_reference_count_input.value(),
             shared_parallel_workers=self._shared_parallel_workers_input.value(),
             sky_atlas_custom_overlay_cache_max_long_edge=self._sky_atlas_custom_overlay_cache_max_long_edge_input.value(),
@@ -11988,13 +12713,12 @@ class SettingsDialog(QDialog):
             asteroid_estimate_stars_per_bin=self._asteroid_estimate_stars_per_bin_input.value(),
             asteroid_estimate_required_visible_stars=self._asteroid_estimate_required_visible_stars_input.value(),
             asteroid_estimate_annotate_lowest_mag_stars=self._asteroid_estimate_annotate_lowest_mag_stars_input.isChecked(),
-            asteroid_visual_show_known_objects=self._asteroid_visual_show_known_objects_input.isChecked(),
-            asteroid_visual_show_object_markers=self._asteroid_visual_show_known_objects_input.isChecked(),
+            asteroid_visual_show_known_objects=True,
+            asteroid_visual_show_object_markers=True,
             asteroid_visual_show_potential_discoveries=self._asteroid_visual_show_potential_discoveries_input.isChecked(),
             asteroid_visual_label_all_objects=self._asteroid_visual_label_all_objects_input.isChecked(),
-            asteroid_visual_show_target_marker=self._asteroid_visual_show_target_marker_input.isChecked(),
+            asteroid_visual_marker_style=str(self._asteroid_visual_marker_style_input.currentData() or "target"),
             asteroid_track_object_position_mode=str(self._asteroid_track_object_position_mode_input.currentData() or "predicted"),
-            asteroid_visual_show_all_crosshairs=self._asteroid_visual_show_all_crosshairs_input.isChecked(),
             asteroid_visual_highlight_selected_object=self._asteroid_visual_highlight_selected_object_input.isChecked(),
             asteroid_visual_invert_annotation_colors=self._asteroid_visual_invert_annotation_colors_input.isChecked(),
             asteroid_target_marker_line_color=self._asteroid_target_marker_line_color,
@@ -12277,6 +13001,7 @@ class SettingsDialog(QDialog):
         self._api_key_input.setText(defaults.astrometry_api_key or "")
         self._interface_tips_enabled_input.setChecked(bool(defaults.interface_tips_enabled))
         self._show_mode_launcher_on_startup_input.setChecked(bool(defaults.show_mode_launcher_on_startup))
+        self._keep_mode_state_on_switch_input.setChecked(bool(defaults.keep_mode_state_on_switch))
         self._cache_dir_input.setText(str(defaults.cache_dir))
         self._nearby_reference_count_input.setValue(defaults.nearby_reference_count)
         self._shared_parallel_workers_input.setValue(resolve_shared_parallel_workers(defaults))
@@ -12412,12 +13137,13 @@ class SettingsDialog(QDialog):
         self._asteroid_estimate_stars_per_bin_input.setValue(defaults.asteroid_estimate_stars_per_bin)
         self._asteroid_estimate_required_visible_stars_input.setValue(defaults.asteroid_estimate_required_visible_stars)
         self._asteroid_estimate_annotate_lowest_mag_stars_input.setChecked(defaults.asteroid_estimate_annotate_lowest_mag_stars)
-        self._asteroid_visual_show_known_objects_input.setChecked(defaults.asteroid_visual_show_known_objects)
         self._asteroid_visual_show_potential_discoveries_input.setChecked(defaults.asteroid_visual_show_potential_discoveries)
         self._asteroid_visual_label_all_objects_input.setChecked(defaults.asteroid_visual_label_all_objects)
-        self._asteroid_visual_show_target_marker_input.setChecked(defaults.asteroid_visual_show_target_marker)
+        self._set_combo_data(
+            self._asteroid_visual_marker_style_input,
+            str(getattr(defaults, "asteroid_visual_marker_style", "target") or "target"),
+        )
         self._set_combo_data(self._asteroid_track_object_position_mode_input, defaults.asteroid_track_object_position_mode)
-        self._asteroid_visual_show_all_crosshairs_input.setChecked(defaults.asteroid_visual_show_all_crosshairs)
         self._asteroid_visual_highlight_selected_object_input.setChecked(defaults.asteroid_visual_highlight_selected_object)
         self._asteroid_visual_invert_annotation_colors_input.setChecked(defaults.asteroid_visual_invert_annotation_colors)
         self._asteroid_target_marker_line_color = str(defaults.asteroid_target_marker_line_color or "#ef4444").strip().lower() or "#ef4444"

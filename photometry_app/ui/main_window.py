@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 
 
 import csv
@@ -39,7 +41,11 @@ from datetime import UTC, datetime, timedelta
 
 from pathlib import Path
 
-from time import monotonic, perf_counter
+from time import monotonic, perf_counter, sleep
+
+import gc
+
+import multiprocessing
 
 from typing import Callable, Sequence, cast
 from types import SimpleNamespace
@@ -93,6 +99,10 @@ from photometry_app.core.astrostack_presets import (
     materialize_astrostack_preset_region,
     read_astrostack_overlay_preset,
     write_astrostack_overlay_preset,
+)
+from photometry_app.core.moonlight import (
+    evaluate_moonlight_impact,
+    moon_illumination_percent,
 )
 from photometry_app.core.candidate_training import *
 from photometry_app.core.distance_map import DistanceMapResult
@@ -175,6 +185,7 @@ from photometry_app.ui.distance_map_view import DistanceMapPanel
 from photometry_app.ui.astro_tools_panel import AstroToolsPanel
 from photometry_app.ui.differential_label_dialog import DifferentialQuickLabelDialog
 from photometry_app.ui.sky_explorer_collage_dialog import SkyExplorerCollageDialog
+from photometry_app.ui.sky_explorer_mag_limit_dialog import SkyExplorerMagLimitDialog, SkyExplorerMagLimitOptions
 from photometry_app.ui.hr_plot_widget import *
 from photometry_app.ui.image_view import *
 from photometry_app.ui.levels_dialog import CurvesDialog
@@ -241,6 +252,8 @@ _THEME_GRUVBOX = "gruvbox"
 _THEME_CATPPUCCIN = "catppuccin"
 _THEME_SOLARIZED_DARK = "solarized-dark"
 _THEME_ONE_DARK = "one-dark"
+_THEME_CRIMSON = "crimson"
+_THEME_BLOOD_MOON = "blood-moon"
 _THEME_CUSTOM = "custom"
 
 _VALID_THEME_NAMES = {
@@ -253,6 +266,8 @@ _VALID_THEME_NAMES = {
     _THEME_CATPPUCCIN,
     _THEME_SOLARIZED_DARK,
     _THEME_ONE_DARK,
+    _THEME_CRIMSON,
+    _THEME_BLOOD_MOON,
     _THEME_CUSTOM,
 }
 
@@ -268,6 +283,8 @@ _THEME_LABELS = {
     _THEME_CATPPUCCIN: "Catppuccin",
     _THEME_SOLARIZED_DARK: "Solarized Dark",
     _THEME_ONE_DARK: "One Dark",
+    _THEME_CRIMSON: "Crimson",
+    _THEME_BLOOD_MOON: "Blood Moon",
     _THEME_CUSTOM: "Custom",
 }
 
@@ -463,6 +480,28 @@ _BUILTIN_THEME_STYLES = {
         menu_text="#abb2bf",
         gridline="#3e4451",
     ),
+    _THEME_CRIMSON: _theme_style(
+        window="#1a1214",
+        window_text="#f2e8ea",
+        base="#100c0d",
+        button="#2a1a1e",
+        highlight="#e11d48",
+        highlight_text="#ffffff",
+        menu_bg="#0c0809",
+        menu_text="#f2e8ea",
+        gridline="#3d2428",
+    ),
+    _THEME_BLOOD_MOON: _theme_style(
+        window="#2a1418",
+        window_text="#f5d0d6",
+        base="#1a0c10",
+        button="#3a1c22",
+        highlight="#c45c26",
+        highlight_text="#fff5f0",
+        menu_bg="#14080b",
+        menu_text="#f5d0d6",
+        gridline="#5c3038",
+    ),
 }
 
 _THEME_PREVIEW_SWATCHES = {
@@ -475,6 +514,8 @@ _THEME_PREVIEW_SWATCHES = {
     _THEME_CATPPUCCIN: ("#11111b", "#89b4fa", "#cdd6f4", "#45475a"),
     _THEME_SOLARIZED_DARK: ("#001f27", "#268bd2", "#eee8d5", "#586e75"),
     _THEME_ONE_DARK: ("#1b1f24", "#61afef", "#abb2bf", "#3e4451"),
+    _THEME_CRIMSON: ("#0c0809", "#e11d48", "#f2e8ea", "#3d2428"),
+    _THEME_BLOOD_MOON: ("#14080b", "#c45c26", "#f5d0d6", "#5c3038"),
     _THEME_CUSTOM: ("#2b2d31", "#3d8bfd", "#f0f2f5", "#4b5563"),
 }
 
@@ -540,6 +581,8 @@ _ASTROSTACK_PLOT_METRICS: dict[str, str] = {
     "snr": "SNR",
     "signal": "Signal",
     "noise": "Noise",
+    "moon_illumination": "Moon Illumination",
+    "moonlight_impact": "Moonlight Impact",
 }
 _ASTROSTACK_ANNOTATION_FONT_COMBO_WIDTH = 120
 _ASTROSTACK_LAYER_LIST_MAX_HEIGHT = 132
@@ -560,6 +603,8 @@ _ASTROSTACK_PLOT_METRIC_AXIS_LABELS: dict[str, str] = {
     "snr": "SNR",
     "signal": "Signal",
     "noise": "Noise",
+    "moon_illumination": "Moon illumination (%)",
+    "moonlight_impact": "Moonlight impact score",
 }
 _ASTROSTACK_SIGNAL_REGION_COLOR = "#22c55e"
 _ASTROSTACK_BACKGROUND_REGION_COLOR = "#f97316"
@@ -6342,6 +6387,104 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._milky_way_projection_grid_cache_key = None
 
         self._milky_way_projection_grid_cache_value = None
+
+    def purge_runtime_caches(self) -> None:
+
+        self._clear_milky_way_projected_caches()
+
+        self._milky_way_source_image_cache_key = None
+
+        self._milky_way_source_image_cache_value = None
+
+        self._milky_way_manifest_base_image_cache_key = None
+
+        self._milky_way_manifest_base_image_cache_value = None
+
+        self._milky_way_manifest_full_image_cache_key = None
+
+        self._milky_way_manifest_full_image_cache_value = None
+
+        self._milky_way_tile_metadata_cache_key = None
+
+        self._milky_way_tile_metadata_cache_value = None
+
+        self._milky_way_manifest_generation_identity_cache_probe = None
+
+        self._milky_way_manifest_generation_identity_cache_value = None
+
+        self._milky_way_shader_tile_request_cache_values.clear()
+
+        self._milky_way_texture_cache_key = None
+
+        self._milky_way_texture_cache_value = None
+
+        self._constellation_source_image_cache_key = None
+
+        self._constellation_source_image_cache_value = None
+
+        self._constellation_view_cache_values.clear()
+
+        constellation_overlay = getattr(self, "_constellation_overlay", None)
+
+        if constellation_overlay is not None and hasattr(constellation_overlay, "clear_projected_cache"):
+
+            constellation_overlay.clear_projected_cache()
+
+        self._clear_rendered_ground_layer_cache()
+
+        self._ground_viewport_geometry_cache_key = None
+
+        self._ground_viewport_geometry_cache_value = None
+
+        self._clear_projected_grid_caches()
+
+        self._clear_star_sprite_caches()
+
+        self._invalidate_custom_sky_overlay_view_cache()
+
+        self._custom_sky_overlay_display_cache.clear()
+
+        self._custom_sky_overlay_mesh_cache.clear()
+
+        milky_way_layer = getattr(self, "_gl_milky_way_layer", None)
+
+        if milky_way_layer is not None and hasattr(milky_way_layer, "clear_all_caches"):
+
+            try:
+
+                milky_way_layer.clear_all_caches()
+
+            except Exception:
+
+                pass
+
+        moon_renderer = getattr(self, "_gl_moon_renderer", None)
+
+        if moon_renderer is not None and hasattr(moon_renderer, "release"):
+
+            try:
+
+                moon_renderer.release()
+
+            except Exception:
+
+                pass
+
+        moon_cache = getattr(self, "_moon_cache", None)
+
+        tile_manager = getattr(moon_cache, "tile_manager", None) if moon_cache is not None else None
+
+        if tile_manager is not None and hasattr(tile_manager, "_clear_generation_dependent_cache"):
+
+            try:
+
+                tile_manager._clear_generation_dependent_cache()
+
+            except Exception:
+
+                pass
+
+        self._invalidate_milky_way_visual_caches()
 
     def set_milky_way_enabled(self, enabled: bool) -> None:
 
@@ -24009,6 +24152,8 @@ class _DifferentialWorkflowDialog(QDialog):
 
         settings: AppSettings | None = None,
 
+        terminate_callback: Callable[[], None] | None = None,
+
     ) -> None:
 
         super().__init__(parent)
@@ -24016,6 +24161,10 @@ class _DifferentialWorkflowDialog(QDialog):
         self._choose_folder_callback = choose_folder_callback
 
         self._generate_callback = generate_callback
+
+        self._terminate_callback = terminate_callback
+
+        self._is_busy = False
 
         self._default_options = _DifferentialWorkflowOptions()
 
@@ -24373,7 +24522,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._close_button.setObjectName("workflowSecondaryButton")
 
-        self._close_button.clicked.connect(self.close)
+        self._close_button.clicked.connect(self._handle_close_or_terminate_clicked)
 
         self._close_button.setFixedHeight(34)
 
@@ -24531,11 +24680,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._generate_button.setEnabled(False)
 
-        self._close_button.setObjectName("workflowSecondaryButton")
-
-        self._close_button.style().unpolish(self._close_button)
-
-        self._close_button.style().polish(self._close_button)
+        self._set_close_button_idle()
 
         self._pull_periods_checkbox.setEnabled(True)
 
@@ -24558,6 +24703,48 @@ class _DifferentialWorkflowDialog(QDialog):
     def _handle_generate_clicked(self) -> None:
 
         self._generate_callback(self.options())
+
+
+
+    def _handle_close_or_terminate_clicked(self) -> None:
+
+        if self._is_busy:
+
+            if self._terminate_callback is not None:
+
+                self._terminate_callback()
+
+            return
+
+        self.close()
+
+
+
+    def _set_close_button_idle(self, *, accent_finished: bool = False) -> None:
+
+        self._is_busy = False
+
+        self._close_button.setText("Close")
+
+        self._close_button.setObjectName("workflowGenerateButton" if accent_finished else "workflowSecondaryButton")
+
+        self._close_button.style().unpolish(self._close_button)
+
+        self._close_button.style().polish(self._close_button)
+
+
+
+    def _set_close_button_terminate(self) -> None:
+
+        self._is_busy = True
+
+        self._close_button.setText("Terminate")
+
+        self._close_button.setObjectName("workflowTerminateButton")
+
+        self._close_button.style().unpolish(self._close_button)
+
+        self._close_button.style().polish(self._close_button)
 
 
 
@@ -24613,11 +24800,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._tip_label.setStyleSheet("")
 
-        self._close_button.setObjectName("workflowSecondaryButton")
-
-        self._close_button.style().unpolish(self._close_button)
-
-        self._close_button.style().polish(self._close_button)
+        self._set_close_button_terminate()
 
         self._busy_bar.show()
 
@@ -24643,11 +24826,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._tip_label.setStyleSheet("")
 
-        self._close_button.setObjectName("workflowSecondaryButton")
-
-        self._close_button.style().unpolish(self._close_button)
-
-        self._close_button.style().polish(self._close_button)
+        self._set_close_button_idle()
 
         self._busy_bar.hide()
 
@@ -24681,11 +24860,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._tip_label.setStyleSheet("")
 
-        self._close_button.setObjectName("workflowSecondaryButton")
-
-        self._close_button.style().unpolish(self._close_button)
-
-        self._close_button.style().polish(self._close_button)
+        self._set_close_button_terminate()
 
         self._busy_bar.show()
 
@@ -24697,11 +24872,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._generate_button.setEnabled(True)
 
-        self._close_button.setObjectName("workflowGenerateButton")
-
-        self._close_button.style().unpolish(self._close_button)
-
-        self._close_button.style().polish(self._close_button)
+        self._set_close_button_idle(accent_finished=True)
 
         self._reset_button.setEnabled(True)
 
@@ -24741,11 +24912,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._generate_button.setEnabled(can_generate)
 
-        self._close_button.setObjectName("workflowSecondaryButton")
-
-        self._close_button.style().unpolish(self._close_button)
-
-        self._close_button.style().polish(self._close_button)
+        self._set_close_button_idle()
 
         self._reset_button.setEnabled(True)
 
@@ -24887,6 +25054,12 @@ class _DifferentialWorkflowDialog(QDialog):
 
             f"QPushButton#workflowGenerateButton:pressed {{ background-color: {accent_deep}; color: {self._contrast_text_for_dialog(accent_deep)}; border-color: {accent_deep}; }}"
 
+            f"QPushButton#workflowTerminateButton {{ background-color: {card_bg}; color: {body_text}; border: 2px solid {accent}; }}"
+
+            f"QPushButton#workflowTerminateButton:hover {{ background-color: {QColor(card_bg).lighter(112).name().lower()}; color: {body_text}; border: 2px solid {accent_soft}; }}"
+
+            f"QPushButton#workflowTerminateButton:pressed {{ background-color: {QColor(card_bg).darker(108).name().lower()}; color: {body_text}; border: 2px solid {accent_deep}; }}"
+
             f"QPushButton#workflowFolderButton {{ border-color: {accent}; }}"
 
             f"QPushButton#workflowFolderButton:hover {{ background-color: {QColor(card_bg).lighter(118).name().lower()}; color: {body_text}; border: 2px solid {accent_soft}; }}"
@@ -24965,6 +25138,8 @@ class MainWindow(QMainWindow):
         self._current_distance_map_source_image: Path | None = None
 
         self._sky_explorer_mag_limit_worker: SkyExplorerWorker | None = None
+
+        self._sky_explorer_mag_limit_auto_worker: AsteroidVisibleMagnitudeWorker | None = None
 
         self._sky_explorer_survey_worker = None
 
@@ -25548,7 +25723,7 @@ class MainWindow(QMainWindow):
 
         self._asteroid_target_marker_accent_color_button = QPushButton("Accent...")
 
-        self._asteroid_target_marker_accent_color_button.setToolTip("Choose the accent color used by the asteroid/comet target marker square and center dot.")
+        self._asteroid_target_marker_accent_color_button.setToolTip("Choose the accent color used by asteroid/comet marker highlights.")
 
         self._asteroid_target_marker_accent_color_button.clicked.connect(self._choose_asteroid_target_marker_accent_color)
 
@@ -27443,7 +27618,17 @@ class MainWindow(QMainWindow):
 
         self._current_sky_explorer_result: SkyExplorerResult | None = None
 
+        self._sky_explorer_queried_object_type_keys: set[str] = set()
+
+        self._sky_explorer_pending_update_object_type_keys: tuple[str, ...] = ()
+
         self._sky_explorer_mag_limit_result: SkyExplorerResult | None = None
+
+        self._sky_explorer_mag_limit_active: bool = False
+
+        self._sky_explorer_mag_limit_options: SkyExplorerMagLimitOptions | None = None
+
+        self._sky_explorer_mag_limit_auto_objects: tuple[SkyExplorerObject, ...] = ()
 
         self._current_sky_explorer_source_image: Path | None = None
 
@@ -27590,6 +27775,16 @@ class MainWindow(QMainWindow):
         self._astrostack_function_metric_overrides: dict[str, float] | None = None
 
         self._astrostack_frame_exposure_seconds: tuple[float, ...] = ()
+
+        self._astrostack_frame_date_obs: tuple[datetime | None, ...] = ()
+
+        self._astrostack_moon_illumination_values: tuple[float, ...] = ()
+
+        self._astrostack_moonlight_impact_values: tuple[float, ...] = ()
+
+        self._astrostack_moonlight_impact_categories: tuple[str, ...] = ()
+
+        self._astrostack_moonlight_cache_key: tuple | None = None
 
         self._astrostack_annotation_tool = "hand"
 
@@ -27953,6 +28148,8 @@ class MainWindow(QMainWindow):
 
         self._active_processing_object_name: str | None = None
 
+        self._terminated_differential_workers: list = []
+
         self._processing_started_monotonic: float | None = None
 
         self._processing_total_files: int | None = None
@@ -28257,6 +28454,12 @@ class MainWindow(QMainWindow):
         if getattr(sys, "frozen", False):
 
             QTimer.singleShot(1500, self._check_for_updates_on_startup)
+
+        app = QApplication.instance()
+
+        if app is not None:
+
+            app.aboutToQuit.connect(self._force_stop_background_workers)
 
     def _sync_mode_launcher_accent(self) -> None:
 
@@ -28890,7 +29093,7 @@ class MainWindow(QMainWindow):
 
         self._asteroid_target_marker_button.setCheckable(True)
 
-        self._asteroid_target_marker_button.setToolTip("Use the square-and-guides target marker for the selected asteroid/comet on the main image.")
+        self._asteroid_target_marker_button.setToolTip("Show the configured marker style only for the selected asteroid/comet on the main image.")
 
         self._asteroid_target_marker_button.toggled.connect(self._handle_asteroid_target_marker_toggled)
 
@@ -29723,7 +29926,29 @@ class MainWindow(QMainWindow):
         if custom:
             return custom
         normalized_key = str(metric_key or "frame_count").strip().lower()
+        if normalized_key == "moonlight_impact":
+            category = self._astrostack_current_moonlight_impact_category()
+            if category:
+                return f"Moonlight impact ({category})"
         return _ASTROSTACK_PLOT_METRIC_AXIS_LABELS.get(normalized_key, normalized_key.replace("_", " ").title())
+
+    def _astrostack_current_moonlight_impact_category(self) -> str | None:
+        _illumination, _impact, categories = self._ensure_astrostack_moonlight_series()
+        if not categories:
+            return None
+        measured_indices = tuple(getattr(self, "_astrostack_snr_frame_indices", ()) or ())
+        highlight_index = getattr(self, "_astrostack_snr_highlight_index", None)
+        frame_number = None
+        if highlight_index is not None and measured_indices and 0 <= highlight_index < len(measured_indices):
+            frame_number = int(measured_indices[highlight_index])
+        elif measured_indices:
+            frame_number = int(measured_indices[-1])
+        if frame_number is None:
+            return str(categories[0]) if categories else None
+        frame_index = frame_number - 1
+        if 0 <= frame_index < len(categories):
+            return str(categories[frame_index])
+        return str(categories[-1])
 
     def _astrostack_existing_frame_paths(self) -> list[Path]:
         return [path for path in getattr(self, "_astrostack_frame_paths", []) if path.exists()]
@@ -29764,6 +29989,19 @@ class MainWindow(QMainWindow):
             return tuple(float(value) for value in measured_signal)
         if normalized_key == "noise" and len(measured_noise) == len(measured_indices):
             return tuple(float(value) for value in measured_noise)
+        if normalized_key in {"moon_illumination", "moonlight_impact"}:
+            moon_series = self._ensure_astrostack_moonlight_series()
+            source_values = moon_series[0] if normalized_key == "moon_illumination" else moon_series[1]
+            if not source_values:
+                return tuple(0.0 for _ in measured_indices)
+            values = []
+            for index in measured_indices:
+                frame_index = int(index) - 1
+                if 0 <= frame_index < len(source_values):
+                    values.append(float(source_values[frame_index]))
+                else:
+                    values.append(float(source_values[-1]))
+            return tuple(values)
         return ()
 
     def _astrostack_plot_metric_series(self, metric_key: str) -> tuple[float, ...]:
@@ -31149,6 +31387,20 @@ class MainWindow(QMainWindow):
 
             return None
 
+    def _astrostack_canvas_dimensions(self) -> tuple[int, int] | None:
+        """Return the current overlay canvas size (cropped display when a crop is active)."""
+
+        image_path = self._current_astrostack_source_image
+        if image_path is None or not image_path.exists():
+            frame_paths = self._astrostack_existing_frame_paths()
+            image_path = frame_paths[0] if frame_paths else None
+        if image_path is None or not image_path.exists():
+            return None
+        width, height = self._astrostack_plot_image_dimensions(image_path)
+        if width <= 0 or height <= 0:
+            return self._astrostack_reference_image_dimensions()
+        return max(1, int(width)), max(1, int(height))
+
     def _astrostack_active_crop_payload(self) -> dict[str, object] | None:
 
         selection = self._astrostack_active_roi_selection_for_crop()
@@ -31181,8 +31433,9 @@ class MainWindow(QMainWindow):
         if not self._astrostack_overlay_layers:
             QMessageBox.information(self, "Save Preset", "Add at least one overlay layer before saving a preset.")
             return
-        reference_size = self._astrostack_reference_image_dimensions()
-        if reference_size is None:
+        source_size = self._astrostack_reference_image_dimensions()
+        canvas_size = self._astrostack_canvas_dimensions()
+        if source_size is None or canvas_size is None:
             QMessageBox.information(
                 self,
                 "Save Preset",
@@ -31200,17 +31453,22 @@ class MainWindow(QMainWindow):
         output_path = Path(selected_path)
         if output_path.suffix.lower() != ".json":
             output_path = output_path.with_suffix(".astrostack.json")
+        signal_region = getattr(self, "_astrostack_signal_region", None)
+        background_region = getattr(self, "_astrostack_background_region", None)
         try:
             write_astrostack_overlay_preset(
                 output_path,
                 self._astrostack_overlay_layers,
-                reference_size=reference_size,
+                canvas_size=canvas_size,
+                source_size=source_size,
                 crop=self._astrostack_active_crop_payload(),
                 signal_region=self._astrostack_measure_region_payload(
-                    getattr(self, "_astrostack_signal_region", None)
+                    self._astrostack_measure_region_to_display(signal_region) if signal_region is not None else None
                 ),
                 background_region=self._astrostack_measure_region_payload(
-                    getattr(self, "_astrostack_background_region", None)
+                    self._astrostack_measure_region_to_display(background_region)
+                    if background_region is not None
+                    else None
                 ),
             )
         except (OSError, ValueError) as exc:
@@ -31243,27 +31501,19 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Load Preset", str(exc))
             return
-        target_size = self._astrostack_reference_image_dimensions()
-        if preset_state.version >= 2 and preset_state.reference_size is not None and target_size is None:
+        source_target = self._astrostack_reference_image_dimensions()
+        if preset_state.version >= 2 and source_target is None:
             QMessageBox.information(
                 self,
                 "Load Preset",
                 "Open a Deep Stack image folder before loading this preset so layer positions and crop can be restored for the current image.",
             )
             return
-        if target_size is None and preset_state.version >= 2 and preset_state.reference_size is not None:
-            target_size = preset_state.reference_size
-        materialized_layers = materialize_astrostack_preset_layers(
-            preset_state,
-            target_size or preset_state.reference_size or (1, 1),
-        )
-        loaded_layers = [self._astrostack_overlay_layer_from_dict(payload) for payload in materialized_layers]
-        self._astrostack_overlay_layers = loaded_layers
-        self._selected_astrostack_layer_id = loaded_layers[0].layer_id if loaded_layers else None
-        crop_payload = materialize_astrostack_preset_crop(
-            preset_state,
-            target_size or preset_state.reference_size or (1, 1),
-        )
+        if source_target is None:
+            source_target = preset_state.source_size or preset_state.reference_size or (1, 1)
+
+        # Apply crop first so the canvas size matches the exported/visible frame.
+        crop_payload = materialize_astrostack_preset_crop(preset_state, source_target)
         if crop_payload is not None:
             self._astrostack_roi_selections = [
                 _HrRoiSelection(
@@ -31277,27 +31527,46 @@ class MainWindow(QMainWindow):
             ]
             self._astrostack_active_roi_selection = None
             self._astrostack_roi_drag_origin = None
+            self._clear_astrostack_cropped_display_cache()
         else:
             self._clear_astrostack_roi_selection()
+
+        canvas_target = self._astrostack_canvas_dimensions() or source_target
+        if preset_state.version < 3:
+            # Legacy v2 presets normalized overlays against the full source size.
+            canvas_target = source_target
+
+        materialized_layers = materialize_astrostack_preset_layers(preset_state, canvas_target)
+        loaded_layers = [self._astrostack_overlay_layer_from_dict(payload) for payload in materialized_layers]
+        self._astrostack_overlay_layers = loaded_layers
+        self._selected_astrostack_layer_id = loaded_layers[0].layer_id if loaded_layers else None
+
         signal_payload = materialize_astrostack_preset_region(
             preset_state.signal_region,
             preset=preset_state,
-            target_size=target_size or preset_state.reference_size or (1, 1),
+            target_size=canvas_target if preset_state.version >= 3 else source_target,
         )
         background_payload = materialize_astrostack_preset_region(
             preset_state.background_region,
             preset=preset_state,
-            target_size=target_size or preset_state.reference_size or (1, 1),
+            target_size=canvas_target if preset_state.version >= 3 else source_target,
         )
-        self._astrostack_signal_region = self._astrostack_measure_region_from_payload(signal_payload)
-        self._astrostack_background_region = self._astrostack_measure_region_from_payload(background_payload)
+        signal_region = self._astrostack_measure_region_from_payload(signal_payload)
+        background_region = self._astrostack_measure_region_from_payload(background_payload)
+        if preset_state.version >= 3:
+            if signal_region is not None:
+                signal_region = self._astrostack_measure_region_to_full_image(signal_region)
+            if background_region is not None:
+                background_region = self._astrostack_measure_region_to_full_image(background_region)
+        self._astrostack_signal_region = signal_region
+        self._astrostack_background_region = background_region
         self._astrostack_active_measure_region = None
         self._astrostack_measure_region_drag_origin = None
         if loaded_layers:
             self._select_astrostack_layer(loaded_layers[0].layer_id, refresh=False)
         self._sync_astrostack_layer_list_widget()
         self._refresh_astrostack_snr_curve_preview()
-        self._refresh_astrostack_image_view(reset_view=False, overlays_only=True)
+        self._refresh_astrostack_image_view(reset_view=False, overlays_only=False)
         self.statusBar().showMessage(f"Loaded {len(loaded_layers)} Deep Stack layer(s) from preset.", 5000)
 
     def _prompt_astrostack_text_layer_label(self) -> str | None:
@@ -33004,6 +33273,150 @@ class MainWindow(QMainWindow):
             return exposure_seconds
         self._astrostack_frame_exposure_seconds = self._load_astrostack_frame_exposure_seconds(frame_paths)
         return self._astrostack_frame_exposure_seconds
+
+    def _clear_astrostack_moonlight_series_cache(self) -> None:
+        self._astrostack_frame_date_obs = ()
+        self._astrostack_moon_illumination_values = ()
+        self._astrostack_moonlight_impact_values = ()
+        self._astrostack_moonlight_impact_categories = ()
+        self._astrostack_moonlight_cache_key = None
+
+    def _astrostack_moonlight_series_cache_key(self, frame_paths: list[Path]) -> tuple:
+        settings = self._ensure_settings()
+        target = self._astrostack_reference_target_sky_position()
+        return (
+            tuple(str(path) for path in frame_paths),
+            None if settings.observing_site_latitude_deg is None else float(settings.observing_site_latitude_deg),
+            None if settings.observing_site_longitude_deg is None else float(settings.observing_site_longitude_deg),
+            0.0 if settings.observing_site_elevation_m is None else float(settings.observing_site_elevation_m),
+            None if target is None else (round(float(target[0]), 6), round(float(target[1]), 6)),
+        )
+
+    def _astrostack_reference_target_sky_position(self) -> tuple[float, float] | None:
+        frame_paths = self._astrostack_existing_frame_paths()
+        if not frame_paths:
+            return None
+        reference_path = frame_paths[0]
+        try:
+            header, width, height = read_header_and_shape(reference_path)
+            solved_field = extract_solved_field(header, width, height, reference_path)
+        except Exception:
+            return None
+        if solved_field is None:
+            return None
+        return float(solved_field.center_ra_deg), float(solved_field.center_dec_deg)
+
+    def _ensure_astrostack_frame_date_obs(self) -> tuple[datetime | None, ...]:
+        frame_paths = self._astrostack_existing_frame_paths()
+        if not frame_paths:
+            self._astrostack_frame_date_obs = ()
+            return ()
+        cached = getattr(self, "_astrostack_frame_date_obs", ())
+        if len(cached) == len(frame_paths):
+            return cached
+        self._astrostack_frame_date_obs = self._load_astrostack_frame_date_obs(frame_paths)
+        return self._astrostack_frame_date_obs
+
+    def _load_astrostack_frame_date_obs(self, frame_paths: list[Path]) -> tuple[datetime | None, ...]:
+        if not frame_paths:
+            return ()
+        root_path = self._current_astrostack_root_path
+        object_folder = root_path.name if root_path is not None else ""
+        settings = self._ensure_settings()
+        date_obs_values: list[datetime | None] = []
+        for path in frame_paths:
+            observation_time: datetime | None = None
+            try:
+                scan_result = getattr(self, "_astrostack_frame_scan_results", {}).get(path)
+                if scan_result is None:
+                    scan_result = inspect_fits_file(
+                        path,
+                        object_folder,
+                        observation_timezone=settings.observation_timezone,
+                    )
+                observation_time = _coerce_utc_datetime(scan_result.metadata.date_obs)
+                exposure_seconds = scan_result.metadata.exposure_seconds
+                if observation_time is not None and exposure_seconds is not None and float(exposure_seconds) > 0.0:
+                    observation_time = observation_time + timedelta(seconds=0.5 * float(exposure_seconds))
+            except Exception:
+                observation_time = None
+            date_obs_values.append(observation_time)
+        return tuple(date_obs_values)
+
+    def _ensure_astrostack_moonlight_series(self) -> tuple[tuple[float, ...], tuple[float, ...], tuple[str, ...]]:
+        frame_paths = self._astrostack_existing_frame_paths()
+        if not frame_paths:
+            self._clear_astrostack_moonlight_series_cache()
+            return (), (), ()
+        cache_key = self._astrostack_moonlight_series_cache_key(frame_paths)
+        illumination_values = getattr(self, "_astrostack_moon_illumination_values", ())
+        impact_values = getattr(self, "_astrostack_moonlight_impact_values", ())
+        categories = getattr(self, "_astrostack_moonlight_impact_categories", ())
+        if (
+            cache_key == getattr(self, "_astrostack_moonlight_cache_key", None)
+            and len(illumination_values) == len(frame_paths)
+            and len(impact_values) == len(frame_paths)
+            and len(categories) == len(frame_paths)
+        ):
+            return illumination_values, impact_values, categories
+        illumination_values, impact_values, categories = self._load_astrostack_moonlight_series(frame_paths)
+        self._astrostack_moon_illumination_values = illumination_values
+        self._astrostack_moonlight_impact_values = impact_values
+        self._astrostack_moonlight_impact_categories = categories
+        self._astrostack_moonlight_cache_key = cache_key
+        return illumination_values, impact_values, categories
+
+    def _load_astrostack_moonlight_series(
+        self,
+        frame_paths: list[Path],
+    ) -> tuple[tuple[float, ...], tuple[float, ...], tuple[str, ...]]:
+        if not frame_paths:
+            return (), (), ()
+        settings = self._ensure_settings()
+        latitude = settings.observing_site_latitude_deg
+        longitude = settings.observing_site_longitude_deg
+        elevation = 0.0 if settings.observing_site_elevation_m is None else float(settings.observing_site_elevation_m)
+        target = self._astrostack_reference_target_sky_position()
+        date_obs_values = self._ensure_astrostack_frame_date_obs()
+        illumination_values: list[float] = []
+        impact_values: list[float] = []
+        categories: list[str] = []
+        for index, _path in enumerate(frame_paths):
+            observation_time = date_obs_values[index] if index < len(date_obs_values) else None
+            if observation_time is None:
+                illumination_values.append(0.0)
+                impact_values.append(0.0)
+                categories.append("Low")
+                continue
+            try:
+                illumination = moon_illumination_percent(
+                    observation_time,
+                    latitude_deg=None if latitude is None else float(latitude),
+                    longitude_deg=None if longitude is None else float(longitude),
+                    elevation_m=elevation,
+                )
+            except Exception:
+                illumination = 0.0
+            illumination_values.append(float(illumination))
+            if latitude is None or longitude is None or target is None:
+                impact_values.append(0.0)
+                categories.append("Low")
+                continue
+            try:
+                estimate = evaluate_moonlight_impact(
+                    observation_time,
+                    latitude_deg=float(latitude),
+                    longitude_deg=float(longitude),
+                    elevation_m=elevation,
+                    target_ra_deg=float(target[0]),
+                    target_dec_deg=float(target[1]),
+                )
+                impact_values.append(float(estimate.relative_score))
+                categories.append(str(estimate.category))
+            except Exception:
+                impact_values.append(0.0)
+                categories.append("Low")
+        return tuple(illumination_values), tuple(impact_values), tuple(categories)
 
     def _load_astrostack_frame_exposure_seconds(self, frame_paths: list[Path]) -> tuple[float, ...]:
 
@@ -37423,14 +37836,6 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_filter_actions()
 
-        self._sky_explorer_mag_limit_button = QPushButton("Mag Limit")
-
-        self._sky_explorer_mag_limit_button.setCheckable(True)
-
-        self._sky_explorer_mag_limit_button.setToolTip("Annotate representative Gaia stars in 0.5 magnitude intervals.")
-
-        self._sky_explorer_mag_limit_button.toggled.connect(self._handle_sky_explorer_mag_limit_toggled)
-
         self._sky_explorer_object_type_table.setHorizontalHeaderLabels(["Stroke Color", "Fill Color", "Text", "Group", "Object Type", "Description"])
 
         self._sky_explorer_object_type_table.verticalHeader().setVisible(False)
@@ -37867,11 +38272,6 @@ class MainWindow(QMainWindow):
         self._sky_explorer_export_menu.addAction(self._sky_explorer_export_animation_action)
         self._sky_explorer_export_image_button.setMenu(self._sky_explorer_export_menu)
 
-        self._sky_explorer_collage_button = QPushButton("Collage...")
-        self._sky_explorer_collage_button.setToolTip(
-            "Export a collage of selected or visible Sky Explorer objects that have catalog size metadata."
-        )
-        self._sky_explorer_collage_button.clicked.connect(self._export_sky_explorer_collage)
         self._sky_explorer_collage_options = SkyExplorerCollageOptions(margin_fraction=DEFAULT_COLLAGE_MARGIN_FRACTION)
 
         self._set_sky_explorer_header_button_widths()
@@ -38047,10 +38447,6 @@ class MainWindow(QMainWindow):
         image_controls_layout.addWidget(self._sky_explorer_center_object_button)
 
         image_controls_layout.addWidget(self._sky_explorer_show_auto_annotations_button)
-
-        image_controls_layout.addWidget(self._sky_explorer_mag_limit_button)
-
-        image_controls_layout.addWidget(self._sky_explorer_collage_button)
 
         image_controls_layout.addWidget(self._sky_explorer_export_image_button)
         self._sky_explorer_image_controls_layout = image_controls_layout
@@ -38292,6 +38688,14 @@ class MainWindow(QMainWindow):
 
             return
 
+        pending_type_keys = self._sky_explorer_pending_object_type_keys()
+
+        if self._current_sky_explorer_result is not None and pending_type_keys:
+
+            self._start_sky_explorer_exploration(object_type_keys=pending_type_keys, merge_with_existing=True)
+
+            return
+
         self._start_sky_explorer_exploration()
 
     def _browse_for_sky_explorer_source_image(self) -> None:
@@ -38340,6 +38744,10 @@ class MainWindow(QMainWindow):
 
         self._current_sky_explorer_result = None
 
+        self._sky_explorer_queried_object_type_keys = set()
+
+        self._sky_explorer_pending_update_object_type_keys = ()
+
         self._selected_sky_explorer_manual_annotation_id = None
 
         self._sky_explorer_manual_annotation_drag = None
@@ -38354,13 +38762,11 @@ class MainWindow(QMainWindow):
 
         self._pending_sky_explorer_mag_limit_query_signature = None
 
-        if hasattr(self, "_sky_explorer_mag_limit_button"):
+        self._sky_explorer_mag_limit_auto_objects = ()
 
-            self._sky_explorer_mag_limit_button.blockSignals(True)
+        self._sky_explorer_mag_limit_options = None
 
-            self._sky_explorer_mag_limit_button.setChecked(False)
-
-            self._sky_explorer_mag_limit_button.blockSignals(False)
+        self._set_sky_explorer_mag_limit_active(False)
 
         self._sky_explorer_results_table.setSortingEnabled(False)
 
@@ -38387,7 +38793,17 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_image_controls()
 
-    def _start_sky_explorer_exploration(self) -> None:
+    def _start_sky_explorer_exploration(
+
+        self,
+
+        *,
+
+        object_type_keys: Sequence[str] | None = None,
+
+        merge_with_existing: bool = False,
+
+    ) -> None:
 
         source_path = self._current_sky_explorer_source_image
 
@@ -38409,9 +38825,15 @@ class MainWindow(QMainWindow):
 
             return
 
+        if self._sky_explorer_mag_limit_auto_worker is not None and self._sky_explorer_mag_limit_auto_worker.isRunning():
+
+            self.statusBar().showMessage("Mag Limit is already estimating the visible magnitude limit.", 5000)
+
+            return
+
         settings = self._ensure_settings()
 
-        selected_object_types = self._selected_sky_explorer_object_type_keys()
+        selected_object_types = tuple(object_type_keys) if object_type_keys is not None else self._selected_sky_explorer_object_type_keys()
 
         if not selected_object_types:
 
@@ -38421,7 +38843,7 @@ class MainWindow(QMainWindow):
 
         selected_layers = self._selected_sky_explorer_query_layers(selected_object_types)
 
-        if self._sky_explorer_mag_limit_button.isChecked():
+        if self._sky_explorer_mag_limit_is_active():
 
             selected_layer_set = set(selected_layers)
 
@@ -38443,13 +38865,25 @@ class MainWindow(QMainWindow):
 
             return
 
-        self._current_sky_explorer_result = None
+        if merge_with_existing:
 
-        self._sky_explorer_results_table.setSortingEnabled(False)
+            if self._current_sky_explorer_result is None:
 
-        self._sky_explorer_results_table.setRowCount(0)
+                merge_with_existing = False
 
-        self._sky_explorer_details_output.clear()
+        if not merge_with_existing:
+
+            self._current_sky_explorer_result = None
+
+            self._sky_explorer_queried_object_type_keys = set()
+
+            self._sky_explorer_results_table.setSortingEnabled(False)
+
+            self._sky_explorer_results_table.setRowCount(0)
+
+            self._sky_explorer_details_output.clear()
+
+        self._sky_explorer_pending_update_object_type_keys = tuple(selected_object_types)
 
         selected_titles = [
 
@@ -38461,15 +38895,21 @@ class MainWindow(QMainWindow):
 
         ]
 
+        action_label = "Updating" if merge_with_existing else "Started"
+
         self._append_sky_explorer_workflow_note(
 
-            f"Started Sky Explorer for {source_path.name} with object types: {', '.join(selected_titles)}."
+            f"{action_label} Sky Explorer for {source_path.name} with object types: {', '.join(selected_titles)}."
 
         )
 
-        self._sky_explorer_status_label.setText("Checking WCS, resolving the sky footprint, and querying object catalogs.")
+        self._sky_explorer_status_label.setText(
+            "Checking WCS and querying newly selected object catalogs."
+            if merge_with_existing
+            else "Checking WCS, resolving the sky footprint, and querying object catalogs."
+        )
 
-        self.statusBar().showMessage("Sky Explorer started.", 5000)
+        self.statusBar().showMessage("Sky Explorer update started." if merge_with_existing else "Sky Explorer started.", 5000)
 
         self._set_sky_explorer_busy(True)
 
@@ -38485,9 +38925,13 @@ class MainWindow(QMainWindow):
 
             selected_layers=selected_layers,
 
+            selected_object_type_keys=selected_object_types,
+
             gaia_object_limit=250,
 
-            include_dense_galaxy_catalog=self._should_enable_dense_sky_explorer_galaxy_catalog(selected_object_types),
+            include_dense_galaxy_catalog=self._should_enable_dense_sky_explorer_galaxy_catalog(
+                self._selected_sky_explorer_object_type_keys()
+            ),
 
             parent=self,
 
@@ -38507,8 +38951,6 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_object_type_mode_button.setEnabled(not is_busy)
 
-        self._sky_explorer_mag_limit_button.setEnabled(not is_busy)
-
         self._sky_explorer_object_type_table.setEnabled(not is_busy)
 
         if self._processing_started_monotonic is None:
@@ -38521,11 +38963,17 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_primary_button()
 
+        self._sync_tools_menu_actions()
+
     def _sync_sky_explorer_primary_button(self) -> None:
 
         if self._sky_explorer_worker is not None and self._sky_explorer_worker.isRunning():
 
-            self._sky_explorer_primary_button.setText("Exploring...")
+            pending_update = bool(self._sky_explorer_pending_update_object_type_keys) and bool(
+                self._sky_explorer_queried_object_type_keys
+            )
+
+            self._sky_explorer_primary_button.setText("Updating..." if pending_update else "Exploring...")
 
             self._sync_sky_explorer_header_buttons()
 
@@ -38536,6 +38984,14 @@ class MainWindow(QMainWindow):
         if image_path is None or not image_path.exists():
 
             self._sky_explorer_primary_button.setText("Open")
+
+            self._sync_sky_explorer_header_buttons()
+
+            return
+
+        if self._current_sky_explorer_result is not None and self._sky_explorer_pending_object_type_keys():
+
+            self._sky_explorer_primary_button.setText("Update")
 
             self._sync_sky_explorer_header_buttons()
 
@@ -38565,7 +39021,21 @@ class MainWindow(QMainWindow):
 
             return
 
-        self._current_sky_explorer_result = result
+        pending_update_keys = tuple(self._sky_explorer_pending_update_object_type_keys)
+
+        if pending_update_keys and self._current_sky_explorer_result is not None and self._sky_explorer_queried_object_type_keys:
+
+            self._current_sky_explorer_result = merge_sky_explorer_results(self._current_sky_explorer_result, result)
+
+        else:
+
+            self._current_sky_explorer_result = result
+
+            self._sky_explorer_queried_object_type_keys = set()
+
+        self._sky_explorer_queried_object_type_keys.update(pending_update_keys or self._selected_sky_explorer_object_type_keys())
+
+        self._sky_explorer_pending_update_object_type_keys = ()
 
         self._sky_explorer_result_gaia_query_signature = self._pending_sky_explorer_result_gaia_query_signature
 
@@ -38589,7 +39059,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_sky_explorer_filtered_view(preserve_selection=False, select_first_row=True)
 
-        if self._sky_explorer_mag_limit_button.isChecked() and not self._sky_explorer_mag_limit_source_objects():
+        if self._sky_explorer_mag_limit_is_active() and not self._sky_explorer_mag_limit_auto_objects and not self._sky_explorer_mag_limit_source_objects():
 
             self._start_sky_explorer_mag_limit_query()
 
@@ -38599,7 +39069,7 @@ class MainWindow(QMainWindow):
 
         if source_path is None or not source_path.exists():
 
-            self._set_sky_explorer_mag_limit_checked(False)
+            self._set_sky_explorer_mag_limit_active(False)
 
             QMessageBox.information(self, "No source image", "Choose a valid source image before using Mag Limit.")
 
@@ -38617,7 +39087,25 @@ class MainWindow(QMainWindow):
 
             return
 
+        if self._sky_explorer_mag_limit_auto_worker is not None and self._sky_explorer_mag_limit_auto_worker.isRunning():
+
+            self.statusBar().showMessage("Mag Limit is already estimating the visible magnitude limit.", 5000)
+
+            return
+
+        options = self._sky_explorer_mag_limit_options or self._sky_explorer_mag_limit_options_from_settings()
+
+        settings = self._ensure_settings()
+
+        worker_settings = settings
+
+        if abs(float(options.max_magnitude) - float(getattr(settings, "sky_explorer_gaia_max_magnitude", 17.0))) > 1e-9:
+
+            worker_settings = replace(settings, sky_explorer_gaia_max_magnitude=float(options.max_magnitude))
+
         self._sky_explorer_mag_limit_result = None
+
+        self._sky_explorer_mag_limit_auto_objects = ()
 
         self._sky_explorer_status_label.setText("Mag Limit is resolving the field and querying Gaia stars.")
 
@@ -38627,13 +39115,13 @@ class MainWindow(QMainWindow):
 
         self._set_sky_explorer_busy(True)
 
-        self._pending_sky_explorer_mag_limit_query_signature = self._current_sky_explorer_mag_limit_query_signature()
+        self._pending_sky_explorer_mag_limit_query_signature = (round(float(options.max_magnitude), 6),)
 
         self._sky_explorer_mag_limit_worker = SkyExplorerWorker(
 
             source_path=source_path,
 
-            settings=self._ensure_settings(),
+            settings=worker_settings,
 
             selected_layers=("gaia_stars",),
 
@@ -38685,6 +39173,8 @@ class MainWindow(QMainWindow):
 
         self._current_sky_explorer_source_image = result.source_path
 
+        self._set_sky_explorer_mag_limit_active(True)
+
         representative_stars = self._sky_explorer_mag_limit_representative_objects(result.objects)
 
         if representative_stars:
@@ -38733,7 +39223,7 @@ class MainWindow(QMainWindow):
 
         self._set_sky_explorer_busy(False)
 
-        self._set_sky_explorer_mag_limit_checked(False)
+        self._set_sky_explorer_mag_limit_active(False)
 
         self._sky_explorer_status_label.setText(f"Mag Limit failed: {message}")
 
@@ -38746,6 +39236,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_worker = None
 
         self._pending_sky_explorer_result_gaia_query_signature = None
+
+        self._sky_explorer_pending_update_object_type_keys = ()
 
         self._set_sky_explorer_busy(False)
 
@@ -39020,8 +39512,6 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_filter_button.setStyleSheet(secondary_style)
 
-        self._sky_explorer_mag_limit_button.setStyleSheet(secondary_style)
-
         self._sky_explorer_center_object_button.setStyleSheet(secondary_style)
 
         self._sky_explorer_show_auto_annotations_button.setStyleSheet(secondary_style)
@@ -39173,7 +39663,7 @@ class MainWindow(QMainWindow):
 
             self.fontMetrics().horizontalAdvance(label)
 
-            for label in ("Open", "Explore", "Exploring...")
+            for label in ("Open", "Explore", "Exploring...", "Update", "Updating...")
 
         ) + button_padding_px
 
@@ -39194,10 +39684,6 @@ class MainWindow(QMainWindow):
         ) + button_padding_px
 
         filter_width = self.fontMetrics().horizontalAdvance("Filter") + button_padding_px + 12
-
-        mag_limit_width = self.fontMetrics().horizontalAdvance("Mag Limit") + button_padding_px
-
-        collage_width = self.fontMetrics().horizontalAdvance("Collage...") + button_padding_px
 
         surveys_width = self.fontMetrics().horizontalAdvance("Surveys") + button_padding_px + 12
 
@@ -39229,10 +39715,6 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_filter_button.setFixedWidth(filter_width)
 
-        self._sky_explorer_mag_limit_button.setFixedWidth(mag_limit_width)
-
-        self._sky_explorer_collage_button.setFixedWidth(collage_width)
-
         self._sky_explorer_surveys_button.setFixedWidth(surveys_width)
 
         self._sky_explorer_show_auto_annotations_button.setFixedWidth(auto_width)
@@ -39248,10 +39730,6 @@ class MainWindow(QMainWindow):
         self._sky_explorer_center_object_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_show_auto_annotations_button.setFixedHeight(header_control_height)
-
-        self._sky_explorer_mag_limit_button.setFixedHeight(header_control_height)
-
-        self._sky_explorer_collage_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_surveys_button.setFixedHeight(header_control_height)
 
@@ -40341,6 +40819,8 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_select_all_button()
 
+        self._sync_sky_explorer_primary_button()
+
         self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
 
     def _toggle_sky_explorer_select_all(self) -> None:
@@ -40373,7 +40853,17 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_select_all_button()
 
+        self._sync_sky_explorer_primary_button()
+
         self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
+
+    def _sky_explorer_pending_object_type_keys(self) -> tuple[str, ...]:
+
+        selected_keys = self._selected_sky_explorer_object_type_keys()
+
+        queried_keys = set(self._sky_explorer_queried_object_type_keys)
+
+        return tuple(key for key in selected_keys if key not in queried_keys)
 
     def _selected_sky_explorer_object_type_keys(self) -> tuple[str, ...]:
 
@@ -41428,8 +41918,6 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_reset_display_button.setEnabled(has_image)
 
-        self._sky_explorer_mag_limit_button.setEnabled(has_image)
-
         self._sky_explorer_surveys_button.setEnabled(has_image)
 
         self._sky_explorer_survey_display_controls.setEnabled(has_image and has_survey)
@@ -41472,15 +41960,13 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_export_image_button.setEnabled(has_image)
 
-        if hasattr(self, "_sky_explorer_collage_button"):
-
-            self._sky_explorer_collage_button.setEnabled(self._sky_explorer_can_export_collage())
-
         if hasattr(self, "_sky_explorer_export_animation_action"):
 
             self._sky_explorer_export_animation_action.setEnabled(
                 self._sky_explorer_can_export_comparison_animation()
             )
+
+        self._sync_tools_menu_actions()
 
     def _sync_sky_explorer_header_splitter_from_main(self) -> None:
 
@@ -44168,17 +44654,151 @@ class MainWindow(QMainWindow):
 
             self.statusBar().showMessage("Automatic Sky Explorer annotations are hidden; manual annotations remain visible.", 4000)
 
-    def _handle_sky_explorer_mag_limit_toggled(self, is_checked: bool) -> None:
+    def _sky_explorer_mag_limit_is_active(self) -> bool:
 
-        if not is_checked:
+        return bool(getattr(self, "_sky_explorer_mag_limit_active", False))
 
-            self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
+    def _set_sky_explorer_mag_limit_active(self, active: bool) -> None:
+
+        self._sky_explorer_mag_limit_active = bool(active)
+
+        self._sync_tools_menu_actions()
+
+    def _sky_explorer_mag_limit_options_from_settings(self) -> SkyExplorerMagLimitOptions:
+
+        settings = self._ensure_settings()
+
+        return SkyExplorerMagLimitOptions(
+
+            mode="ladder",
+
+            bin_size_mag=float(getattr(settings, "sky_explorer_mag_limit_bin_size_mag", 0.5)),
+
+            examples_per_bin=max(1, int(getattr(settings, "sky_explorer_mag_limit_examples_per_bin", 1))),
+
+            mark_only_faintest=bool(getattr(settings, "sky_explorer_mag_limit_mark_only_faintest", False)),
+
+            max_magnitude=float(getattr(settings, "sky_explorer_gaia_max_magnitude", 17.0)),
+
+            auto_stars_per_bin=max(2, int(getattr(settings, "sky_explorer_mag_limit_auto_stars_per_bin", 10))),
+
+            auto_required_visible_stars=max(1, int(getattr(settings, "sky_explorer_mag_limit_auto_required_visible_stars", 7))),
+
+            auto_start_magnitude=float(getattr(settings, "sky_explorer_mag_limit_auto_start_magnitude", 12.0)),
+
+            auto_step_magnitude=float(getattr(settings, "sky_explorer_mag_limit_auto_step_magnitude", 0.5)),
+
+            auto_snr_threshold=float(getattr(settings, "sky_explorer_mag_limit_auto_snr_threshold", 5.0)),
+
+        )
+
+    def _persist_sky_explorer_mag_limit_options(self, options: SkyExplorerMagLimitOptions) -> None:
+
+        settings = self._ensure_settings()
+
+        replacements: dict[str, object] = {
+
+            "sky_explorer_mag_limit_bin_size_mag": float(options.bin_size_mag),
+
+            "sky_explorer_mag_limit_examples_per_bin": max(1, int(options.examples_per_bin)),
+
+            "sky_explorer_mag_limit_mark_only_faintest": bool(options.mark_only_faintest),
+
+            "sky_explorer_mag_limit_auto_stars_per_bin": max(2, int(options.auto_stars_per_bin)),
+
+            "sky_explorer_mag_limit_auto_required_visible_stars": max(1, int(options.auto_required_visible_stars)),
+
+            "sky_explorer_mag_limit_auto_start_magnitude": float(options.auto_start_magnitude),
+
+            "sky_explorer_mag_limit_auto_step_magnitude": float(options.auto_step_magnitude),
+
+            "sky_explorer_mag_limit_auto_snr_threshold": float(options.auto_snr_threshold),
+
+        }
+
+        if options.mode == "ladder":
+
+            replacements["sky_explorer_gaia_max_magnitude"] = float(options.max_magnitude)
+
+        self._settings = replace(settings, **replacements)
+
+        self._save_settings_snapshot()
+
+    def _open_sky_explorer_mag_limit_dialog(self) -> None:
+
+        if self._current_app_mode() != AppMode.SKY_EXPLORER:
+
+            QMessageBox.information(self, "Sky Explorer required", "Switch to Sky Explorer mode before estimating a magnitude limit.")
+
+            return
+
+        source_path = self._current_sky_explorer_source_image
+
+        if source_path is None or not source_path.exists():
+
+            QMessageBox.information(self, "No source image", "Choose a valid source image before estimating a magnitude limit.")
+
+            return
+
+        initial_options = self._sky_explorer_mag_limit_options or self._sky_explorer_mag_limit_options_from_settings()
+
+        dialog = SkyExplorerMagLimitDialog(
+
+            initial_options=initial_options,
+
+            markers_active=self._sky_explorer_mag_limit_is_active(),
+
+            parent=self,
+
+        )
+
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+
+            return
+
+        if dialog.clear_markers_requested():
+
+            self._clear_sky_explorer_mag_limit_markers()
+
+            return
+
+        options = dialog.selected_options()
+
+        self._persist_sky_explorer_mag_limit_options(options)
+
+        self._apply_sky_explorer_mag_limit_options(options)
+
+    def _clear_sky_explorer_mag_limit_markers(self) -> None:
+
+        self._sky_explorer_mag_limit_auto_objects = ()
+
+        self._set_sky_explorer_mag_limit_active(False)
+
+        self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
+
+        self.statusBar().showMessage("Cleared magnitude limit markers.", 3000)
+
+        self._append_sky_explorer_workflow_note("Cleared magnitude limit markers.")
+
+    def _apply_sky_explorer_mag_limit_options(self, options: SkyExplorerMagLimitOptions) -> None:
+
+        self._sky_explorer_mag_limit_options = options
+
+        self._sky_explorer_mag_limit_auto_objects = ()
+
+        if options.mode == "auto":
+
+            self._set_sky_explorer_mag_limit_active(False)
+
+            self._start_sky_explorer_mag_limit_auto_estimate(options)
 
             return
 
         source_objects = self._sky_explorer_mag_limit_source_objects()
 
         if source_objects:
+
+            self._set_sky_explorer_mag_limit_active(True)
 
             representative_stars = self._sky_explorer_mag_limit_representative_objects(source_objects)
 
@@ -44200,17 +44820,232 @@ class MainWindow(QMainWindow):
 
             return
 
+        self._set_sky_explorer_mag_limit_active(True)
+
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
 
         self._start_sky_explorer_mag_limit_query()
 
-    def _set_sky_explorer_mag_limit_checked(self, is_checked: bool) -> None:
+    def _start_sky_explorer_mag_limit_auto_estimate(self, options: SkyExplorerMagLimitOptions) -> None:
 
-        self._sky_explorer_mag_limit_button.blockSignals(True)
+        source_path = self._current_sky_explorer_source_image
 
-        self._sky_explorer_mag_limit_button.setChecked(bool(is_checked))
+        if source_path is None or not source_path.exists():
 
-        self._sky_explorer_mag_limit_button.blockSignals(False)
+            QMessageBox.information(self, "No source image", "Choose a valid source image before estimating a magnitude limit.")
+
+            return
+
+        if self._sky_explorer_worker is not None and self._sky_explorer_worker.isRunning():
+
+            self.statusBar().showMessage("Sky Explorer is already running.", 5000)
+
+            return
+
+        if self._sky_explorer_mag_limit_worker is not None and self._sky_explorer_mag_limit_worker.isRunning():
+
+            self.statusBar().showMessage("Mag Limit is already querying Gaia stars for this field.", 5000)
+
+            return
+
+        if self._sky_explorer_mag_limit_auto_worker is not None and self._sky_explorer_mag_limit_auto_worker.isRunning():
+
+            self.statusBar().showMessage("Mag Limit is already estimating the visible magnitude limit.", 5000)
+
+            return
+
+        estimate_options = build_visible_limit_estimate_options(
+
+            snr_threshold=float(options.auto_snr_threshold),
+
+            start_magnitude=float(options.auto_start_magnitude),
+
+            stars_per_bin=int(options.auto_stars_per_bin),
+
+            required_visible_count=int(options.auto_required_visible_stars),
+
+            annotate_lowest_mag_stars=bool(options.mark_only_faintest),
+
+            step_magnitude=float(options.auto_step_magnitude),
+
+            annotate_all_visible_stars=not bool(options.mark_only_faintest),
+
+        )
+
+        self._sky_explorer_status_label.setText("Mag Limit is estimating the visible magnitude limit.")
+
+        self.statusBar().showMessage("Mag Limit visible-limit estimate started.", 5000)
+
+        self._append_sky_explorer_workflow_note(f"Started Mag Limit visible-limit estimate for {source_path.name}.")
+
+        self._set_sky_explorer_busy(True)
+
+        self._sky_explorer_mag_limit_auto_worker = AsteroidVisibleMagnitudeWorker(
+
+            source_path=source_path,
+
+            settings=self._ensure_settings(),
+
+            options=estimate_options,
+
+            parent=self,
+
+        )
+
+        self._sky_explorer_mag_limit_auto_worker.progress_updated.connect(self._handle_sky_explorer_mag_limit_auto_progress)
+
+        self._sky_explorer_mag_limit_auto_worker.estimate_completed.connect(self._handle_sky_explorer_mag_limit_auto_completed)
+
+        self._sky_explorer_mag_limit_auto_worker.estimate_failed.connect(self._handle_sky_explorer_mag_limit_auto_failed)
+
+        self._sky_explorer_mag_limit_auto_worker.start()
+
+    def _handle_sky_explorer_mag_limit_auto_progress(self, message: str) -> None:
+
+        progress_text = f"Mag Limit: {message}"
+
+        self._sky_explorer_status_label.setText(progress_text)
+
+        self.statusBar().showMessage(progress_text, 5000)
+
+        self._append_sky_explorer_workflow_note(progress_text)
+
+    def _handle_sky_explorer_mag_limit_auto_completed(self, result: object) -> None:
+
+        self._sky_explorer_mag_limit_auto_worker = None
+
+        self._set_sky_explorer_busy(False)
+
+        if not isinstance(result, SolarSystemVisibilityEstimateResult):
+
+            self._handle_sky_explorer_mag_limit_auto_failed("Mag Limit returned an unexpected estimate result.")
+
+            return
+
+        self._sky_explorer_mag_limit_auto_objects = self._sky_explorer_objects_from_visible_limit_stars(result.annotated_stars)
+
+        self._set_sky_explorer_mag_limit_active(True)
+
+        summary_text = str(result.summary_text or "").strip() or "Mag Limit finished estimating the visible magnitude limit."
+
+        if self._sky_explorer_mag_limit_auto_objects:
+
+            summary_text = f"{summary_text} Marked {len(self._sky_explorer_mag_limit_auto_objects)} star(s)."
+
+        self._sky_explorer_status_label.setText(summary_text)
+
+        self.statusBar().showMessage(summary_text, 6000)
+
+        self._append_sky_explorer_workflow_note(summary_text)
+
+        self._refresh_sky_explorer_filtered_view(
+
+            preserve_selection=True,
+
+            select_first_row=self._selected_sky_explorer_object() is None and self._current_sky_explorer_result is None,
+
+        )
+
+    def _handle_sky_explorer_mag_limit_auto_failed(self, message: str) -> None:
+
+        self._sky_explorer_mag_limit_auto_worker = None
+
+        self._sky_explorer_mag_limit_auto_objects = ()
+
+        self._set_sky_explorer_busy(False)
+
+        self._set_sky_explorer_mag_limit_active(False)
+
+        self._sky_explorer_status_label.setText(f"Mag Limit failed: {message}")
+
+        self._append_sky_explorer_workflow_note(f"Mag Limit failed: {message}")
+
+        QMessageBox.warning(self, "Mag Limit failed", message)
+
+    def _sky_explorer_objects_from_visible_limit_stars(
+
+        self,
+
+        stars: Sequence[SolarSystemVisibilityEstimateStar],
+
+    ) -> tuple[SkyExplorerObject, ...]:
+
+        objects: list[SkyExplorerObject] = []
+
+        for index, star in enumerate(stars):
+
+            pixel_x = float(star.measured_x if star.measured_x is not None else star.predicted_x)
+
+            pixel_y = float(star.measured_y if star.measured_y is not None else star.predicted_y)
+
+            name = str(star.name or f"Gaia {index + 1}").strip() or f"Gaia {index + 1}"
+
+            objects.append(
+
+                SkyExplorerObject(
+
+                    layer_key="gaia_stars",
+
+                    catalog="Gaia DR3",
+
+                    source_id=f"mag-limit-auto:{index}:{name}",
+
+                    name=name,
+
+                    object_type="Star",
+
+                    ra_deg=0.0,
+
+                    dec_deg=0.0,
+
+                    pixel_x=pixel_x,
+
+                    pixel_y=pixel_y,
+
+                    magnitude=float(star.magnitude),
+
+                    angular_distance_arcmin=0.0,
+
+                    short_label=_short_label_for_name(name, fallback=name),
+
+                    metadata={"sky_explorer_mag_limit_auto": True},
+
+                )
+
+            )
+
+        return tuple(objects)
+
+    def _sync_tools_menu_actions(self) -> None:
+
+        if not hasattr(self, "_tools_create_collage_action"):
+
+            return
+
+        is_sky_explorer = self._current_app_mode() == AppMode.SKY_EXPLORER
+
+        image_path = getattr(self, "_current_sky_explorer_source_image", None)
+
+        has_image = image_path is not None and image_path.exists()
+
+        is_busy = (
+
+            (self._sky_explorer_worker is not None and self._sky_explorer_worker.isRunning())
+
+            or (self._sky_explorer_mag_limit_worker is not None and self._sky_explorer_mag_limit_worker.isRunning())
+
+            or (
+                getattr(self, "_sky_explorer_mag_limit_auto_worker", None) is not None
+                and self._sky_explorer_mag_limit_auto_worker.isRunning()
+            )
+
+        )
+
+        self._tools_create_collage_action.setEnabled(is_sky_explorer and self._sky_explorer_can_export_collage())
+
+        self._tools_estimate_magnitude_limit_action.setEnabled(is_sky_explorer and has_image and not is_busy)
+
+        self._tools_clear_magnitude_limit_action.setEnabled(is_sky_explorer and self._sky_explorer_mag_limit_is_active())
 
     def _reset_sky_explorer_image_display_controls(self) -> None:
 
@@ -46618,7 +47453,11 @@ class MainWindow(QMainWindow):
 
             selected_identity,
 
-            bool(self._sky_explorer_mag_limit_button.isChecked()),
+            bool(self._sky_explorer_mag_limit_is_active()),
+
+            id(getattr(self, "_sky_explorer_mag_limit_options", None)),
+
+            len(getattr(self, "_sky_explorer_mag_limit_auto_objects", ())),
 
             self._current_sky_explorer_gaia_query_signature(),
 
@@ -46637,6 +47476,10 @@ class MainWindow(QMainWindow):
             round(float(getattr(settings, "sky_explorer_annotated_galaxy_max_magnitude", 17.0)), 4),
 
             int(getattr(settings, "sky_explorer_mag_limit_examples_per_bin", 1)),
+
+            round(float(getattr(settings, "sky_explorer_mag_limit_bin_size_mag", 0.5)), 4),
+
+            bool(getattr(settings, "sky_explorer_mag_limit_mark_only_faintest", False)),
 
             str(settings.sky_explorer_mag_limit_marker_color).strip().lower(),
 
@@ -46877,6 +47720,12 @@ class MainWindow(QMainWindow):
 
     def _current_sky_explorer_mag_limit_query_signature(self) -> tuple[float,]:
 
+        options = getattr(self, "_sky_explorer_mag_limit_options", None)
+
+        if options is not None:
+
+            return (round(float(options.max_magnitude), 6),)
+
         settings = self._ensure_settings()
 
         return (round(float(getattr(settings, "sky_explorer_gaia_max_magnitude", 17.0)), 6),)
@@ -46925,19 +47774,25 @@ class MainWindow(QMainWindow):
 
     def _sky_explorer_mag_limit_table_objects(self) -> tuple[SkyExplorerObject, ...]:
 
-        if not self._sky_explorer_mag_limit_button.isChecked():
+        if not self._sky_explorer_mag_limit_is_active():
 
             return ()
 
-        source_objects = self._sky_explorer_mag_limit_source_objects()
+        selected_objects = self._sky_explorer_mag_limit_auto_objects
 
-        if not source_objects:
+        if not selected_objects:
 
-            return ()
+            source_objects = self._sky_explorer_mag_limit_source_objects()
+
+            if not source_objects:
+
+                return ()
+
+            selected_objects = self._sky_explorer_mag_limit_representative_objects(source_objects)
 
         measurement_objects: list[SkyExplorerObject] = []
 
-        for sky_object in self._sky_explorer_mag_limit_representative_objects(source_objects):
+        for sky_object in selected_objects:
 
             metadata = dict(sky_object.metadata or {})
 
@@ -47043,11 +47898,17 @@ class MainWindow(QMainWindow):
 
     def _sky_explorer_mag_limit_image_overlays(self, objects: Sequence[SkyExplorerObject]) -> list[ImageOverlay]:
 
-        if not self._sky_explorer_mag_limit_button.isChecked():
+        if not self._sky_explorer_mag_limit_is_active():
 
             return []
 
-        selected_stars = self._sky_explorer_mag_limit_representative_objects(objects)
+        if self._sky_explorer_mag_limit_auto_objects:
+
+            selected_stars = self._sky_explorer_mag_limit_auto_objects
+
+        else:
+
+            selected_stars = self._sky_explorer_mag_limit_representative_objects(objects)
 
         if not selected_stars:
 
@@ -47180,9 +48041,17 @@ class MainWindow(QMainWindow):
 
     def _sky_explorer_mag_limit_representative_objects(self, objects: Sequence[SkyExplorerObject]) -> tuple[SkyExplorerObject, ...]:
 
+        options = self._sky_explorer_mag_limit_options or self._sky_explorer_mag_limit_options_from_settings()
+
         settings = self._ensure_settings()
 
-        examples_per_bin = max(1, min(10, int(getattr(settings, "sky_explorer_mag_limit_examples_per_bin", 1))))
+        examples_per_bin = max(1, min(20, int(options.examples_per_bin or getattr(settings, "sky_explorer_mag_limit_examples_per_bin", 1))))
+
+        bin_size = max(0.1, float(options.bin_size_mag or getattr(settings, "sky_explorer_mag_limit_bin_size_mag", 0.5)))
+
+        max_magnitude = float(options.max_magnitude)
+
+        mark_only_faintest = bool(options.mark_only_faintest)
 
         objects_by_bin: dict[float, list[tuple[SkyExplorerObject, float]]] = {}
 
@@ -47200,15 +48069,25 @@ class MainWindow(QMainWindow):
 
             magnitude_value = float(magnitude)
 
-            bin_start = math.floor(magnitude_value * 2.0) / 2.0
+            if magnitude_value > max_magnitude:
+
+                continue
+
+            bin_start = math.floor(magnitude_value / bin_size) * bin_size
 
             objects_by_bin.setdefault(bin_start, []).append((sky_object, magnitude_value))
 
         selected_objects: list[SkyExplorerObject] = []
 
-        for bin_start in sorted(objects_by_bin):
+        bin_starts = sorted(objects_by_bin)
 
-            bin_center = bin_start + 0.25
+        if mark_only_faintest and bin_starts:
+
+            bin_starts = [bin_starts[-1]]
+
+        for bin_start in bin_starts:
+
+            bin_center = bin_start + (bin_size / 2.0)
 
             ranked_objects = sorted(
 
@@ -47726,6 +48605,8 @@ class MainWindow(QMainWindow):
 
         self._set_sky_explorer_object_type_mode(self._current_sky_explorer_object_type_mode(), preserve_selection=True)
 
+        self._sync_sky_explorer_primary_button()
+
         self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
 
     def _handle_sky_explorer_object_type_selection_changed(self, item: QTableWidgetItem) -> None:
@@ -47747,6 +48628,8 @@ class MainWindow(QMainWindow):
             return
 
         self._sync_sky_explorer_select_all_button()
+
+        self._sync_sky_explorer_primary_button()
 
         self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
 
@@ -48134,6 +49017,30 @@ class MainWindow(QMainWindow):
 
 
 
+        tools_menu = self.menuBar().addMenu("Tools")
+
+        self._tools_create_collage_action = QAction("Create collage", self)
+
+        self._tools_create_collage_action.triggered.connect(self._export_sky_explorer_collage)
+
+        tools_menu.addAction(self._tools_create_collage_action)
+
+        self._tools_estimate_magnitude_limit_action = QAction("Estimate magnitude limit...", self)
+
+        self._tools_estimate_magnitude_limit_action.triggered.connect(self._open_sky_explorer_mag_limit_dialog)
+
+        tools_menu.addAction(self._tools_estimate_magnitude_limit_action)
+
+        self._tools_clear_magnitude_limit_action = QAction("Clear magnitude limit markers", self)
+
+        self._tools_clear_magnitude_limit_action.triggered.connect(self._clear_sky_explorer_mag_limit_markers)
+
+        tools_menu.addAction(self._tools_clear_magnitude_limit_action)
+
+        self._sync_tools_menu_actions()
+
+
+
         settings_menu = self.menuBar().addMenu("Settings")
 
 
@@ -48224,6 +49131,18 @@ class MainWindow(QMainWindow):
 
         self._theme_one_dark_action.triggered.connect(lambda _checked: self._handle_theme_changed(_THEME_ONE_DARK))
 
+        self._theme_crimson_action = QAction("Crimson", self)
+
+        self._theme_crimson_action.setCheckable(True)
+
+        self._theme_crimson_action.triggered.connect(lambda _checked: self._handle_theme_changed(_THEME_CRIMSON))
+
+        self._theme_blood_moon_action = QAction("Blood Moon", self)
+
+        self._theme_blood_moon_action.setCheckable(True)
+
+        self._theme_blood_moon_action.triggered.connect(lambda _checked: self._handle_theme_changed(_THEME_BLOOD_MOON))
+
         self._theme_custom_action = QAction("Customize", self)
 
         self._theme_custom_action.setCheckable(True)
@@ -48248,6 +49167,10 @@ class MainWindow(QMainWindow):
 
         self._theme_action_group.addAction(self._theme_one_dark_action)
 
+        self._theme_action_group.addAction(self._theme_crimson_action)
+
+        self._theme_action_group.addAction(self._theme_blood_moon_action)
+
         self._theme_action_group.addAction(self._theme_custom_action)
 
         theme_menu.addAction(self._theme_normal_action)
@@ -48267,6 +49190,10 @@ class MainWindow(QMainWindow):
         theme_menu.addAction(self._theme_solarized_dark_action)
 
         theme_menu.addAction(self._theme_one_dark_action)
+
+        theme_menu.addAction(self._theme_crimson_action)
+
+        theme_menu.addAction(self._theme_blood_moon_action)
 
         theme_menu.addAction(self._theme_custom_action)
 
@@ -48310,19 +49237,11 @@ class MainWindow(QMainWindow):
 
         self._asteroid_settings_menu = asteroid_menu
 
-        self._asteroid_show_markers_action = QAction("Show Markers on Main Image", self)
-
-        self._asteroid_show_markers_action.setCheckable(True)
-
-        self._asteroid_show_markers_action.triggered.connect(lambda _checked: self._handle_asteroid_settings_menu_changed())
-
         self._asteroid_show_labels_action = QAction("Show Labels on Main Image", self)
 
         self._asteroid_show_labels_action.setCheckable(True)
 
         self._asteroid_show_labels_action.triggered.connect(lambda _checked: self._handle_asteroid_settings_menu_changed())
-
-        asteroid_menu.addAction(self._asteroid_show_markers_action)
 
         asteroid_menu.addAction(self._asteroid_show_labels_action)
 
@@ -48338,31 +49257,57 @@ class MainWindow(QMainWindow):
 
         asteroid_settings_layout.setVerticalSpacing(6)
 
-        asteroid_target_marker_label = QLabel("Target Marker", asteroid_settings_panel)
+        asteroid_marker_style_label = QLabel("Marker Style", asteroid_settings_panel)
+
+        asteroid_marker_style_label.setStyleSheet("font-weight: 700; padding-top: 4px;")
+
+        asteroid_settings_layout.addWidget(asteroid_marker_style_label, 0, 0, 1, 2)
+
+        self._asteroid_marker_style_combo = QComboBox(asteroid_settings_panel)
+
+        self._asteroid_marker_style_combo.addItem("Square aim", "target")
+
+        self._asteroid_marker_style_combo.addItem("Circle", "circle")
+
+        self._asteroid_marker_style_combo.addItem("Corner brackets", "brackets")
+
+        self._asteroid_marker_style_combo.addItem("Open crosshair", "crosshair")
+
+        self._asteroid_marker_style_combo.setToolTip(
+            "Marker shape used for the selected object when Target Marker is on. Only one target marker is shown."
+        )
+
+        self._asteroid_marker_style_combo.currentIndexChanged.connect(lambda _index: self._handle_asteroid_settings_menu_changed())
+
+        asteroid_settings_layout.addWidget(QLabel("Shape", asteroid_settings_panel), 1, 0)
+
+        asteroid_settings_layout.addWidget(self._asteroid_marker_style_combo, 1, 1)
+
+        asteroid_target_marker_label = QLabel("Marker Appearance", asteroid_settings_panel)
 
         asteroid_target_marker_label.setStyleSheet("font-weight: 700; padding-top: 4px;")
 
-        asteroid_settings_layout.addWidget(asteroid_target_marker_label, 0, 0, 1, 2)
+        asteroid_settings_layout.addWidget(asteroid_target_marker_label, 2, 0, 1, 2)
 
-        asteroid_settings_layout.addWidget(QLabel("Line Color", asteroid_settings_panel), 1, 0)
+        asteroid_settings_layout.addWidget(QLabel("Line Color", asteroid_settings_panel), 3, 0)
 
-        asteroid_settings_layout.addWidget(self._asteroid_target_marker_line_color_button, 1, 1)
+        asteroid_settings_layout.addWidget(self._asteroid_target_marker_line_color_button, 3, 1)
 
-        asteroid_settings_layout.addWidget(QLabel("Accent Color", asteroid_settings_panel), 2, 0)
+        asteroid_settings_layout.addWidget(QLabel("Accent Color", asteroid_settings_panel), 4, 0)
 
-        asteroid_settings_layout.addWidget(self._asteroid_target_marker_accent_color_button, 2, 1)
+        asteroid_settings_layout.addWidget(self._asteroid_target_marker_accent_color_button, 4, 1)
 
-        asteroid_settings_layout.addWidget(QLabel("Label Color", asteroid_settings_panel), 3, 0)
+        asteroid_settings_layout.addWidget(QLabel("Label Color", asteroid_settings_panel), 5, 0)
 
-        asteroid_settings_layout.addWidget(self._asteroid_target_marker_text_color_button, 3, 1)
+        asteroid_settings_layout.addWidget(self._asteroid_target_marker_text_color_button, 5, 1)
 
-        asteroid_settings_layout.addWidget(QLabel("Outline Color", asteroid_settings_panel), 4, 0)
+        asteroid_settings_layout.addWidget(QLabel("Outline Color", asteroid_settings_panel), 6, 0)
 
-        asteroid_settings_layout.addWidget(self._asteroid_target_marker_outline_color_button, 4, 1)
+        asteroid_settings_layout.addWidget(self._asteroid_target_marker_outline_color_button, 6, 1)
 
-        asteroid_settings_layout.addWidget(QLabel("Thickness", asteroid_settings_panel), 5, 0)
+        asteroid_settings_layout.addWidget(QLabel("Thickness", asteroid_settings_panel), 7, 0)
 
-        asteroid_settings_layout.addWidget(self._asteroid_target_marker_line_width_spin, 5, 1)
+        asteroid_settings_layout.addWidget(self._asteroid_target_marker_line_width_spin, 7, 1)
 
         asteroid_settings_panel.setLayout(asteroid_settings_layout)
 
@@ -49138,23 +50083,25 @@ class MainWindow(QMainWindow):
 
     def _sync_asteroid_settings_menu_controls(self) -> None:
 
-        if not hasattr(self, "_asteroid_show_markers_action"):
+        if not hasattr(self, "_asteroid_show_labels_action"):
 
             return
 
         settings = getattr(self, "_settings", None)
 
-        markers_enabled = True if settings is None else bool(settings.asteroid_visual_show_object_markers)
-
         labels_enabled = True if settings is None else bool(settings.asteroid_visual_label_all_objects)
 
-        target_marker_enabled = False if settings is None else bool(settings.asteroid_visual_show_target_marker)
+        marker_style = "target" if settings is None else str(getattr(settings, "asteroid_visual_marker_style", "target") or "target")
 
         target_marker_line_width = 4.0 if settings is None else min(8.0, max(0.5, float(settings.asteroid_target_marker_line_width)))
 
-        self._asteroid_show_markers_action.blockSignals(True)
-
         self._asteroid_show_labels_action.blockSignals(True)
+
+        has_style_combo = hasattr(self, "_asteroid_marker_style_combo")
+
+        if has_style_combo:
+
+            self._asteroid_marker_style_combo.blockSignals(True)
 
         has_target_marker_toolbar_button = hasattr(self, "_asteroid_target_marker_button")
 
@@ -49164,19 +50111,25 @@ class MainWindow(QMainWindow):
 
         self._asteroid_target_marker_line_width_spin.blockSignals(True)
 
-        self._asteroid_show_markers_action.setChecked(markers_enabled)
-
         self._asteroid_show_labels_action.setChecked(labels_enabled)
+
+        if has_style_combo:
+
+            style_index = self._asteroid_marker_style_combo.findData(marker_style)
+
+            self._asteroid_marker_style_combo.setCurrentIndex(style_index if style_index >= 0 else 0)
 
         if has_target_marker_toolbar_button:
 
-            self._asteroid_target_marker_button.setChecked(target_marker_enabled)
+            self._asteroid_target_marker_button.setChecked(False if settings is None else bool(settings.asteroid_visual_show_target_marker))
 
         self._asteroid_target_marker_line_width_spin.setValue(target_marker_line_width)
 
-        self._asteroid_show_markers_action.blockSignals(False)
-
         self._asteroid_show_labels_action.blockSignals(False)
+
+        if has_style_combo:
+
+            self._asteroid_marker_style_combo.blockSignals(False)
 
         if has_target_marker_toolbar_button:
 
@@ -49434,19 +50387,25 @@ class MainWindow(QMainWindow):
 
         settings = self._ensure_settings()
 
-        markers_enabled = self._asteroid_show_markers_action.isChecked()
-
         labels_enabled = self._asteroid_show_labels_action.isChecked()
 
-        settings.asteroid_visual_show_known_objects = markers_enabled
+        settings.asteroid_visual_show_known_objects = True
 
-        settings.asteroid_visual_show_object_markers = markers_enabled
+        settings.asteroid_visual_show_object_markers = True
 
         settings.asteroid_visual_label_all_objects = labels_enabled
+
+        if hasattr(self, "_asteroid_marker_style_combo"):
+
+            style = str(self._asteroid_marker_style_combo.currentData() or "target")
+
+            settings.asteroid_visual_marker_style = style
 
         settings.asteroid_target_marker_line_width = float(self._asteroid_target_marker_line_width_spin.value())
 
         self._save_settings_snapshot()
+
+        self._sync_asteroid_settings_menu_controls()
 
         if self._current_asteroid_source_image is not None:
 
@@ -49458,7 +50417,13 @@ class MainWindow(QMainWindow):
 
         settings.asteroid_visual_show_target_marker = bool(checked)
 
+        settings.asteroid_visual_show_object_markers = True
+
+        settings.asteroid_visual_show_known_objects = True
+
         self._save_settings_snapshot()
+
+        self._sync_asteroid_settings_menu_controls()
 
         if self._current_asteroid_source_image is not None:
 
@@ -51223,6 +52188,8 @@ class MainWindow(QMainWindow):
 
             generate_callback=self._start_differential_workflow_generate,
 
+            terminate_callback=self._terminate_differential_workflow,
+
         )
 
         dialog.destroyed.connect(lambda _obj=None: setattr(self, "_differential_workflow_dialog", None))
@@ -52959,6 +53926,8 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_view_time_flow_timer()
 
+        self._sync_tools_menu_actions()
+
     def _window_title_for_mode(self, mode: AppMode) -> str:
 
         if mode == AppMode.DIFFERENTIAL_PHOTOMETRY:
@@ -53011,6 +53980,12 @@ class MainWindow(QMainWindow):
 
             self._settings = AppSettings.from_root(Path.cwd())
 
+        previous_mode = self._current_app_mode()
+
+        if previous_mode != mode and not bool(getattr(self._settings, "keep_mode_state_on_switch", False)):
+
+            self._purge_mode_runtime_state(previous_mode)
+
         self._settings.app_mode = mode
 
         self._sync_app_mode_controls()
@@ -53022,6 +53997,813 @@ class MainWindow(QMainWindow):
         if mode == AppMode.HR_DIAGRAM:
 
             self._show_hr_diagram_prerequisites_warning()
+
+    def _purge_mode_runtime_state(self, mode: AppMode) -> None:
+
+        try:
+
+            if mode == AppMode.SKY_VIEW:
+
+                self._purge_sky_view_runtime_state()
+
+            elif mode == AppMode.SKY_EXPLORER:
+
+                self._purge_sky_explorer_runtime_state()
+
+            elif mode == AppMode.ASTEROID_COMET_DETECTION:
+
+                self._purge_asteroid_runtime_state()
+
+            elif mode == AppMode.HR_DIAGRAM:
+
+                self._purge_hr_diagram_runtime_state()
+
+            elif mode == AppMode.DIFFERENTIAL_PHOTOMETRY:
+
+                self._purge_differential_photometry_runtime_state()
+
+            elif mode == AppMode.ASTROSTACK:
+
+                self._purge_astrostack_runtime_state()
+
+            elif mode == AppMode.TRANSIENT_FINDER:
+
+                self._purge_transient_finder_runtime_state()
+
+            elif mode == AppMode.DISTANCE_MAP:
+
+                self._purge_distance_map_runtime_state()
+
+            elif mode == AppMode.ASTRO_TOOLS:
+
+                self._purge_astro_tools_runtime_state()
+
+        except Exception as exc:
+
+            _LOGGER.warning("Failed to purge runtime state for mode %s: %s", mode, exc)
+
+        try:
+
+            gc.collect()
+
+        except Exception:
+
+            pass
+
+    def _interrupt_and_drop_worker(self, attr_name: str, *, wait_ms: int = 750) -> None:
+
+        worker = getattr(self, attr_name, None)
+
+        if worker is None:
+
+            return
+
+        try:
+
+            worker.blockSignals(True)
+
+        except Exception:
+
+            pass
+
+        try:
+
+            request_cancel = getattr(worker, "request_cancel", None)
+
+            if callable(request_cancel):
+
+                request_cancel()
+
+            request_interruption = getattr(worker, "requestInterruption", None)
+
+            if callable(request_interruption):
+
+                request_interruption()
+
+            if hasattr(worker, "isRunning") and worker.isRunning():
+
+                worker.wait(max(0, int(wait_ms)))
+
+        except Exception:
+
+            pass
+
+        setattr(self, attr_name, None)
+
+    def _terminate_differential_workflow(self) -> None:
+
+        self._differential_workflow_scan_requested = False
+
+        self._differential_workflow_auto_generate_after_scan = False
+
+        self._differential_scan_in_progress = False
+
+        differential_worker_attrs = (
+
+            "_process_worker",
+
+            "_scan_worker",
+
+            "_preview_worker",
+
+            "_cached_processing_report_worker",
+
+            "_calibration_worker",
+
+            "_calculate_period_worker",
+
+            "_literature_period_worker",
+
+            "_fit_period_worker",
+
+        )
+
+        terminated_workers: list = []
+
+        for attr_name in differential_worker_attrs:
+
+            worker = getattr(self, attr_name, None)
+
+            if worker is None:
+
+                continue
+
+            try:
+
+                worker.blockSignals(True)
+
+            except Exception:
+
+                pass
+
+            try:
+
+                request_cancel = getattr(worker, "request_cancel", None)
+
+                if callable(request_cancel):
+
+                    request_cancel()
+
+                request_interruption = getattr(worker, "requestInterruption", None)
+
+                if callable(request_interruption):
+
+                    request_interruption()
+
+            except Exception:
+
+                pass
+
+            terminated_workers.append(worker)
+
+            # Detach immediately so signal events already queued from this worker are dropped
+            # by the sender guards in the progress/completed/failed handlers.
+            setattr(self, attr_name, None)
+
+        self._clear_processing_progress_state()
+
+        self._fail_differential_workflow("Workflow terminated by user.")
+
+        self._set_generate_button_attention(False)
+
+        self._summary_label.setText("Differential Photometry workflow terminated by user.")
+
+        self.statusBar().showMessage("Differential Photometry workflow terminated.", 5000)
+
+        self._append_work_log("Differential Photometry workflow terminated by user.")
+
+        try:
+
+            for child in multiprocessing.active_children():
+
+                try:
+
+                    child.terminate()
+
+                except Exception:
+
+                    pass
+
+        except Exception:
+
+            pass
+
+        if terminated_workers:
+
+            # Give cooperative cancellation a few seconds to unwind worker pipelines before
+            # hard-terminating. Killing the QThread too early would orphan its executor
+            # threads before their queued futures are cancelled, so work would continue.
+            self._terminated_differential_workers.extend(terminated_workers)
+
+            QTimer.singleShot(5000, self._reap_terminated_differential_workers)
+
+    def _reap_terminated_differential_workers(self) -> None:
+
+        workers = self._terminated_differential_workers
+
+        self._terminated_differential_workers = []
+
+        for worker in workers:
+
+            try:
+
+                if hasattr(worker, "isRunning") and worker.isRunning():
+
+                    worker.terminate()
+
+                    worker.wait(1000)
+
+            except Exception:
+
+                pass
+
+        try:
+
+            for child in multiprocessing.active_children():
+
+                try:
+
+                    child.terminate()
+
+                except Exception:
+
+                    pass
+
+        except Exception:
+
+            pass
+
+    def _background_worker_attr_names(self) -> tuple[str, ...]:
+
+        return (
+
+            "_scan_worker",
+
+            "_cached_processing_report_worker",
+
+            "_preview_worker",
+
+            "_process_worker",
+
+            "_hr_prepare_worker",
+
+            "_calibration_worker",
+
+            "_transient_search_worker",
+
+            "_sky_explorer_worker",
+
+            "_distance_map_worker",
+
+            "_sky_explorer_mag_limit_worker",
+
+            "_sky_explorer_mag_limit_auto_worker",
+
+            "_sky_explorer_survey_worker",
+
+            "_sky_explorer_detect_worker",
+
+            "_calculate_period_worker",
+
+            "_fit_period_worker",
+
+            "_literature_period_worker",
+
+            "_update_check_worker",
+
+            "_update_download_worker",
+
+            "_increase_snr_worker",
+
+            "_comparison_fit_worker",
+
+            "_discover_sources_worker",
+
+            "_report_export_worker",
+
+            "_light_curve_gif_export_worker",
+
+            "_asteroid_detection_worker",
+
+            "_asteroid_visible_magnitude_worker",
+
+            "_asteroid_alignment_worker",
+
+            "_asteroid_synthetic_tracking_worker",
+
+            "_asteroid_discovery_test_worker",
+
+            "_asteroid_discovery_worker",
+
+            "_asteroid_recovery_worker",
+
+            "_asteroid_orbit_context_worker",
+
+            "_asteroid_preload_worker",
+
+            "_transient_preload_worker",
+
+        )
+
+    def _force_stop_background_workers(self, *, wait_ms: int = 2000) -> None:
+
+        for attr_name in self._background_worker_attr_names():
+
+            worker = getattr(self, attr_name, None)
+
+            if worker is None:
+
+                continue
+
+            try:
+
+                worker.blockSignals(True)
+
+            except Exception:
+
+                pass
+
+            try:
+
+                request_cancel = getattr(worker, "request_cancel", None)
+
+                if callable(request_cancel):
+
+                    request_cancel()
+
+                request_interruption = getattr(worker, "requestInterruption", None)
+
+                if callable(request_interruption):
+
+                    request_interruption()
+
+                if hasattr(worker, "isRunning") and worker.isRunning():
+
+                    worker.wait(max(0, int(wait_ms)))
+
+                    if worker.isRunning():
+
+                        try:
+
+                            worker.terminate()
+
+                        except Exception:
+
+                            pass
+
+                        try:
+
+                            worker.wait(1000)
+
+                        except Exception:
+
+                            pass
+
+            except Exception:
+
+                pass
+
+            setattr(self, attr_name, None)
+
+        hr_workers = getattr(self, "_hr_star_details_workers", None)
+
+        if isinstance(hr_workers, dict):
+
+            for key, worker in list(hr_workers.items()):
+
+                try:
+
+                    worker.blockSignals(True)
+
+                except Exception:
+
+                    pass
+
+                try:
+
+                    request_cancel = getattr(worker, "request_cancel", None)
+
+                    if callable(request_cancel):
+
+                        request_cancel()
+
+                    if hasattr(worker, "requestInterruption"):
+
+                        worker.requestInterruption()
+
+                    if hasattr(worker, "isRunning") and worker.isRunning():
+
+                        worker.wait(max(0, int(wait_ms)))
+
+                        if worker.isRunning():
+
+                            try:
+
+                                worker.terminate()
+
+                            except Exception:
+
+                                pass
+
+                            try:
+
+                                worker.wait(1000)
+
+                            except Exception:
+
+                                pass
+
+                except Exception:
+
+                    pass
+
+                hr_workers.pop(key, None)
+
+        try:
+
+            for child in multiprocessing.active_children():
+
+                try:
+
+                    child.terminate()
+
+                except Exception:
+
+                    pass
+
+            sleep(0.2)
+
+            for child in multiprocessing.active_children():
+
+                try:
+
+                    child.kill()
+
+                except Exception:
+
+                    pass
+
+        except Exception:
+
+            pass
+
+    def _purge_sky_view_runtime_state(self) -> None:
+
+        timer = getattr(self, "_sky_view_time_flow_timer", None)
+
+        if isinstance(timer, QTimer):
+
+            timer.stop()
+
+        canvas = getattr(self, "_sky_view_canvas", None)
+
+        if canvas is not None and hasattr(canvas, "purge_runtime_caches"):
+
+            canvas.purge_runtime_caches()
+
+        self._sky_view_catalog_objects = load_sky_atlas_objects(None, enabled_deep_sky_catalogs={"Messier", "NGC"})
+
+        self._sky_view_search_results = ()
+
+        self._sky_view_scientific_catalog_loaded = False
+
+        self._sky_view_loaded_star_magnitude_limit = 0.0
+
+        self._sky_view_loaded_deep_sky_catalogs = frozenset()
+
+        self._sky_view_scientific_catalog_error = None
+
+        if canvas is not None and hasattr(canvas, "set_objects"):
+
+            canvas.set_objects(self._sky_view_catalog_objects)
+
+            if hasattr(canvas, "set_selected_object"):
+
+                canvas.set_selected_object(None)
+
+    def _purge_sky_explorer_runtime_state(self) -> None:
+
+        self._interrupt_and_drop_worker("_sky_explorer_worker")
+
+        self._interrupt_and_drop_worker("_sky_explorer_mag_limit_worker")
+
+        self._interrupt_and_drop_worker("_sky_explorer_mag_limit_auto_worker")
+
+        self._interrupt_and_drop_worker("_sky_explorer_detect_worker")
+
+        self._interrupt_and_drop_worker("_sky_explorer_survey_worker")
+
+        self._sky_explorer_survey_worker_context = None
+
+        self._clear_sky_explorer_survey_comparison(reset_selection=True)
+
+        self._current_sky_explorer_result = None
+
+        self._sky_explorer_queried_object_type_keys = set()
+
+        self._sky_explorer_pending_update_object_type_keys = ()
+
+        self._sky_explorer_mag_limit_result = None
+
+        self._sky_explorer_mag_limit_query_signature = None
+
+        self._pending_sky_explorer_mag_limit_query_signature = None
+
+        self._sky_explorer_result_gaia_query_signature = None
+
+        self._pending_sky_explorer_result_gaia_query_signature = None
+
+        self._sky_explorer_mag_limit_auto_objects = ()
+
+        self._sky_explorer_mag_limit_options = None
+
+        if hasattr(self, "_set_sky_explorer_mag_limit_active"):
+
+            self._set_sky_explorer_mag_limit_active(False)
+
+        self._current_sky_explorer_source_image = None
+
+        if hasattr(self, "_sky_explorer_image_input"):
+
+            self._sky_explorer_image_input.clear()
+
+        if hasattr(self, "_sky_explorer_results_table"):
+
+            self._sky_explorer_results_table.setSortingEnabled(False)
+
+            self._sky_explorer_results_table.setRowCount(0)
+
+        if hasattr(self, "_sky_explorer_steps_output"):
+
+            self._sky_explorer_steps_output.clear()
+
+        if hasattr(self, "_sky_explorer_details_output"):
+
+            self._sky_explorer_details_output.clear()
+
+        if hasattr(self, "_sky_explorer_status_label"):
+
+            self._sky_explorer_status_label.setText("Open a source image to explore the field.")
+
+        self._selected_sky_explorer_manual_annotation_id = None
+
+        self._sky_explorer_manual_annotation_drag = None
+
+        self._sky_explorer_manual_annotations_by_image.clear()
+
+        self._sky_explorer_detected_objects_by_image.clear()
+
+        self._sky_explorer_detected_object_identities_by_image.clear()
+
+        self._sky_explorer_automatic_overlay_cache_signature = None
+
+        self._sky_explorer_automatic_overlay_cache = []
+
+        if hasattr(self, "_sky_explorer_image_view"):
+
+            self._sky_explorer_image_view.set_message("Open a source image to explore the field.")
+
+        self._image_display_cache.clear()
+
+        if hasattr(self, "_sync_sky_explorer_primary_button"):
+
+            self._sync_sky_explorer_primary_button()
+
+        if hasattr(self, "_sync_sky_explorer_image_controls"):
+
+            self._sync_sky_explorer_image_controls()
+
+    def _purge_asteroid_runtime_state(self) -> None:
+
+        if hasattr(self, "_asteroid_blink_timer"):
+
+            self._asteroid_blink_timer.stop()
+
+        if hasattr(self, "_asteroid_blink_button"):
+
+            self._asteroid_blink_button.blockSignals(True)
+
+            self._asteroid_blink_button.setChecked(False)
+
+            self._asteroid_blink_button.blockSignals(False)
+
+        self._asteroid_sequence_display_cache.clear()
+
+        self._asteroid_sequence_qimage_cache.clear()
+
+        self._current_asteroid_detection_result = None
+
+        self._current_asteroid_discovery_result = None
+
+        self._current_asteroid_discovery_context_key = None
+
+        self._current_asteroid_source_image = None
+
+        self._selected_asteroid_detection_index = None
+
+        if hasattr(self, "_asteroid_results_table"):
+
+            self._asteroid_results_table.setRowCount(0)
+
+        if hasattr(self, "_asteroid_details_output"):
+
+            self._asteroid_details_output.clear()
+
+        if hasattr(self, "_asteroid_steps_output"):
+
+            self._asteroid_steps_output.clear()
+
+        if hasattr(self, "_asteroid_image_view"):
+
+            self._asteroid_image_view.set_message("Open a source image to preview predicted asteroid/comet positions.")
+
+        for dialog in list(getattr(self, "_asteroid_known_trajectory_dialogs", [])):
+
+            try:
+
+                dialog.close()
+
+            except Exception:
+
+                pass
+
+        for dialog in list(getattr(self, "_asteroid_known_orbit_dialogs", [])):
+
+            try:
+
+                dialog.close()
+
+            except Exception:
+
+                pass
+
+        self._asteroid_known_trajectory_dialogs = []
+
+        self._asteroid_known_orbit_dialogs = []
+
+    def _purge_hr_diagram_runtime_state(self) -> None:
+
+        self._current_hr_working_table = None
+
+        self._current_hr_source_image = None
+
+        self._selected_hr_result_row = None
+
+        self._current_hr_row_x_values = None
+
+        self._current_hr_row_y_values = None
+
+        self._current_hr_measurement_cache_key = None
+
+        self._current_hr_table_source_rows = []
+
+        self._current_hr_plotted_row_count = 0
+
+        if hasattr(self, "_hr_manually_included_row_keys"):
+
+            self._hr_manually_included_row_keys.clear()
+
+        if hasattr(self, "_hr_manually_excluded_row_keys"):
+
+            self._hr_manually_excluded_row_keys.clear()
+
+        if hasattr(self, "_hr_pinned_top_row_keys"):
+
+            self._hr_pinned_top_row_keys.clear()
+
+        if hasattr(self, "_hr_common_motion_row_keys"):
+
+            self._hr_common_motion_row_keys.clear()
+
+        if hasattr(self, "_hr_common_motion_highlight_row_keys"):
+
+            self._hr_common_motion_highlight_row_keys.clear()
+
+        self._hr_common_motion_result = None
+
+        self._hr_source_wcs = None
+
+        self._hr_source_wcs_cache_key = None
+
+        self._hr_roi_selections = []
+
+        self._hr_applied_roi_selections = []
+
+        self._hr_applied_roi_inverted = False
+
+        self._hr_active_roi_selection = None
+
+        self._hr_roi_drag_origin = None
+
+        if hasattr(self, "_hr_source_image_input"):
+
+            self._hr_source_image_input.clear()
+
+        if hasattr(self, "_populate_hr_results_table"):
+
+            self._populate_hr_results_table([])
+
+        if hasattr(self, "_hr_diagram_widget"):
+
+            self._refresh_hr_plot()
+
+            self._hr_diagram_widget.set_selected_row(None)
+
+        if hasattr(self, "_hr_image_view"):
+
+            self._hr_image_view.set_message("Open an HR source image to inspect the field and draw an ROI filter.")
+
+        if hasattr(self, "_hr_status_label"):
+
+            self._hr_status_label.setText("Open an HR source image to begin.")
+
+        self._image_display_cache.clear()
+
+    def _purge_differential_photometry_runtime_state(self) -> None:
+
+        self._clear_image_panel()
+
+        self._image_display_cache.clear()
+
+        if hasattr(self, "_clear_measurement_table_view"):
+
+            self._clear_measurement_table_view()
+
+        self._measurement_table_refresh_pending = False
+
+    def _purge_astrostack_runtime_state(self) -> None:
+
+        self._clear_astrostack_cropped_display_cache()
+
+        if hasattr(self, "_astrostack_image_view"):
+
+            self._astrostack_image_view.set_message(
+
+                "Open a Deep Stack folder to inspect the reference frame and define an optional crop with the Crop tool."
+
+            )
+
+    def _purge_transient_finder_runtime_state(self) -> None:
+
+        if hasattr(self, "_transient_blink_timer"):
+
+            self._transient_blink_timer.stop()
+
+        if hasattr(self, "_transient_blink_button"):
+
+            self._transient_blink_button.blockSignals(True)
+
+            self._transient_blink_button.setChecked(False)
+
+            self._transient_blink_button.blockSignals(False)
+
+        self._interrupt_and_drop_worker("_transient_search_worker")
+
+        self._current_transient_search_result = None
+
+        self._current_transient_source_image = None
+
+        if hasattr(self, "_transient_results_table"):
+
+            self._transient_results_table.setSortingEnabled(False)
+
+            self._transient_results_table.setRowCount(0)
+
+            self._transient_results_table.setSortingEnabled(True)
+
+        if hasattr(self, "_transient_details_output"):
+
+            self._transient_details_output.clear()
+
+        if hasattr(self, "_transient_steps_output"):
+
+            self._transient_steps_output.clear()
+
+        if hasattr(self, "_transient_image_view"):
+
+            self._transient_image_view.set_message("Open a transient folder to preview candidate source frames.")
+
+        if hasattr(self, "_update_transient_frame_display"):
+
+            self._update_transient_frame_display(None)
+
+    def _purge_distance_map_runtime_state(self) -> None:
+
+        panel = getattr(self, "_distance_map_panel_widget", None)
+
+        if panel is not None and hasattr(panel, "clear_loaded_work"):
+
+            panel.clear_loaded_work()
+
+    def _purge_astro_tools_runtime_state(self) -> None:
+
+        panel = getattr(self, "_astro_tools_panel_widget", None)
+
+        clear_method = getattr(panel, "clear_loaded_work", None) if panel is not None else None
+
+        if callable(clear_method):
+
+            clear_method()
 
     def _handle_open_file_action(self) -> None:
 
@@ -53181,6 +54963,8 @@ class MainWindow(QMainWindow):
         self._astrostack_frame_count_label.setText(f"Frames: {len(frame_paths)}")
 
         self._astrostack_frame_exposure_seconds = ()
+
+        self._clear_astrostack_moonlight_series_cache()
 
         self._astrostack_overlay_layers = []
 
@@ -60128,7 +61912,7 @@ class MainWindow(QMainWindow):
 
                     accent_color=str(marker_style["accent_color"]),
 
-                    show_center_dot=True,
+                    show_center_dot=False,
 
                     outline_color=str(marker_style["outline_color"]),
 
@@ -61441,19 +63225,23 @@ class MainWindow(QMainWindow):
 
             settings = self._ensure_settings()
 
-            markers_enabled = bool(settings.asteroid_visual_show_object_markers)
+            markers_enabled = True
 
             labels_enabled = bool(settings.asteroid_visual_label_all_objects)
 
             selected_row = self._selected_asteroid_result_row()
+
+            configured_marker_style = str(getattr(settings, "asteroid_visual_marker_style", "target") or "target").strip().lower() or "target"
+
+            if configured_marker_style not in {"target", "circle", "brackets", "crosshair"}:
+
+                configured_marker_style = "target"
 
             target_marker_enabled = selected_row is not None and bool(settings.asteroid_visual_show_target_marker)
 
             if markers_enabled or labels_enabled or target_marker_enabled:
 
                 default_text_color = self._asteroid_overlay_display_color("#ffffff")
-
-                default_match_color = self._asteroid_overlay_display_color("#38bdf8")
 
                 other_style = self._current_asteroid_other_overlay_theme()
 
@@ -61467,7 +63255,10 @@ class MainWindow(QMainWindow):
 
                     target_marker_style = self._current_asteroid_target_marker_style() if is_selected and target_marker_enabled else None
 
-                    if not markers_enabled and not labels_enabled and target_marker_style is None:
+                    # Target Marker mode: only the selected object gets a marker (any configured style).
+                    show_object_marker = bool(target_marker_style is not None) if target_marker_enabled else bool(markers_enabled)
+
+                    if not show_object_marker and not labels_enabled:
 
                         continue
 
@@ -61497,6 +63288,18 @@ class MainWindow(QMainWindow):
 
                     overlay_color = str(target_marker_style["line_color"]) if target_marker_style is not None else (str(overlay_style["line_color"]) if overlay_style is not None else default_color)
 
+                    if target_marker_style is not None:
+
+                        object_marker_style = configured_marker_style
+
+                    elif settings.asteroid_visual_show_all_crosshairs or is_selected:
+
+                        object_marker_style = "cross"
+
+                    else:
+
+                        object_marker_style = "circle"
+
                     overlays.append(
 
                         ImageOverlay(
@@ -61519,11 +63322,11 @@ class MainWindow(QMainWindow):
 
                             show_annulus=False,
 
-                            show_marker=markers_enabled or target_marker_style is not None,
+                            show_marker=show_object_marker,
 
                             show_label=labels_enabled,
 
-                            marker_style="target" if target_marker_style is not None else ("cross" if settings.asteroid_visual_show_all_crosshairs or is_selected else "circle"),
+                            marker_style=object_marker_style,
 
                             pen_width=float(target_marker_style["line_width"]) if target_marker_style is not None else (float(overlay_style["line_width"]) if overlay_style is not None else 0.0),
 
@@ -61533,7 +63336,7 @@ class MainWindow(QMainWindow):
 
                             accent_color=str(target_marker_style["accent_color"]) if target_marker_style is not None else (str(overlay_style["circle_color"]) if overlay_style is not None else None),
 
-                            show_center_dot=target_marker_style is not None,
+                            show_center_dot=False,
 
                             outline_color=str(target_marker_style["outline_color"]) if target_marker_style is not None else self._asteroid_overlay_outline_color(overlay_color),
 
@@ -61543,51 +63346,7 @@ class MainWindow(QMainWindow):
 
                     )
 
-                    measured_x = detection.measured_x if frame_measurement is None else frame_measurement.measured_x
 
-                    measured_y = detection.measured_y if frame_measurement is None else frame_measurement.measured_y
-
-                    if markers_enabled and measured_x is not None and measured_y is not None:
-
-                        measured_color = (
-
-                            str(overlay_style["circle_color"]) if overlay_style is not None else default_match_color
-
-                        )
-
-                        overlays.append(
-
-                            ImageOverlay(
-
-                                source_id=f"solar:{index}:measured",
-
-                                name=f"{detection.name} match",
-
-                                x=measured_x,
-
-                                y=measured_y,
-
-                                aperture_radius=4.0 if is_selected else 3.0,
-
-                                annulus_inner_radius=4.0,
-
-                                annulus_outer_radius=4.0,
-
-                                color=measured_color,
-
-                                show_annulus=False,
-
-                                show_label=False,
-
-                                pen_width=float(overlay_style["line_width"]) if overlay_style is not None else 0.0,
-
-                                outline_color=self._asteroid_overlay_outline_color(measured_color),
-
-                                outline_width=2.0 if is_selected else 1.5,
-
-                            )
-
-                        )
 
         overlays.extend(self._current_asteroid_visible_limit_overlays())
 
@@ -61685,7 +63444,7 @@ class MainWindow(QMainWindow):
 
                     accent_color=accent_color,
 
-                    show_center_dot=True,
+                    show_center_dot=False,
 
                     outline_color=outline_color,
 
@@ -61755,7 +63514,7 @@ class MainWindow(QMainWindow):
 
                 accent_color=str(target_marker_style["accent_color"]),
 
-                show_center_dot=True,
+                show_center_dot=False,
 
                 outline_color=outline_color,
 
@@ -68969,6 +70728,10 @@ class MainWindow(QMainWindow):
 
         self._theme_one_dark_action.blockSignals(True)
 
+        self._theme_crimson_action.blockSignals(True)
+
+        self._theme_blood_moon_action.blockSignals(True)
+
         self._theme_custom_action.blockSignals(True)
 
         self._theme_normal_action.setChecked(theme == _THEME_NORMAL)
@@ -68989,6 +70752,10 @@ class MainWindow(QMainWindow):
 
         self._theme_one_dark_action.setChecked(theme == _THEME_ONE_DARK)
 
+        self._theme_crimson_action.setChecked(theme == _THEME_CRIMSON)
+
+        self._theme_blood_moon_action.setChecked(theme == _THEME_BLOOD_MOON)
+
         self._theme_custom_action.setChecked(theme == _THEME_CUSTOM)
 
         self._theme_normal_action.blockSignals(False)
@@ -69008,6 +70775,10 @@ class MainWindow(QMainWindow):
         self._theme_solarized_dark_action.blockSignals(False)
 
         self._theme_one_dark_action.blockSignals(False)
+
+        self._theme_crimson_action.blockSignals(False)
+
+        self._theme_blood_moon_action.blockSignals(False)
 
         self._theme_custom_action.blockSignals(False)
 
@@ -69263,93 +71034,9 @@ class MainWindow(QMainWindow):
 
             self._sky_explorer_survey_refine_timer.stop()
 
-        if self._update_check_worker is not None:
-
-            self._update_check_worker.wait(4500)
-
-        if self._update_download_worker is not None:
-
-            self._update_download_worker.request_cancel()
-
-            self._update_download_worker.wait(4500)
+        self._force_stop_background_workers()
 
         self._close_update_download_progress_dialog()
-
-        if self._sky_explorer_survey_worker is not None:
-
-            self._sky_explorer_survey_worker.wait(4500)
-
-        if self._calculate_period_worker is not None:
-
-            self._calculate_period_worker.request_cancel()
-
-        if self._fit_period_worker is not None:
-
-            self._fit_period_worker.request_cancel()
-
-            self._fit_period_worker.wait(4500)
-
-        if self._literature_period_worker is not None:
-
-            self._literature_period_worker.request_cancel()
-
-        if self._increase_snr_worker is not None:
-
-            self._increase_snr_worker.request_cancel()
-
-        if self._comparison_fit_worker is not None:
-
-            self._comparison_fit_worker.request_cancel()
-
-        if self._report_export_worker is not None:
-
-            self._report_export_worker.request_cancel()
-
-        if self._light_curve_gif_export_worker is not None:
-
-            self._light_curve_gif_export_worker.request_cancel()
-
-            self._light_curve_gif_export_worker.wait(4500)
-
-        if self._calibration_worker is not None:
-
-            self._calibration_worker.wait(4500)
-
-        if self._transient_search_worker is not None:
-
-            self._transient_search_worker.request_cancel()
-
-            self._transient_search_worker.wait(4500)
-
-        if self._asteroid_detection_worker is not None:
-
-            self._asteroid_detection_worker.wait(4500)
-
-        if self._asteroid_synthetic_tracking_worker is not None:
-
-            self._asteroid_synthetic_tracking_worker.wait(4500)
-
-        if self._asteroid_recovery_worker is not None:
-
-            self._asteroid_recovery_worker.request_cancel()
-
-            self._asteroid_recovery_worker.wait(4500)
-
-        if self._asteroid_discovery_worker is not None:
-
-            self._asteroid_discovery_worker.request_cancel()
-
-            self._asteroid_discovery_worker.wait(4500)
-
-        if self._asteroid_discovery_test_worker is not None:
-
-            self._asteroid_discovery_test_worker.request_cancel()
-
-            self._asteroid_discovery_test_worker.wait(4500)
-
-        if self._asteroid_preload_worker is not None:
-
-            self._asteroid_preload_worker.wait(4500)
 
         self._close_asteroid_blink_progress_dialog()
 
@@ -69360,10 +71047,6 @@ class MainWindow(QMainWindow):
         self._close_asteroid_discovery_test_progress_dialog()
 
         self._close_asteroid_discovery_progress_dialog()
-
-        for worker in tuple(self._hr_star_details_workers.values()):
-
-            worker.wait(4500)
 
         save_last_theme(self._current_theme_name())
 
@@ -69632,6 +71315,10 @@ class MainWindow(QMainWindow):
         self._theme_solarized_dark_action.setIcon(self._theme_preview_icon(_THEME_SOLARIZED_DARK))
 
         self._theme_one_dark_action.setIcon(self._theme_preview_icon(_THEME_ONE_DARK))
+
+        self._theme_crimson_action.setIcon(self._theme_preview_icon(_THEME_CRIMSON))
+
+        self._theme_blood_moon_action.setIcon(self._theme_preview_icon(_THEME_BLOOD_MOON))
 
         self._theme_custom_action.setIcon(self._theme_preview_icon(_THEME_CUSTOM))
 
@@ -75419,6 +77106,8 @@ class MainWindow(QMainWindow):
 
         workflow_scan_requested = self._differential_workflow_scan_requested
 
+        self._notify_excluded_unsuitable_scan_images(report)
+
         workflow_auto_generate_after_scan = self._differential_workflow_auto_generate_after_scan
 
         self._differential_workflow_scan_requested = False
@@ -75524,6 +77213,16 @@ class MainWindow(QMainWindow):
         self._update_workspace_active_object_label()
 
         self._sync_differential_primary_button()
+
+    def _notify_excluded_unsuitable_scan_images(self, report: ScanReport) -> None:
+        message = format_excluded_unsuitable_images_message(
+            getattr(report, "excluded_unsuitable_image_counts", ()) or ()
+        )
+        if not message:
+            return
+        self._append_work_log(message)
+        self.statusBar().showMessage(message, 8000)
+        QMessageBox.information(self, "Images excluded", message)
 
     def _handle_scan_failed(self, message: str) -> None:
 
@@ -75641,6 +77340,13 @@ class MainWindow(QMainWindow):
 
     def _handle_process_progress(self, message: str) -> None:
 
+        sender = self.sender()
+
+        if sender is not None and sender is not self._process_worker and sender is not self._preview_worker:
+
+            # Event queued by a worker that has since been terminated/detached.
+            return
+
         display_message = self._format_processing_progress_message(message)
 
         self.statusBar().showMessage(display_message)
@@ -75662,6 +77368,12 @@ class MainWindow(QMainWindow):
             self._set_differential_workflow_stage("generating light curves", display_message)
 
     def _handle_processing_completed(self, report: ProcessingReport, *, save_cache: bool = True) -> None:
+
+        sender = self.sender()
+
+        if sender is not None and sender is not self._process_worker:
+
+            return
 
         self._clear_processing_progress_state()
 
@@ -75986,6 +77698,12 @@ class MainWindow(QMainWindow):
         return deduplicated
 
     def _handle_processing_failed(self, message: str) -> None:
+
+        sender = self.sender()
+
+        if sender is not None and sender is not self._process_worker:
+
+            return
 
         self._clear_processing_progress_state()
 

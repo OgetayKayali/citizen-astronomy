@@ -12,8 +12,8 @@ Every deep image is denser than it looks. Behind the obvious bright star or the 
 - **Choose how deep the census goes.** Cycle object-type modes from **Simple** (six common deep-sky classes) through **Advanced** to **Scientific** (SIMBAD-style type codes).
 - **Compare with survey imaging.** Overlay DSS2 Blue, SHS Hα, PanSTARRS, or IPHAS Hα cutouts with an interactive divider so you can compare your frame to public survey data.
 - **Annotate by hand.** Draw circles, ellipses, and text labels; edit stroke, fill, weight, opacity, and fonts; keep automatic catalog overlays on or off.
-- **Probe magnitude reach.** **Mag Limit** marks representative Gaia stars in half-magnitude bins so you can see how deep the frame goes.
-- **Export the view.** Save still images of the annotated field, GIF/MP4 comparison animations when a survey layer is loaded, or a **Collage** of catalog objects that have usable angular-size metadata.
+- **Probe magnitude reach.** Use **Tools → Estimate magnitude limit...** to mark a Gaia magnitude ladder or estimate the actual detection limit from SNR probing.
+- **Export the view.** Save still images of the annotated field, GIF/MP4 comparison animations when a survey layer is loaded, or **Tools → Create collage** for catalog objects that have usable angular-size metadata.
 
 ### Why this matters
 
@@ -96,14 +96,16 @@ CAst validates embedded celestial WCS keywords. If they are missing or unusable 
 
 ### 2. Query catalog layers
 
-Enabled layers run in a fixed order:
+Enabled layers run in a fixed order, and within each layer Explore now queries **only the object types you have selected**:
 
-1. **Deep sky** (SIMBAD + VizieR supplements such as HyperLEDA, Sharpless, Barnard, van den Bergh, NGC 2000)
+1. **Deep sky** (SIMBAD + matching VizieR supplements such as HyperLEDA, Sharpless, Barnard, van den Bergh, HASH PN via V/163, NGC 2000)
 2. **General SIMBAD objects**
 3. **Solar system** (JPL Horizons / known SSO search, magnitude ≤ 18)
 4. **Variable stars** (VSX)
 5. **Gaia DR3 stars**
 6. **Exoplanet hosts** (NASA Exoplanet Archive)
+
+If you select additional object types after a successful Explore, the primary button becomes **Update**. Update fetches only the newly selected types and merges them into the existing results; already-loaded types are not re-queried. Unchecking a type still only hides it.
 
 Wide fields are tiled for SIMBAD (about 20′ tiles with a time budget) so large mosaics still return useful hits without hanging forever.
 
@@ -134,7 +136,7 @@ Rows are grouped (Nebulae / ISM, Galaxies, Stars, Variable Stars, Solar System, 
 | Action | Effect |
 |--------|--------|
 | Click a row | Fills **Inspector**; highlights the object on the image |
-| Ctrl/Shift-click rows | Multi-select for **Collage...** (the current row still drives Inspector, centering, and overlay highlighting) |
+| Ctrl/Shift-click rows | Multi-select for **Tools → Create collage** (the current row still drives Inspector, centering, and overlay highlighting) |
 | Double-click a row | Opens the object’s catalog page in your browser (Gaia → VizieR, VSX → AAVSO, exoplanets → NASA archive, otherwise SIMBAD) |
 | **Center Object** | Pans the image so the selection sits near the view center |
 
@@ -177,11 +179,16 @@ When a survey is active, an interactive divider lets you wipe between your image
 
 Survey rasters are cached locally (Sky Explorer survey cache) so repeat comparisons are faster.
 
-### Mag Limit
+### Estimate magnitude limit
 
-Toggle **Mag Limit** to annotate representative Gaia stars in **0.5-mag** bins. By default, one example star is chosen per bin (near the bin center magnitude, preferring stars closer to the field center). Marker colors, stroke, text, and sizes are configurable in Settings.
+Use **Tools → Estimate magnitude limit...** to open the magnitude-limit dialog. Two modes are available:
 
-Enabling Mag Limit causes Explore to include Gaia even if the Gaia Star type row is unchecked, so the magnitude ladder has data to draw.
+- **Mark magnitude ladder** — query Gaia up to a chosen max magnitude and annotate representative stars in configurable magnitude bins (bin size, stars per bin, and optional “mark only the faintest” bin).
+- **Find actual magnitude limit** — probe Gaia stars at each magnitude step with an SNR detection test and mark confirmed detections at the estimated limit (all visible stars, or only the faintest).
+
+Marker colors, stroke, text, and sizes remain configurable in Settings. **Tools → Clear magnitude limit markers** removes active Mag Limit annotations.
+
+While Mag Limit markers are active, Explore includes Gaia even if the Gaia Star type row is unchecked, so the ladder has data to draw.
 
 ### Auto overlays
 
@@ -218,9 +225,9 @@ The **Manual Annotation** dialog edits geometry (X, Y, radii, rotation), line wi
 
 **Export → Image...** saves the current view (source stretch, overlays, and survey comparison if visible) as PNG, JPEG, or BMP. Default name pattern: `{stem}_sky_explorer.png`.
 
-### Collage...
+### Create collage
 
-**Collage...** (beside Mag Limit / Export) builds a figure from catalog objects that have usable angular-size metadata (`catalog_major_axis_arcmin`, `catalog_minor_axis_arcmin`, or `catalog_size_arcmin`). Objects without size data are skipped and counted in the dialog summary and Work Log.
+**Tools → Create collage** builds a figure from catalog objects that have usable angular-size metadata (`catalog_major_axis_arcmin`, `catalog_minor_axis_arcmin`, or `catalog_size_arcmin`). Objects without size data are skipped and counted in the dialog summary and Work Log.
 
 The collage dialog offers:
 
@@ -265,7 +272,7 @@ Intro text in the dialog: *Sky Explorer settings control the manual SIMBAD looku
 | **Search Radius** | Cone radius (arcseconds) for right-click **Search** / **Detect** (default 10″) |
 | **Gaia Max Mag** | Magnitude ceiling for Gaia / VSX / exoplanet filtering of non–deep-sky hits (default 17) |
 | **Gaia Hard Cap** / **Gaia Cap Rows** | Optional hard limit on Gaia rows retrieved |
-| **Mag Limit Examples** | How many Gaia stars to label per 0.5-mag bin |
+| **Mag Limit Examples** | Default stars to label per magnitude bin (also set in the Mag Limit dialog) |
 | Mag Limit marker / text colors and sizes | Appearance of Mag Limit annotations |
 | **Galaxy Mag Limit** / **Galaxy Max Mag** | Optionally hide faint or unknown-magnitude galaxies on the overlay |
 | **Galaxy Shape Only** | Only draw galaxies that have ellipse metadata |
@@ -291,10 +298,12 @@ Global settings that matter here: **Astrometry API Key**, observing site, and im
 | Gaia DR3 (VizieR) | Field stars and Mag Limit ladder |
 | VSX (VizieR) | Variable stars |
 | NASA Exoplanet Archive | Confirmed exoplanet host stars |
-| HyperLEDA / Sharpless / Barnard / VdB / NGC 2000 (VizieR) | Galaxy and nebula supplements |
+| HyperLEDA / Sharpless / Barnard / VdB / HASH PN (V/163) / NGC 2000 (VizieR) | Galaxy, nebula, and planetary-nebula supplements |
 | JPL Horizons | Known asteroids and comets in the field |
 | hips2fits (CDS) | Survey cutouts for comparison |
 | astrometry.net | Optional plate-solve fallback |
+
+HASH planetary nebulae are queried live from CDS/VizieR catalogue **V/163** (`pnmain`) whenever the Deep Sky layer is enabled. CAst does not redistribute the HASH database. Inspector metadata includes HASH status (true / likely / possible / candidate / mimic), morphology, sizes, and spectrum-availability flags from that catalogue. If you use these results in a publication, cite Parker, Bojičić & Frew 2016, acknowledge the HASH PN database, and acknowledge VizieR/CDS.
 
 Results and solves are cached under Sky Explorer catalog / WCS / survey cache directories so repeat work on the same field is cheaper.
 
@@ -306,9 +315,9 @@ Results and solves are cached under Sky Explorer catalog / WCS / survey cache di
 2. Start in **Simple** mode with the six deep-sky types selected; click **Explore**.
 3. Collapse groups you do not need; click interesting rows and use **Center Object**.
 4. Switch to **Advanced** or **Scientific** and re-Explore if you need stars, variables, AGN, or SSO.
-5. Turn on **Mag Limit** to judge depth; toggle **Auto** off if overlays clutter a presentation frame.
+5. Use **Tools → Estimate magnitude limit...** to judge depth; toggle **Auto** off if overlays clutter a presentation frame.
 6. Load **DSS2 Blue** or an Hα survey and scrub the divider for a before/after comparison.
-7. Add a few manual labels for teaching slides; **Export → Image...** or **Animation...**. Use **Collage...** when you want a multi-object size-aware figure of galaxies/nebulae from the same frame.
+7. Add a few manual labels for teaching slides; **Export → Image...** or **Animation...**. Use **Tools → Create collage** when you want a multi-object size-aware figure of galaxies/nebulae from the same frame.
 
 ---
 
@@ -329,6 +338,8 @@ Results and solves are cached under Sky Explorer catalog / WCS / survey cache di
 ### What Sky Explorer does not do
 
 - It does not replace careful catalog verification for discovery claims.
+- Absence of a HASH / VizieR V/163 match is not by itself a discovery of a new planetary nebula.
+- It does not embed the interactive HASH website (image cutouts hosted only there, live notes, or SQL sample tools); Sky Explorer uses the VizieR V/163 catalogue tables.
 - It does not photometer targets (use Differential Photometry for that).
 - It does not run multi-frame moving-object discovery (use Asteroid / Comet Detection).
 - Manual annotations and Detect hits are session/per-image aids, not a full exportable discovery catalog.
@@ -351,6 +362,6 @@ Results and solves are cached under Sky Explorer catalog / WCS / survey cache di
 
 ## Conclusion
 
-Sky Explorer is the “what am I looking at?” mode. Point it at a solved image, pick the object classes that matter for your night, and let the catalogs paint the field. Use Mag Limit and survey comparison when you are teaching or planning, export the annotated view when you want a figure that still looks like *your* data, and use Collage when you want a tidy multi-object cutout board from catalog sizes.
+Sky Explorer is the “what am I looking at?” mode. Point it at a solved image, pick the object classes that matter for your night, and let the catalogs paint the field. Use Tools → Estimate magnitude limit and survey comparison when you are teaching or planning, export the annotated view when you want a figure that still looks like *your* data, and use Tools → Create collage when you want a tidy multi-object cutout board from catalog sizes.
 
 For shared shell themes and layout conventions, see [Themes, Layout, and Shared UI](themes_layout_ui.md). For the repository map, see [CODEBASE_MAP.md](../CODEBASE_MAP.md).

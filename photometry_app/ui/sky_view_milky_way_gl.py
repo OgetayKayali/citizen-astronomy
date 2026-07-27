@@ -1088,7 +1088,7 @@ void main() {
 
         self.last_decoded_tile_eviction_count = 0
 
-    def release(self) -> None:
+    def clear_all_caches(self) -> None:
 
         self._cancel_prepared_tile_futures()
 
@@ -1099,6 +1099,18 @@ void main() {
         self._destroy_prepared_tiles()
 
         self._destroy_decoded_tiles()
+
+        self._prepared_tile_future_errors.clear()
+
+        self.last_tile_cache_entries = 0
+
+        self.last_cpu_tile_cache_entries = 0
+
+        self.last_cpu_tile_cache_bytes = 0
+
+    def release(self) -> None:
+
+        self.clear_all_caches()
 
         texture = self._texture
 

@@ -26,7 +26,7 @@ from photometry_app.core.discovery import DiscoveryCancelledError, MovingObjectD
 from photometry_app.core.exporters import AnimatedLightCurveExportCanceled, ScienceExportMetadata, export_light_curve_animated_gif
 from photometry_app.core.matching import apply_differential_photometry, apply_measurement_quality_analysis, build_light_curve_series, measurement_has_usable_value, select_reference_stars
 from photometry_app.core.models import CatalogStar, FileScanResult, LightCurveSeries, ManualPhotometryConfig, ObservationMetadata, PhotometryMeasurement, ProcessingReport, ScanReport, VariableSelectionPreview
-from photometry_app.core.pipeline import PhotometryPipeline, _AAVSO_ANALYZE_BEST_MAX_SATURATION_FRACTION, _AAVSO_ANALYZE_BEST_MIN_PEAK_ABOVE_SKY_ADU, _resolve_photometry_parallel_workers
+from photometry_app.core.pipeline import PhotometryPipeline, PipelineCancelled, _AAVSO_ANALYZE_BEST_MAX_SATURATION_FRACTION, _AAVSO_ANALYZE_BEST_MIN_PEAK_ABOVE_SKY_ADU, _resolve_photometry_parallel_workers
 from photometry_app.core.photometry import measure_targets, resolve_aperture_profile
 from photometry_app.core.period_tasks import calculate_period_for_series, calculate_period_task
 from photometry_app.core.plotting import AnnotatedImageDisplay, AnnotatedImageRenderSettings, FitPeriodInferenceResult, LightCurveFitConfig, build_annotated_image_display, build_placeholder_annotated_image_display, render_image_path_for_display
@@ -2078,9 +2078,29 @@ class ScanWorker(QThread):
 
         self._pipeline = PhotometryPipeline()
 
+        self._cancel_requested = Event()
+
+
+
+    def request_cancel(self) -> None:
+
+        self._cancel_requested.set()
+
+
+
+    def cancellation_requested(self) -> bool:
+
+        return self._cancel_requested.is_set()
+
 
 
     def run(self) -> None:
+
+        if self._cancel_requested.is_set() or self.isInterruptionRequested():
+
+            self.scan_failed.emit("Folder scan was terminated.")
+
+            return
 
         try:
 
@@ -2092,7 +2112,11 @@ class ScanWorker(QThread):
 
             return
 
+        if self._cancel_requested.is_set() or self.isInterruptionRequested():
 
+            self.scan_failed.emit("Folder scan was terminated.")
+
+            return
 
         self.scan_completed.emit(report)
 
@@ -2142,9 +2166,31 @@ class ProcessWorker(QThread):
 
         self._pipeline = PhotometryPipeline()
 
+        self._cancel_requested = Event()
+
+
+
+    def request_cancel(self) -> None:
+
+        self._cancel_requested.set()
+
+
+
+    def cancellation_requested(self) -> bool:
+
+        return self._cancel_requested.is_set() or self.isInterruptionRequested()
+
 
 
     def run(self) -> None:
+
+        def progress_callback(message: str) -> None:
+
+            if self.cancellation_requested():
+
+                raise PipelineCancelled("Differential photometry processing was terminated.")
+
+            self.progress_updated.emit(message)
 
         try:
 
@@ -2160,9 +2206,17 @@ class ProcessWorker(QThread):
 
                 analyze_best_targets=self._analyze_best_targets,
 
-                progress_callback=self.progress_updated.emit,
+                progress_callback=progress_callback,
+
+                cancel_requested=self.cancellation_requested,
 
             )
+
+        except PipelineCancelled as exc:
+
+            self.process_failed.emit(str(exc) or "Differential photometry processing was terminated.")
+
+            return
 
         except Exception as exc:
 
@@ -2171,6 +2225,12 @@ class ProcessWorker(QThread):
             return
 
 
+
+        if self.cancellation_requested():
+
+            self.process_failed.emit("Differential photometry processing was terminated.")
+
+            return
 
         self.process_completed.emit(report)
 
@@ -2222,9 +2282,29 @@ class CachedProcessingReportWorker(QThread):
 
         self._pipeline = PhotometryPipeline()
 
+        self._cancel_requested = Event()
+
+
+
+    def request_cancel(self) -> None:
+
+        self._cancel_requested.set()
+
+
+
+    def cancellation_requested(self) -> bool:
+
+        return self._cancel_requested.is_set() or self.isInterruptionRequested()
+
 
 
     def run(self) -> None:
+
+        if self.cancellation_requested():
+
+            self.cache_failed.emit("Cached processing report load was terminated.")
+
+            return
 
         try:
 
@@ -2247,6 +2327,12 @@ class CachedProcessingReportWorker(QThread):
         except Exception as exc:
 
             self.cache_failed.emit(str(exc))
+
+            return
+
+        if self.cancellation_requested():
+
+            self.cache_failed.emit("Cached processing report load was terminated.")
 
             return
 
@@ -2275,9 +2361,31 @@ class PreviewWorker(QThread):
 
         self._pipeline = PhotometryPipeline()
 
+        self._cancel_requested = Event()
+
+
+
+    def request_cancel(self) -> None:
+
+        self._cancel_requested.set()
+
+
+
+    def cancellation_requested(self) -> bool:
+
+        return self._cancel_requested.is_set() or self.isInterruptionRequested()
+
 
 
     def run(self) -> None:
+
+        def progress_callback(message: str) -> None:
+
+            if self.cancellation_requested():
+
+                raise PipelineCancelled("Variable selection preview was terminated.")
+
+            self.progress_updated.emit(message)
 
         try:
 
@@ -2287,9 +2395,17 @@ class PreviewWorker(QThread):
 
                 self._object_name,
 
-                progress_callback=self.progress_updated.emit,
+                progress_callback=progress_callback,
+
+                cancel_requested=self.cancellation_requested,
 
             )
+
+        except PipelineCancelled as exc:
+
+            self.preview_failed.emit(str(exc) or "Variable selection preview was terminated.")
+
+            return
 
         except Exception as exc:
 
@@ -2297,7 +2413,11 @@ class PreviewWorker(QThread):
 
             return
 
+        if self.cancellation_requested():
 
+            self.preview_failed.emit("Variable selection preview was terminated.")
+
+            return
 
         self.preview_completed.emit(preview)
 
@@ -2664,6 +2784,8 @@ class SkyExplorerWorker(QThread):
 
         selected_layers: Sequence[str] | None = None,
 
+        selected_object_type_keys: Sequence[str] | None = None,
+
         gaia_object_limit: int = 250,
 
         include_dense_galaxy_catalog: bool = False,
@@ -2681,6 +2803,8 @@ class SkyExplorerWorker(QThread):
         self._settings = settings
 
         self._selected_layers = tuple(selected_layers or ())
+
+        self._selected_object_type_keys = tuple(selected_object_type_keys or ())
 
         self._gaia_object_limit = max(0, int(gaia_object_limit))
 
@@ -2701,6 +2825,8 @@ class SkyExplorerWorker(QThread):
                 settings=self._settings,
 
                 selected_layers=self._selected_layers,
+
+                selected_object_type_keys=self._selected_object_type_keys,
 
                 gaia_object_limit=self._gaia_object_limit,
 
@@ -3092,17 +3218,45 @@ class CalibrationWorker(QThread):
 
         self._request = request
 
+        self._cancel_requested = Event()
+
+
+
+    def request_cancel(self) -> None:
+
+        self._cancel_requested.set()
+
+
+
+    def cancellation_requested(self) -> bool:
+
+        return self._cancel_requested.is_set() or self.isInterruptionRequested()
+
 
 
     def run(self) -> None:
 
+        def progress_callback(message: str) -> None:
+
+            if self.cancellation_requested():
+
+                raise RuntimeError("Image calibration was terminated.")
+
+            self.progress_updated.emit(message)
+
         try:
 
-            result = calibrate_image_sequence(self._request, progress_callback=self.progress_updated.emit)
+            result = calibrate_image_sequence(self._request, progress_callback=progress_callback)
 
         except Exception as exc:
 
             self.calibration_failed.emit(str(exc))
+
+            return
+
+        if self.cancellation_requested():
+
+            self.calibration_failed.emit("Image calibration was terminated.")
 
             return
 
@@ -5306,7 +5460,29 @@ class CalculatePeriodWorker(QThread):
 
                 finally:
 
-                    executor.shutdown(wait=True, cancel_futures=True)
+                    if self._cancel_requested.is_set():
+
+                        executor.shutdown(wait=False, cancel_futures=True)
+
+                        for process in list(getattr(executor, "_processes", {}).values()):
+
+                            try:
+
+                                process.kill()
+
+                            except Exception:
+
+                                try:
+
+                                    process.terminate()
+
+                                except Exception:
+
+                                    pass
+
+                    else:
+
+                        executor.shutdown(wait=True, cancel_futures=True)
 
         except Exception as exc:
 
