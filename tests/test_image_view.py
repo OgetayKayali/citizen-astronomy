@@ -30,7 +30,7 @@ from PySide6.QtWidgets import QApplication
 
 from photometry_app.core.plotting import AnnotatedImageRenderSettings, build_annotated_image_display, build_annotated_image_display_from_array
 
-from photometry_app.ui.image_view import AnnotatedImageView, EquatorialGridOverlay, ImageChartOverlayPanel, ImageInfoItem, ImageInfoLineChart, ImageInfoPanel, ImageInfoSection, ImageOverlay, SelectionOverlay
+from photometry_app.ui.image_view import AnnotatedImageView, EquatorialGridOverlay, ImageChartOverlayPanel, ImageInfoItem, ImageInfoLineChart, ImageInfoPanel, ImageInfoSection, ImageOverlay, SelectionOverlay, SurveyTileLayerItem
 
 
 
@@ -1776,6 +1776,103 @@ class ImageViewInfoPanelTest(unittest.TestCase):
 
 
 
+    def test_left_double_click_emits_image_double_clicked_without_leaving_pan_or_roi_active(self) -> None:
+
+        view = AnnotatedImageView()
+
+        view.resize(900, 600)
+
+
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            image_path = Path(temp_dir) / "demo.fit"
+
+            image_path.write_text("placeholder", encoding="utf-8")
+
+            data = np.arange(400, dtype=float).reshape(20, 20)
+
+
+
+            with patch("photometry_app.core.plotting.read_image_data", return_value=data):
+
+                display = build_annotated_image_display(image_path)
+
+
+
+            double_clicked: list[tuple[float, float]] = []
+
+            view.imageDoubleClicked.connect(lambda x, y, _button, _mods: double_clicked.append((x, y)))
+
+            view.set_content(display, [], [], False, gesture_roi_enabled=True)
+
+            before_center = view._clamped_view_center()
+
+
+
+            class _FakeMouseEvent:
+
+                def __init__(self, x: float, y: float, button: object, buttons: object, modifiers: object) -> None:
+
+                    self._point = QPointF(x, y)
+
+                    self._button = button
+
+                    self._buttons = buttons
+
+                    self._modifiers = modifiers
+
+
+
+                def position(self) -> QPointF:
+
+                    return self._point
+
+
+
+                def button(self) -> object:
+
+                    return self._button
+
+
+
+                def buttons(self) -> object:
+
+                    return self._buttons
+
+
+
+                def modifiers(self) -> object:
+
+                    return self._modifiers
+
+
+
+            # Simulate the second press of a double-click (may arm pan/ROI), then the double-click event.
+            view.mousePressEvent(_FakeMouseEvent(200.0, 180.0, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+
+            view.mouseDoubleClickEvent(_FakeMouseEvent(200.0, 180.0, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+
+            after_center = view._clamped_view_center()
+
+
+
+            self.assertEqual(len(double_clicked), 1)
+
+            self.assertIsNone(view._pan_anchor)
+
+            self.assertFalse(view._pan_drag_active)
+
+            self.assertFalse(view._gesture_roi_active)
+
+            self.assertIsNone(view._pending_overlay_click)
+
+            self.assertAlmostEqual(after_center.x(), before_center.x(), places=4)
+
+            self.assertAlmostEqual(after_center.y(), before_center.y(), places=4)
+
+
+
     def test_overlay_center_dot_can_be_hidden(self) -> None:
 
         view = AnnotatedImageView()
@@ -2240,6 +2337,42 @@ class ImageViewInfoPanelTest(unittest.TestCase):
             self.assertFalse(view._comparison_has_survey_raster())
             self.assertIsNotNone(view._comparison_split_widget_x())
 
+    def test_comparison_divider_can_be_hidden_for_full_frame_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            primary_path = Path(temp_dir) / "primary.fit"
+            survey_path = Path(temp_dir) / "survey.fit"
+            primary_path.write_text("primary", encoding="utf-8")
+            survey_path.write_text("survey", encoding="utf-8")
+            view = AnnotatedImageView()
+            view.resize(200, 100)
+            view.set_content(
+                build_annotated_image_display_from_array(
+                    np.ones((100, 100), dtype=np.float32),
+                    image_path=primary_path,
+                ),
+                overlays=[],
+                grid_overlays=[],
+                editor_enabled=False,
+            )
+            view.set_comparison_content(
+                build_annotated_image_display_from_array(
+                    np.full((100, 100), 2.0, dtype=np.float32),
+                    image_path=survey_path,
+                ),
+                target_rect=QRectF(0.0, 0.0, 100.0, 100.0),
+            )
+            view.set_comparison_divider_visible(False)
+
+            self.assertTrue(view._comparison_is_active())
+            self.assertFalse(view.comparison_divider_visible())
+            self.assertIsNone(view._comparison_split_widget_x())
+            self.assertFalse(view._comparison_split_hit_test(QPointF(100.0, 50.0)))
+            self.assertAlmostEqual(view.comparison_split_fraction(), 0.0, places=3)
+
+            view.set_comparison_divider_visible(True)
+            self.assertTrue(view.comparison_divider_visible())
+            self.assertIsNotNone(view._comparison_split_widget_x())
+
     def test_comparison_loading_indicator_is_active_while_loading(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             primary_path = Path(temp_dir) / "primary.fit"
@@ -2293,8 +2426,164 @@ class ImageViewInfoPanelTest(unittest.TestCase):
             self.assertAlmostEqual(visible.width(), 50.0, places=2)
             self.assertAlmostEqual(visible.height(), 90.0, places=2)
 
+    def test_ruler_overlay_hit_test_uses_line_segment(self) -> None:
+        overlay = ImageOverlay(
+            source_id="ruler-1",
+            name='12.5"',
+            x=10.0,
+            y=20.0,
+            aperture_radius=50.0,
+            annulus_inner_radius=50.0,
+            annulus_outer_radius=50.0,
+            color="#38bdf8",
+            marker_style="ruler",
+            endpoint_x=60.0,
+            endpoint_y=20.0,
+            pen_width=2.0,
+        )
+        view = AnnotatedImageView()
+        on_line = view._overlay_hit_test_score(overlay, QPointF(35.0, 20.0))
+        off_line = view._overlay_hit_test_score(overlay, QPointF(35.0, 40.0))
+        self.assertIsNotNone(on_line)
+        self.assertIsNone(off_line)
+        near_end = view._overlay_hit_test_score(overlay, QPointF(60.0, 21.0))
+        self.assertIsNotNone(near_end)
+
+    def test_unbounded_pan_allows_center_outside_image(self) -> None:
+        view = AnnotatedImageView()
+        view.resize(400, 300)
+        view._qimage = QImage(100, 80, QImage.Format.Format_ARGB32)
+        view._zoom_scale = 2.0
+        view._view_center = QPointF(50.0, 40.0)
+
+        clamped = view._clamped_view_center()
+        self.assertGreaterEqual(clamped.x(), 0.0)
+        self.assertLessEqual(clamped.x(), 100.0)
+
+        view.set_unbounded_pan(True)
+        view._view_center = QPointF(-40.0, 200.0)
+        unbounded = view.view_center_image_point()
+        self.assertAlmostEqual(unbounded.x(), -40.0, places=3)
+        self.assertAlmostEqual(unbounded.y(), 200.0, places=3)
+        self.assertAlmostEqual(view._clamped_view_center().x(), -40.0, places=3)
+
+        view.set_unbounded_pan(False)
+        reclamped = view._clamped_view_center()
+        self.assertGreaterEqual(reclamped.x(), 0.0)
+        self.assertLessEqual(reclamped.x(), 100.0)
 
 
+
+    def test_unbounded_pan_allows_widget_to_image_outside_primary_plate(self) -> None:
+        from pathlib import Path
+
+        import numpy as np
+        from astropy.visualization import AsinhStretch, ImageNormalize
+
+        from photometry_app.core.plotting import AnnotatedImageDisplay
+
+        view = AnnotatedImageView()
+        view.resize(400, 300)
+        data = np.zeros((80, 100), dtype=float)
+        view._display = AnnotatedImageDisplay(
+            image_path=Path("survey-canvas.fits"),
+            normalized_data=data,
+            norm=ImageNormalize(data, stretch=AsinhStretch()),
+            preview_normalized=data,
+        )
+        view._qimage = QImage(100, 80, QImage.Format.Format_ARGB32)
+        view._zoom_scale = 1.0
+        view._view_center = QPointF(-50.0, 40.0)
+        content = view._image_content_rect()
+
+        view.set_unbounded_pan(False)
+        bounded = view.widget_to_image(content.center().x(), content.center().y())
+        self.assertIsNotNone(bounded)
+        assert bounded is not None
+        self.assertGreaterEqual(bounded.x(), 0.0)
+
+        view.set_unbounded_pan(True)
+        view._view_center = QPointF(-50.0, 40.0)
+        outside = view.widget_to_image(content.center().x(), content.center().y())
+        self.assertIsNotNone(outside)
+        assert outside is not None
+        self.assertLess(outside.x(), 0.0)
+
+    def test_comparison_split_track_spans_full_content_with_survey_tiles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            primary_path = Path(temp_dir) / "primary.fit"
+            primary_path.write_text("primary", encoding="utf-8")
+            view = AnnotatedImageView()
+            view.resize(400, 240)
+            view.set_content(
+                build_annotated_image_display_from_array(
+                    np.ones((64, 64), dtype=np.float32),
+                    image_path=primary_path,
+                ),
+                overlays=[],
+                grid_overlays=[],
+                editor_enabled=False,
+            )
+            view.set_unbounded_pan(True)
+            rgba = np.full((32, 32, 4), 180, dtype=np.uint8)
+            qimage = QImage(rgba.data, 32, 32, rgba.strides[0], QImage.Format.Format_RGBA8888).copy()
+            view.set_survey_tile_layers(
+                [
+                    SurveyTileLayerItem(rect=QRectF(0.0, 0.0, 64.0, 64.0), qimage=qimage, layer_id="primary"),
+                    SurveyTileLayerItem(rect=QRectF(64.0, 0.0, 64.0, 64.0), qimage=qimage, layer_id="primary"),
+                ]
+            )
+            view.set_comparison_survey_tile_layers(
+                [
+                    SurveyTileLayerItem(rect=QRectF(0.0, 0.0, 64.0, 64.0), qimage=qimage, layer_id="comparison"),
+                    SurveyTileLayerItem(rect=QRectF(64.0, 0.0, 64.0, 64.0), qimage=qimage, layer_id="comparison"),
+                ]
+            )
+            view.set_comparison_split_enabled(True)
+            view.set_comparison_divider_visible(True)
+            view.set_comparison_split_fraction(0.5)
+
+            track = view._comparison_split_track_rect()
+            content = view._image_content_rect()
+            self.assertAlmostEqual(track.left(), content.left(), places=3)
+            self.assertAlmostEqual(track.right(), content.right(), places=3)
+            self.assertAlmostEqual(track.top(), content.top(), places=3)
+            self.assertAlmostEqual(track.bottom(), content.bottom(), places=3)
+            split_x = view._comparison_split_widget_x()
+            self.assertIsNotNone(split_x)
+            assert split_x is not None
+            self.assertAlmostEqual(split_x, content.center().x(), places=1)
+            self.assertTrue(view._comparison_has_tile_layers())
+
+    def test_overlay_clip_rect_covers_neighbor_survey_tiles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            primary_path = Path(temp_dir) / "primary.fit"
+            primary_path.write_text("primary", encoding="utf-8")
+            view = AnnotatedImageView()
+            view.resize(400, 240)
+            view.set_content(
+                build_annotated_image_display_from_array(
+                    np.ones((64, 64), dtype=np.float32),
+                    image_path=primary_path,
+                ),
+                overlays=[],
+                grid_overlays=[],
+                editor_enabled=False,
+            )
+            view.set_unbounded_pan(True)
+            rgba = np.full((16, 16, 4), 200, dtype=np.uint8)
+            qimage = QImage(rgba.data, 16, 16, rgba.strides[0], QImage.Format.Format_RGBA8888).copy()
+            view.set_survey_tile_layers(
+                [
+                    SurveyTileLayerItem(rect=QRectF(0.0, 0.0, 64.0, 64.0), qimage=qimage),
+                    SurveyTileLayerItem(rect=QRectF(-64.0, 0.0, 64.0, 64.0), qimage=qimage),
+                ]
+            )
+            clip = view._overlay_clip_rect()
+            self.assertLessEqual(clip.left(), -64.0)
+            self.assertGreaterEqual(clip.right(), 64.0)
+            plate = view._image_bounds_rect()
+            self.assertGreater(clip.width(), plate.width())
 
 
 if __name__ == "__main__":

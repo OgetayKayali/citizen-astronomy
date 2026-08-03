@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import numpy as np
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtGui import QColor, QImage, QVector3D
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 
@@ -693,6 +693,7 @@ class RecoveryAuditRegressionTest(unittest.TestCase):
             animation_plan = dialog.export_plan()
             self.assertTrue(animation_plan.is_animation)
             self.assertTrue(animation_plan.include_info_panel)
+            self.assertEqual(animation_plan.camera_motion, "fixed")
             self.assertAlmostEqual(animation_plan.total_duration_seconds, 30.0)
             self.assertEqual(animation_plan.frame_count, 900)
             self.assertEqual(animation_plan.frame_duration_ms, 33)
@@ -701,6 +702,18 @@ class RecoveryAuditRegressionTest(unittest.TestCase):
             self.assertIn("30 s", details_text)
             self.assertIn("1600 x 900", details_text)
             self.assertIn("Estimated file size", details_text)
+            self.assertIn("Camera motion: Fixed", details_text)
+
+            orbit_index = dialog._camera_motion_combo.findData("slow-orbit")
+            self.assertGreaterEqual(orbit_index, 0)
+            dialog._camera_motion_combo.setCurrentIndex(orbit_index)
+            orbit_plan = dialog.export_plan()
+            self.assertEqual(orbit_plan.camera_motion, "slow-orbit")
+            self.assertIn("Camera motion: Slow orbit", dialog._details_label.text())
+
+            dialog._format_combo.setCurrentIndex(dialog._format_combo.findData("png"))
+            self.assertFalse(dialog._camera_motion_combo.isEnabled())
+            self.assertEqual(dialog.export_plan().camera_motion, "fixed")
         finally:
             dialog.close()
 
@@ -833,17 +846,41 @@ class RecoveryAuditRegressionTest(unittest.TestCase):
                     frame_count=4,
                     frame_duration_ms=100,
                     total_duration_seconds=0.4,
+                    camera_motion="slow-orbit",
                 )
                 captured_times: list[datetime] = []
+                camera_progress: list[tuple[float, str, datetime]] = []
                 original_set_playback_time = dialog._set_playback_time
 
                 def record_playback_time(observation_time: datetime, **kwargs) -> None:
                     captured_times.append(observation_time)
                     original_set_playback_time(observation_time, **kwargs)
 
+                def record_camera_motion(progress: float, motion: str, playback_time: datetime, **_kwargs) -> None:
+                    camera_progress.append((progress, motion, playback_time))
+
                 with (
                     patch.object(dialog, "_capture_export_image", return_value=captured_image),
                     patch.object(dialog, "_set_playback_time", side_effect=record_playback_time),
+                    patch.object(dialog, "_apply_export_camera_motion", side_effect=record_camera_motion),
+                    patch.object(
+                        dialog,
+                        "_current_gl_camera_pose",
+                        return_value={
+                            "center": QVector3D(0.0, 0.0, 0.0),
+                            "distance": 4.5,
+                            "elevation": 20.0,
+                            "azimuth": -40.0,
+                        },
+                    ),
+                    patch.object(
+                        dialog,
+                        "_snapshot_meteor_stream_animation_state",
+                        return_value={"path_fractions": np.array([0.1, 0.2], dtype=float)},
+                    ),
+                    patch.object(dialog, "_step_meteor_stream_animation") as step_meteor,
+                    patch.object(dialog, "_restore_meteor_stream_animation_state") as restore_meteor,
+                    patch.object(dialog, "_restore_gl_camera_pose") as restore_camera,
                     patch("photometry_app.ui.dialogs.QMessageBox.information"),
                 ):
                     dialog._export_trajectory_animation(output_path, animation_plan)
@@ -858,6 +895,55 @@ class RecoveryAuditRegressionTest(unittest.TestCase):
                     captured_times[2],
                     window_start + timedelta(seconds=window_seconds * 2 / 4),
                 )
+                self.assertEqual(len(camera_progress), 4)
+                self.assertEqual(camera_progress[0][1], "slow-orbit")
+                self.assertAlmostEqual(camera_progress[0][0], 0.0)
+                self.assertAlmostEqual(camera_progress[-1][0], 1.0)
+                restore_camera.assert_called()
+                self.assertEqual(step_meteor.call_count, 4)
+                step_meteor.assert_called_with(0.1)
+                restore_meteor.assert_called()
+        finally:
+            dialog.close()
+
+    def test_known_object_orbit_3d_export_camera_motion_object_chase_tracks_target(self) -> None:
+        base_time = datetime(2026, 4, 14, 6, 0, tzinfo=UTC)
+        detection = _detection("12P/Pons-Brooks", "12P", "Comet")
+        dialog = KnownObjectOrbit3DDialog(
+            detection=detection,
+            frame_measurements=(_frame_measurement(base_time, "frame_01.fits"),),
+            context=_context("12P/Pons-Brooks", "DES=12P;CAP", base_time),
+        )
+        try:
+            with patch.object(
+                dialog,
+                "_interpolate_position",
+                return_value=np.array([1.5, 0.25, -0.1], dtype=float),
+            ):
+                camera_calls: list[dict[str, object]] = []
+
+                class _FakeGlView:
+                    def setCameraPosition(self, **kwargs) -> None:
+                        camera_calls.append(kwargs)
+
+                dialog._gl_view = _FakeGlView()
+                base_pose = {
+                    "center": QVector3D(0.2, 0.1, 0.0),
+                    "distance": 3.25,
+                    "elevation": 22.0,
+                    "azimuth": -40.0,
+                }
+                dialog._apply_export_camera_motion(0.0, "object-chase", base_time, base_pose=base_pose)
+                dialog._apply_export_camera_motion(1.0, "object-chase", base_time, base_pose=base_pose)
+
+            self.assertEqual(len(camera_calls), 2)
+            self.assertEqual(camera_calls[0]["pos"], QVector3D(1.5, 0.25, -0.1))
+            self.assertEqual(camera_calls[1]["pos"], QVector3D(1.5, 0.25, -0.1))
+            self.assertAlmostEqual(float(camera_calls[0]["distance"]), 3.25)
+            self.assertAlmostEqual(float(camera_calls[1]["distance"]), 3.25)
+            self.assertAlmostEqual(float(camera_calls[0]["azimuth"]), -40.0)
+            self.assertAlmostEqual(float(camera_calls[1]["azimuth"]), 230.0)
+            self.assertAlmostEqual(float(camera_calls[0]["elevation"]), 22.0)
         finally:
             dialog.close()
 

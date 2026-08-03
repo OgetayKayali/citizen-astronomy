@@ -2776,6 +2776,7 @@ class KnownObjectOrbit3DSaveExportPlan:
     frame_count: int
     frame_duration_ms: int
     total_duration_seconds: float
+    camera_motion: str = "fixed"
 
 
 class KnownObjectOrbit3DSaveDialog(QDialog):
@@ -2786,6 +2787,11 @@ class KnownObjectOrbit3DSaveDialog(QDialog):
     _ANIMATION_FORMAT_OPTIONS: tuple[tuple[str, str], ...] = (
         ("gif", "GIF animation (*.gif)"),
         ("mp4", "MP4 video (*.mp4)"),
+    )
+    _CAMERA_MOTION_OPTIONS: tuple[tuple[str, str], ...] = (
+        ("fixed", "Fixed"),
+        ("slow-orbit", "Slow orbit"),
+        ("object-chase", "Object chase"),
     )
     _ANIMATION_FPS: dict[str, float] = {"gif": 15.0, "mp4": 30.0}
     _MAX_ANIMATION_FRAMES = 1800
@@ -2827,6 +2833,19 @@ class KnownObjectOrbit3DSaveDialog(QDialog):
         format_row.addWidget(QLabel("Format", self))
         format_row.addWidget(self._format_combo, stretch=1)
 
+        self._camera_motion_combo = QComboBox(self)
+        for motion_key, motion_label in self._CAMERA_MOTION_OPTIONS:
+            self._camera_motion_combo.addItem(motion_label, motion_key)
+        self._camera_motion_combo.setToolTip(
+            "Camera motion used while rendering GIF/MP4 exports. Motions keep your current zoom and start from the "
+            "current view: Fixed holds the angle, Slow orbit turns around the current look-at, and Object chase "
+            "follows the selected target while orbiting."
+        )
+        self._camera_motion_label = QLabel("Camera motion", self)
+        camera_motion_row = QHBoxLayout()
+        camera_motion_row.addWidget(self._camera_motion_label)
+        camera_motion_row.addWidget(self._camera_motion_combo, stretch=1)
+
         self._details_label = QLabel(self)
         self._details_label.setWordWrap(True)
         self._details_label.setStyleSheet(
@@ -2843,12 +2862,14 @@ class KnownObjectOrbit3DSaveDialog(QDialog):
         layout = QVBoxLayout()
         layout.addWidget(capture_group)
         layout.addLayout(format_row)
+        layout.addLayout(camera_motion_row)
         layout.addWidget(self._details_label)
         layout.addWidget(button_box)
         self.setLayout(layout)
 
         self._view_only_radio.toggled.connect(self._refresh_details)
         self._format_combo.currentIndexChanged.connect(self._refresh_details)
+        self._camera_motion_combo.currentIndexChanged.connect(self._refresh_details)
         self._refresh_details()
 
     def selected_format(self) -> str:
@@ -2857,9 +2878,17 @@ class KnownObjectOrbit3DSaveDialog(QDialog):
     def include_info_panel(self) -> bool:
         return self._with_panel_radio.isChecked()
 
+    def selected_camera_motion(self) -> str:
+        if self.selected_format() not in self._ANIMATION_FPS:
+            return "fixed"
+        motion = str(self._camera_motion_combo.currentData() or "fixed").strip().lower() or "fixed"
+        allowed = {key for key, _label in self._CAMERA_MOTION_OPTIONS}
+        return motion if motion in allowed else "fixed"
+
     def export_plan(self) -> KnownObjectOrbit3DSaveExportPlan:
         export_format = self.selected_format()
         include_info_panel = self.include_info_panel()
+        camera_motion = self.selected_camera_motion()
         if export_format not in self._ANIMATION_FPS:
             return KnownObjectOrbit3DSaveExportPlan(
                 export_format=export_format,
@@ -2868,6 +2897,7 @@ class KnownObjectOrbit3DSaveDialog(QDialog):
                 frame_count=1,
                 frame_duration_ms=0,
                 total_duration_seconds=0.0,
+                camera_motion="fixed",
             )
         duration_seconds = self._animation_window_seconds / self._speed_seconds_per_second
         frames_per_second = self._ANIMATION_FPS[export_format]
@@ -2881,6 +2911,7 @@ class KnownObjectOrbit3DSaveDialog(QDialog):
             frame_count=frame_count,
             frame_duration_ms=frame_duration_ms,
             total_duration_seconds=duration_seconds,
+            camera_motion=camera_motion,
         )
 
     @staticmethod
@@ -2908,6 +2939,9 @@ class KnownObjectOrbit3DSaveDialog(QDialog):
         return pixel_count * plan.frame_count * 0.0125
 
     def _refresh_details(self) -> None:
+        is_animation = self.selected_format() in self._ANIMATION_FPS
+        self._camera_motion_label.setEnabled(is_animation)
+        self._camera_motion_combo.setEnabled(is_animation)
         plan = self.export_plan()
         width, height = self._capture_size_provider(plan.include_info_panel)
         size_estimate = self._format_file_size(self._estimated_file_size_bytes(plan, width, height))
@@ -2916,9 +2950,12 @@ class KnownObjectOrbit3DSaveDialog(QDialog):
                 f"Image size: {width} x {height} px\nEstimated file size: ~{size_estimate}"
             )
             return
+        motion_labels = {key: label for key, label in self._CAMERA_MOTION_OPTIONS}
+        motion_label = motion_labels.get(plan.camera_motion, "Fixed")
         effective_fps = plan.frame_count / plan.total_duration_seconds if plan.total_duration_seconds > 0 else 0.0
         lines = [
             f"One full pass of the current timeline at {self._speed_label}.",
+            f"Camera motion: {motion_label}.",
             f"Video length: {self._format_duration(plan.total_duration_seconds)} "
             f"({plan.frame_count} frames at ~{effective_fps:.0f} fps).",
             f"Frame size: {width} x {height} px.",
@@ -3247,6 +3284,7 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._meteor_stream_animate_checkbox.setChecked(True)
         self._meteor_stream_animate_checkbox.setToolTip(
             "While timeline playback is running, debris drifts slowly along the orbit. "
+            "GIF/MP4 Save also advances debris when this is enabled. "
             "Occasionally a point flashes out and a new one appears elsewhere."
         )
         self._meteor_stream_animate_checkbox.toggled.connect(self._handle_meteor_stream_animation_toggled)
@@ -3935,7 +3973,14 @@ class KnownObjectOrbit3DDialog(QDialog):
             QMessageBox.warning(self, "Save Failed", "The current timeline is too short to export an animation.")
             return
         original_time = self._current_playback_time()
-        update_camera = self._camera_mode_requires_tracking()
+        camera_motion = str(getattr(plan, "camera_motion", "fixed") or "fixed").strip().lower() or "fixed"
+        if camera_motion not in {"fixed", "slow-orbit", "object-chase"}:
+            camera_motion = "fixed"
+        update_camera = camera_motion == "fixed" and self._camera_mode_requires_tracking()
+        export_camera_pose = None if camera_motion == "fixed" else self._current_gl_camera_pose()
+        meteor_animation_snapshot = self._snapshot_meteor_stream_animation_state()
+        animate_meteor_during_export = meteor_animation_snapshot is not None
+        meteor_frame_dt = max(0.001, float(plan.frame_duration_ms) / 1000.0)
         writer_factory = StreamingGifWriter if plan.export_format == "gif" else StreamingMp4Writer
         progress = QProgressDialog("Rendering trajectory animation...", "Cancel", 0, plan.frame_count, self)
         progress.setWindowModality(Qt.WindowModality.NonModal)
@@ -3949,6 +3994,17 @@ class KnownObjectOrbit3DDialog(QDialog):
                 for frame_index in range(plan.frame_count):
                     frame_time = window_start + timedelta(seconds=window_seconds * frame_index / plan.frame_count)
                     self._set_playback_time(frame_time, update_camera=update_camera)
+                    if camera_motion != "fixed" and export_camera_pose is not None:
+                        motion_progress = frame_index / max(1, plan.frame_count - 1)
+                        self._apply_export_camera_motion(
+                            motion_progress,
+                            camera_motion,
+                            frame_time,
+                            base_pose=export_camera_pose,
+                        )
+                    if animate_meteor_during_export:
+                        # Drive debris with exported frame timing (not the live play timer).
+                        self._step_meteor_stream_animation(meteor_frame_dt)
                     QApplication.processEvents()
                     image = self._capture_export_image(plan.include_info_panel)
                     if image is None or image.isNull():
@@ -3959,14 +4015,18 @@ class KnownObjectOrbit3DDialog(QDialog):
                         cancelled = True
                         break
         except ValueError as exc:
-            progress.close()
-            self._set_playback_time(original_time, update_camera=update_camera)
             output_path.unlink(missing_ok=True)
             QMessageBox.warning(self, "Animation Export Failed", str(exc))
             return
         finally:
             progress.close()
             self._set_playback_time(original_time, update_camera=update_camera)
+            if export_camera_pose is not None:
+                self._restore_gl_camera_pose(export_camera_pose)
+            elif update_camera:
+                self._apply_camera_mode()
+            if meteor_animation_snapshot is not None:
+                self._restore_meteor_stream_animation_state(meteor_animation_snapshot)
         if cancelled:
             output_path.unlink(missing_ok=True)
             return
@@ -7518,6 +7578,108 @@ class KnownObjectOrbit3DDialog(QDialog):
         self._meteor_anim_base_colors[index, 0:3] = line_rgb
         self._meteor_anim_base_colors[index, 3] = max(0.2, alpha)
 
+    def _snapshot_meteor_stream_animation_state(self) -> dict[str, object] | None:
+        if (
+            not self._meteor_stream_visible()
+            or not self._meteor_stream_animation_enabled()
+            or self._meteor_stream_particle_item is None
+            or self._meteor_anim_orbit is None
+            or self._meteor_anim_path_fractions is None
+            or self._meteor_anim_offsets is None
+            or self._meteor_anim_base_colors is None
+            or self._meteor_anim_flash is None
+        ):
+            return None
+        return {
+            "path_fractions": np.array(self._meteor_anim_path_fractions, dtype=float, copy=True),
+            "offsets": np.array(self._meteor_anim_offsets, dtype=float, copy=True),
+            "base_colors": np.array(self._meteor_anim_base_colors, dtype=float, copy=True),
+            "flash": np.array(self._meteor_anim_flash, dtype=float, copy=True),
+            "flash_accumulator": float(getattr(self, "_meteor_flash_accumulator", 0.0) or 0.0),
+        }
+
+    def _restore_meteor_stream_animation_state(self, snapshot: Mapping[str, object] | None) -> None:
+        if snapshot is None or self._meteor_stream_particle_item is None:
+            return
+        path_fractions = snapshot.get("path_fractions")
+        offsets = snapshot.get("offsets")
+        base_colors = snapshot.get("base_colors")
+        flash = snapshot.get("flash")
+        if (
+            not isinstance(path_fractions, np.ndarray)
+            or not isinstance(offsets, np.ndarray)
+            or not isinstance(base_colors, np.ndarray)
+            or not isinstance(flash, np.ndarray)
+        ):
+            return
+        self._meteor_anim_path_fractions = np.array(path_fractions, dtype=float, copy=True)
+        self._meteor_anim_offsets = np.array(offsets, dtype=float, copy=True)
+        self._meteor_anim_base_colors = np.array(base_colors, dtype=float, copy=True)
+        self._meteor_anim_flash = np.array(flash, dtype=float, copy=True)
+        self._meteor_flash_accumulator = float(snapshot.get("flash_accumulator", 0.0) or 0.0)
+        if self._meteor_anim_orbit is None:
+            return
+        positions = self._meteor_stream_positions_from_path_fractions()
+        colors, sizes = self._meteor_stream_particle_style_arrays(
+            particle_count=len(positions),
+            near_mask=None,
+            base_colors=self._meteor_anim_base_colors,
+            flash=self._meteor_anim_flash,
+            tube_radius_au=float(getattr(self, "_meteor_anim_tube_radius", 0.03) or 0.03),
+        )
+        self._meteor_stream_particle_item.setData(pos=positions, color=colors, size=sizes)
+
+    def _step_meteor_stream_animation(self, dt: float) -> None:
+        if (
+            not self._meteor_stream_visible()
+            or not self._meteor_stream_animation_enabled()
+            or self._gl_view is None
+            or self._meteor_stream_particle_item is None
+            or self._meteor_anim_orbit is None
+            or self._meteor_anim_path_fractions is None
+            or self._meteor_anim_offsets is None
+            or self._meteor_anim_base_colors is None
+            or self._meteor_anim_flash is None
+        ):
+            return
+
+        step = max(0.0, float(dt))
+        if step <= 0.0:
+            return
+
+        # Advance by orbit fraction so spacing stays even on high-e polylines.
+        fraction_speed = self._meteor_stream_drift_scale() / _KNOWN_OBJECT_3D_METEOR_STREAM_ORBIT_SECONDS_AT_1X
+        self._meteor_anim_path_fractions = np.mod(
+            self._meteor_anim_path_fractions + fraction_speed * step,
+            1.0,
+        )
+
+        # Rare flashes: about one event / second, independent of particle count.
+        self._meteor_flash_accumulator += _KNOWN_OBJECT_3D_METEOR_STREAM_FLASHES_PER_SEC * step
+        idle = np.where(self._meteor_anim_flash <= 0.0)[0]
+        while self._meteor_flash_accumulator >= 1.0 and idle.size:
+            pick = int(idle[int(self._meteor_anim_rng.integers(0, len(idle)))])
+            self._meteor_anim_flash[pick] = 1.0e-3
+            self._meteor_flash_accumulator -= 1.0
+            idle = np.where(self._meteor_anim_flash <= 0.0)[0]
+
+        active = self._meteor_anim_flash > 0.0
+        if bool(np.any(active)):
+            self._meteor_anim_flash[active] += step / 0.45
+            finished = np.where(self._meteor_anim_flash >= 1.0)[0]
+            for index in finished:
+                self._respawn_meteor_stream_particle(int(index))
+
+        positions = self._meteor_stream_positions_from_path_fractions()
+        colors, sizes = self._meteor_stream_particle_style_arrays(
+            particle_count=len(positions),
+            near_mask=None,
+            base_colors=self._meteor_anim_base_colors,
+            flash=self._meteor_anim_flash,
+            tube_radius_au=float(getattr(self, "_meteor_anim_tube_radius", 0.03) or 0.03),
+        )
+        self._meteor_stream_particle_item.setData(pos=positions, color=colors, size=sizes)
+
     def _advance_meteor_stream_animation(self) -> None:
         if (
             not self._meteor_stream_visible()
@@ -7542,39 +7704,7 @@ class KnownObjectOrbit3DDialog(QDialog):
             else max(0.001, min(0.08, now - self._meteor_drift_last_tick_seconds))
         )
         self._meteor_drift_last_tick_seconds = now
-
-        # Advance by orbit fraction so spacing stays even on high-e polylines.
-        fraction_speed = self._meteor_stream_drift_scale() / _KNOWN_OBJECT_3D_METEOR_STREAM_ORBIT_SECONDS_AT_1X
-        self._meteor_anim_path_fractions = np.mod(
-            self._meteor_anim_path_fractions + fraction_speed * dt,
-            1.0,
-        )
-
-        # Rare flashes: about one event / second, independent of particle count.
-        self._meteor_flash_accumulator += _KNOWN_OBJECT_3D_METEOR_STREAM_FLASHES_PER_SEC * dt
-        idle = np.where(self._meteor_anim_flash <= 0.0)[0]
-        while self._meteor_flash_accumulator >= 1.0 and idle.size:
-            pick = int(idle[int(self._meteor_anim_rng.integers(0, len(idle)))])
-            self._meteor_anim_flash[pick] = 1.0e-3
-            self._meteor_flash_accumulator -= 1.0
-            idle = np.where(self._meteor_anim_flash <= 0.0)[0]
-
-        active = self._meteor_anim_flash > 0.0
-        if bool(np.any(active)):
-            self._meteor_anim_flash[active] += dt / 0.45
-            finished = np.where(self._meteor_anim_flash >= 1.0)[0]
-            for index in finished:
-                self._respawn_meteor_stream_particle(int(index))
-
-        positions = self._meteor_stream_positions_from_path_fractions()
-        colors, sizes = self._meteor_stream_particle_style_arrays(
-            particle_count=len(positions),
-            near_mask=None,
-            base_colors=self._meteor_anim_base_colors,
-            flash=self._meteor_anim_flash,
-            tube_radius_au=float(getattr(self, "_meteor_anim_tube_radius", 0.03) or 0.03),
-        )
-        self._meteor_stream_particle_item.setData(pos=positions, color=colors, size=sizes)
+        self._step_meteor_stream_animation(dt)
 
     def _handle_label_style_changed(self, *_args) -> None:
         self._draw_plots()
@@ -7889,6 +8019,88 @@ class KnownObjectOrbit3DDialog(QDialog):
         else:
             target = QVector3D(0.0, 0.0, 0.0)
             self._gl_view.setCameraPosition(pos=target, distance=scene_extent * 2.1, elevation=24.0, azimuth=-58.0)
+
+    @staticmethod
+    def _export_camera_ease(progress: float) -> float:
+        clamped = min(1.0, max(0.0, float(progress)))
+        return clamped * clamped * (3.0 - 2.0 * clamped)
+
+    def _current_gl_camera_pose(self) -> dict[str, object] | None:
+        if self._gl_view is None:
+            return None
+        opts = getattr(self._gl_view, "opts", None)
+        if not isinstance(opts, dict):
+            return None
+        center = opts.get("center")
+        if isinstance(center, QVector3D):
+            center_vector = QVector3D(center)
+        else:
+            center_vector = QVector3D(0.0, 0.0, 0.0)
+        distance = float(opts.get("distance", 0.0) or 0.0)
+        if distance <= 0.0:
+            scene_points = self._scene_points()
+            scene_extent = max(1.0, float(np.max(np.linalg.norm(scene_points, axis=1))))
+            distance = scene_extent * 2.1
+        return {
+            "center": center_vector,
+            "distance": distance,
+            "elevation": float(opts.get("elevation", 24.0) or 24.0),
+            "azimuth": float(opts.get("azimuth", -58.0) or -58.0),
+        }
+
+    def _restore_gl_camera_pose(self, pose: Mapping[str, object] | None) -> None:
+        if self._gl_view is None or pose is None:
+            return
+        center = pose.get("center")
+        if not isinstance(center, QVector3D):
+            center = QVector3D(0.0, 0.0, 0.0)
+        self._gl_view.setCameraPosition(
+            pos=center,
+            distance=float(pose.get("distance", 1.0) or 1.0),
+            elevation=float(pose.get("elevation", 24.0) or 24.0),
+            azimuth=float(pose.get("azimuth", -58.0) or -58.0),
+        )
+
+    def _apply_export_camera_motion(
+        self,
+        progress: float,
+        motion: str,
+        playback_time: datetime,
+        *,
+        base_pose: Mapping[str, object] | None = None,
+    ) -> None:
+        if self._gl_view is None or motion in {"", "fixed"}:
+            return
+        eased = self._export_camera_ease(progress)
+        pose = dict(base_pose) if base_pose is not None else self._current_gl_camera_pose()
+        if pose is None:
+            return
+        base_distance = max(float(_KNOWN_OBJECT_3D_MIN_CAMERA_DISTANCE_AU), float(pose.get("distance", 1.0) or 1.0))
+        base_elevation = float(pose.get("elevation", 24.0) or 24.0)
+        base_azimuth = float(pose.get("azimuth", -58.0) or -58.0)
+        base_center = pose.get("center")
+        if not isinstance(base_center, QVector3D):
+            base_center = QVector3D(0.0, 0.0, 0.0)
+        object_position = self._interpolate_position(self._context.object_path_samples, playback_time)
+        if object_position is None:
+            object_position = np.array([base_center.x(), base_center.y(), base_center.z()], dtype=float)
+        if motion == "slow-orbit":
+            # Keep the user's zoom and start angle; orbit in place around the current look-at.
+            elevation = base_elevation + 8.0 * math.sin(eased * math.pi)
+            azimuth = base_azimuth + 180.0 * eased
+            target = QVector3D(base_center)
+        elif motion == "object-chase":
+            elevation = base_elevation + 6.0 * math.sin(eased * math.pi)
+            azimuth = base_azimuth + 270.0 * eased
+            target = QVector3D(float(object_position[0]), float(object_position[1]), float(object_position[2]))
+        else:
+            return
+        self._gl_view.setCameraPosition(
+            pos=target,
+            distance=base_distance,
+            elevation=elevation,
+            azimuth=azimuth,
+        )
 
     def _add_gl_path(
         self,
@@ -11142,6 +11354,34 @@ class SettingsDialog(QDialog):
         self._sky_explorer_simbad_search_radius_arcsec_input.setSingleStep(1.0)
         self._sky_explorer_simbad_search_radius_arcsec_input.setSuffix(" arcsec")
         self._sky_explorer_simbad_search_radius_arcsec_input.setValue(settings.sky_explorer_simbad_search_radius_arcsec)
+        self._sky_explorer_survey_field_ra_deg_input = QDoubleSpinBox()
+        self._sky_explorer_survey_field_ra_deg_input.setDecimals(4)
+        self._sky_explorer_survey_field_ra_deg_input.setRange(0.0, 360.0)
+        self._sky_explorer_survey_field_ra_deg_input.setSingleStep(0.1)
+        self._sky_explorer_survey_field_ra_deg_input.setSuffix(" deg")
+        self._sky_explorer_survey_field_ra_deg_input.setValue(float(settings.sky_explorer_survey_field_ra_deg))
+        self._sky_explorer_survey_field_dec_deg_input = QDoubleSpinBox()
+        self._sky_explorer_survey_field_dec_deg_input.setDecimals(4)
+        self._sky_explorer_survey_field_dec_deg_input.setRange(-90.0, 90.0)
+        self._sky_explorer_survey_field_dec_deg_input.setSingleStep(0.1)
+        self._sky_explorer_survey_field_dec_deg_input.setSuffix(" deg")
+        self._sky_explorer_survey_field_dec_deg_input.setValue(float(settings.sky_explorer_survey_field_dec_deg))
+        self._sky_explorer_survey_field_fov_arcmin_input = QDoubleSpinBox()
+        self._sky_explorer_survey_field_fov_arcmin_input.setDecimals(1)
+        self._sky_explorer_survey_field_fov_arcmin_input.setRange(1.0, 180.0)
+        self._sky_explorer_survey_field_fov_arcmin_input.setSingleStep(1.0)
+        self._sky_explorer_survey_field_fov_arcmin_input.setSuffix(" arcmin")
+        self._sky_explorer_survey_field_fov_arcmin_input.setValue(float(settings.sky_explorer_survey_field_fov_arcmin))
+        self._sky_explorer_survey_field_width_px_input = QSpinBox()
+        self._sky_explorer_survey_field_width_px_input.setRange(256, 2048)
+        self._sky_explorer_survey_field_width_px_input.setSingleStep(64)
+        self._sky_explorer_survey_field_width_px_input.setSuffix(" px")
+        self._sky_explorer_survey_field_width_px_input.setValue(int(settings.sky_explorer_survey_field_width_px))
+        self._sky_explorer_survey_field_height_px_input = QSpinBox()
+        self._sky_explorer_survey_field_height_px_input.setRange(256, 2048)
+        self._sky_explorer_survey_field_height_px_input.setSingleStep(64)
+        self._sky_explorer_survey_field_height_px_input.setSuffix(" px")
+        self._sky_explorer_survey_field_height_px_input.setValue(int(settings.sky_explorer_survey_field_height_px))
         self._sky_explorer_gaia_max_magnitude_input = QDoubleSpinBox()
         self._sky_explorer_gaia_max_magnitude_input.setDecimals(1)
         self._sky_explorer_gaia_max_magnitude_input.setRange(-5.0, 30.0)
@@ -11605,7 +11845,7 @@ class SettingsDialog(QDialog):
         self._asteroid_visual_invert_annotation_colors_input.setChecked(settings.asteroid_visual_invert_annotation_colors)
         self._asteroid_target_marker_line_color = str(settings.asteroid_target_marker_line_color or "#ef4444").strip().lower() or "#ef4444"
         self._asteroid_target_marker_accent_color = str(settings.asteroid_target_marker_accent_color or "#fca5a5").strip().lower() or "#fca5a5"
-        self._asteroid_target_marker_text_color = str(settings.asteroid_target_marker_text_color or "#fff1f2").strip().lower() or "#fff1f2"
+        self._asteroid_target_marker_text_color = str(settings.asteroid_target_marker_text_color or "#ffffff").strip().lower() or "#ffffff"
         self._asteroid_target_marker_outline_color = str(settings.asteroid_target_marker_outline_color or "#ffffff").strip().lower() or "#ffffff"
         self._asteroid_target_marker_line_color_button = QPushButton("Line...")
         self._asteroid_target_marker_line_color_button.clicked.connect(self._choose_asteroid_target_marker_line_color)
@@ -12297,139 +12537,190 @@ class SettingsDialog(QDialog):
         sky_explorer_tab = QWidget()
         sky_explorer_layout = QVBoxLayout()
         sky_explorer_description = QLabel(
-            "Sky Explorer settings control the manual SIMBAD lookup radius and which background search sources are allowed when Explore resolves a field."
+            "Sky Explorer settings are split into General (field/query defaults and catalog sources) and Visuals "
+            "(marker colors, opacities, and Mag Limit styling) so the list fits more cleanly on screen."
         )
         sky_explorer_description.setWordWrap(True)
-        sky_explorer_form_layout = QFormLayout()
-        self._sky_explorer_form_layout = sky_explorer_form_layout
+
+        sky_explorer_general_form_layout = QFormLayout()
+        self._sky_explorer_form_layout = sky_explorer_general_form_layout
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_general_form_layout,
+            "Survey Field RA",
+            self._sky_explorer_survey_field_ra_deg_input,
+            "Right ascension used when Open starts from a sky survey with no user image yet. Default centers on the Trifid Nebula (M20). Panning later recenters the survey beyond this initial field.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_general_form_layout,
+            "Survey Field Dec",
+            self._sky_explorer_survey_field_dec_deg_input,
+            "Declination used when Open starts from a sky survey with no user image yet. Default centers on the Trifid Nebula (M20).",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_general_form_layout,
+            "Survey Field FOV",
+            self._sky_explorer_survey_field_fov_arcmin_input,
+            "Field of view fetched for survey-as-primary tiles. Larger FOVs cover more sky per request; smaller FOVs keep tiles sharper.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_general_form_layout,
+            "Survey Field Width",
+            self._sky_explorer_survey_field_width_px_input,
+            "Pixel width requested for survey-as-primary tiles. Higher values increase detail and download cost.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_general_form_layout,
+            "Survey Field Height",
+            self._sky_explorer_survey_field_height_px_input,
+            "Pixel height requested for survey-as-primary tiles. Higher values increase detail and download cost.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_general_form_layout,
             "Search Radius",
             self._sky_explorer_simbad_search_radius_arcsec_input,
             "Search radius used by the Sky Explorer image right-click Search action when opening SIMBAD by coordinates. Increase it when the target is slightly offset or catalog positions are imprecise; lower values keep the search tighter.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_general_form_layout,
             "Gaia Max Mag",
             self._sky_explorer_gaia_max_magnitude_input,
             "Upper Gaia G magnitude used by Sky Explorer field-star queries. Lower values keep the field lighter and faster; higher values include fainter Gaia sources.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_general_form_layout,
             "Gaia Hard Cap",
             self._sky_explorer_gaia_hard_cap_enabled_input,
             "Optional hard cap for Gaia Sky Explorer queries. When enabled, Sky Explorer applies both the Gaia magnitude limit and this row cap to reduce very dense-field lookups.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_general_form_layout,
             "Gaia Cap Rows",
             self._sky_explorer_gaia_hard_cap_rows_input,
             "Maximum Gaia rows requested by Sky Explorer when the hard cap is enabled. Lower values reduce dense-field query cost more aggressively.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_general_form_layout,
             "Mag Limit Examples",
             self._sky_explorer_mag_limit_examples_per_bin_input,
             "Number of representative Gaia stars labeled in each 0.5 magnitude interval when the Sky Explorer Mag Limit annotation button is enabled.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
-            "Mag Limit Marker",
-            self._sky_explorer_mag_limit_marker_color_button,
-            "Fill color used for Mag Limit representative star markers on the Sky Explorer image.",
-        )
-        self._add_tooltip_form_row(
-            sky_explorer_form_layout,
-            "Mag Limit Marker Stroke",
-            self._sky_explorer_mag_limit_marker_stroke_color_button,
-            "Stroke color used around Mag Limit representative star markers.",
-        )
-        self._add_tooltip_form_row(
-            sky_explorer_form_layout,
-            "Mag Limit Marker Stroke Width",
-            self._sky_explorer_mag_limit_marker_stroke_width_input,
-            "Stroke width for Mag Limit representative star markers. Set to 0 to hide the marker outline.",
-        )
-        self._add_tooltip_form_row(
-            sky_explorer_form_layout,
-            "Mag Limit Target Size",
-            self._sky_explorer_mag_limit_target_size_input,
-            "Radius in pixels used for Mag Limit representative star markers on the Sky Explorer image.",
-        )
-        self._add_tooltip_form_row(
-            sky_explorer_form_layout,
-            "Mag Limit Text",
-            self._sky_explorer_mag_limit_text_color_button,
-            "Text color used for Mag Limit representative star labels on the Sky Explorer image.",
-        )
-        self._add_tooltip_form_row(
-            sky_explorer_form_layout,
-            "Mag Limit Text Stroke",
-            self._sky_explorer_mag_limit_text_stroke_color_button,
-            "Outline color used around Mag Limit representative star labels.",
-        )
-        self._add_tooltip_form_row(
-            sky_explorer_form_layout,
-            "Mag Limit Text Stroke Width",
-            self._sky_explorer_mag_limit_text_stroke_width_input,
-            "Outline width for Mag Limit representative star labels. Set to 0 to disable the text outline.",
-        )
-        self._add_tooltip_form_row(
-            sky_explorer_form_layout,
-            "Mag Limit Text Size",
-            self._sky_explorer_mag_limit_text_size_input,
-            "Font size in points used for Mag Limit representative star labels.",
-        )
-        self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_general_form_layout,
             "Galaxy Mag Limit",
             self._sky_explorer_annotated_galaxy_max_magnitude_enabled_input,
             "When enabled, only galaxies at or brighter than the threshold below are annotated on the image. Galaxies with unknown magnitude are skipped while this limit is active.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_general_form_layout,
             "Galaxy Max Mag",
             self._sky_explorer_annotated_galaxy_max_magnitude_input,
             "Upper magnitude limit used when the galaxy annotation magnitude filter is enabled. Lower values keep only brighter annotated galaxies.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_general_form_layout,
             "Galaxy Shape Only",
             self._sky_explorer_annotated_galaxy_require_shape_metadata_input,
             "When enabled, Sky Explorer only annotates galaxies that include enough catalog geometry to draw an oriented ellipse instead of a generic circle.",
         )
+        sky_explorer_sources_group = QGroupBox("Catalog Sources")
+        sky_explorer_sources_layout = QVBoxLayout()
+        sky_explorer_sources_layout.setContentsMargins(8, 8, 8, 8)
+        sky_explorer_sources_layout.setSpacing(6)
+        for layer_key in SKY_EXPLORER_LAYER_ORDER:
+            checkbox = self._sky_explorer_layer_inputs.get(layer_key)
+            if checkbox is not None:
+                sky_explorer_sources_layout.addWidget(checkbox)
+        sky_explorer_sources_group.setLayout(sky_explorer_sources_layout)
+
+        sky_explorer_general_tab = QWidget()
+        sky_explorer_general_layout = QVBoxLayout()
+        sky_explorer_general_layout.addLayout(sky_explorer_general_form_layout)
+        sky_explorer_general_layout.addWidget(sky_explorer_sources_group)
+        sky_explorer_general_layout.addStretch(1)
+        sky_explorer_general_tab.setLayout(sky_explorer_general_layout)
+
+        sky_explorer_visual_form_layout = QFormLayout()
+        self._sky_explorer_visual_form_layout = sky_explorer_visual_form_layout
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_visual_form_layout,
+            "Mag Limit Marker",
+            self._sky_explorer_mag_limit_marker_color_button,
+            "Fill color used for Mag Limit representative star markers on the Sky Explorer image.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Mag Limit Marker Stroke",
+            self._sky_explorer_mag_limit_marker_stroke_color_button,
+            "Stroke color used around Mag Limit representative star markers.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Mag Limit Marker Stroke Width",
+            self._sky_explorer_mag_limit_marker_stroke_width_input,
+            "Stroke width for Mag Limit representative star markers. Set to 0 to hide the marker outline.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Mag Limit Target Size",
+            self._sky_explorer_mag_limit_target_size_input,
+            "Radius in pixels used for Mag Limit representative star markers on the Sky Explorer image.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Mag Limit Text",
+            self._sky_explorer_mag_limit_text_color_button,
+            "Text color used for Mag Limit representative star labels on the Sky Explorer image.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Mag Limit Text Stroke",
+            self._sky_explorer_mag_limit_text_stroke_color_button,
+            "Outline color used around Mag Limit representative star labels.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Mag Limit Text Stroke Width",
+            self._sky_explorer_mag_limit_text_stroke_width_input,
+            "Outline width for Mag Limit representative star labels. Set to 0 to disable the text outline.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Mag Limit Text Size",
+            self._sky_explorer_mag_limit_text_size_input,
+            "Font size in points used for Mag Limit representative star labels.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
             "Extended Nebula Scale",
             self._sky_explorer_scale_extended_nebulae_input,
             "Expands Sky Explorer nebula overlays from catalog diameters so broad emission, reflection, and dark-nebula structures better cover their visible extent. Disable this for strict catalog-size circles.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_visual_form_layout,
             "Scale Stroke Width",
             self._sky_explorer_scale_overlay_strokes_input,
             "Scales Sky Explorer marker outline thickness with annotation size so large nebula and galaxy outlines remain readable. Disable this for fixed-width outlines.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_visual_form_layout,
             "Marker Color Relation",
             self._sky_explorer_marker_color_relation_input,
             "Controls whether generated Sky Explorer type colors use the brighter related color for marker fill and the darker color for stroke, or invert that relation.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_visual_form_layout,
             "Text Color Relation",
             self._sky_explorer_text_color_relation_input,
             "Controls whether Sky Explorer labels without an explicit text override use the darker or brighter related type color.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_visual_form_layout,
             "Fill Opacity",
             self._sky_explorer_fill_opacity_input,
             "Opacity used for filled Sky Explorer object markers. Lower values keep the image visible underneath large galaxies and nebulae; higher values make filled markers stronger.",
         )
         self._add_tooltip_form_row(
-            sky_explorer_form_layout,
+            sky_explorer_visual_form_layout,
             "Stroke Opacity",
             self._sky_explorer_stroke_opacity_input,
             "Opacity used for Sky Explorer marker outlines. Lower values make dense annotation fields quieter; higher values make object borders more prominent.",
@@ -12446,20 +12737,22 @@ class SettingsDialog(QDialog):
                 f"Main hue used for {group_title} Sky Explorer annotations. Object types inside this group keep nearby related colors.",
             )
         sky_explorer_group_colors_group.setLayout(sky_explorer_group_colors_layout)
-        sky_explorer_sources_group = QGroupBox("Catalog Sources")
-        sky_explorer_sources_layout = QVBoxLayout()
-        sky_explorer_sources_layout.setContentsMargins(8, 8, 8, 8)
-        sky_explorer_sources_layout.setSpacing(6)
-        for layer_key in SKY_EXPLORER_LAYER_ORDER:
-            checkbox = self._sky_explorer_layer_inputs.get(layer_key)
-            if checkbox is not None:
-                sky_explorer_sources_layout.addWidget(checkbox)
-        sky_explorer_sources_group.setLayout(sky_explorer_sources_layout)
+
+        sky_explorer_visual_tab = QWidget()
+        sky_explorer_visual_layout = QVBoxLayout()
+        sky_explorer_visual_layout.addLayout(sky_explorer_visual_form_layout)
+        sky_explorer_visual_layout.addWidget(sky_explorer_group_colors_group)
+        sky_explorer_visual_layout.addStretch(1)
+        sky_explorer_visual_tab.setLayout(sky_explorer_visual_layout)
+
+        self._sky_explorer_general_settings_tab = sky_explorer_general_tab
+        self._sky_explorer_visual_settings_tab = sky_explorer_visual_tab
+        self._sky_explorer_settings_subtabs = QTabWidget()
+        self._sky_explorer_settings_subtabs.addTab(self._sky_explorer_general_settings_tab, "General")
+        self._sky_explorer_settings_subtabs.addTab(self._sky_explorer_visual_settings_tab, "Visuals")
+
         sky_explorer_layout.addWidget(sky_explorer_description)
-        sky_explorer_layout.addLayout(sky_explorer_form_layout)
-        sky_explorer_layout.addWidget(sky_explorer_group_colors_group)
-        sky_explorer_layout.addWidget(sky_explorer_sources_group)
-        sky_explorer_layout.addStretch(1)
+        sky_explorer_layout.addWidget(self._sky_explorer_settings_subtabs, stretch=1)
         sky_explorer_tab.setLayout(sky_explorer_layout)
         self._sky_explorer_settings_tab = sky_explorer_tab
         advanced_description = QLabel(
@@ -12671,6 +12964,11 @@ class SettingsDialog(QDialog):
             shared_parallel_workers=self._shared_parallel_workers_input.value(),
             sky_atlas_custom_overlay_cache_max_long_edge=self._sky_atlas_custom_overlay_cache_max_long_edge_input.value(),
             sky_explorer_simbad_search_radius_arcsec=self._sky_explorer_simbad_search_radius_arcsec_input.value(),
+            sky_explorer_survey_field_ra_deg=self._sky_explorer_survey_field_ra_deg_input.value(),
+            sky_explorer_survey_field_dec_deg=self._sky_explorer_survey_field_dec_deg_input.value(),
+            sky_explorer_survey_field_fov_arcmin=self._sky_explorer_survey_field_fov_arcmin_input.value(),
+            sky_explorer_survey_field_width_px=self._sky_explorer_survey_field_width_px_input.value(),
+            sky_explorer_survey_field_height_px=self._sky_explorer_survey_field_height_px_input.value(),
             sky_explorer_gaia_max_magnitude=self._sky_explorer_gaia_max_magnitude_input.value(),
             sky_explorer_gaia_hard_cap_enabled=self._sky_explorer_gaia_hard_cap_enabled_input.isChecked(),
             sky_explorer_gaia_hard_cap_rows=self._sky_explorer_gaia_hard_cap_rows_input.value(),
@@ -13027,6 +13325,11 @@ class SettingsDialog(QDialog):
         self._comparison_fit_stop_match_index_input.setValue(defaults.comparison_fit_stop_match_index)
         self._comparison_fit_parallel_workers_input.setValue(max(0, defaults.comparison_fit_parallel_workers))
         self._sky_explorer_simbad_search_radius_arcsec_input.setValue(defaults.sky_explorer_simbad_search_radius_arcsec)
+        self._sky_explorer_survey_field_ra_deg_input.setValue(float(defaults.sky_explorer_survey_field_ra_deg))
+        self._sky_explorer_survey_field_dec_deg_input.setValue(float(defaults.sky_explorer_survey_field_dec_deg))
+        self._sky_explorer_survey_field_fov_arcmin_input.setValue(float(defaults.sky_explorer_survey_field_fov_arcmin))
+        self._sky_explorer_survey_field_width_px_input.setValue(int(defaults.sky_explorer_survey_field_width_px))
+        self._sky_explorer_survey_field_height_px_input.setValue(int(defaults.sky_explorer_survey_field_height_px))
         self._sky_explorer_gaia_max_magnitude_input.setValue(defaults.sky_explorer_gaia_max_magnitude)
         self._sky_explorer_gaia_hard_cap_enabled_input.setChecked(bool(defaults.sky_explorer_gaia_hard_cap_enabled))
         self._sky_explorer_gaia_hard_cap_rows_input.setValue(max(1, int(defaults.sky_explorer_gaia_hard_cap_rows)))
@@ -13148,7 +13451,7 @@ class SettingsDialog(QDialog):
         self._asteroid_visual_invert_annotation_colors_input.setChecked(defaults.asteroid_visual_invert_annotation_colors)
         self._asteroid_target_marker_line_color = str(defaults.asteroid_target_marker_line_color or "#ef4444").strip().lower() or "#ef4444"
         self._asteroid_target_marker_accent_color = str(defaults.asteroid_target_marker_accent_color or "#fca5a5").strip().lower() or "#fca5a5"
-        self._asteroid_target_marker_text_color = str(defaults.asteroid_target_marker_text_color or "#fff1f2").strip().lower() or "#fff1f2"
+        self._asteroid_target_marker_text_color = str(defaults.asteroid_target_marker_text_color or "#ffffff").strip().lower() or "#ffffff"
         self._asteroid_target_marker_outline_color = str(defaults.asteroid_target_marker_outline_color or "#ffffff").strip().lower() or "#ffffff"
         self._asteroid_target_marker_line_width_input.setValue(float(defaults.asteroid_target_marker_line_width))
         self._update_asteroid_target_marker_line_color_button()

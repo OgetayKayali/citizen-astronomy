@@ -29,7 +29,28 @@ from photometry_app.core.models import CatalogStar, FileScanResult, LightCurveSe
 from photometry_app.core.pipeline import PhotometryPipeline, PipelineCancelled, _AAVSO_ANALYZE_BEST_MAX_SATURATION_FRACTION, _AAVSO_ANALYZE_BEST_MIN_PEAK_ABOVE_SKY_ADU, _resolve_photometry_parallel_workers
 from photometry_app.core.photometry import measure_targets, resolve_aperture_profile
 from photometry_app.core.period_tasks import calculate_period_for_series, calculate_period_task
-from photometry_app.core.plotting import AnnotatedImageDisplay, AnnotatedImageRenderSettings, FitPeriodInferenceResult, LightCurveFitConfig, build_annotated_image_display, build_placeholder_annotated_image_display, render_image_path_for_display
+from photometry_app.core.plotting import AnnotatedImageDisplay, AnnotatedImageRenderSettings, FitPeriodInferenceResult, LightCurveFitConfig, build_annotated_image_display, build_annotated_image_display_from_array, build_placeholder_annotated_image_display, render_annotated_image, render_image_path_for_display
+from photometry_app.core.survey_images import (
+    SurveyFieldTileCacheEntry,
+    SurveyImageRequest,
+    compose_sky_explorer_survey_field_mosaic,
+    fetch_survey_image,
+    sky_explorer_survey_field_tile_spec,
+    write_survey_image_fits,
+    build_sky_explorer_field_wcs,
+)
+from photometry_app.core.survey_tiles import (
+    SurveyTileKey,
+    SurveyTileLoadResult,
+    SurveyTileResolution,
+    SurveyTileResultStatus,
+    SurveyTileTiming,
+    compute_survey_tile_stf_parameters,
+    is_survey_no_data_error,
+    render_survey_tile_display_rgba,
+    survey_tile_fetch_size,
+    survey_tile_sky_center,
+)
 from photometry_app.core.distance_map import build_distance_map
 from photometry_app.core.sky_explorer import explore_sky_image
 from photometry_app.core.settings import AppSettings, SkyAtlasCustomOverlayRecord
@@ -2910,6 +2931,248 @@ class SkyExplorerSurveyWorker(QThread):
 
         self.survey_completed.emit(result)
 
+
+
+@dataclass(frozen=True, slots=True)
+class SkyExplorerSurveyFieldMosaicBuildResult:
+    generation: int
+    output_path: Path
+    display: AnnotatedImageDisplay
+    qimage: QImage
+    center_i: int
+    center_j: int
+    center_ra_deg: float
+    center_dec_deg: float
+    detail_signature: str
+
+
+class SkyExplorerSurveyFieldMosaicWorker(QThread):
+    """Compose mosaic FITS + display/QImage off the UI thread."""
+
+    mosaic_completed = Signal(object)
+    mosaic_failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        generation: int,
+        survey_key: str,
+        tiles: dict[tuple[int, int], SurveyFieldTileCacheEntry],
+        center_i: int,
+        center_j: int,
+        origin_ra_deg: float,
+        origin_dec_deg: float,
+        fov_arcmin: float,
+        width_px: int,
+        height_px: int,
+        radius: int,
+        output_path: Path,
+        detail_signature: str,
+        render_settings: AnnotatedImageRenderSettings,
+        parent: object | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._generation = int(generation)
+        self._survey_key = str(survey_key)
+        self._tiles = tiles
+        self._center_i = int(center_i)
+        self._center_j = int(center_j)
+        self._origin_ra_deg = float(origin_ra_deg)
+        self._origin_dec_deg = float(origin_dec_deg)
+        self._fov_arcmin = float(fov_arcmin)
+        self._width_px = int(width_px)
+        self._height_px = int(height_px)
+        self._radius = int(radius)
+        self._output_path = Path(output_path)
+        self._detail_signature = str(detail_signature)
+        self._render_settings = render_settings
+
+    def run(self) -> None:
+        try:
+            mosaic_pixels, mosaic_wcs = compose_sky_explorer_survey_field_mosaic(
+                self._tiles,
+                center_i=self._center_i,
+                center_j=self._center_j,
+                origin_ra_deg=self._origin_ra_deg,
+                origin_dec_deg=self._origin_dec_deg,
+                fov_arcmin=self._fov_arcmin,
+                width_px=self._width_px,
+                height_px=self._height_px,
+                radius=self._radius,
+            )
+            write_survey_image_fits(
+                self._output_path,
+                image_data=mosaic_pixels,
+                wcs=mosaic_wcs,
+            )
+            pixels = np.asarray(mosaic_pixels)
+            if pixels.ndim == 3:
+                color_data = np.asarray(pixels[..., :3], dtype=float)
+                data = np.asarray(np.mean(color_data, axis=-1), dtype=float)
+            else:
+                color_data = None
+                data = np.asarray(pixels, dtype=float)
+            display = build_annotated_image_display_from_array(
+                data,
+                image_path=self._output_path,
+                color_data=color_data,
+                recommended_stretch_mode="stf",
+            )
+            rendered = np.ascontiguousarray(render_annotated_image(display, self._render_settings))
+            if rendered.ndim == 2:
+                height, width = rendered.shape
+                qimage = QImage(
+                    rendered.data,
+                    width,
+                    height,
+                    rendered.strides[0],
+                    QImage.Format.Format_Grayscale8,
+                ).copy()
+            elif rendered.ndim == 3 and rendered.shape[2] == 3:
+                height, width, _channels = rendered.shape
+                qimage = QImage(
+                    rendered.data,
+                    width,
+                    height,
+                    rendered.strides[0],
+                    QImage.Format.Format_RGB888,
+                ).copy()
+            else:
+                raise ValueError("Rendered survey mosaic must be grayscale or RGB.")
+            center_spec = sky_explorer_survey_field_tile_spec(
+                origin_ra_deg=self._origin_ra_deg,
+                origin_dec_deg=self._origin_dec_deg,
+                fov_arcmin=self._fov_arcmin,
+                tile_i=self._center_i,
+                tile_j=self._center_j,
+            )
+            self.mosaic_completed.emit(
+                SkyExplorerSurveyFieldMosaicBuildResult(
+                    generation=self._generation,
+                    output_path=self._output_path,
+                    display=display,
+                    qimage=qimage,
+                    center_i=self._center_i,
+                    center_j=self._center_j,
+                    center_ra_deg=float(center_spec.ra_deg),
+                    center_dec_deg=float(center_spec.dec_deg),
+                    detail_signature=self._detail_signature,
+                )
+            )
+        except Exception as exc:
+            self.mosaic_failed.emit(str(exc))
+
+
+class SkyExplorerSurveyTileWorker(QThread):
+    """Fetch one survey tile and produce per-tile STF + display RGBA off the GUI thread."""
+
+    tile_completed = Signal(object)
+    tile_failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        session_id: int,
+        tile_key: SurveyTileKey,
+        resolution: SurveyTileResolution,
+        request_generation: int,
+        cache_dir: Path,
+        parent: object | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._session_id = int(session_id)
+        self._tile_key = tile_key
+        self._resolution = resolution
+        self._request_generation = int(request_generation)
+        self._cache_dir = Path(cache_dir)
+
+    def run(self) -> None:
+        started = perf_counter()
+        download_ms = 0.0
+        process_ms = 0.0
+        stf_ms = 0.0
+        try:
+            ra_deg, dec_deg = survey_tile_sky_center(self._tile_key)
+            fetch_width, fetch_height = survey_tile_fetch_size(
+                width_px=self._tile_key.width_px,
+                height_px=self._tile_key.height_px,
+                resolution=self._resolution,
+            )
+            field_wcs = build_sky_explorer_field_wcs(
+                ra_deg=ra_deg,
+                dec_deg=dec_deg,
+                fov_arcmin=self._tile_key.fov_arcmin,
+                width_px=fetch_width,
+                height_px=fetch_height,
+            )
+            request = SurveyImageRequest(
+                survey_key=self._tile_key.survey_key,
+                wcs=field_wcs,
+                width=int(fetch_width),
+                height=int(fetch_height),
+                target_rect=(0.0, 0.0, float(fetch_width), float(fetch_height)),
+                cache_dir=self._cache_dir,
+            )
+            download_started = perf_counter()
+            try:
+                result = fetch_survey_image(request)
+                image_data = np.asarray(result.image_data)
+            except Exception as exc:
+                message = str(exc)
+                status = (
+                    SurveyTileResultStatus.NO_DATA
+                    if is_survey_no_data_error(message)
+                    else SurveyTileResultStatus.FAILED_RETRYABLE
+                )
+                self.tile_completed.emit(
+                    SurveyTileLoadResult(
+                        session_id=self._session_id,
+                        layer_id=self._tile_key.layer_id,
+                        tile_key=self._tile_key,
+                        resolution=self._resolution,
+                        status=status,
+                        image_data=None,
+                        display_rgba=None,
+                        stf_parameters=None,
+                        valid_pixel_fraction=0.0,
+                        error_message=message,
+                        timing=SurveyTileTiming(download_ms=(perf_counter() - download_started) * 1000.0),
+                        ra_deg=ra_deg,
+                        dec_deg=dec_deg,
+                    )
+                )
+                return
+            download_ms = (perf_counter() - download_started) * 1000.0
+            process_started = perf_counter()
+            stf = compute_survey_tile_stf_parameters(image_data)
+            stf_ms = (perf_counter() - process_started) * 1000.0
+            render_started = perf_counter()
+            display_rgba = render_survey_tile_display_rgba(image_data, stf)
+            process_ms = (perf_counter() - render_started) * 1000.0 + stf_ms
+            self.tile_completed.emit(
+                SurveyTileLoadResult(
+                    session_id=self._session_id,
+                    layer_id=self._tile_key.layer_id,
+                    tile_key=self._tile_key,
+                    resolution=self._resolution,
+                    status=SurveyTileResultStatus.SUCCESS,
+                    image_data=np.asarray(image_data),
+                    display_rgba=display_rgba,
+                    stf_parameters=stf,
+                    valid_pixel_fraction=float(stf.valid_pixel_fraction),
+                    error_message=None,
+                    timing=SurveyTileTiming(
+                        download_ms=download_ms,
+                        process_ms=process_ms,
+                        stf_ms=stf_ms,
+                        queue_ms=0.0,
+                    ),
+                    ra_deg=ra_deg,
+                    dec_deg=dec_deg,
+                )
+            )
+        except Exception as exc:
+            self.tile_failed.emit(str(exc))
 
 
 class DistanceMapWorker(QThread):

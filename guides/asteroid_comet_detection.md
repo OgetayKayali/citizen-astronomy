@@ -414,6 +414,8 @@ Camera modes include:
 - Object Follow
 - Earth Follow
 
+**Save** exports a still (PNG/JPG) or an animation (GIF/MP4) of the current timeline. For animations, choose a **Camera motion** preset: Fixed keeps the current angle, Slow orbit turns around the current look-at, and Object chase follows the selected target while orbiting. Motions keep your current zoom and start from the current view. When **Animate debris** is on, Meteor Stream particles keep drifting in the exported video.
+
 Span presets typically include a local window around the observations plus ±90d, ±180d, 1y, and 5y. Extending the span keeps the currently selected target set.
 
 ### Objects Menu
@@ -453,7 +455,7 @@ Store telescope, camera, focal length, aperture, pixel size, derived pixel scale
 
 Under Asteroid/Comet Visuals you can control:
 
-- Labels and prediction crosshairs
+- Labels (optional) and Target Marker for the selected object
 - Selected-object highlighting versus other generated objects
 - Overlay circle / line / label colors and sizes (also themeable)
 - Invert-aware annotation colors
@@ -478,7 +480,7 @@ Prefer the Work Log while long tasks run. Generate, Align, Discover, and Estimat
 | Synthetic Track preview | Preview dialog export |
 | Residual debug products | Discover debug / test paths under working outputs |
 
-Blink export uses the configured blink cadence and GIF scale. Animations are especially useful for talks, classroom demos, and sharing a mover that is obvious only when frames are played in sequence.
+Blink export uses the configured blink cadence and GIF scale. Default save names include the selected object (for example `(511) Davida_blink.gif` or `2015 CU58_trail.gif`). Animations are especially useful for talks, classroom demos, and sharing a mover that is obvious only when frames are played in sequence.
 
 ---
 

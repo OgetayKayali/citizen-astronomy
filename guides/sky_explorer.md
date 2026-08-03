@@ -11,7 +11,7 @@ Every deep image is denser than it looks. Behind the obvious bright star or the 
 - **Identify what is in your field.** Deep-sky objects, stars, variables, exoplanet hosts, Gaia sources, and known solar-system bodies are matched to your WCS footprint and drawn on the image.
 - **Choose how deep the census goes.** Cycle object-type modes from **Simple** (six common deep-sky classes) through **Advanced** to **Scientific** (SIMBAD-style type codes).
 - **Compare with survey imaging.** Overlay DSS2 Blue, SHS Hα, PanSTARRS, or IPHAS Hα cutouts with an interactive divider so you can compare your frame to public survey data.
-- **Annotate by hand.** Draw circles, ellipses, and text labels; edit stroke, fill, weight, opacity, and fonts; keep automatic catalog overlays on or off.
+- **Annotate by hand.** Draw circles, ellipses, rulers, and text labels; edit stroke, fill, weight, opacity, and fonts; keep automatic catalog overlays on or off.
 - **Probe magnitude reach.** Use **Tools → Estimate magnitude limit...** to mark a Gaia magnitude ladder or estimate the actual detection limit from SNR probing.
 - **Export the view.** Save still images of the annotated field, GIF/MP4 comparison animations when a survey layer is loaded, or **Tools → Create collage** for catalog objects that have usable angular-size metadata.
 
@@ -27,7 +27,12 @@ Catalog pages and planetarium software know the sky in the abstract. Sky Explore
 
 Enter **Sky Explorer** from the mode launcher or the mode menu.
 
-Click **Open** (or use `File > Open File`) and choose a source image. Supported formats:
+Click **Open** (or use `File > Open File`) to choose how to start:
+
+- **Upload image** opens the usual file picker for a FITS, XISF, TIFF, PNG, or JPEG source image.
+- **Sky survey** downloads a survey field as the primary image using the initial RA, Dec, FOV, and pixel size from **Settings → Sky Explorer** (default center: Trifid Nebula / M20). The center tile loads as a low-res preview, then its detail refine starts before surrounding tiles; neighbors follow with the same preview→detail pattern. Each tile keeps its own stretch, so brightness does not jump when neighbors arrive. Loaded tiles stay available when you pan away and return; empty survey coverage shows a hatched “No survey coverage” tile instead of a black square. Panning stays responsive because network and stretch work run off the UI thread. **Explore** catalogs the full visible mosaic (not only the center cell), and markers are not clipped at tile edges. **Comparison** stays available so you can wipe against another survey (or swap in an uploaded image); the wipe bar spans the full view, and a comparison survey loads with the same center-first tiled path as the primary field.
+
+Supported upload formats:
 
 - `.fits` / `.fit`
 - `.xisf`
@@ -35,7 +40,7 @@ Click **Open** (or use `File > Open File`) and choose a source image. Supported 
 - `.png`
 - `.jpg` / `.jpeg`
 
-The image preview loads into the panel. The primary button switches from **Open** to **Explore**. Status text indicates that the image is ready to explore.
+The image preview loads into the panel. The primary button switches from **Open** to **Explore**. After a successful Explore, selecting additional object types changes that button to **Update** so only the newly enabled layers are queried.
 
 Sky Explorer works on **one image at a time** (not a time-series folder). Prefer a frame with a valid celestial WCS already written into the headers. If WCS is missing, configure an **astrometry.net API key** in Settings so CAst can solve the frame before catalog queries.
 
@@ -165,19 +170,14 @@ The **Display** menu controls how your source image is stretched for viewing:
 
 Also available: **Curves**, **Invert**, and **Reset**. Stretching is for inspection; catalog positions come from WCS, not from the display transform.
 
-### Surveys
+### Comparison
 
-Open **Surveys** and pick a HiPS survey cutout aligned to your WCS:
+Click **Comparison** after a primary image is loaded (including a survey field opened via **Open → Sky survey**):
 
-- **None**
-- **DSS2 Blue**
-- **SHS Ha**
-- **PanSTARRS**
-- **IPHAS DR2 Ha**
+- **Upload image** loads a second image as a full-frame comparison overlay. If the current primary image was opened from a survey field, the upload becomes the new primary image and the original survey is reloaded as the comparison layer.
+- **Sky survey** loads a HiPS survey cutout aligned to your source-image WCS and lazy-loads tiles as you pan (no fixed field lock). On a survey primary, comparison uses the same tiled center→refine→neighbors loader as the primary field, and the wipe bar divides the full view left-to-right across the mosaic (not only the central cell).
 
-When a survey is active, an interactive divider lets you wipe between your image and the survey raster. Nested Display controls can stretch the survey pane independently. Pan/zoom may refine the cutout after the view settles.
-
-Survey rasters are cached locally (Sky Explorer survey cache) so repeat comparisons are faster.
+When a comparison is active, an interactive divider lets you wipe between the primary image and the comparison layer. The **Display** menu now contains both **Image** and **Comparison** sections so each side can be stretched independently. Survey downloads are cached only for the current session (to keep pans and refinements fast) and are deleted when CAst closes.
 
 ### Estimate magnitude limit
 
@@ -201,6 +201,7 @@ Toolbar tools (icon buttons):
 - **Mouse** — select / manipulate
 - **Circle**
 - **Ellipse**
+- **Ruler** — drag between two points; shows pixel distance, or angular distance (arcsec / arcmin / degrees) when WCS is available, with units chosen automatically by magnitude
 - **Text**
 
 The **Properties** strip edits **Stroke**, **Fill**, **Text**, **Weight**, and **Opacity** (opacity can be adjusted by dragging). Text styles include Regular, Bold, Italic, and Bold Italic.
@@ -263,26 +264,36 @@ Save as GIF or MP4 (`{stem}_sky_explorer_comparison.gif` by default). MP4 needs 
 
 ## Settings
 
-Open **Settings → Sky Explorer**.
+Open **Settings → Sky Explorer**. Settings are split into **General** and **Visuals** tabs.
 
-Intro text in the dialog: *Sky Explorer settings control the manual SIMBAD lookup radius and which background search sources are allowed when Explore resolves a field.*
+Intro text in the dialog: *Sky Explorer settings control the initial Open → Sky survey field (default: Trifid Nebula), the manual SIMBAD lookup radius, and which background search sources are allowed when Explore resolves a field.*
+
+### General
 
 | Setting | What it does |
 |---------|----------------|
+| **Survey Field RA / Dec** | Initial center when Open starts from a sky survey (default: Trifid Nebula / M20) |
+| **Survey Field FOV** | Field of view for the survey-as-primary WCS canvas cell (default 45′). About 10× this area is available to pan while the survey overlay loads asynchronously. |
+| **Survey Field Width / Height** | Pixel size used for the survey-as-primary WCS canvas grid (default 1024×1024) |
 | **Search Radius** | Cone radius (arcseconds) for right-click **Search** / **Detect** (default 10″) |
 | **Gaia Max Mag** | Magnitude ceiling for Gaia / VSX / exoplanet filtering of non–deep-sky hits (default 17) |
 | **Gaia Hard Cap** / **Gaia Cap Rows** | Optional hard limit on Gaia rows retrieved |
 | **Mag Limit Examples** | Default stars to label per magnitude bin (also set in the Mag Limit dialog) |
-| Mag Limit marker / text colors and sizes | Appearance of Mag Limit annotations |
 | **Galaxy Mag Limit** / **Galaxy Max Mag** | Optionally hide faint or unknown-magnitude galaxies on the overlay |
 | **Galaxy Shape Only** | Only draw galaxies that have ellipse metadata |
+| **Catalog Sources** | Enable/disable: SIMBAD Deep Sky, SIMBAD General Objects, Solar System Objects, VSX Variable Stars, Gaia DR3 Stars, NASA Exoplanet Hosts |
+
+### Visuals
+
+| Setting | What it does |
+|---------|----------------|
+| Mag Limit marker / text colors and sizes | Appearance of Mag Limit annotations |
 | **Extended Nebula Scale** | Enlarge nebula overlays for visibility |
 | **Scale Stroke Width** | Thicken outlines on large objects |
 | **Marker Color Relation** | Fill bright / stroke dark (or the inverse) |
 | **Text Color Relation** | Dark or bright default labels |
 | **Fill Opacity** / **Stroke Opacity** | Automatic marker transparency |
 | **Object Group Colors** | Base hues per result group |
-| **Catalog Sources** | Enable/disable: SIMBAD Deep Sky, SIMBAD General Objects, Solar System Objects, VSX Variable Stars, Gaia DR3 Stars, NASA Exoplanet Hosts |
 
 Also persisted automatically: splitter sizes, column widths, and per-type style overrides from the type table.
 
@@ -305,7 +316,7 @@ Global settings that matter here: **Astrometry API Key**, observing site, and im
 
 HASH planetary nebulae are queried live from CDS/VizieR catalogue **V/163** (`pnmain`) whenever the Deep Sky layer is enabled. CAst does not redistribute the HASH database. Inspector metadata includes HASH status (true / likely / possible / candidate / mimic), morphology, sizes, and spectrum-availability flags from that catalogue. If you use these results in a publication, cite Parker, Bojičić & Frew 2016, acknowledge the HASH PN database, and acknowledge VizieR/CDS.
 
-Results and solves are cached under Sky Explorer catalog / WCS / survey cache directories so repeat work on the same field is cheaper.
+Results and plate-solves are cached under Sky Explorer catalog / WCS directories so repeat Explore work on the same field is cheaper. Survey image downloads are session-only and are deleted when CAst closes.
 
 ---
 
@@ -316,7 +327,7 @@ Results and solves are cached under Sky Explorer catalog / WCS / survey cache di
 3. Collapse groups you do not need; click interesting rows and use **Center Object**.
 4. Switch to **Advanced** or **Scientific** and re-Explore if you need stars, variables, AGN, or SSO.
 5. Use **Tools → Estimate magnitude limit...** to judge depth; toggle **Auto** off if overlays clutter a presentation frame.
-6. Load **DSS2 Blue** or an Hα survey and scrub the divider for a before/after comparison.
+6. Click **Comparison** to load **DSS2 Blue**, an H-alpha survey, or a second uploaded image, then scrub the divider for a before/after comparison.
 7. Add a few manual labels for teaching slides; **Export → Image...** or **Animation...**. Use **Tools → Create collage** when you want a multi-object size-aware figure of galaxies/nebulae from the same frame.
 
 ---

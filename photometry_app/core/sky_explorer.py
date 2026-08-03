@@ -24,6 +24,7 @@ from photometry_app.core.models import CatalogStar, SolvedField
 from photometry_app.core.scanner import inspect_fits_file
 from photometry_app.core.settings import AppSettings
 from photometry_app.core.solar_system import SolarSystemSearchResult, search_nearby_known_solar_system_objects
+from photometry_app.core.survey_images import SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS
 from photometry_app.core.wcs import AstrometryNetClient, celestial_wcs, extract_solved_field, infer_astrometry_solve_hints, validate_wcs
 
 
@@ -1311,7 +1312,16 @@ def explore_sky_image(
     if progress_callback is not None:
         progress_callback("Checking the image WCS and field footprint.")
     solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=progress_callback)
-    footprint = _build_field_footprint(solved_field)
+    survey_mosaic = _is_sky_explorer_survey_tile_wcs_canvas(source_path)
+    if survey_mosaic:
+        solved_field = _expand_solved_field_for_survey_mosaic(solved_field)
+        if progress_callback is not None:
+            progress_callback(
+                f"Survey mosaic Explore covers ~{solved_field.radius_deg:.3f} deg "
+                f"({2 * SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS + 1}×"
+                f"{2 * SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS + 1} tiles)."
+            )
+    footprint = _build_field_footprint(solved_field, survey_mosaic=survey_mosaic)
     wcs = celestial_wcs(read_header(solved_field.wcs_path))
     field_center = SkyCoord(footprint.center_ra_deg * u.deg, footprint.center_dec_deg * u.deg)
     objects: list[SkyExplorerObject] = []
@@ -1581,23 +1591,61 @@ def _resolve_source_field(
     return result.solved_field, True
 
 
-def _build_field_footprint(solved_field: SolvedField) -> SkyExplorerFieldFootprint:
+def _is_sky_explorer_survey_tile_wcs_canvas(source_path: Path) -> bool:
+    name = Path(source_path).name.lower()
+    return "tile-wcs-" in name
+
+
+def _expand_solved_field_for_survey_mosaic(solved_field: SolvedField) -> SolvedField:
+    """Inflate the catalog search radius to cover the survey-as-primary tile ring."""
+    # One-tile half-diagonal → mosaic half-diagonal spanning ±MOSAIC_RADIUS tiles.
+    mosaic_factor = float(2 * SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS + 1)
+    center_ra_deg = float(solved_field.center_ra_deg)
+    center_dec_deg = float(solved_field.center_dec_deg)
+    try:
+        wcs = celestial_wcs(read_header(solved_field.wcs_path))
+        # After pan/recenter, CRVAL is the current mosaic-center tile sky, while
+        # pixel (W/2, H/2) may still point at a different tile.
+        center_ra_deg = float(wcs.wcs.crval[0]) % 360.0
+        center_dec_deg = float(wcs.wcs.crval[1])
+    except Exception:
+        pass
+    return replace(
+        solved_field,
+        center_ra_deg=center_ra_deg,
+        center_dec_deg=center_dec_deg,
+        radius_deg=max(float(solved_field.radius_deg) * mosaic_factor, float(solved_field.radius_deg)),
+    )
+
+
+def _build_field_footprint(
+    solved_field: SolvedField,
+    *,
+    survey_mosaic: bool = False,
+) -> SkyExplorerFieldFootprint:
     wcs = celestial_wcs(read_header(solved_field.wcs_path))
     width_deg = None
     height_deg = None
+    mosaic_radius = SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS if survey_mosaic else 0
+    mosaic_span = float(2 * mosaic_radius + 1)
     try:
         scales = proj_plane_pixel_scales(wcs.celestial) * 3600.0
-        width_deg = float(scales[0] * solved_field.width) / 3600.0
-        height_deg = float(scales[1] * solved_field.height) / 3600.0
+        width_deg = float(scales[0] * solved_field.width * mosaic_span) / 3600.0
+        height_deg = float(scales[1] * solved_field.height * mosaic_span) / 3600.0
     except Exception:
         width_deg = None
         height_deg = None
     corners: list[SkyExplorerCorner] = []
+    # Mosaic tiles occupy [−R·W, (R+1)·W) × [−R·H, (R+1)·H) in image coords.
+    x_min = -float(mosaic_radius) * float(solved_field.width)
+    y_min = -float(mosaic_radius) * float(solved_field.height)
+    x_max = float(mosaic_radius + 1) * float(solved_field.width) - 1.0
+    y_max = float(mosaic_radius + 1) * float(solved_field.height) - 1.0
     corner_points = (
-        ("Top Left", 0.0, 0.0),
-        ("Top Right", float(max(0, solved_field.width - 1)), 0.0),
-        ("Bottom Right", float(max(0, solved_field.width - 1)), float(max(0, solved_field.height - 1))),
-        ("Bottom Left", 0.0, float(max(0, solved_field.height - 1))),
+        ("Top Left", x_min, y_min),
+        ("Top Right", x_max, y_min),
+        ("Bottom Right", x_max, y_max),
+        ("Bottom Left", x_min, y_max),
     )
     for label, x_coord, y_coord in corner_points:
         world = wcs.pixel_to_world(x_coord, y_coord)
@@ -2766,6 +2814,11 @@ def _pixel_position_for_coordinates(
         return None
     if not np_is_finite(pixel_x) or not np_is_finite(pixel_y):
         return None
+    # Survey-as-primary mosaics place tiles outside the central W×H plate (including
+    # negative mosaic coords after pan/recenter). Catalog cone searches already limit
+    # which sky positions are considered, so only require a finite projection here.
+    if _is_sky_explorer_survey_tile_wcs_canvas(solved_field.wcs_path):
+        return float(pixel_x), float(pixel_y)
     if pixel_x < 0.0 or pixel_y < 0.0 or pixel_x >= float(solved_field.width) or pixel_y >= float(solved_field.height):
         return None
     return float(pixel_x), float(pixel_y)
@@ -3467,3 +3520,46 @@ def np_is_finite(value: object) -> bool:
         return bool(math.isfinite(float(value)))
     except (TypeError, ValueError):
         return False
+
+
+def format_sky_explorer_angular_distance(arcsec: float) -> str:
+    """Format an angular separation with auto-selected arcsec / arcmin / degree units."""
+    value_arcsec = float(arcsec)
+    if not math.isfinite(value_arcsec):
+        return "—"
+    abs_arcsec = abs(value_arcsec)
+    if abs_arcsec < 60.0:
+        return f'{value_arcsec:.2f}"'
+    abs_arcmin = abs_arcsec / 60.0
+    if abs_arcmin < 60.0:
+        return f"{value_arcsec / 60.0:.2f}'"
+    return f"{value_arcsec / 3600.0:.3f}°"
+
+
+def format_sky_explorer_ruler_distance_label(
+    *,
+    pixel_distance: float,
+    angular_separation_arcsec: float | None,
+) -> str:
+    """Label for a Sky Explorer ruler: angular units when WCS is available, otherwise pixels."""
+    if angular_separation_arcsec is not None and math.isfinite(float(angular_separation_arcsec)):
+        return format_sky_explorer_angular_distance(float(angular_separation_arcsec))
+    distance_px = float(pixel_distance)
+    if not math.isfinite(distance_px):
+        return "—"
+    if abs(distance_px) >= 100.0:
+        return f"{distance_px:.0f} px"
+    if abs(distance_px) >= 10.0:
+        return f"{distance_px:.1f} px"
+    return f"{distance_px:.2f} px"
+
+
+def sky_explorer_angular_separation_arcsec(
+    ra_a_deg: float,
+    dec_a_deg: float,
+    ra_b_deg: float,
+    dec_b_deg: float,
+) -> float:
+    first = SkyCoord(float(ra_a_deg) * u.deg, float(dec_a_deg) * u.deg, frame="icrs")
+    second = SkyCoord(float(ra_b_deg) * u.deg, float(dec_b_deg) * u.deg, frame="icrs")
+    return float(first.separation(second).arcsec)

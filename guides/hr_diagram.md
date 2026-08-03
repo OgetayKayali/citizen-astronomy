@@ -30,6 +30,8 @@ Amateur images of open clusters, globular clusters, and rich Milky Way fields al
 
 Switch to **HR Diagram** mode and open a single FITS, FIT, or XISF image with `File > Open File`.
 
+The first time you enter HR mode in a given app version, CAst shows a short prerequisites reminder. You can check **Don't show again for this version** to hide it until the next update (default is to show it again after each new version).
+
 HR mode expects:
 
 - a **plate-solved** image with usable celestial WCS
@@ -289,10 +291,20 @@ The left **Image** view keeps your original field in context:
 - selection circles for plot selection, table selection, or motion-group members
 - optional Gaia proper-motion vectors for the currently plotted subset
 - vector color/width settings, plus optional color-by-angle mapping so similar directions share similar hues
-- Ctrl + click a star on the image to select it (highlights the plot/table and enables catalog browser buttons)
+- Double-click a star on the image to select it (highlights the plot/table and enables catalog browser buttons)
 - multi-select Source Results rows to add/remove them from the plot or clear manual overrides
 - **Save Image...** for the current annotated view
 - **Show Motion / Hide Motion** to toggle Gaia proper-motion vectors for the currently plotted subset
+
+### Display menu (Source Image)
+
+Open **Display** on the HR toolbar for Source Image presentation controls:
+
+- **Show RA/Dec** (default on): live RA/Dec readout at the top-left of the image while hovering (same style as Sky Explorer; independent HR setting)
+- **Show Grid** (default off): equatorial RA/Dec grid overlay (same style as Differential Photometry; independent HR setting)
+- **RA Density** / **Dec Density** (2–12): grid spacing controls, enabled when Show Grid is on
+
+These HR Display options do not change Sky Explorer or Differential Photometry settings.
 
 RGB source previews remain in color so the eye can compare the plot to the field.
 

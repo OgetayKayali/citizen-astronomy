@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import math
+
 import os
 
 import uuid
@@ -407,6 +409,16 @@ class AppSettings:
 
     hr_plot_require_parallax: bool = True
 
+    hr_show_ra_dec: bool = True
+
+    hr_equatorial_grid_enabled: bool = False
+
+    hr_equatorial_grid_ra_density: int = 5
+
+    hr_equatorial_grid_dec_density: int = 5
+
+    hr_prerequisites_warning_dismissed_version: str = ""
+
     hr_motion_group_preset: str = "default"
 
     hr_motion_group_method: str = "auto"
@@ -444,6 +456,17 @@ class AppSettings:
     sky_explorer_results_column_widths: list[int] | None = None
 
     sky_explorer_simbad_search_radius_arcsec: float = 10.0
+
+    # Initial survey-field window when Open → Sky survey (Trifid Nebula).
+    sky_explorer_survey_field_ra_deg: float = 270.63
+
+    sky_explorer_survey_field_dec_deg: float = -23.03
+
+    sky_explorer_survey_field_fov_arcmin: float = 45.0
+
+    sky_explorer_survey_field_width_px: int = 1024
+
+    sky_explorer_survey_field_height_px: int = 1024
 
     sky_explorer_gaia_max_magnitude: float = 17.0
 
@@ -607,7 +630,7 @@ class AppSettings:
 
     asteroid_target_marker_accent_color: str = "#fca5a5"
 
-    asteroid_target_marker_text_color: str = "#fff1f2"
+    asteroid_target_marker_text_color: str = "#ffffff"
 
     asteroid_target_marker_outline_color: str = "#ffffff"
 
@@ -1740,6 +1763,16 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
         hr_plot_require_parallax=bool(payload.get("hr_plot_require_parallax", True)),
 
+        hr_show_ra_dec=bool(payload.get("hr_show_ra_dec", True)),
+
+        hr_equatorial_grid_enabled=bool(payload.get("hr_equatorial_grid_enabled", False)),
+
+        hr_equatorial_grid_ra_density=min(12, max(2, int(payload.get("hr_equatorial_grid_ra_density", 5)))),
+
+        hr_equatorial_grid_dec_density=min(12, max(2, int(payload.get("hr_equatorial_grid_dec_density", 5)))),
+
+        hr_prerequisites_warning_dismissed_version=str(payload.get("hr_prerequisites_warning_dismissed_version", "") or "").strip()[:64],
+
         hr_motion_group_preset=hr_motion_group_preset,
 
         hr_motion_group_method=hr_motion_group_method,
@@ -1766,6 +1799,11 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         sky_explorer_object_type_column_widths=_coerce_sky_explorer_object_type_column_widths(payload.get("sky_explorer_object_type_column_widths")),
         sky_explorer_results_column_widths=_coerce_sky_explorer_results_column_widths(payload.get("sky_explorer_results_column_widths")),
         sky_explorer_simbad_search_radius_arcsec=_coerce_sky_explorer_simbad_search_radius_arcsec(payload.get("sky_explorer_simbad_search_radius_arcsec", 10.0)),
+        sky_explorer_survey_field_ra_deg=_coerce_sky_explorer_survey_field_ra_deg(payload.get("sky_explorer_survey_field_ra_deg", 270.63)),
+        sky_explorer_survey_field_dec_deg=_coerce_sky_explorer_survey_field_dec_deg(payload.get("sky_explorer_survey_field_dec_deg", -23.03)),
+        sky_explorer_survey_field_fov_arcmin=_coerce_sky_explorer_survey_field_fov_arcmin(payload.get("sky_explorer_survey_field_fov_arcmin", 45.0)),
+        sky_explorer_survey_field_width_px=_coerce_sky_explorer_survey_field_pixels(payload.get("sky_explorer_survey_field_width_px", 1024)),
+        sky_explorer_survey_field_height_px=_coerce_sky_explorer_survey_field_pixels(payload.get("sky_explorer_survey_field_height_px", 1024)),
         sky_explorer_gaia_max_magnitude=_coerce_sky_explorer_gaia_max_magnitude(payload.get("sky_explorer_gaia_max_magnitude", 17.0)),
         sky_explorer_gaia_hard_cap_enabled=bool(payload.get("sky_explorer_gaia_hard_cap_enabled", False)),
         sky_explorer_gaia_hard_cap_rows=_coerce_sky_explorer_gaia_hard_cap_rows(payload.get("sky_explorer_gaia_hard_cap_rows", 1000)),
@@ -1884,7 +1922,7 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
         asteroid_target_marker_accent_color=_coerce_hex_color(payload.get("asteroid_target_marker_accent_color"), default="#fca5a5"),
 
-        asteroid_target_marker_text_color=_coerce_hex_color(payload.get("asteroid_target_marker_text_color"), default="#fff1f2"),
+        asteroid_target_marker_text_color=_coerce_hex_color(payload.get("asteroid_target_marker_text_color"), default="#ffffff"),
 
         asteroid_target_marker_outline_color=_coerce_hex_color(payload.get("asteroid_target_marker_outline_color"), default="#ffffff"),
 
@@ -2298,6 +2336,16 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
 
         "hr_plot_require_parallax": bool(settings.hr_plot_require_parallax),
 
+        "hr_show_ra_dec": bool(settings.hr_show_ra_dec),
+
+        "hr_equatorial_grid_enabled": bool(settings.hr_equatorial_grid_enabled),
+
+        "hr_equatorial_grid_ra_density": min(12, max(2, int(settings.hr_equatorial_grid_ra_density))),
+
+        "hr_equatorial_grid_dec_density": min(12, max(2, int(settings.hr_equatorial_grid_dec_density))),
+
+        "hr_prerequisites_warning_dismissed_version": str(settings.hr_prerequisites_warning_dismissed_version or "").strip()[:64],
+
         "hr_motion_group_preset": hr_motion_group_preset,
 
         "hr_motion_group_method": hr_motion_group_method,
@@ -2324,6 +2372,11 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "sky_explorer_object_type_column_widths": _coerce_sky_explorer_object_type_column_widths(settings.sky_explorer_object_type_column_widths),
         "sky_explorer_results_column_widths": _coerce_sky_explorer_results_column_widths(settings.sky_explorer_results_column_widths),
         "sky_explorer_simbad_search_radius_arcsec": _coerce_sky_explorer_simbad_search_radius_arcsec(settings.sky_explorer_simbad_search_radius_arcsec),
+        "sky_explorer_survey_field_ra_deg": _coerce_sky_explorer_survey_field_ra_deg(settings.sky_explorer_survey_field_ra_deg),
+        "sky_explorer_survey_field_dec_deg": _coerce_sky_explorer_survey_field_dec_deg(settings.sky_explorer_survey_field_dec_deg),
+        "sky_explorer_survey_field_fov_arcmin": _coerce_sky_explorer_survey_field_fov_arcmin(settings.sky_explorer_survey_field_fov_arcmin),
+        "sky_explorer_survey_field_width_px": _coerce_sky_explorer_survey_field_pixels(settings.sky_explorer_survey_field_width_px),
+        "sky_explorer_survey_field_height_px": _coerce_sky_explorer_survey_field_pixels(settings.sky_explorer_survey_field_height_px),
         "sky_explorer_gaia_max_magnitude": _coerce_sky_explorer_gaia_max_magnitude(settings.sky_explorer_gaia_max_magnitude),
         "sky_explorer_gaia_hard_cap_enabled": bool(settings.sky_explorer_gaia_hard_cap_enabled),
         "sky_explorer_gaia_hard_cap_rows": _coerce_sky_explorer_gaia_hard_cap_rows(settings.sky_explorer_gaia_hard_cap_rows),
@@ -2448,7 +2501,7 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
 
         "asteroid_target_marker_accent_color": _coerce_hex_color(settings.asteroid_target_marker_accent_color, default="#fca5a5"),
 
-        "asteroid_target_marker_text_color": _coerce_hex_color(settings.asteroid_target_marker_text_color, default="#fff1f2"),
+        "asteroid_target_marker_text_color": _coerce_hex_color(settings.asteroid_target_marker_text_color, default="#ffffff"),
 
         "asteroid_target_marker_outline_color": _coerce_hex_color(settings.asteroid_target_marker_outline_color, default="#ffffff"),
 
@@ -2976,6 +3029,44 @@ def _coerce_sky_explorer_simbad_search_radius_arcsec(value: object) -> float:
         return 10.0
 
     return min(300.0, max(1.0, numeric))
+
+
+def _coerce_sky_explorer_survey_field_ra_deg(value: object) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 270.63
+    if not math.isfinite(numeric):
+        return 270.63
+    return float(numeric % 360.0)
+
+
+def _coerce_sky_explorer_survey_field_dec_deg(value: object) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return -23.03
+    if not math.isfinite(numeric):
+        return -23.03
+    return min(90.0, max(-90.0, numeric))
+
+
+def _coerce_sky_explorer_survey_field_fov_arcmin(value: object) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 45.0
+    if not math.isfinite(numeric):
+        return 45.0
+    return min(180.0, max(1.0, numeric))
+
+
+def _coerce_sky_explorer_survey_field_pixels(value: object) -> int:
+    try:
+        numeric = int(round(float(value)))
+    except (TypeError, ValueError):
+        return 1024
+    return min(2048, max(256, numeric))
 
 
 def _coerce_sky_explorer_gaia_max_magnitude(value: object) -> float:

@@ -100,7 +100,8 @@ Open **Help → About**:
 
 - [ ] Dialog opens without crash
 - [ ] Text includes “Developed by Ogetay.”
-- [ ] Text includes “Alpha-reviewer build only. Do not distribute.”
+- [ ] Text includes the GitHub project URL
+- [ ] Text includes “Alpha build only.”
 
 ---
 

@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -16,8 +17,17 @@ import numpy as np
 
 
 _CACHE_DIRECTORY_NAME = "sky-explorer-surveys"
+SKY_EXPLORER_SURVEY_CACHE_DIR_NAME = _CACHE_DIRECTORY_NAME
+SKY_EXPLORER_SURVEY_FIELD_CACHE_DIR_NAME = "sky-explorer-survey-fields"
 _CACHE_FORMAT_VERSION = 1
 _MAX_CACHE_FILES = 64
+
+# Survey-as-primary mosaic: ~3x3 tiles (~9x FOV area), hard-capped near 10x.
+SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS = 1
+SKY_EXPLORER_SURVEY_FIELD_MAX_CACHED_TILES = 10
+SKY_EXPLORER_SURVEY_FIELD_PREVIEW_MAX_EDGE = 256
+SKY_EXPLORER_SURVEY_FIELD_DETAIL_PREVIEW = "preview"
+SKY_EXPLORER_SURVEY_FIELD_DETAIL_REFINE = "refine"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +138,388 @@ def retrieve_survey_image(request: SurveyImageRequest) -> SurveyImageResult:
 
 def fetch_survey_image(request: SurveyImageRequest) -> SurveyImageResult:
     return retrieve_survey_image(request)
+
+
+def sky_explorer_survey_image_cache_dirs(cache_dir: Path | str) -> tuple[Path, Path]:
+    """Return (hips cutout cache, survey-field WCS canvas cache) under settings.cache_dir."""
+    root = Path(cache_dir).expanduser()
+    return (
+        root / SKY_EXPLORER_SURVEY_CACHE_DIR_NAME,
+        root / SKY_EXPLORER_SURVEY_FIELD_CACHE_DIR_NAME,
+    )
+
+
+def clear_sky_explorer_survey_image_caches(cache_dir: Path | str | None) -> int:
+    """
+    Delete on-disk Sky Explorer survey image caches.
+
+    Survey downloads are session-only: they speed up pans within a run, but are
+    removed when the app closes (and again on startup if a previous exit left them).
+    Returns the number of top-level cache directories removed.
+    """
+    if cache_dir is None:
+        return 0
+    import shutil
+
+    removed = 0
+    for path in sky_explorer_survey_image_cache_dirs(cache_dir):
+        if not path.exists():
+            continue
+        try:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=False)
+            else:
+                path.unlink(missing_ok=True)
+            removed += 1
+        except OSError:
+            # Best-effort cleanup; leave whatever Windows still has locked.
+            try:
+                shutil.rmtree(path, ignore_errors=True)
+                if not path.exists():
+                    removed += 1
+            except Exception:
+                pass
+    return removed
+
+
+def build_sky_explorer_field_wcs(
+    *,
+    ra_deg: float,
+    dec_deg: float,
+    fov_arcmin: float,
+    width_px: int,
+    height_px: int,
+) -> WCS:
+    """Build a simple TAN WCS covering the requested field of view."""
+    width = max(1, int(width_px))
+    height = max(1, int(height_px))
+    fov_deg = max(1.0e-6, float(fov_arcmin) / 60.0)
+    scale_deg = fov_deg / float(max(width, height))
+    wcs = WCS(naxis=2)
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    wcs.wcs.crval = [float(ra_deg) % 360.0, float(dec_deg)]
+    wcs.wcs.crpix = [(width + 1) * 0.5, (height + 1) * 0.5]
+    wcs.wcs.cdelt = [-scale_deg, scale_deg]
+    wcs.wcs.cunit = ["deg", "deg"]
+    wcs.pixel_shape = (width, height)
+    wcs.array_shape = (height, width)
+    return wcs
+
+
+def write_survey_image_fits(
+    output_path: Path,
+    *,
+    image_data: np.ndarray,
+    wcs: WCS,
+) -> Path:
+    """Persist a survey cutout as a FITS file usable as a Sky Explorer source image."""
+    from astropy.io import fits
+
+    destination = Path(output_path).expanduser()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    pixels = np.asarray(image_data)
+    if pixels.ndim == 3 and pixels.shape[0] in {3, 4} and pixels.shape[-1] not in {3, 4}:
+        # Channel-first RGB → keep as (planes, y, x) for FITS.
+        data = np.asarray(pixels[:3], dtype=np.float32)
+    elif pixels.ndim == 3 and pixels.shape[-1] in {3, 4}:
+        data = np.asarray(np.moveaxis(pixels[..., :3], -1, 0), dtype=np.float32)
+    else:
+        data = np.asarray(pixels, dtype=np.float32)
+    header = wcs.to_header(relax=True)
+    fits.PrimaryHDU(data=data, header=header).writeto(destination, overwrite=True)
+    return destination
+
+
+@dataclass(frozen=True, slots=True)
+class SurveyFieldTileSpec:
+    tile_i: int
+    tile_j: int
+    ra_deg: float
+    dec_deg: float
+
+
+@dataclass(frozen=True, slots=True)
+class SurveyFieldTileCacheEntry:
+    image_data: np.ndarray
+    detail_tier: str
+
+    @property
+    def is_refine(self) -> bool:
+        return str(self.detail_tier) == SKY_EXPLORER_SURVEY_FIELD_DETAIL_REFINE
+
+
+def sky_explorer_survey_field_preview_size(
+    width_px: int,
+    height_px: int,
+    *,
+    max_edge: int = SKY_EXPLORER_SURVEY_FIELD_PREVIEW_MAX_EDGE,
+) -> tuple[int, int]:
+    """Return a fast preview pixel size that preserves aspect ratio."""
+    width = max(1, int(width_px))
+    height = max(1, int(height_px))
+    edge = max(32, int(max_edge))
+    long_edge = max(width, height)
+    if long_edge <= edge:
+        return width, height
+    scale = float(edge) / float(long_edge)
+    return max(1, int(round(width * scale))), max(1, int(round(height * scale)))
+
+
+def sky_explorer_survey_field_tile_step_deg(
+    *,
+    fov_arcmin: float,
+    origin_dec_deg: float,
+) -> tuple[float, float]:
+    """Return (ra_step_deg eastward, dec_step_deg northward) for one survey field tile."""
+    fov_deg = max(1.0e-6, float(fov_arcmin) / 60.0)
+    cos_dec = max(0.05, abs(math.cos(math.radians(float(origin_dec_deg)))))
+    return fov_deg / cos_dec, fov_deg
+
+
+def sky_explorer_survey_field_tile_spec(
+    *,
+    origin_ra_deg: float,
+    origin_dec_deg: float,
+    fov_arcmin: float,
+    tile_i: int,
+    tile_j: int,
+) -> SurveyFieldTileSpec:
+    """Map integer tile indices to a sky center. +i is east (+RA), +j is north (+Dec)."""
+    ra_step, dec_step = sky_explorer_survey_field_tile_step_deg(
+        fov_arcmin=fov_arcmin,
+        origin_dec_deg=origin_dec_deg,
+    )
+    ra_deg = (float(origin_ra_deg) + float(tile_i) * ra_step) % 360.0
+    dec_deg = min(90.0, max(-90.0, float(origin_dec_deg) + float(tile_j) * dec_step))
+    return SurveyFieldTileSpec(int(tile_i), int(tile_j), ra_deg, dec_deg)
+
+
+def sky_explorer_survey_field_tile_indices_for_sky(
+    *,
+    ra_deg: float,
+    dec_deg: float,
+    origin_ra_deg: float,
+    origin_dec_deg: float,
+    fov_arcmin: float,
+) -> tuple[int, int]:
+    """Nearest tile indices for a sky position relative to the mosaic origin."""
+    ra_step, dec_step = sky_explorer_survey_field_tile_step_deg(
+        fov_arcmin=fov_arcmin,
+        origin_dec_deg=origin_dec_deg,
+    )
+    delta_ra = ((float(ra_deg) - float(origin_ra_deg) + 180.0) % 360.0) - 180.0
+    tile_i = int(round(delta_ra / ra_step))
+    tile_j = int(round((float(dec_deg) - float(origin_dec_deg)) / dec_step))
+    return tile_i, tile_j
+
+
+def sky_explorer_survey_field_neighbor_tile_indices(
+    center_i: int,
+    center_j: int,
+    *,
+    radius: int = SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS,
+) -> tuple[tuple[int, int], ...]:
+    """Return mosaic tile indices with the center first, then surrounding ring (Aladin-style)."""
+    radius = max(0, int(radius))
+    ordered: list[tuple[int, int]] = [(int(center_i), int(center_j))]
+    for ring in range(1, radius + 1):
+        ring_tiles: list[tuple[int, int, float]] = []
+        for tile_i in range(center_i - ring, center_i + ring + 1):
+            for tile_j in range(center_j - ring, center_j + ring + 1):
+                if max(abs(tile_i - center_i), abs(tile_j - center_j)) != ring:
+                    continue
+                distance = math.hypot(float(tile_i - center_i), float(tile_j - center_j))
+                ring_tiles.append((tile_i, tile_j, distance))
+        ring_tiles.sort(key=lambda item: (item[2], item[0], item[1]))
+        ordered.extend((tile_i, tile_j) for tile_i, tile_j, _distance in ring_tiles)
+    return tuple(ordered)
+
+
+def prune_sky_explorer_survey_field_tiles(
+    tiles: Mapping[tuple[int, int], SurveyFieldTileCacheEntry | np.ndarray],
+    *,
+    center_i: int,
+    center_j: int,
+    max_tiles: int = SKY_EXPLORER_SURVEY_FIELD_MAX_CACHED_TILES,
+) -> dict[tuple[int, int], SurveyFieldTileCacheEntry]:
+    """Keep at most max_tiles, preferring those nearest the current mosaic center."""
+    limit = max(1, int(max_tiles))
+    normalized = {
+        key: _coerce_survey_field_tile_entry(value)
+        for key, value in tiles.items()
+    }
+    if len(normalized) <= limit:
+        return normalized
+    ranked = sorted(
+        normalized.items(),
+        key=lambda item: (
+            0 if item[1].is_refine else 1,
+            math.hypot(float(item[0][0] - center_i), float(item[0][1] - center_j)),
+            item[0][0],
+            item[0][1],
+        ),
+    )
+    return {key: value for key, value in ranked[:limit]}
+
+
+def compose_sky_explorer_survey_field_mosaic(
+    tiles: Mapping[tuple[int, int], SurveyFieldTileCacheEntry | np.ndarray],
+    *,
+    center_i: int,
+    center_j: int,
+    origin_ra_deg: float,
+    origin_dec_deg: float,
+    fov_arcmin: float,
+    width_px: int,
+    height_px: int,
+    radius: int = SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS,
+) -> tuple[np.ndarray, WCS]:
+    """
+    Compose a TAN mosaic around (center_i, center_j).
+
+    Missing tiles stay black/zero. Callers should freeze display stretch from the first
+    loaded tile so empty cells do not wash the sky when auto-levels would otherwise
+    see a near-zero histogram. Preview tiles are upsampled into their mosaic slots.
+    """
+    radius = max(0, int(radius))
+    width = max(1, int(width_px))
+    height = max(1, int(height_px))
+    cells = 2 * radius + 1
+    mosaic_width = cells * width
+    mosaic_height = cells * height
+    center_spec = sky_explorer_survey_field_tile_spec(
+        origin_ra_deg=origin_ra_deg,
+        origin_dec_deg=origin_dec_deg,
+        fov_arcmin=fov_arcmin,
+        tile_i=center_i,
+        tile_j=center_j,
+    )
+    normalized_tiles = {
+        key: _coerce_survey_field_tile_entry(value)
+        for key, value in tiles.items()
+    }
+    sample_entry = next(iter(normalized_tiles.values()), None)
+    sample = None if sample_entry is None else np.asarray(sample_entry.image_data)
+    color = sample is not None and sample.ndim == 3 and sample.shape[-1] >= 3
+    if color:
+        mosaic = np.zeros((mosaic_height, mosaic_width, 3), dtype=np.float32)
+    else:
+        mosaic = np.zeros((mosaic_height, mosaic_width), dtype=np.float32)
+
+    for tile_i in range(center_i - radius, center_i + radius + 1):
+        for tile_j in range(center_j - radius, center_j + radius + 1):
+            entry = normalized_tiles.get((tile_i, tile_j))
+            if entry is None:
+                continue
+            pixels = resize_survey_field_tile_pixels(entry.image_data, width=width, height=height)
+            di = tile_i - center_i
+            dj = tile_j - center_j
+            # cdelt[0] < 0: +RA (east) moves left on the mosaic.
+            x0 = (radius - di) * width
+            y0 = (radius + dj) * height
+            if pixels.ndim == 3:
+                if mosaic.ndim == 2:
+                    mosaic = np.repeat(mosaic[:, :, None], 3, axis=2)
+                mosaic[y0 : y0 + height, x0 : x0 + width, :3] = pixels[..., :3]
+            else:
+                if mosaic.ndim == 3:
+                    mosaic[y0 : y0 + height, x0 : x0 + width, :] = pixels[:, :, None]
+                else:
+                    mosaic[y0 : y0 + height, x0 : x0 + width] = pixels
+
+    mosaic_wcs = build_sky_explorer_field_wcs(
+        ra_deg=center_spec.ra_deg,
+        dec_deg=center_spec.dec_deg,
+        fov_arcmin=float(fov_arcmin) * float(cells),
+        width_px=mosaic_width,
+        height_px=mosaic_height,
+    )
+    return mosaic, mosaic_wcs
+
+
+def sky_explorer_survey_field_frozen_levels(
+    image_data: np.ndarray,
+) -> tuple[float, float, float]:
+    """Return non-default black/mid/white levels from one tile for frozen mosaic stretch."""
+    pixels = _normalized_survey_field_tile_array(image_data)
+    if pixels.ndim == 3:
+        plane = np.mean(pixels[..., : min(3, pixels.shape[-1])], axis=-1)
+    else:
+        plane = pixels
+    finite = plane[np.isfinite(plane)]
+    if finite.size < 16:
+        return (0.01, 0.5, 1.0)
+    vmin = float(np.nanpercentile(finite, 0.5))
+    vmax = float(np.nanpercentile(finite, 99.8))
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+        return (0.01, 0.5, 1.0)
+    normalized = np.clip((finite - vmin) / (vmax - vmin), 0.0, 1.0)
+    black = float(np.nanpercentile(normalized, 1.0))
+    white = float(np.nanpercentile(normalized, 99.5))
+    mid = float(np.nanpercentile(normalized, 50.0))
+    black = max(0.0, min(0.45, black))
+    white = max(black + 0.05, min(1.0, white))
+    mid = max(black + 0.01, min(white - 0.01, mid))
+    # Nudge off the UI default so STF auto-stretch is not re-enabled.
+    if abs(black) <= 1e-6 and abs(mid - 0.5) <= 1e-6 and abs(white - 1.0) <= 1e-6:
+        black = 0.01
+    return (black, mid, white)
+
+
+def resize_survey_field_tile_pixels(
+    image_data: np.ndarray,
+    *,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Normalize and resize a survey tile into the mosaic cell size."""
+    pixels = _normalized_survey_field_tile_array(image_data)
+    width = max(1, int(width))
+    height = max(1, int(height))
+    if pixels.shape[0] == height and pixels.shape[1] == width:
+        return np.asarray(pixels, dtype=np.float32)
+    try:
+        from scipy import ndimage
+    except Exception as exc:  # pragma: no cover - scipy is a project dependency
+        raise RuntimeError("Survey field tile resizing requires scipy.ndimage.") from exc
+    zoom_y = float(height) / float(pixels.shape[0])
+    zoom_x = float(width) / float(pixels.shape[1])
+    if pixels.ndim == 2:
+        resized = ndimage.zoom(pixels, (zoom_y, zoom_x), order=1)
+    else:
+        resized = ndimage.zoom(pixels, (zoom_y, zoom_x, 1.0), order=1)
+    return np.asarray(resized, dtype=np.float32)
+
+
+def _coerce_survey_field_tile_entry(
+    value: SurveyFieldTileCacheEntry | np.ndarray,
+) -> SurveyFieldTileCacheEntry:
+    if isinstance(value, SurveyFieldTileCacheEntry):
+        return value
+    return SurveyFieldTileCacheEntry(
+        image_data=np.asarray(value),
+        detail_tier=SKY_EXPLORER_SURVEY_FIELD_DETAIL_REFINE,
+    )
+
+
+def _normalized_survey_field_tile_array(image_data: np.ndarray) -> np.ndarray:
+    pixels = np.asarray(image_data, dtype=np.float32)
+    if pixels.ndim == 3 and pixels.shape[0] in {3, 4} and pixels.shape[-1] not in {3, 4}:
+        pixels = np.moveaxis(pixels[:3], 0, -1)
+    elif pixels.ndim == 3 and pixels.shape[-1] >= 3:
+        pixels = pixels[..., :3]
+    elif pixels.ndim != 2:
+        raise ValueError(f"Unsupported survey tile shape {pixels.shape}.")
+    return pixels
+
+
+def _normalized_survey_field_tile_pixels(
+    image_data: np.ndarray,
+    *,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    return resize_survey_field_tile_pixels(image_data, width=width, height=height)
 
 
 def scale_wcs_for_pixel_sampling(wcs: WCS, sampling_step: int) -> WCS:

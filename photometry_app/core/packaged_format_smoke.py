@@ -148,10 +148,9 @@ def about_dialog_content() -> tuple[str, str]:
     return (
         f"About {APP_DISPLAY_NAME}",
         f"Version {APP_VERSION}\n\n"
-        "Logo designed by Ege Palaz (https://palaz.se/).\n"
-        "Developed by Ogetay.\n"
-        "For more info, please visit: ogetay.com/citizen-astronomy-cast\n\n"
-        "Alpha-reviewer build only. Do not distribute.",
+        "Developed by Ogetay. For more info, please visit: https://github.com/OgetayKayali/citizen-astronomy\n\n"
+        "Logo designed by Ege Palaz (https://palaz.se).\n\n"
+        "Alpha build only.",
     )
 
 
@@ -162,8 +161,8 @@ def run_about_dialog_smoke() -> dict[str, object]:
     title, message = about_dialog_content()
     if f"Version {APP_VERSION}" not in message:
         return {"success": False, "error": "application version missing from About dialog text"}
-    if "Alpha-reviewer build only. Do not distribute." not in message:
-        return {"success": False, "error": "alpha-review notice missing from About dialog text"}
+    if "Alpha build only." not in message:
+        return {"success": False, "error": "alpha-build notice missing from About dialog text"}
 
     existing = QCoreApplication.instance()
     if existing is None:

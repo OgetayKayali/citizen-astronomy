@@ -170,10 +170,45 @@ from photometry_app.core.sky_explorer_collage import (
     save_sky_explorer_collage_image,
 )
 from photometry_app.core.survey_images import (
+    SKY_EXPLORER_SURVEY_FIELD_CACHE_DIR_NAME,
+    SKY_EXPLORER_SURVEY_FIELD_DETAIL_PREVIEW,
+    SKY_EXPLORER_SURVEY_FIELD_DETAIL_REFINE,
+    SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS,
+    SurveyFieldTileCacheEntry,
+    build_sky_explorer_field_wcs,
+    clear_sky_explorer_survey_image_caches,
+    compose_sky_explorer_survey_field_mosaic,
+    prune_sky_explorer_survey_field_tiles,
+    sky_explorer_survey_field_neighbor_tile_indices,
+    sky_explorer_survey_field_preview_size,
+    sky_explorer_survey_field_tile_indices_for_sky,
+    sky_explorer_survey_field_tile_spec,
     SurveyImageRequest,
     fetch_survey_image,
     scale_wcs_for_pixel_sampling,
     survey_target_rect_in_source_pixels,
+    write_survey_image_fits,
+)
+from photometry_app.core.survey_tiles import (
+    SURVEY_TILE_MAX_NETWORK_WORKERS,
+    SURVEY_TILE_MAX_QUEUED_REQUESTS,
+    SURVEY_TILE_MAX_RETRIES,
+    SURVEY_TILE_VIEWPORT_DEBOUNCE_MS,
+    SurveyTileDrawItem,
+    SurveyTileKey,
+    SurveyTileLoadResult,
+    SurveyTileRecord,
+    SurveyTileResolution,
+    SurveyTileResultStatus,
+    SurveyTileState,
+    build_viewport_survey_tile_work,
+    initial_survey_tile_work_order,
+    make_survey_tile_key,
+    make_survey_tile_placeholder_rgba,
+    survey_tile_indices_for_image_point,
+    survey_tile_pixel_rect,
+    survey_tile_request_priority,
+    survey_tile_sky_center,
 )
 from photometry_app.core.snr_binning import *
 from photometry_app.core.solar_system import *
@@ -186,6 +221,7 @@ from photometry_app.ui.astro_tools_panel import AstroToolsPanel
 from photometry_app.ui.differential_label_dialog import DifferentialQuickLabelDialog
 from photometry_app.ui.sky_explorer_collage_dialog import SkyExplorerCollageDialog
 from photometry_app.ui.sky_explorer_mag_limit_dialog import SkyExplorerMagLimitDialog, SkyExplorerMagLimitOptions
+from photometry_app.ui.sky_explorer_source_dialog import SkyExplorerSourceChoice, SkyExplorerSourceDialog
 from photometry_app.ui.hr_plot_widget import *
 from photometry_app.ui.image_view import *
 from photometry_app.ui.levels_dialog import CurvesDialog
@@ -248,6 +284,7 @@ _SKY_EXPLORER_SURVEY_FETCH_MARGIN_FRACTION = 0.4
 _SKY_EXPLORER_SURVEY_PREVIEW_MAX_OUTPUT = 512
 _SKY_EXPLORER_SURVEY_DETAIL_PREVIEW = "preview"
 _SKY_EXPLORER_SURVEY_DETAIL_REFINE = "refine"
+_SKY_EXPLORER_IMAGE_COMPARISON_KEY = "__image__"
 _THEME_GRUVBOX = "gruvbox"
 _THEME_CATPPUCCIN = "catppuccin"
 _THEME_SOLARIZED_DARK = "solarized-dark"
@@ -651,6 +688,7 @@ _DIFFERENTIAL_INTERFACE_TIPS = (
 
 _HR_INTERFACE_TIPS = (
     "Open a solved RGB image to populate the HR diagram and Gaia-matched source table.",
+    "Double-click a star on the Source Image to select it on the HR diagram and results table.",
     "Use Find Cluster to highlight a likely common-motion group across the plot and table.",
     "Snapshot exports preserve the current HR view, while Scientific uses the filtered dataset.",
 )
@@ -706,6 +744,8 @@ class _SkyExplorerManualAnnotation:
     label: str
     x: float
     y: float
+    x2: float = 0.0
+    y2: float = 0.0
     radius: float = 24.0
     minor_radius: float = 16.0
     rotation_degrees: float = 0.0
@@ -25509,6 +25549,62 @@ class MainWindow(QMainWindow):
 
         self._hr_reset_button.clicked.connect(self._reset_hr_source_image_controls)
 
+        self._hr_show_ra_dec_checkbox = QCheckBox("Show RA/Dec")
+
+        self._hr_show_ra_dec_checkbox.setToolTip(
+
+            "Show live RA/Dec coordinates at the top-left of the Source Image when WCS is available."
+
+        )
+
+        self._hr_show_ra_dec_checkbox.setChecked(True)
+
+        self._hr_show_ra_dec_checkbox.checkStateChanged.connect(self._handle_hr_show_ra_dec_changed)
+
+        self._hr_show_grid_checkbox = QCheckBox("Show Grid")
+
+        self._hr_show_grid_checkbox.setToolTip(
+
+            "Show RA/Dec grid lines on the Source Image when WCS is available."
+
+        )
+
+        self._hr_show_grid_checkbox.setChecked(False)
+
+        self._hr_show_grid_checkbox.checkStateChanged.connect(self._handle_hr_show_grid_changed)
+
+        self._hr_grid_ra_density_label = QLabel("RA Density")
+
+        self._hr_grid_ra_density_spin = QSpinBox()
+
+        self._hr_grid_ra_density_spin.setRange(2, 12)
+
+        self._hr_grid_ra_density_spin.setValue(5)
+
+        self._hr_grid_ra_density_spin.setToolTip(
+
+            "Target number of RA grid intervals across the Source Image when Show Grid is enabled."
+
+        )
+
+        self._hr_grid_ra_density_spin.valueChanged.connect(self._handle_hr_grid_ra_density_changed)
+
+        self._hr_grid_dec_density_label = QLabel("Dec Density")
+
+        self._hr_grid_dec_density_spin = QSpinBox()
+
+        self._hr_grid_dec_density_spin.setRange(2, 12)
+
+        self._hr_grid_dec_density_spin.setValue(5)
+
+        self._hr_grid_dec_density_spin.setToolTip(
+
+            "Target number of Dec grid intervals across the Source Image when Show Grid is enabled."
+
+        )
+
+        self._hr_grid_dec_density_spin.valueChanged.connect(self._handle_hr_grid_dec_density_changed)
+
         self._hr_display_controls_group = self._create_display_menu_content(
 
             self._hr_image_stretch_combo,
@@ -25518,6 +25614,34 @@ class MainWindow(QMainWindow):
             trailing_widgets=(self._hr_reset_button,),
 
         )
+
+        hr_display_layout = self._hr_display_controls_group.layout()
+
+        if isinstance(hr_display_layout, QVBoxLayout):
+
+            hr_display_layout.addWidget(self._hr_show_ra_dec_checkbox)
+
+            hr_display_layout.addWidget(self._hr_show_grid_checkbox)
+
+            hr_grid_density_row = QGridLayout()
+
+            hr_grid_density_row.setContentsMargins(0, 0, 0, 0)
+
+            hr_grid_density_row.setHorizontalSpacing(10)
+
+            hr_grid_density_row.setVerticalSpacing(6)
+
+            hr_grid_density_row.addWidget(self._hr_grid_ra_density_label, 0, 0)
+
+            hr_grid_density_row.addWidget(self._hr_grid_ra_density_spin, 0, 1)
+
+            hr_grid_density_row.addWidget(self._hr_grid_dec_density_label, 1, 0)
+
+            hr_grid_density_row.addWidget(self._hr_grid_dec_density_spin, 1, 1)
+
+            hr_display_layout.addLayout(hr_grid_density_row)
+
+        self._sync_hr_grid_density_controls_enabled()
 
         self._hr_display_section_menu = self._create_differential_section_menu(
 
@@ -25850,6 +25974,8 @@ class MainWindow(QMainWindow):
         self._hr_image_view.set_message("Open an HR source image to inspect the field and draw an ROI filter.")
 
         self._hr_image_view.imagePressed.connect(self._handle_hr_image_pressed)
+
+        self._hr_image_view.imageDoubleClicked.connect(self._handle_hr_image_double_clicked)
 
         self._hr_image_view.imageMoved.connect(self._handle_hr_image_moved)
 
@@ -27631,6 +27757,41 @@ class MainWindow(QMainWindow):
         self._sky_explorer_mag_limit_auto_objects: tuple[SkyExplorerObject, ...] = ()
 
         self._current_sky_explorer_source_image: Path | None = None
+        self._sky_explorer_primary_survey_key: str | None = None
+        self._sky_explorer_comparison_image_path: Path | None = None
+        self._sky_explorer_survey_field_origin_ra_deg: float | None = None
+        self._sky_explorer_survey_field_origin_dec_deg: float | None = None
+        self._sky_explorer_survey_field_center_ra_deg: float | None = None
+        self._sky_explorer_survey_field_center_dec_deg: float | None = None
+        self._sky_explorer_survey_field_mosaic_center: tuple[int, int] | None = None
+        self._sky_explorer_survey_field_tiles: dict[tuple[int, int], SurveyTileRecord] = {}
+        self._sky_explorer_survey_field_prefetch_queue: list[tuple[float, int, int, SurveyTileResolution]] = []
+        self._sky_explorer_survey_field_inflight: set[tuple[int, int, str]] = set()
+        self._sky_explorer_survey_field_workers: list[object] = []
+        self._sky_explorer_survey_field_request_generation = 0
+        self._sky_explorer_survey_field_session_id = 0
+        self._sky_explorer_survey_field_worker = None
+        self._sky_explorer_survey_field_worker_context: tuple[object, ...] | None = None
+        self._pending_sky_explorer_survey_field_center: tuple[float, float] | None = None
+        self._sky_explorer_survey_field_stretch_frozen = False
+        self._sky_explorer_survey_field_pan_velocity: tuple[float, float] = (0.0, 0.0)
+        self._sky_explorer_survey_field_last_view_tile: tuple[int, int] | None = None
+        self._sky_explorer_survey_field_qimage_cache: dict[tuple[int, int, str], object] = {}
+        self._sky_explorer_survey_field_mosaic_worker = None
+        self._sky_explorer_survey_field_mosaic_generation = 0
+        self._sky_explorer_survey_field_mosaic_pending: dict[str, object] | None = None
+        self._sky_explorer_survey_field_mosaic_dirty = False
+        # Comparison survey tiles (same grid as primary when Open → Sky survey is active).
+        self._sky_explorer_comparison_survey_tiles: dict[tuple[int, int], SurveyTileRecord] = {}
+        self._sky_explorer_comparison_survey_prefetch_queue: list[
+            tuple[float, int, int, SurveyTileResolution]
+        ] = []
+        self._sky_explorer_comparison_survey_inflight: set[tuple[int, int, str]] = set()
+        self._sky_explorer_comparison_survey_workers: list[object] = []
+        self._sky_explorer_comparison_survey_request_generation = 0
+        self._sky_explorer_comparison_survey_session_id = 0
+        self._sky_explorer_comparison_survey_qimage_cache: dict[tuple[int, int, str], object] = {}
+        self._sky_explorer_comparison_survey_key: str | None = None
 
         self._sky_explorer_image_levels = (0.0, 0.5, 1.0)
 
@@ -27643,6 +27804,7 @@ class MainWindow(QMainWindow):
         self._sky_explorer_survey_result_context: tuple[object, ...] | None = None
 
         self._sky_explorer_survey_last_error: str | None = None
+        self._sky_explorer_survey_actions: dict[str | None, QAction] = {}
 
         self._sky_explorer_survey_display: AnnotatedImageDisplay | None = None
 
@@ -28397,6 +28559,9 @@ class MainWindow(QMainWindow):
 
         self._settings = AppSettings.from_root(Path(self._root_path_input.text()).expanduser())
 
+        # Drop leftover survey image downloads from a previous session / crash.
+        self._clear_sky_explorer_survey_image_caches_on_exit()
+
         self._sync_asteroid_blink_timing_from_settings()
 
         self._sync_app_mode_controls()
@@ -28459,7 +28624,11 @@ class MainWindow(QMainWindow):
 
         if app is not None:
 
-            app.aboutToQuit.connect(self._force_stop_background_workers)
+            app.aboutToQuit.connect(self._handle_application_about_to_quit)
+
+    def _handle_application_about_to_quit(self) -> None:
+        self._force_stop_background_workers()
+        self._clear_sky_explorer_survey_image_caches_on_exit()
 
     def _sync_mode_launcher_accent(self) -> None:
 
@@ -37786,6 +37955,14 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_primary_button.clicked.connect(self._handle_sky_explorer_primary_action)
 
+        self._sky_explorer_comparison_button = QPushButton("Comparison")
+
+        self._sky_explorer_comparison_button.setToolTip(
+            "Choose a survey or uploaded image to compare with the current Sky Explorer source."
+        )
+
+        self._sky_explorer_comparison_button.clicked.connect(self._handle_sky_explorer_comparison_action)
+
         self._sky_explorer_status_label = QLabel(
 
             "Load an image, then click Explore to plate-solve if needed and identify what is in the field."
@@ -37993,12 +38170,13 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_reset_display_button.clicked.connect(self._reset_sky_explorer_image_display_controls)
 
-        self._sky_explorer_display_controls_group = self._create_display_menu_content(
+        self._sky_explorer_image_display_controls_group = self._create_display_menu_content(
             self._sky_explorer_image_stretch_combo,
             self._sky_explorer_adjust_levels_button,
             self._sky_explorer_image_invert_checkbox,
             trailing_widgets=(self._sky_explorer_image_reset_display_button,),
         )
+        self._sky_explorer_display_controls_group = QWidget()
         self._sky_explorer_display_section_menu = self._create_differential_section_menu(
             self._sky_explorer_display_section_label,
             self._sky_explorer_display_controls_group,
@@ -38037,41 +38215,22 @@ class MainWindow(QMainWindow):
             self._sky_explorer_survey_invert_checkbox,
             trailing_widgets=(self._sky_explorer_survey_reset_display_button,),
         )
-
-        self._sky_explorer_surveys_button = QToolButton(self)
-        self._sky_explorer_surveys_button.setText("Surveys")
-        self._sky_explorer_surveys_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._sky_explorer_surveys_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self._sky_explorer_surveys_button.setToolTip(
-            "Compare the current view with a WCS-aligned reference survey."
+        display_menu_layout = QVBoxLayout()
+        display_menu_layout.setContentsMargins(6, 6, 6, 6)
+        display_menu_layout.setSpacing(8)
+        display_menu_layout.addWidget(
+            self._create_display_menu_section("Image", self._sky_explorer_image_display_controls_group)
         )
-        self._sky_explorer_surveys_menu = QMenu(self._sky_explorer_surveys_button)
-        self._sky_explorer_survey_action_group = QActionGroup(self._sky_explorer_surveys_menu)
-        self._sky_explorer_survey_action_group.setExclusive(True)
-        self._sky_explorer_survey_actions: dict[str | None, QAction] = {}
-        no_survey_action = self._sky_explorer_surveys_menu.addAction("None")
-        no_survey_action.setCheckable(True)
-        no_survey_action.setChecked(True)
-        no_survey_action.triggered.connect(
-            lambda checked=False: self._select_sky_explorer_survey(None) if checked else None
+        display_menu_layout.addWidget(
+            self._create_display_menu_section("Comparison", self._sky_explorer_survey_display_controls)
         )
-        self._sky_explorer_survey_action_group.addAction(no_survey_action)
-        self._sky_explorer_survey_actions[None] = no_survey_action
-        for survey_key, survey_title in _SKY_EXPLORER_SURVEY_OPTIONS:
-            survey_action = self._sky_explorer_surveys_menu.addAction(survey_title)
-            survey_action.setCheckable(True)
-            survey_action.triggered.connect(
-                lambda checked=False, key=survey_key: self._select_sky_explorer_survey(key) if checked else None
+        self._sky_explorer_display_controls_group.setLayout(display_menu_layout)
+        self._sky_explorer_display_section_menu.setMinimumWidth(
+            max(
+                self._sky_explorer_display_section_label.sizeHint().width(),
+                self._sky_explorer_display_controls_group.sizeHint().width() + 20,
             )
-            self._sky_explorer_survey_action_group.addAction(survey_action)
-            self._sky_explorer_survey_actions[survey_key] = survey_action
-        self._sky_explorer_surveys_menu.addSeparator()
-        self._sky_explorer_survey_display_action = QWidgetAction(self._sky_explorer_surveys_menu)
-        self._sky_explorer_survey_display_action.setDefaultWidget(
-            self._sky_explorer_survey_display_controls
         )
-        self._sky_explorer_surveys_menu.addAction(self._sky_explorer_survey_display_action)
-        self._sky_explorer_surveys_button.setMenu(self._sky_explorer_surveys_menu)
 
         self._sky_explorer_center_object_button = QPushButton("Center Object")
 
@@ -38092,11 +38251,13 @@ class MainWindow(QMainWindow):
         self._sky_explorer_annotation_mouse_button = QPushButton("Mouse")
         self._sky_explorer_annotation_circle_button = QPushButton("Circle")
         self._sky_explorer_annotation_ellipse_button = QPushButton("Ellipse")
+        self._sky_explorer_annotation_ruler_button = QPushButton("Ruler")
         self._sky_explorer_annotation_text_button = QPushButton("Text")
         self._sky_explorer_annotation_tool_buttons = {
             "mouse": self._sky_explorer_annotation_mouse_button,
             "circle": self._sky_explorer_annotation_circle_button,
             "ellipse": self._sky_explorer_annotation_ellipse_button,
+            "ruler": self._sky_explorer_annotation_ruler_button,
             "text": self._sky_explorer_annotation_text_button,
         }
         for tool_key, tool_button in self._sky_explorer_annotation_tool_buttons.items():
@@ -38107,11 +38268,12 @@ class MainWindow(QMainWindow):
         self._sky_explorer_annotation_mouse_button.setToolTip("Navigate the image and select existing manual annotations without drawing.")
         self._sky_explorer_annotation_circle_button.setToolTip("Draw manual circle annotations with the active object color and opacity.")
         self._sky_explorer_annotation_ellipse_button.setToolTip("Draw manual ellipse annotations with the active object color and opacity.")
+        self._sky_explorer_annotation_ruler_button.setToolTip("Draw a ruler between two points and show pixel or angular distance under the line.")
         self._sky_explorer_annotation_text_button.setToolTip("Place manual text annotations with the active text color and opacity.")
         self._sync_sky_explorer_annotation_tool_buttons()
 
         self._sky_explorer_annotation_stroke_color_button = QPushButton("Stroke")
-        self._sky_explorer_annotation_stroke_color_button.setToolTip("Choose the stroke color for newly drawn circle and ellipse annotations.")
+        self._sky_explorer_annotation_stroke_color_button.setToolTip("Choose the stroke color for newly drawn circle, ellipse, and ruler annotations.")
         self._sky_explorer_annotation_stroke_color_button.clicked.connect(self._choose_sky_explorer_annotation_stroke_color)
         self._sky_explorer_annotation_stroke_label = QLabel("Stroke")
 
@@ -38158,7 +38320,7 @@ class MainWindow(QMainWindow):
         self._sky_explorer_annotation_line_width_spin.setSingleStep(0.25)
         self._sky_explorer_annotation_line_width_spin.setSuffix(" px")
         self._sky_explorer_annotation_line_width_spin.setValue(self._sky_explorer_annotation_line_width)
-        self._sky_explorer_annotation_line_width_spin.setToolTip("Adjust stroke thickness for newly drawn circle and ellipse annotations.")
+        self._sky_explorer_annotation_line_width_spin.setToolTip("Adjust stroke thickness for newly drawn circle, ellipse, and ruler annotations.")
         self._sky_explorer_annotation_line_width_spin.valueChanged.connect(self._handle_sky_explorer_annotation_line_width_changed)
 
         self._sky_explorer_annotation_opacity_button = QToolButton(self)
@@ -38205,6 +38367,7 @@ class MainWindow(QMainWindow):
         self._sky_explorer_annotation_tools_layout.addWidget(self._sky_explorer_annotation_mouse_button)
         self._sky_explorer_annotation_tools_layout.addWidget(self._sky_explorer_annotation_circle_button)
         self._sky_explorer_annotation_tools_layout.addWidget(self._sky_explorer_annotation_ellipse_button)
+        self._sky_explorer_annotation_tools_layout.addWidget(self._sky_explorer_annotation_ruler_button)
         self._sky_explorer_annotation_tools_layout.addWidget(self._sky_explorer_annotation_text_button)
         self._sky_explorer_annotation_tools_group.setLayout(self._sky_explorer_annotation_tools_layout)
 
@@ -38304,6 +38467,12 @@ class MainWindow(QMainWindow):
                 force_detail=_SKY_EXPLORER_SURVEY_DETAIL_REFINE,
             )
         )
+        self._sky_explorer_survey_field_shift_timer = QTimer(self)
+        self._sky_explorer_survey_field_shift_timer.setSingleShot(True)
+        self._sky_explorer_survey_field_shift_timer.setInterval(int(SURVEY_TILE_VIEWPORT_DEBOUNCE_MS))
+        self._sky_explorer_survey_field_shift_timer.timeout.connect(
+            self._request_sky_explorer_survey_field_recenter
+        )
         self._sky_explorer_image_view.viewportChanged.connect(
             self._handle_sky_explorer_survey_viewport_changed
         )
@@ -38318,6 +38487,8 @@ class MainWindow(QMainWindow):
 
         workflow_row.addWidget(self._sky_explorer_primary_button)
 
+        workflow_row.addWidget(self._sky_explorer_comparison_button)
+
         workflow_row.addWidget(self._sky_explorer_object_type_mode_button)
 
         workflow_row.addWidget(self._sky_explorer_select_all_button)
@@ -38325,6 +38496,7 @@ class MainWindow(QMainWindow):
         workflow_row.addWidget(self._sky_explorer_filter_button)
 
         workflow_row.addStretch(1)
+        self._sky_explorer_workflow_row = workflow_row
 
 
         header_left_widget = QWidget()
@@ -38441,8 +38613,6 @@ class MainWindow(QMainWindow):
         image_controls_layout.addStretch(1)
 
         image_controls_layout.addWidget(self._sky_explorer_display_section_label)
-
-        image_controls_layout.addWidget(self._sky_explorer_surveys_button)
 
         image_controls_layout.addWidget(self._sky_explorer_center_object_button)
 
@@ -38680,11 +38850,17 @@ class MainWindow(QMainWindow):
 
     def _handle_sky_explorer_primary_action(self) -> None:
 
+        if self._sky_explorer_primary_button.text().strip().lower() == "open":
+
+            self._open_sky_explorer_source_picker(as_comparison=False)
+
+            return
+
         source_path = Path(self._sky_explorer_image_input.text()).expanduser() if self._sky_explorer_image_input.text().strip() else None
 
         if source_path is None or not source_path.exists():
 
-            self._browse_for_sky_explorer_source_image()
+            self._open_sky_explorer_source_picker(as_comparison=False)
 
             return
 
@@ -38698,7 +38874,17 @@ class MainWindow(QMainWindow):
 
         self._start_sky_explorer_exploration()
 
-    def _browse_for_sky_explorer_source_image(self) -> None:
+    def _handle_sky_explorer_comparison_action(self) -> None:
+
+        source_path = self._current_sky_explorer_source_image
+
+        if source_path is None or not source_path.exists():
+
+            return
+
+        self._open_sky_explorer_source_picker(as_comparison=True)
+
+    def _browse_for_sky_explorer_source_image(self, *, set_as_source: bool = True) -> Path | None:
 
         selected, _selected_filter = QFileDialog.getOpenFileName(
 
@@ -38714,7 +38900,1168 @@ class MainWindow(QMainWindow):
 
         if selected:
 
-            self._set_sky_explorer_source_image_path(Path(selected).expanduser())
+            source_path = Path(selected).expanduser()
+            if set_as_source:
+                self._set_sky_explorer_source_image_path(source_path)
+            return source_path
+
+        return None
+
+    def _sky_explorer_survey_field_cache_dir(self) -> Path:
+
+        settings = self._ensure_settings()
+
+        return Path(settings.cache_dir).expanduser() / SKY_EXPLORER_SURVEY_FIELD_CACHE_DIR_NAME
+
+    def _sky_explorer_path_in_survey_field_cache(self, path: Path) -> bool:
+
+        try:
+
+            return Path(path).expanduser().resolve().is_relative_to(self._sky_explorer_survey_field_cache_dir().resolve())
+
+        except Exception:
+
+            return False
+
+    def _sky_explorer_source_dialog_initial_survey_key(self) -> str | None:
+
+        if self._sky_explorer_active_survey_key and self._sky_explorer_active_survey_key != _SKY_EXPLORER_IMAGE_COMPARISON_KEY:
+
+            return self._sky_explorer_active_survey_key
+
+        return self._sky_explorer_primary_survey_key
+
+    def _open_sky_explorer_source_picker(self, *, as_comparison: bool) -> None:
+
+        if as_comparison:
+            dialog = SkyExplorerSourceDialog(
+                title="Choose Sky Explorer Comparison",
+                intro="Compare the current source image with a local upload or one of the built-in surveys.",
+                survey_options=_SKY_EXPLORER_SURVEY_OPTIONS,
+                initial_survey_key=self._sky_explorer_source_dialog_initial_survey_key(),
+                field_hint=(
+                    "Survey comparison follows your image WCS and lazy-loads tiles as you pan. "
+                    "Works with a user image or another survey opened as the primary field."
+                ),
+                parent=self,
+            )
+        else:
+            settings = self._ensure_settings()
+            dialog = SkyExplorerSourceDialog(
+                title="Open Sky Explorer Source",
+                intro="Open a local image or build a survey field as the primary Sky Explorer source image.",
+                survey_options=_SKY_EXPLORER_SURVEY_OPTIONS,
+                initial_survey_key=self._sky_explorer_source_dialog_initial_survey_key(),
+                field_hint=(
+                    "Initial survey field comes from Settings → Sky Explorer "
+                    f"(RA {settings.sky_explorer_survey_field_ra_deg:.2f}°, "
+                    f"Dec {settings.sky_explorer_survey_field_dec_deg:.2f}°, "
+                    f"FOV {settings.sky_explorer_survey_field_fov_arcmin:.0f}′). "
+                    "A fast preview loads first, then detail refines while you pan—same path as Comparison."
+                ),
+                parent=self,
+            )
+
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+
+            return
+
+        choice = dialog.choice()
+        if choice.kind == "upload":
+            if as_comparison:
+                self._open_sky_explorer_uploaded_comparison()
+            else:
+                self._browse_for_sky_explorer_source_image()
+            return
+
+        if as_comparison:
+            survey_key = str(choice.survey_key or "").strip().lower() or None
+            self._select_sky_explorer_survey(survey_key)
+            return
+
+        self._load_sky_explorer_primary_survey_field(choice)
+
+    def _open_sky_explorer_uploaded_comparison(self) -> None:
+
+        comparison_path = self._browse_for_sky_explorer_source_image(set_as_source=False)
+
+        if comparison_path is None:
+
+            return
+
+        primary_survey_key = self._sky_explorer_primary_survey_key
+        if primary_survey_key:
+            self._set_sky_explorer_source_image_path(comparison_path)
+            self._select_sky_explorer_survey(primary_survey_key)
+            return
+
+        self._set_sky_explorer_comparison_image_path(comparison_path)
+
+    def _sky_explorer_survey_field_settings(self) -> tuple[float, float, float, int, int]:
+        settings = self._ensure_settings()
+        return (
+            float(settings.sky_explorer_survey_field_ra_deg),
+            float(settings.sky_explorer_survey_field_dec_deg),
+            float(settings.sky_explorer_survey_field_fov_arcmin),
+            int(settings.sky_explorer_survey_field_width_px),
+            int(settings.sky_explorer_survey_field_height_px),
+        )
+
+    def _load_sky_explorer_primary_survey_field(self, choice: SkyExplorerSourceChoice) -> None:
+        survey_key = str(choice.survey_key or "").strip().lower()
+        if not survey_key:
+            QMessageBox.warning(self, "Survey missing", "Choose a survey before opening a survey field.")
+            return
+        ra_deg, dec_deg, fov_arcmin, width_px, height_px = self._sky_explorer_survey_field_settings()
+        self._sky_explorer_survey_field_session_id += 1
+        self._sky_explorer_survey_field_request_generation += 1
+        self._sky_explorer_survey_field_tiles = {}
+        self._sky_explorer_survey_field_prefetch_queue = []
+        self._sky_explorer_survey_field_inflight = set()
+        self._sky_explorer_survey_field_workers = []
+        self._sky_explorer_survey_field_qimage_cache = {}
+        self._pending_sky_explorer_survey_field_center = None
+        self._sky_explorer_survey_field_stretch_frozen = False
+        self._sky_explorer_survey_field_pan_velocity = (0.0, 0.0)
+        self._sky_explorer_survey_field_last_view_tile = (0, 0)
+        self._sky_explorer_image_levels = (0.0, 0.5, 1.0)
+        self._sky_explorer_survey_field_origin_ra_deg = float(ra_deg)
+        self._sky_explorer_survey_field_origin_dec_deg = float(dec_deg)
+        self._sky_explorer_survey_field_mosaic_center = (0, 0)
+        self._sky_explorer_survey_field_center_ra_deg = float(ra_deg)
+        self._sky_explorer_survey_field_center_dec_deg = float(dec_deg)
+        self._sky_explorer_primary_survey_key = survey_key
+        self._clear_sky_explorer_survey_comparison(reset_selection=True)
+        self._sky_explorer_comparison_image_path = None
+        self._selected_sky_explorer_manual_annotation_id = None
+        self._sky_explorer_manual_annotation_drag = None
+        self._sky_explorer_mag_limit_result = None
+        self._sky_explorer_mag_limit_auto_objects = ()
+        self._set_sky_explorer_mag_limit_active(False)
+        self._sky_explorer_steps_output.clear()
+        try:
+            canvas_path = self._ensure_sky_explorer_survey_field_wcs_canvas(
+                survey_key=survey_key, center_i=0, center_j=0,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Survey load failed", str(exc))
+            return
+        self._sky_explorer_image_input.setText(str(canvas_path))
+        self._current_sky_explorer_source_image = canvas_path
+        try:
+            display = self._cached_annotated_image_display(canvas_path)
+        except Exception:
+            display = None
+        if display is not None:
+            self._sky_explorer_image_view.set_content(
+                display, overlays=[], grid_overlays=[], editor_enabled=False,
+                reset_view=True, safe_margin_fraction=0.0,
+                render_settings=AnnotatedImageRenderSettings(stretch_mode="linear"),
+            )
+            self._sky_explorer_image_view.focus_on(float(width_px) / 2.0, float(height_px) / 2.0)
+        self._sky_explorer_image_view.set_unbounded_pan(True)
+        self._sync_sky_explorer_comparison_divider_visibility()
+        self._refresh_sky_explorer_survey_tile_layers()
+        self._sync_sky_explorer_primary_button()
+        self._sync_sky_explorer_image_controls()
+        survey_title = dict(_SKY_EXPLORER_SURVEY_OPTIONS).get(survey_key, survey_key)
+        self.statusBar().showMessage(f"Opened {survey_title} survey field. Loading center preview…", 5000)
+        self._append_sky_explorer_workflow_note(
+            f"Opened {survey_title} survey field centered at RA {ra_deg:.4f} deg, Dec {dec_deg:.4f} deg."
+        )
+        self._queue_sky_explorer_survey_field_initial_work()
+        self._pump_sky_explorer_survey_field_prefetch()
+
+    def _ensure_sky_explorer_survey_field_wcs_canvas(self, *, survey_key: str, center_i: int, center_j: int) -> Path:
+        _ra, _dec, fov_arcmin, width_px, height_px = self._sky_explorer_survey_field_settings()
+        origin_ra = self._sky_explorer_survey_field_origin_ra_deg
+        origin_dec = self._sky_explorer_survey_field_origin_dec_deg
+        if origin_ra is None or origin_dec is None:
+            raise RuntimeError("Survey field origin is not set.")
+        center_spec = sky_explorer_survey_field_tile_spec(
+            origin_ra_deg=origin_ra, origin_dec_deg=origin_dec, fov_arcmin=fov_arcmin,
+            tile_i=center_i, tile_j=center_j,
+        )
+        field_wcs = build_sky_explorer_field_wcs(
+            ra_deg=center_spec.ra_deg, dec_deg=center_spec.dec_deg, fov_arcmin=fov_arcmin,
+            width_px=width_px, height_px=height_px,
+        )
+        x0, y0, _w, _h = survey_tile_pixel_rect(center_i, center_j, width_px=width_px, height_px=height_px)
+        field_wcs.wcs.crpix[0] = float(field_wcs.wcs.crpix[0]) + float(x0)
+        field_wcs.wcs.crpix[1] = float(field_wcs.wcs.crpix[1]) + float(y0)
+        canvas = np.zeros((int(height_px), int(width_px)), dtype=np.float32)
+        payload = json.dumps(
+            {
+                "kind": "survey-tile-wcs-canvas", "survey_key": survey_key,
+                "center_i": int(center_i), "center_j": int(center_j),
+                "origin_ra_deg": round(float(origin_ra), 6), "origin_dec_deg": round(float(origin_dec), 6),
+                "fov_arcmin": round(float(fov_arcmin), 6), "width_px": int(width_px), "height_px": int(height_px),
+            },
+            sort_keys=True, separators=(",", ":"),
+        )
+        filename = f"{survey_key}-tile-wcs-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}.fits"
+        return write_survey_image_fits(
+            self._sky_explorer_survey_field_cache_dir() / filename, image_data=canvas, wcs=field_wcs,
+        )
+
+    def _fetch_sky_explorer_survey_field_tile_pixels(
+        self, *, survey_key: str, ra_deg: float, dec_deg: float, fov_arcmin: float,
+        width_px: int, height_px: int, show_progress: bool, progress_callback=None,
+    ):
+        field_wcs = build_sky_explorer_field_wcs(
+            ra_deg=ra_deg, dec_deg=dec_deg, fov_arcmin=fov_arcmin, width_px=width_px, height_px=height_px,
+        )
+        request = SurveyImageRequest(
+            survey_key=survey_key, wcs=field_wcs, width=int(width_px), height=int(height_px),
+            target_rect=(0.0, 0.0, float(width_px), float(height_px)),
+            cache_dir=self._ensure_settings().cache_dir,
+        )
+
+        def _progress(message: str) -> None:
+            if progress_callback is not None:
+                progress_callback(message)
+            if show_progress:
+                self.statusBar().showMessage(str(message).strip() or "Preparing survey field...", 4000)
+
+        result = fetch_survey_image(replace(request, progress_callback=_progress))
+        return np.asarray(result.image_data)
+
+    def _fetch_and_write_sky_explorer_survey_field(
+        self, *, survey_key: str, ra_deg: float, dec_deg: float, fov_arcmin: float,
+        width_px: int, height_px: int, show_progress: bool, progress_callback=None,
+    ) -> Path:
+        pixels = self._fetch_sky_explorer_survey_field_tile_pixels(
+            survey_key=survey_key, ra_deg=ra_deg, dec_deg=dec_deg, fov_arcmin=fov_arcmin,
+            width_px=width_px, height_px=height_px, show_progress=show_progress,
+            progress_callback=progress_callback,
+        )
+        field_wcs = build_sky_explorer_field_wcs(
+            ra_deg=ra_deg, dec_deg=dec_deg, fov_arcmin=fov_arcmin, width_px=width_px, height_px=height_px,
+        )
+        payload = json.dumps(
+            {
+                "survey_key": survey_key, "ra_deg": round(float(ra_deg), 6), "dec_deg": round(float(dec_deg), 6),
+                "fov_arcmin": round(float(fov_arcmin), 6), "width_px": int(width_px), "height_px": int(height_px),
+            },
+            sort_keys=True, separators=(",", ":"),
+        )
+        filename = f"{survey_key}-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}.fits"
+        return write_survey_image_fits(
+            self._sky_explorer_survey_field_cache_dir() / filename, image_data=pixels, wcs=field_wcs,
+        )
+
+    def _sky_explorer_survey_tile_key(
+        self,
+        tile_i: int,
+        tile_j: int,
+        *,
+        survey_key: str | None = None,
+        layer_id: str = "primary",
+    ) -> SurveyTileKey | None:
+        resolved_survey = survey_key or (
+            self._sky_explorer_comparison_survey_key
+            if layer_id == "comparison"
+            else self._sky_explorer_primary_survey_key
+        )
+        origin_ra = self._sky_explorer_survey_field_origin_ra_deg
+        origin_dec = self._sky_explorer_survey_field_origin_dec_deg
+        if resolved_survey is None or origin_ra is None or origin_dec is None:
+            return None
+        _ra, _dec, fov_arcmin, width_px, height_px = self._sky_explorer_survey_field_settings()
+        return make_survey_tile_key(
+            survey_key=resolved_survey,
+            tile_i=tile_i,
+            tile_j=tile_j,
+            origin_ra_deg=origin_ra,
+            origin_dec_deg=origin_dec,
+            fov_arcmin=fov_arcmin,
+            width_px=width_px,
+            height_px=height_px,
+            layer_id=layer_id,
+        )
+
+    def _sky_explorer_is_survey_field_primary(self) -> bool:
+        return bool(
+            self._sky_explorer_primary_survey_key
+            and self._current_sky_explorer_source_image is not None
+            and self._sky_explorer_path_in_survey_field_cache(self._current_sky_explorer_source_image)
+        )
+
+    def _ensure_sky_explorer_survey_tile_record(self, tile_i: int, tile_j: int) -> SurveyTileRecord | None:
+        key = self._sky_explorer_survey_tile_key(tile_i, tile_j)
+        if key is None:
+            return None
+        record = self._sky_explorer_survey_field_tiles.get((tile_i, tile_j))
+        if record is None:
+            ra_deg, dec_deg = survey_tile_sky_center(key)
+            record = SurveyTileRecord(key=key, ra_deg=ra_deg, dec_deg=dec_deg)
+            self._sky_explorer_survey_field_tiles[(tile_i, tile_j)] = record
+        record.touch()
+        return record
+
+    def _sky_explorer_survey_tile_queue_score(
+        self,
+        tile_i: int,
+        tile_j: int,
+        resolution: SurveyTileResolution,
+        *,
+        retry_penalty: float = 0.0,
+    ) -> float:
+        view_i, view_j = self._sky_explorer_survey_field_last_view_tile or (0, 0)
+        pan_di, pan_dj = self._sky_explorer_survey_field_pan_velocity
+        return survey_tile_request_priority(
+            tile_i=tile_i,
+            tile_j=tile_j,
+            view_i=view_i,
+            view_j=view_j,
+            resolution=resolution,
+            pan_di=pan_di,
+            pan_dj=pan_dj,
+        ) + float(retry_penalty)
+
+    def _queue_sky_explorer_survey_field_initial_work(self) -> None:
+        # Score with the shared priority function so center refine outranks neighbor work
+        # once the center preview completes and re-queues high-res.
+        for tile_i, tile_j, resolution in initial_survey_tile_work_order(0, 0):
+            self._enqueue_sky_explorer_survey_tile(
+                tile_i,
+                tile_j,
+                resolution,
+                score=self._sky_explorer_survey_tile_queue_score(tile_i, tile_j, resolution),
+            )
+
+    def _enqueue_sky_explorer_survey_tile(
+        self, tile_i: int, tile_j: int, resolution: SurveyTileResolution, *, score: float,
+    ) -> None:
+        record = self._ensure_sky_explorer_survey_tile_record(tile_i, tile_j)
+        if record is None:
+            return
+        if record.state in {SurveyTileState.NO_DATA, SurveyTileState.FAILED_FINAL, SurveyTileState.CANCELLED}:
+            return
+        inflight_key = (int(tile_i), int(tile_j), str(resolution.value))
+        if inflight_key in self._sky_explorer_survey_field_inflight:
+            return
+        if any(
+            int(item[1]) == int(tile_i) and int(item[2]) == int(tile_j) and item[3] is resolution
+            for item in self._sky_explorer_survey_field_prefetch_queue
+        ):
+            return
+        if resolution is SurveyTileResolution.PREVIEW:
+            if record.preview_display is not None or record.refine_display is not None:
+                return
+            if record.state in {SurveyTileState.QUEUED_LOW_RES, SurveyTileState.LOADING_LOW_RES}:
+                return
+            record.state = SurveyTileState.QUEUED_LOW_RES
+        else:
+            if record.refine_display is not None:
+                return
+            if record.state in {SurveyTileState.QUEUED_HIGH_RES, SurveyTileState.LOADING_HIGH_RES}:
+                return
+            if record.preview_display is None and record.state in {
+                SurveyTileState.NOT_REQUESTED, SurveyTileState.QUEUED_LOW_RES, SurveyTileState.LOADING_LOW_RES,
+            }:
+                return
+            record.state = SurveyTileState.QUEUED_HIGH_RES
+        self._sky_explorer_survey_field_prefetch_queue.append(
+            (float(score), int(tile_i), int(tile_j), resolution)
+        )
+        self._sky_explorer_survey_field_prefetch_queue.sort(
+            key=lambda item: (item[0], item[1], item[2], item[3].value)
+        )
+        if len(self._sky_explorer_survey_field_prefetch_queue) > SURVEY_TILE_MAX_QUEUED_REQUESTS:
+            kept = [item for item in self._sky_explorer_survey_field_prefetch_queue if item[0] < 2.0]
+            rest = [item for item in self._sky_explorer_survey_field_prefetch_queue if item[0] >= 2.0]
+            self._sky_explorer_survey_field_prefetch_queue = (
+                kept + rest[: max(0, SURVEY_TILE_MAX_QUEUED_REQUESTS - len(kept))]
+            )
+
+    def _pump_sky_explorer_survey_field_prefetch(self) -> None:
+        if not self._sky_explorer_primary_survey_key:
+            return
+        self._sky_explorer_survey_field_workers = [
+            worker for worker in self._sky_explorer_survey_field_workers
+            if worker is not None and worker.isRunning()
+        ]
+        view_i, view_j = self._sky_explorer_survey_field_last_view_tile or (0, 0)
+        hold_neighbors_for_center = self._sky_explorer_survey_field_should_hold_neighbors_for_center(
+            view_i, view_j,
+        )
+        deferred: list[tuple[float, int, int, SurveyTileResolution]] = []
+        while len(self._sky_explorer_survey_field_workers) < SURVEY_TILE_MAX_NETWORK_WORKERS:
+            if not self._sky_explorer_survey_field_prefetch_queue:
+                break
+            score, tile_i, tile_j, resolution = self._sky_explorer_survey_field_prefetch_queue.pop(0)
+            if hold_neighbors_for_center and (int(tile_i), int(tile_j)) != (int(view_i), int(view_j)):
+                deferred.append((score, tile_i, tile_j, resolution))
+                continue
+            inflight_key = (int(tile_i), int(tile_j), str(resolution.value))
+            if inflight_key in self._sky_explorer_survey_field_inflight:
+                continue
+            record = self._sky_explorer_survey_field_tiles.get((tile_i, tile_j))
+            if record is not None:
+                if resolution is SurveyTileResolution.PREVIEW and (
+                    record.preview_display is not None or record.refine_display is not None
+                ):
+                    continue
+                if resolution is SurveyTileResolution.REFINE and record.refine_display is not None:
+                    continue
+            if not self._start_sky_explorer_survey_field_tile_fetch(
+                tile_i=tile_i, tile_j=tile_j, resolution=resolution,
+            ):
+                continue
+            # After the center high-res fetch starts, neighbors may use remaining workers.
+            hold_neighbors_for_center = self._sky_explorer_survey_field_should_hold_neighbors_for_center(
+                view_i, view_j,
+            )
+        if deferred:
+            self._sky_explorer_survey_field_prefetch_queue = (
+                deferred + self._sky_explorer_survey_field_prefetch_queue
+            )
+            self._sky_explorer_survey_field_prefetch_queue.sort(
+                key=lambda item: (item[0], item[1], item[2], item[3].value)
+            )
+
+    def _sky_explorer_survey_field_should_hold_neighbors_for_center(
+        self, view_i: int, view_j: int,
+    ) -> bool:
+        """Keep neighbor fetches paused until the view-center refine is running or done."""
+        record = self._sky_explorer_survey_field_tiles.get((int(view_i), int(view_j)))
+        if record is None:
+            return True
+        if record.state in {
+            SurveyTileState.NO_DATA,
+            SurveyTileState.FAILED_FINAL,
+            SurveyTileState.CANCELLED,
+            SurveyTileState.HIGH_RES_READY,
+            SurveyTileState.LOADING_HIGH_RES,
+        }:
+            return False
+        if record.refine_display is not None:
+            return False
+        return True
+
+    def _start_sky_explorer_survey_field_tile_fetch(
+        self, *, tile_i: int, tile_j: int, resolution: SurveyTileResolution,
+    ) -> bool:
+        tile_key = self._sky_explorer_survey_tile_key(tile_i, tile_j)
+        if tile_key is None:
+            return False
+        record = self._ensure_sky_explorer_survey_tile_record(tile_i, tile_j)
+        if record is None:
+            return False
+        self._sky_explorer_survey_field_request_generation += 1
+        generation = self._sky_explorer_survey_field_request_generation
+        record.request_generation = generation
+        record.state = (
+            SurveyTileState.LOADING_LOW_RES
+            if resolution is SurveyTileResolution.PREVIEW
+            else SurveyTileState.LOADING_HIGH_RES
+        )
+        inflight_key = (int(tile_i), int(tile_j), str(resolution.value))
+        self._sky_explorer_survey_field_inflight.add(inflight_key)
+        worker = SkyExplorerSurveyTileWorker(
+            session_id=self._sky_explorer_survey_field_session_id,
+            tile_key=tile_key, resolution=resolution, request_generation=generation,
+            cache_dir=self._ensure_settings().cache_dir, parent=self,
+        )
+        self._sky_explorer_survey_field_workers.append(worker)
+        worker.tile_completed.connect(self._handle_sky_explorer_survey_tile_completed)
+        worker.tile_failed.connect(
+            lambda message, key=inflight_key, gen=generation, ti=tile_i, tj=tile_j, res=resolution:
+            self._handle_sky_explorer_survey_tile_failed(
+                message, inflight_key=key, generation=gen, tile_i=ti, tile_j=tj, resolution=res,
+            )
+        )
+        worker.finished.connect(worker.deleteLater)
+        tier_label = "preview" if resolution is SurveyTileResolution.PREVIEW else "detail"
+        self.statusBar().showMessage(f"Loading survey {tier_label} tile ({tile_i},{tile_j})…", 3000)
+        worker.start()
+        self._refresh_sky_explorer_survey_tile_layers()
+        return True
+
+    def _handle_sky_explorer_survey_tile_failed(
+        self, message: str, *, inflight_key: tuple[int, int, str], generation: int,
+        tile_i: int, tile_j: int, resolution: SurveyTileResolution,
+    ) -> None:
+        self._sky_explorer_survey_field_inflight.discard(inflight_key)
+        record = self._sky_explorer_survey_field_tiles.get((tile_i, tile_j))
+        if record is not None and record.request_generation == generation:
+            record.retry_count += 1
+            record.last_error = str(message)
+            if record.retry_count > SURVEY_TILE_MAX_RETRIES:
+                record.state = SurveyTileState.FAILED_FINAL
+            else:
+                record.state = SurveyTileState.FAILED_RETRYABLE
+                self._enqueue_sky_explorer_survey_tile(
+                    tile_i,
+                    tile_j,
+                    resolution,
+                    score=self._sky_explorer_survey_tile_queue_score(
+                        tile_i, tile_j, resolution, retry_penalty=1.5,
+                    ),
+                )
+        self._refresh_sky_explorer_survey_tile_layers()
+        self._pump_sky_explorer_survey_field_prefetch()
+
+    def _handle_sky_explorer_survey_tile_completed(self, result: object) -> None:
+        if not isinstance(result, SurveyTileLoadResult):
+            self._pump_sky_explorer_survey_field_prefetch()
+            return
+        inflight_key = (int(result.tile_key.tile_i), int(result.tile_key.tile_j), str(result.resolution.value))
+        self._sky_explorer_survey_field_inflight.discard(inflight_key)
+        if int(result.session_id) != int(self._sky_explorer_survey_field_session_id):
+            self._pump_sky_explorer_survey_field_prefetch()
+            return
+        if result.layer_id != "primary" or not self._sky_explorer_primary_survey_key:
+            self._pump_sky_explorer_survey_field_prefetch()
+            return
+        tile_i = int(result.tile_key.tile_i)
+        tile_j = int(result.tile_key.tile_j)
+        record = self._ensure_sky_explorer_survey_tile_record(tile_i, tile_j)
+        if record is None:
+            self._pump_sky_explorer_survey_field_prefetch()
+            return
+        record.ra_deg = float(result.ra_deg)
+        record.dec_deg = float(result.dec_deg)
+        record.touch()
+        if result.status is SurveyTileResultStatus.NO_DATA:
+            record.state = SurveyTileState.NO_DATA
+            record.last_error = result.error_message
+            self._refresh_sky_explorer_survey_tile_layers()
+            self._pump_sky_explorer_survey_field_prefetch()
+            return
+        if result.status is not SurveyTileResultStatus.SUCCESS or result.display_rgba is None:
+            record.retry_count += 1
+            record.last_error = result.error_message
+            if record.retry_count > SURVEY_TILE_MAX_RETRIES:
+                record.state = SurveyTileState.FAILED_FINAL
+            else:
+                record.state = SurveyTileState.FAILED_RETRYABLE
+                self._enqueue_sky_explorer_survey_tile(
+                    tile_i,
+                    tile_j,
+                    result.resolution,
+                    score=self._sky_explorer_survey_tile_queue_score(
+                        tile_i, tile_j, result.resolution, retry_penalty=1.5,
+                    ),
+                )
+            self._refresh_sky_explorer_survey_tile_layers()
+            self._pump_sky_explorer_survey_field_prefetch()
+            return
+        if result.resolution is SurveyTileResolution.PREVIEW:
+            if record.refine_display is None:
+                record.preview_image = result.image_data
+                record.preview_display = result.display_rgba
+                record.preview_stf = result.stf_parameters
+                record.state = SurveyTileState.LOW_RES_READY
+                self._sky_explorer_survey_field_qimage_cache.pop((tile_i, tile_j, "preview"), None)
+            # Ring-aware priority: view-center refine must outrank neighbor previews/refines.
+            self._enqueue_sky_explorer_survey_tile(
+                tile_i,
+                tile_j,
+                SurveyTileResolution.REFINE,
+                score=self._sky_explorer_survey_tile_queue_score(
+                    tile_i, tile_j, SurveyTileResolution.REFINE,
+                ),
+            )
+        else:
+            record.refine_image = result.image_data
+            record.refine_display = result.display_rgba
+            record.refine_stf = result.stf_parameters
+            record.state = SurveyTileState.HIGH_RES_READY
+            self._sky_explorer_survey_field_qimage_cache.pop((tile_i, tile_j, "refine"), None)
+            self._sky_explorer_survey_field_qimage_cache.pop((tile_i, tile_j, "preview"), None)
+        ready = sum(1 for item in self._sky_explorer_survey_field_tiles.values() if item.is_ready)
+        self.statusBar().showMessage(
+            f"Survey tiles ready: {ready} (session cache {len(self._sky_explorer_survey_field_tiles)}).",
+            2500,
+        )
+        self._refresh_sky_explorer_survey_tile_layers()
+        self._pump_sky_explorer_survey_field_prefetch()
+
+    def _rgba_to_qimage(self, rgba: np.ndarray):
+        from PySide6.QtGui import QImage
+        array = np.ascontiguousarray(rgba)
+        if array.ndim != 3 or array.shape[2] != 4:
+            raise ValueError("Expected RGBA image array.")
+        height, width, _channels = array.shape
+        return QImage(array.data, width, height, array.strides[0], QImage.Format.Format_RGBA8888).copy()
+
+    def _qimage_for_survey_tile_record(self, record: SurveyTileRecord):
+        tile_i = int(record.key.tile_i)
+        tile_j = int(record.key.tile_j)
+        if record.refine_display is not None:
+            cache_key = (tile_i, tile_j, "refine")
+            cached = self._sky_explorer_survey_field_qimage_cache.get(cache_key)
+            if cached is None:
+                cached = self._rgba_to_qimage(record.refine_display)
+                self._sky_explorer_survey_field_qimage_cache[cache_key] = cached
+            return cached, ""
+        if record.preview_display is not None:
+            cache_key = (tile_i, tile_j, "preview")
+            cached = self._sky_explorer_survey_field_qimage_cache.get(cache_key)
+            if cached is None:
+                cached = self._rgba_to_qimage(record.preview_display)
+                self._sky_explorer_survey_field_qimage_cache[cache_key] = cached
+            return cached, ""
+        _ra, _dec, _fov, width_px, height_px = self._sky_explorer_survey_field_settings()
+        if record.state == SurveyTileState.NO_DATA:
+            rgba = make_survey_tile_placeholder_rgba(
+                width=width_px, height=height_px, state=SurveyTileState.NO_DATA,
+            )
+            return self._rgba_to_qimage(rgba), "No survey coverage"
+        if record.state in {SurveyTileState.FAILED_FINAL, SurveyTileState.FAILED_RETRYABLE}:
+            rgba = make_survey_tile_placeholder_rgba(width=width_px, height=height_px, state=record.state)
+            return self._rgba_to_qimage(rgba), "Survey tile failed"
+        if record.state in {
+            SurveyTileState.QUEUED_LOW_RES, SurveyTileState.LOADING_LOW_RES,
+            SurveyTileState.QUEUED_HIGH_RES, SurveyTileState.LOADING_HIGH_RES,
+        }:
+            rgba = make_survey_tile_placeholder_rgba(
+                width=width_px, height=height_px, state=SurveyTileState.LOADING_LOW_RES,
+            )
+            return self._rgba_to_qimage(rgba), "Loading…"
+        return None, ""
+
+    def _refresh_sky_explorer_survey_tile_layers(self) -> None:
+        if not self._sky_explorer_primary_survey_key:
+            self._sky_explorer_image_view.clear_survey_tile_layers()
+            return
+        from photometry_app.ui.image_view import SurveyTileLayerItem
+        from PySide6.QtCore import QRectF
+        _ra, _dec, _fov, width_px, height_px = self._sky_explorer_survey_field_settings()
+        layers = []
+        for (tile_i, tile_j), record in sorted(self._sky_explorer_survey_field_tiles.items()):
+            x0, y0, width, height = survey_tile_pixel_rect(
+                tile_i, tile_j, width_px=width_px, height_px=height_px,
+            )
+            qimage, label = self._qimage_for_survey_tile_record(record)
+            layers.append(
+                SurveyTileLayerItem(
+                    rect=QRectF(float(x0), float(y0), float(width), float(height)),
+                    qimage=qimage, state=str(record.state.value), label=label,
+                    layer_id="primary",
+                )
+            )
+        self._sky_explorer_image_view.set_survey_tile_layers(layers)
+
+    def _clear_sky_explorer_comparison_survey_tiles(self) -> None:
+        self._sky_explorer_comparison_survey_session_id += 1
+        self._sky_explorer_comparison_survey_request_generation += 1
+        self._sky_explorer_comparison_survey_tiles = {}
+        self._sky_explorer_comparison_survey_prefetch_queue = []
+        self._sky_explorer_comparison_survey_inflight = set()
+        self._sky_explorer_comparison_survey_workers = []
+        self._sky_explorer_comparison_survey_qimage_cache = {}
+        self._sky_explorer_comparison_survey_key = None
+        if hasattr(self, "_sky_explorer_image_view"):
+            self._sky_explorer_image_view.clear_comparison_survey_tile_layers()
+
+    def _start_sky_explorer_comparison_survey_tiles(self, survey_key: str) -> None:
+        """Load comparison as a tiled survey mosaic aligned to the primary survey grid."""
+        self._clear_sky_explorer_comparison_survey_tiles()
+        self._sky_explorer_comparison_survey_key = str(survey_key).strip().lower()
+        view_i, view_j = self._sky_explorer_survey_field_last_view_tile or (0, 0)
+        self._sky_explorer_image_view.set_comparison_split_enabled(True)
+        self._sync_sky_explorer_comparison_divider_visibility()
+        self._sky_explorer_image_view.set_comparison_loading(True)
+        for tile_i, tile_j, resolution in initial_survey_tile_work_order(view_i, view_j):
+            self._enqueue_sky_explorer_comparison_survey_tile(
+                tile_i,
+                tile_j,
+                resolution,
+                score=self._sky_explorer_survey_tile_queue_score(tile_i, tile_j, resolution),
+            )
+        self._refresh_sky_explorer_comparison_survey_tile_layers()
+        self._pump_sky_explorer_comparison_survey_prefetch()
+        title = dict(_SKY_EXPLORER_SURVEY_OPTIONS).get(survey_key, survey_key)
+        self.statusBar().showMessage(f"Loading {title} comparison tiles from center…", 4000)
+
+    def _ensure_sky_explorer_comparison_survey_tile_record(
+        self, tile_i: int, tile_j: int,
+    ) -> SurveyTileRecord | None:
+        key = self._sky_explorer_survey_tile_key(
+            tile_i,
+            tile_j,
+            survey_key=self._sky_explorer_comparison_survey_key,
+            layer_id="comparison",
+        )
+        if key is None:
+            return None
+        record = self._sky_explorer_comparison_survey_tiles.get((tile_i, tile_j))
+        if record is None:
+            ra_deg, dec_deg = survey_tile_sky_center(key)
+            record = SurveyTileRecord(key=key, ra_deg=ra_deg, dec_deg=dec_deg)
+            self._sky_explorer_comparison_survey_tiles[(tile_i, tile_j)] = record
+        record.touch()
+        return record
+
+    def _enqueue_sky_explorer_comparison_survey_tile(
+        self, tile_i: int, tile_j: int, resolution: SurveyTileResolution, *, score: float,
+    ) -> None:
+        record = self._ensure_sky_explorer_comparison_survey_tile_record(tile_i, tile_j)
+        if record is None:
+            return
+        if record.state in {SurveyTileState.NO_DATA, SurveyTileState.FAILED_FINAL, SurveyTileState.CANCELLED}:
+            return
+        inflight_key = (int(tile_i), int(tile_j), str(resolution.value))
+        if inflight_key in self._sky_explorer_comparison_survey_inflight:
+            return
+        if any(
+            int(item[1]) == int(tile_i) and int(item[2]) == int(tile_j) and item[3] is resolution
+            for item in self._sky_explorer_comparison_survey_prefetch_queue
+        ):
+            return
+        if resolution is SurveyTileResolution.PREVIEW:
+            if record.preview_display is not None or record.refine_display is not None:
+                return
+            if record.state in {SurveyTileState.QUEUED_LOW_RES, SurveyTileState.LOADING_LOW_RES}:
+                return
+            record.state = SurveyTileState.QUEUED_LOW_RES
+        else:
+            if record.refine_display is not None:
+                return
+            if record.state in {SurveyTileState.QUEUED_HIGH_RES, SurveyTileState.LOADING_HIGH_RES}:
+                return
+            if record.preview_display is None and record.state in {
+                SurveyTileState.NOT_REQUESTED, SurveyTileState.QUEUED_LOW_RES, SurveyTileState.LOADING_LOW_RES,
+            }:
+                return
+            record.state = SurveyTileState.QUEUED_HIGH_RES
+        self._sky_explorer_comparison_survey_prefetch_queue.append(
+            (float(score), int(tile_i), int(tile_j), resolution)
+        )
+        self._sky_explorer_comparison_survey_prefetch_queue.sort(
+            key=lambda item: (item[0], item[1], item[2], item[3].value)
+        )
+        if len(self._sky_explorer_comparison_survey_prefetch_queue) > SURVEY_TILE_MAX_QUEUED_REQUESTS:
+            kept = [item for item in self._sky_explorer_comparison_survey_prefetch_queue if item[0] < 2.0]
+            rest = [item for item in self._sky_explorer_comparison_survey_prefetch_queue if item[0] >= 2.0]
+            self._sky_explorer_comparison_survey_prefetch_queue = (
+                kept + rest[: max(0, SURVEY_TILE_MAX_QUEUED_REQUESTS - len(kept))]
+            )
+
+    def _pump_sky_explorer_comparison_survey_prefetch(self) -> None:
+        if not self._sky_explorer_comparison_survey_key:
+            return
+        self._sky_explorer_comparison_survey_workers = [
+            worker for worker in self._sky_explorer_comparison_survey_workers
+            if worker is not None and worker.isRunning()
+        ]
+        view_i, view_j = self._sky_explorer_survey_field_last_view_tile or (0, 0)
+        hold_neighbors = self._sky_explorer_comparison_should_hold_neighbors_for_center(view_i, view_j)
+        deferred: list[tuple[float, int, int, SurveyTileResolution]] = []
+        while len(self._sky_explorer_comparison_survey_workers) < SURVEY_TILE_MAX_NETWORK_WORKERS:
+            if not self._sky_explorer_comparison_survey_prefetch_queue:
+                break
+            score, tile_i, tile_j, resolution = self._sky_explorer_comparison_survey_prefetch_queue.pop(0)
+            if hold_neighbors and (int(tile_i), int(tile_j)) != (int(view_i), int(view_j)):
+                deferred.append((score, tile_i, tile_j, resolution))
+                continue
+            inflight_key = (int(tile_i), int(tile_j), str(resolution.value))
+            if inflight_key in self._sky_explorer_comparison_survey_inflight:
+                continue
+            record = self._sky_explorer_comparison_survey_tiles.get((tile_i, tile_j))
+            if record is not None:
+                if resolution is SurveyTileResolution.PREVIEW and (
+                    record.preview_display is not None or record.refine_display is not None
+                ):
+                    continue
+                if resolution is SurveyTileResolution.REFINE and record.refine_display is not None:
+                    continue
+            if not self._start_sky_explorer_comparison_survey_tile_fetch(
+                tile_i=tile_i, tile_j=tile_j, resolution=resolution,
+            ):
+                continue
+            hold_neighbors = self._sky_explorer_comparison_should_hold_neighbors_for_center(view_i, view_j)
+        if deferred:
+            self._sky_explorer_comparison_survey_prefetch_queue = (
+                deferred + self._sky_explorer_comparison_survey_prefetch_queue
+            )
+            self._sky_explorer_comparison_survey_prefetch_queue.sort(
+                key=lambda item: (item[0], item[1], item[2], item[3].value)
+            )
+
+    def _sky_explorer_comparison_should_hold_neighbors_for_center(
+        self, view_i: int, view_j: int,
+    ) -> bool:
+        record = self._sky_explorer_comparison_survey_tiles.get((int(view_i), int(view_j)))
+        if record is None:
+            return True
+        if record.state in {
+            SurveyTileState.NO_DATA,
+            SurveyTileState.FAILED_FINAL,
+            SurveyTileState.CANCELLED,
+            SurveyTileState.HIGH_RES_READY,
+            SurveyTileState.LOADING_HIGH_RES,
+        }:
+            return False
+        if record.refine_display is not None:
+            return False
+        return True
+
+    def _start_sky_explorer_comparison_survey_tile_fetch(
+        self, *, tile_i: int, tile_j: int, resolution: SurveyTileResolution,
+    ) -> bool:
+        tile_key = self._sky_explorer_survey_tile_key(
+            tile_i,
+            tile_j,
+            survey_key=self._sky_explorer_comparison_survey_key,
+            layer_id="comparison",
+        )
+        if tile_key is None:
+            return False
+        record = self._ensure_sky_explorer_comparison_survey_tile_record(tile_i, tile_j)
+        if record is None:
+            return False
+        self._sky_explorer_comparison_survey_request_generation += 1
+        generation = self._sky_explorer_comparison_survey_request_generation
+        record.request_generation = generation
+        record.state = (
+            SurveyTileState.LOADING_LOW_RES
+            if resolution is SurveyTileResolution.PREVIEW
+            else SurveyTileState.LOADING_HIGH_RES
+        )
+        inflight_key = (int(tile_i), int(tile_j), str(resolution.value))
+        self._sky_explorer_comparison_survey_inflight.add(inflight_key)
+        worker = SkyExplorerSurveyTileWorker(
+            session_id=self._sky_explorer_comparison_survey_session_id,
+            tile_key=tile_key,
+            resolution=resolution,
+            request_generation=generation,
+            cache_dir=self._ensure_settings().cache_dir,
+            parent=self,
+        )
+        self._sky_explorer_comparison_survey_workers.append(worker)
+        worker.tile_completed.connect(self._handle_sky_explorer_comparison_survey_tile_completed)
+        worker.tile_failed.connect(
+            lambda message, key=inflight_key, gen=generation, ti=tile_i, tj=tile_j, res=resolution:
+            self._handle_sky_explorer_comparison_survey_tile_failed(
+                message, inflight_key=key, generation=gen, tile_i=ti, tile_j=tj, resolution=res,
+            )
+        )
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+        self._refresh_sky_explorer_comparison_survey_tile_layers()
+        return True
+
+    def _handle_sky_explorer_comparison_survey_tile_failed(
+        self, message: str, *, inflight_key: tuple[int, int, str], generation: int,
+        tile_i: int, tile_j: int, resolution: SurveyTileResolution,
+    ) -> None:
+        self._sky_explorer_comparison_survey_inflight.discard(inflight_key)
+        record = self._sky_explorer_comparison_survey_tiles.get((tile_i, tile_j))
+        if record is not None and record.request_generation == generation:
+            record.retry_count += 1
+            record.last_error = str(message)
+            if record.retry_count > SURVEY_TILE_MAX_RETRIES:
+                record.state = SurveyTileState.FAILED_FINAL
+            else:
+                record.state = SurveyTileState.FAILED_RETRYABLE
+                self._enqueue_sky_explorer_comparison_survey_tile(
+                    tile_i,
+                    tile_j,
+                    resolution,
+                    score=self._sky_explorer_survey_tile_queue_score(
+                        tile_i, tile_j, resolution, retry_penalty=1.5,
+                    ),
+                )
+        self._refresh_sky_explorer_comparison_survey_tile_layers()
+        self._pump_sky_explorer_comparison_survey_prefetch()
+
+    def _handle_sky_explorer_comparison_survey_tile_completed(self, result: object) -> None:
+        if not isinstance(result, SurveyTileLoadResult):
+            self._pump_sky_explorer_comparison_survey_prefetch()
+            return
+        inflight_key = (int(result.tile_key.tile_i), int(result.tile_key.tile_j), str(result.resolution.value))
+        self._sky_explorer_comparison_survey_inflight.discard(inflight_key)
+        if int(result.session_id) != int(self._sky_explorer_comparison_survey_session_id):
+            self._pump_sky_explorer_comparison_survey_prefetch()
+            return
+        if result.layer_id != "comparison" or not self._sky_explorer_comparison_survey_key:
+            self._pump_sky_explorer_comparison_survey_prefetch()
+            return
+        tile_i = int(result.tile_key.tile_i)
+        tile_j = int(result.tile_key.tile_j)
+        record = self._ensure_sky_explorer_comparison_survey_tile_record(tile_i, tile_j)
+        if record is None:
+            self._pump_sky_explorer_comparison_survey_prefetch()
+            return
+        record.ra_deg = float(result.ra_deg)
+        record.dec_deg = float(result.dec_deg)
+        record.touch()
+        if result.status is SurveyTileResultStatus.NO_DATA:
+            record.state = SurveyTileState.NO_DATA
+            record.last_error = result.error_message
+            self._refresh_sky_explorer_comparison_survey_tile_layers()
+            self._pump_sky_explorer_comparison_survey_prefetch()
+            return
+        if result.status is not SurveyTileResultStatus.SUCCESS or result.display_rgba is None:
+            record.retry_count += 1
+            record.last_error = result.error_message
+            if record.retry_count > SURVEY_TILE_MAX_RETRIES:
+                record.state = SurveyTileState.FAILED_FINAL
+            else:
+                record.state = SurveyTileState.FAILED_RETRYABLE
+                self._enqueue_sky_explorer_comparison_survey_tile(
+                    tile_i,
+                    tile_j,
+                    result.resolution,
+                    score=self._sky_explorer_survey_tile_queue_score(
+                        tile_i, tile_j, result.resolution, retry_penalty=1.5,
+                    ),
+                )
+            self._refresh_sky_explorer_comparison_survey_tile_layers()
+            self._pump_sky_explorer_comparison_survey_prefetch()
+            return
+        if result.resolution is SurveyTileResolution.PREVIEW:
+            if record.refine_display is None:
+                record.preview_image = result.image_data
+                record.preview_display = result.display_rgba
+                record.preview_stf = result.stf_parameters
+                record.state = SurveyTileState.LOW_RES_READY
+                self._sky_explorer_comparison_survey_qimage_cache.pop((tile_i, tile_j, "preview"), None)
+            self._enqueue_sky_explorer_comparison_survey_tile(
+                tile_i,
+                tile_j,
+                SurveyTileResolution.REFINE,
+                score=self._sky_explorer_survey_tile_queue_score(
+                    tile_i, tile_j, SurveyTileResolution.REFINE,
+                ),
+            )
+        else:
+            record.refine_image = result.image_data
+            record.refine_display = result.display_rgba
+            record.refine_stf = result.stf_parameters
+            record.state = SurveyTileState.HIGH_RES_READY
+            self._sky_explorer_comparison_survey_qimage_cache.pop((tile_i, tile_j, "refine"), None)
+            self._sky_explorer_comparison_survey_qimage_cache.pop((tile_i, tile_j, "preview"), None)
+        self._sky_explorer_image_view.set_comparison_loading(False)
+        self._refresh_sky_explorer_comparison_survey_tile_layers()
+        self._pump_sky_explorer_comparison_survey_prefetch()
+
+    def _qimage_for_comparison_survey_tile_record(self, record: SurveyTileRecord):
+        tile_i = int(record.key.tile_i)
+        tile_j = int(record.key.tile_j)
+        if record.refine_display is not None:
+            cache_key = (tile_i, tile_j, "refine")
+            cached = self._sky_explorer_comparison_survey_qimage_cache.get(cache_key)
+            if cached is None:
+                cached = self._rgba_to_qimage(record.refine_display)
+                self._sky_explorer_comparison_survey_qimage_cache[cache_key] = cached
+            return cached, ""
+        if record.preview_display is not None:
+            cache_key = (tile_i, tile_j, "preview")
+            cached = self._sky_explorer_comparison_survey_qimage_cache.get(cache_key)
+            if cached is None:
+                cached = self._rgba_to_qimage(record.preview_display)
+                self._sky_explorer_comparison_survey_qimage_cache[cache_key] = cached
+            return cached, ""
+        _ra, _dec, _fov, width_px, height_px = self._sky_explorer_survey_field_settings()
+        if record.state == SurveyTileState.NO_DATA:
+            rgba = make_survey_tile_placeholder_rgba(
+                width=width_px, height=height_px, state=SurveyTileState.NO_DATA,
+            )
+            return self._rgba_to_qimage(rgba), "No survey coverage"
+        if record.state in {SurveyTileState.FAILED_FINAL, SurveyTileState.FAILED_RETRYABLE}:
+            rgba = make_survey_tile_placeholder_rgba(width=width_px, height=height_px, state=record.state)
+            return self._rgba_to_qimage(rgba), "Survey tile failed"
+        if record.state in {
+            SurveyTileState.QUEUED_LOW_RES, SurveyTileState.LOADING_LOW_RES,
+            SurveyTileState.QUEUED_HIGH_RES, SurveyTileState.LOADING_HIGH_RES,
+        }:
+            rgba = make_survey_tile_placeholder_rgba(
+                width=width_px, height=height_px, state=SurveyTileState.LOADING_LOW_RES,
+            )
+            return self._rgba_to_qimage(rgba), "Loading…"
+        return None, ""
+
+    def _refresh_sky_explorer_comparison_survey_tile_layers(self) -> None:
+        if not self._sky_explorer_comparison_survey_key:
+            self._sky_explorer_image_view.clear_comparison_survey_tile_layers()
+            return
+        from photometry_app.ui.image_view import SurveyTileLayerItem
+        from PySide6.QtCore import QRectF
+        _ra, _dec, _fov, width_px, height_px = self._sky_explorer_survey_field_settings()
+        layers = []
+        for (tile_i, tile_j), record in sorted(self._sky_explorer_comparison_survey_tiles.items()):
+            x0, y0, width, height = survey_tile_pixel_rect(
+                tile_i, tile_j, width_px=width_px, height_px=height_px,
+            )
+            qimage, label = self._qimage_for_comparison_survey_tile_record(record)
+            layers.append(
+                SurveyTileLayerItem(
+                    rect=QRectF(float(x0), float(y0), float(width), float(height)),
+                    qimage=qimage,
+                    state=str(record.state.value),
+                    label=label,
+                    layer_id="comparison",
+                )
+            )
+        self._sky_explorer_image_view.set_comparison_survey_tile_layers(layers)
+
+    def _queue_sky_explorer_comparison_survey_viewport_work(self) -> None:
+        if not self._sky_explorer_comparison_survey_key:
+            return
+        view_i, view_j = self._sky_explorer_survey_field_last_view_tile or (0, 0)
+        pan_di, pan_dj = self._sky_explorer_survey_field_pan_velocity
+        work = build_viewport_survey_tile_work(
+            view_i=view_i,
+            view_j=view_j,
+            records=self._sky_explorer_comparison_survey_tiles,
+            radius=SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS,
+            pan_di=pan_di,
+            pan_dj=pan_dj,
+        )
+        for score, tile_i, tile_j, resolution in work:
+            self._enqueue_sky_explorer_comparison_survey_tile(
+                tile_i, tile_j, resolution, score=score,
+            )
+        self._pump_sky_explorer_comparison_survey_prefetch()
+
+    def _sky_explorer_world_coordinates_for_survey_tile_point(
+        self, image_x: float, image_y: float,
+    ) -> tuple[float, float] | None:
+        if not self._sky_explorer_primary_survey_key:
+            return None
+        if not self._sky_explorer_path_in_survey_field_cache(self._current_sky_explorer_source_image or Path()):
+            return None
+        _ra, _dec, fov_arcmin, width_px, height_px = self._sky_explorer_survey_field_settings()
+        tile_i, tile_j = survey_tile_indices_for_image_point(
+            image_x, image_y, width_px=width_px, height_px=height_px,
+        )
+        record = self._sky_explorer_survey_field_tiles.get((tile_i, tile_j))
+        if record is not None:
+            ra_deg, dec_deg = float(record.ra_deg), float(record.dec_deg)
+        else:
+            key = self._sky_explorer_survey_tile_key(tile_i, tile_j)
+            if key is None:
+                return None
+            ra_deg, dec_deg = survey_tile_sky_center(key)
+        x0, y0, _w, _h = survey_tile_pixel_rect(tile_i, tile_j, width_px=width_px, height_px=height_px)
+        local_x = float(image_x) - float(x0)
+        local_y = float(image_y) - float(y0)
+        tile_wcs = build_sky_explorer_field_wcs(
+            ra_deg=ra_deg, dec_deg=dec_deg, fov_arcmin=fov_arcmin, width_px=width_px, height_px=height_px,
+        )
+        return self._sky_explorer_world_coordinates_from_wcs(tile_wcs, local_x, local_y)
+
+    def _sky_explorer_survey_field_needs_recenter(self) -> bool:
+        if not self._sky_explorer_primary_survey_key:
+            return False
+        source_path = self._current_sky_explorer_source_image
+        if source_path is None or not self._sky_explorer_path_in_survey_field_cache(source_path):
+            return False
+        if self._sky_explorer_survey_field_origin_ra_deg is None:
+            return False
+        view_center = self._sky_explorer_image_view.view_center_image_point()
+        _ra, _dec, _fov, width_px, height_px = self._sky_explorer_survey_field_settings()
+        view_i, view_j = survey_tile_indices_for_image_point(
+            view_center.x(), view_center.y(), width_px=width_px, height_px=height_px,
+        )
+        last = self._sky_explorer_survey_field_last_view_tile
+        if last != (view_i, view_j):
+            return True
+        for tile_i, tile_j in sky_explorer_survey_field_neighbor_tile_indices(
+            view_i, view_j, radius=SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS,
+        ):
+            record = self._sky_explorer_survey_field_tiles.get((tile_i, tile_j))
+            if record is None or record.state in {
+                SurveyTileState.NOT_REQUESTED, SurveyTileState.FAILED_RETRYABLE, SurveyTileState.LOW_RES_READY,
+            }:
+                return True
+        return False
+
+    def _request_sky_explorer_survey_field_recenter(self) -> None:
+        if not self._sky_explorer_primary_survey_key:
+            return
+        if self._sky_explorer_survey_field_origin_ra_deg is None:
+            return
+        view_center = self._sky_explorer_image_view.view_center_image_point()
+        _ra, _dec, _fov, width_px, height_px = self._sky_explorer_survey_field_settings()
+        view_i, view_j = survey_tile_indices_for_image_point(
+            view_center.x(), view_center.y(), width_px=width_px, height_px=height_px,
+        )
+        last = self._sky_explorer_survey_field_last_view_tile
+        if last is not None and last != (view_i, view_j):
+            self._sky_explorer_survey_field_pan_velocity = (
+                float(view_i - last[0]), float(view_j - last[1]),
+            )
+        self._sky_explorer_survey_field_last_view_tile = (view_i, view_j)
+        self._sky_explorer_survey_field_mosaic_center = (view_i, view_j)
+        pan_di, pan_dj = self._sky_explorer_survey_field_pan_velocity
+        if last != (view_i, view_j):
+            try:
+                canvas_path = self._ensure_sky_explorer_survey_field_wcs_canvas(
+                    survey_key=self._sky_explorer_primary_survey_key, center_i=view_i, center_j=view_j,
+                )
+                previous = self._current_sky_explorer_source_image
+                self._sky_explorer_image_input.setText(str(canvas_path))
+                self._current_sky_explorer_source_image = canvas_path
+                try:
+                    self._cached_annotated_image_display(canvas_path)
+                except Exception:
+                    pass
+                if previous is not None and previous != canvas_path:
+                    try:
+                        if (
+                            self._sky_explorer_path_in_survey_field_cache(previous)
+                            and "tile-wcs-" in previous.name and previous.exists()
+                        ):
+                            previous.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        work = build_viewport_survey_tile_work(
+            view_i=view_i, view_j=view_j, records=self._sky_explorer_survey_field_tiles,
+            radius=SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS, pan_di=pan_di, pan_dj=pan_dj,
+        )
+        for score, tile_i, tile_j, resolution in work:
+            self._enqueue_sky_explorer_survey_tile(tile_i, tile_j, resolution, score=score)
+        self._refresh_sky_explorer_survey_tile_layers()
+        self._pump_sky_explorer_survey_field_prefetch()
+        self._queue_sky_explorer_comparison_survey_viewport_work()
+
+    def _set_sky_explorer_comparison_image_path(self, comparison_image: Path) -> None:
+
+        source_path = self._current_sky_explorer_source_image
+
+        if source_path is None or not source_path.exists():
+
+            QMessageBox.information(self, "No source image", "Open a source image before choosing a comparison.")
+
+            return
+
+        if not comparison_image.exists():
+
+            QMessageBox.warning(self, "Image not found", f"Could not find the selected comparison image:\n{comparison_image}")
+
+            return
+
+        if not is_supported_image_path(comparison_image):
+
+            QMessageBox.warning(
+                self,
+                "Unsupported image",
+                f"This file type is not supported for Sky Explorer comparison:\n{comparison_image}",
+            )
+
+            return
+
+        try:
+            self._cached_annotated_image_display(comparison_image)
+        except Exception as exc:
+            QMessageBox.warning(self, "Comparison unavailable", str(exc))
+            return
+
+        self._clear_sky_explorer_survey_comparison(reset_selection=False)
+        self._sky_explorer_active_survey_key = _SKY_EXPLORER_IMAGE_COMPARISON_KEY
+        self._sky_explorer_comparison_image_path = comparison_image
+        self._apply_sky_explorer_survey_comparison()
+        self._sync_sky_explorer_image_controls()
+        self.statusBar().showMessage(f"Loaded comparison image {comparison_image.name}.", 5000)
+        self._append_sky_explorer_workflow_note(f"Loaded comparison image overlay: {comparison_image}")
 
     def _set_sky_explorer_source_image_path(self, source_image: Path) -> None:
 
@@ -38739,6 +40086,30 @@ class MainWindow(QMainWindow):
         self._sky_explorer_image_input.setText(str(source_image))
 
         self._clear_sky_explorer_survey_comparison(reset_selection=True)
+        self._sky_explorer_comparison_image_path = None
+        if not self._sky_explorer_path_in_survey_field_cache(source_image):
+            self._sky_explorer_primary_survey_key = None
+            self._sky_explorer_survey_field_center_ra_deg = None
+            self._sky_explorer_survey_field_center_dec_deg = None
+            self._sky_explorer_survey_field_origin_ra_deg = None
+            self._sky_explorer_survey_field_origin_dec_deg = None
+            self._sky_explorer_survey_field_mosaic_center = None
+            self._sky_explorer_survey_field_tiles = {}
+            self._sky_explorer_survey_field_prefetch_queue = []
+            self._sky_explorer_survey_field_inflight = set()
+            self._sky_explorer_survey_field_workers = []
+            self._sky_explorer_survey_field_stretch_frozen = False
+            self._sky_explorer_survey_field_qimage_cache = {}
+            self._sky_explorer_survey_field_last_view_tile = None
+            self._sky_explorer_survey_field_session_id += 1
+            self._sky_explorer_image_view.clear_survey_tile_layers()
+            self._sky_explorer_image_view.set_unbounded_pan(False)
+            self._sky_explorer_survey_field_request_generation += 1
+            self._pending_sky_explorer_survey_field_center = None
+        else:
+            # Survey-as-primary mosaic: allow indefinite pan; the mosaic recenters
+            # as the view moves, re-pasting cached tiles. User-image opens keep clamping.
+            self._sky_explorer_image_view.set_unbounded_pan(True)
 
         self._current_sky_explorer_source_image = source_image
 
@@ -39512,11 +40883,11 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_filter_button.setStyleSheet(secondary_style)
 
+        self._sky_explorer_comparison_button.setStyleSheet(secondary_style)
+
         self._sky_explorer_center_object_button.setStyleSheet(secondary_style)
 
         self._sky_explorer_show_auto_annotations_button.setStyleSheet(secondary_style)
-
-        self._sky_explorer_surveys_button.setStyleSheet(secondary_tool_style)
 
         self._sky_explorer_annotation_opacity_button.setStyleSheet(
             secondary_tool_style
@@ -39685,7 +41056,7 @@ class MainWindow(QMainWindow):
 
         filter_width = self.fontMetrics().horizontalAdvance("Filter") + button_padding_px + 12
 
-        surveys_width = self.fontMetrics().horizontalAdvance("Surveys") + button_padding_px + 12
+        comparison_width = self.fontMetrics().horizontalAdvance("Comparison") + button_padding_px
 
         auto_width = self.fontMetrics().horizontalAdvance("Auto") + button_padding_px
 
@@ -39715,7 +41086,7 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_filter_button.setFixedWidth(filter_width)
 
-        self._sky_explorer_surveys_button.setFixedWidth(surveys_width)
+        self._sky_explorer_comparison_button.setFixedWidth(comparison_width)
 
         self._sky_explorer_show_auto_annotations_button.setFixedWidth(auto_width)
 
@@ -39727,11 +41098,11 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_filter_button.setFixedHeight(header_control_height)
 
+        self._sky_explorer_comparison_button.setFixedHeight(header_control_height)
+
         self._sky_explorer_center_object_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_show_auto_annotations_button.setFixedHeight(header_control_height)
-
-        self._sky_explorer_surveys_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_display_section_label.setFixedHeight(header_control_height)
 
@@ -41908,7 +43279,7 @@ class MainWindow(QMainWindow):
 
         has_selection = self._selected_sky_explorer_object() is not None
 
-        has_survey = bool(self._sky_explorer_active_survey_key)
+        has_comparison = bool(self._sky_explorer_active_survey_key)
 
         self._sky_explorer_image_stretch_combo.setEnabled(has_image)
 
@@ -41918,9 +43289,9 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_reset_display_button.setEnabled(has_image)
 
-        self._sky_explorer_surveys_button.setEnabled(has_image)
+        self._sky_explorer_comparison_button.setEnabled(has_image)
 
-        self._sky_explorer_survey_display_controls.setEnabled(has_image and has_survey)
+        self._sky_explorer_survey_display_controls.setEnabled(has_image and has_comparison)
 
         self._sky_explorer_center_object_button.setEnabled(has_image and has_selection)
 
@@ -42462,7 +43833,10 @@ class MainWindow(QMainWindow):
 
             return False
 
-        if not self._sky_explorer_active_survey_key:
+        if (
+            not self._sky_explorer_active_survey_key
+            or self._sky_explorer_active_survey_key == _SKY_EXPLORER_IMAGE_COMPARISON_KEY
+        ):
 
             return False
 
@@ -43015,6 +44389,45 @@ class MainWindow(QMainWindow):
 
             return
 
+        if self._sky_explorer_active_survey_key == _SKY_EXPLORER_IMAGE_COMPARISON_KEY:
+
+            comparison_path = self._sky_explorer_comparison_image_path
+            source_path = self._current_sky_explorer_source_image
+
+            if comparison_path is None or source_path is None or not source_path.exists() or not comparison_path.exists():
+
+                self._sky_explorer_image_view.clear_comparison()
+
+                return
+
+            try:
+
+                display = self._cached_annotated_image_display(comparison_path)
+                source_display = self._cached_annotated_image_display(source_path)
+
+            except Exception:
+
+                self._sky_explorer_image_view.clear_comparison()
+
+                return
+
+            source_height, source_width = source_display.normalized_data.shape[:2]
+            self._sky_explorer_image_view.set_comparison_content(
+                display,
+                target_rect=QRectF(0.0, 0.0, float(source_width), float(source_height)),
+                render_settings=self._current_sky_explorer_survey_render_settings(),
+            )
+            self._sky_explorer_image_view.set_comparison_loading(False)
+            self._sync_sky_explorer_comparison_divider_visibility()
+
+            if hasattr(self, "_sky_explorer_export_animation_action"):
+
+                self._sky_explorer_export_animation_action.setEnabled(
+                    self._sky_explorer_can_export_comparison_animation()
+                )
+
+            return
+
         result = self._sky_explorer_survey_result
 
         display = self._sky_explorer_survey_display
@@ -43022,6 +44435,8 @@ class MainWindow(QMainWindow):
         if result is None or display is None:
 
             self._sky_explorer_image_view.set_comparison_split_enabled(True)
+
+            self._sync_sky_explorer_comparison_divider_visibility()
 
             return
 
@@ -43069,6 +44484,8 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_view.set_comparison_loading(False)
 
+        self._sync_sky_explorer_comparison_divider_visibility()
+
         if hasattr(self, "_sky_explorer_export_animation_action"):
 
             self._sky_explorer_export_animation_action.setEnabled(
@@ -43105,9 +44522,13 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_survey_last_error = None
 
+        self._sky_explorer_comparison_image_path = None
+
         self._sky_explorer_survey_display = None
 
         self._sky_explorer_image_view.clear_comparison()
+
+        self._clear_sky_explorer_comparison_survey_tiles()
 
         if reset_selection:
 
@@ -43116,14 +44537,6 @@ class MainWindow(QMainWindow):
             if hasattr(self, "_sky_explorer_survey_actions"):
 
                 self._set_sky_explorer_survey_action_checked(None)
-
-            if hasattr(self, "_sky_explorer_surveys_button"):
-
-                self._sky_explorer_surveys_button.setToolTip(
-
-                    "Compare the current view with a WCS-aligned reference survey."
-
-                )
 
         if hasattr(self, "_sky_explorer_survey_display_controls"):
 
@@ -43199,24 +44612,53 @@ class MainWindow(QMainWindow):
 
         title = dict(_SKY_EXPLORER_SURVEY_OPTIONS).get(normalized_key, normalized_key)
 
-        self._sky_explorer_surveys_button.setToolTip(
-
-            f"Comparing the source image with {title}. Drag the vertical divider to inspect either image."
-
-        )
-
         self._append_sky_explorer_workflow_note(f"Requested {title} survey comparison for the current view.")
 
         self._sky_explorer_image_view.set_comparison_split_enabled(True)
 
+        self._sync_sky_explorer_comparison_divider_visibility()
+
         self._sky_explorer_image_view.set_comparison_loading(True)
 
-        self._sky_explorer_survey_refresh_timer.start(0)
+        if self._sky_explorer_is_survey_field_primary():
+            # Survey-vs-survey: same tiled center-first loader as Open → Sky survey.
+            self._start_sky_explorer_comparison_survey_tiles(normalized_key)
+        else:
+            self._sky_explorer_survey_refresh_timer.start(0)
+
+    def _sync_sky_explorer_comparison_divider_visibility(self) -> None:
+        """Show the wipe bar whenever a comparison layer is active.
+
+        Survey-as-primary alone keeps the wipe bar hidden so the tiled mosaic is
+        unobstructed; choosing Comparison (another survey or an upload swap) turns
+        the divider back on for side-by-side wiping.
+        """
+        has_comparison = bool(self._sky_explorer_active_survey_key)
+        primary_is_survey_field = bool(
+            self._sky_explorer_primary_survey_key
+            and self._current_sky_explorer_source_image is not None
+            and self._sky_explorer_path_in_survey_field_cache(self._current_sky_explorer_source_image)
+        )
+        self._sky_explorer_image_view.set_comparison_divider_visible(
+            has_comparison or not primary_is_survey_field
+        )
 
     def _handle_sky_explorer_survey_viewport_changed(self) -> None:
 
-        if not self._sky_explorer_active_survey_key:
+        if self._sky_explorer_primary_survey_key and self._sky_explorer_path_in_survey_field_cache(
+            self._current_sky_explorer_source_image or Path()
+        ):
+            self._sky_explorer_survey_field_shift_timer.start()
 
+        if (
+            not self._sky_explorer_active_survey_key
+            or self._sky_explorer_active_survey_key == _SKY_EXPLORER_IMAGE_COMPARISON_KEY
+        ):
+
+            return
+
+        # Survey-field primary already refreshes comparison tiles via the shift timer.
+        if self._sky_explorer_is_survey_field_primary() and self._sky_explorer_comparison_survey_key:
             return
 
         self._sky_explorer_survey_refresh_timer.start()
@@ -43397,6 +44839,10 @@ class MainWindow(QMainWindow):
 
     def _sky_explorer_active_survey_title(self) -> str:
 
+        if self._sky_explorer_active_survey_key == _SKY_EXPLORER_IMAGE_COMPARISON_KEY:
+
+            return "Comparison image"
+
         return dict(_SKY_EXPLORER_SURVEY_OPTIONS).get(
 
             self._sky_explorer_active_survey_key or "",
@@ -43460,6 +44906,8 @@ class MainWindow(QMainWindow):
             self._sky_explorer_survey_loading_message_for_detail(detail_tier)
 
         )
+
+        self._sync_sky_explorer_comparison_divider_visibility()
 
     @staticmethod
 
@@ -43915,7 +45363,7 @@ class MainWindow(QMainWindow):
 
         survey_key = self._sky_explorer_active_survey_key
 
-        if not survey_key:
+        if not survey_key or survey_key == _SKY_EXPLORER_IMAGE_COMPARISON_KEY:
 
             return
 
@@ -44019,7 +45467,10 @@ class MainWindow(QMainWindow):
 
     ) -> None:
 
-        if not self._sky_explorer_active_survey_key:
+        if (
+            not self._sky_explorer_active_survey_key
+            or self._sky_explorer_active_survey_key == _SKY_EXPLORER_IMAGE_COMPARISON_KEY
+        ):
 
             return
 
@@ -44299,7 +45750,7 @@ class MainWindow(QMainWindow):
 
         normalized_tool = str(tool or "mouse").strip().lower()
 
-        if normalized_tool not in {"mouse", "circle", "ellipse", "text"}:
+        if normalized_tool not in {"mouse", "circle", "ellipse", "ruler", "text"}:
 
             normalized_tool = "mouse"
 
@@ -44326,6 +45777,8 @@ class MainWindow(QMainWindow):
                 "circle": "Circle tool selected. Drag on the image to draw a manual circle annotation.",
 
                 "ellipse": "Ellipse tool selected. Drag on the image to draw a manual ellipse annotation.",
+
+                "ruler": "Ruler tool selected. Drag between two points to measure pixel or angular distance.",
 
                 "text": "Text tool selected. Click the image to place manual text.",
 
@@ -44420,6 +45873,14 @@ class MainWindow(QMainWindow):
             painter.drawEllipse(QRectF(-6.5, -4.0, 13.0, 8.0))
 
             painter.restore()
+
+        elif normalized_tool == "ruler":
+
+            painter.drawLine(QPointF(3.5, 15.5), QPointF(16.5, 4.5))
+
+            painter.drawLine(QPointF(2.5, 13.8), QPointF(5.2, 16.5))
+
+            painter.drawLine(QPointF(14.8, 2.8), QPointF(17.5, 5.5))
 
         else:
 
@@ -44526,6 +45987,8 @@ class MainWindow(QMainWindow):
             "circle": 1,
 
             "ellipse": 1,
+
+            "ruler": 1,
 
             "text": 2,
 
@@ -45107,7 +46570,13 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Applied Sky Explorer image curves.", 3000)
 
-    def _refresh_sky_explorer_image_view(self, *, reset_view: bool, focus_selected: bool) -> None:
+    def _refresh_sky_explorer_image_view(
+        self,
+        *,
+        reset_view: bool,
+        focus_selected: bool,
+        pre_rendered_qimage=None,
+    ) -> None:
 
         if self._current_sky_explorer_source_image is None or not self._current_sky_explorer_source_image.exists():
 
@@ -45151,9 +46620,11 @@ class MainWindow(QMainWindow):
 
             render_settings=self._current_sky_explorer_image_render_settings(),
 
+            pre_rendered_qimage=pre_rendered_qimage,
+
             direct_edit_enabled=self._sky_explorer_annotation_tool != "mouse",
 
-            direct_edit_draw_enabled=self._sky_explorer_annotation_tool in {"circle", "ellipse", "text"},
+            direct_edit_draw_enabled=self._sky_explorer_annotation_tool in {"circle", "ellipse", "ruler", "text"},
 
             static_overlay_count=len(automatic_overlays),
 
@@ -45238,6 +46709,18 @@ class MainWindow(QMainWindow):
         dx = float(image_x) - float(annotation.x)
 
         dy = float(image_y) - float(annotation.y)
+
+        if annotation.shape == "ruler":
+
+            return AnnotatedImageView._point_to_segment_distance_score(
+                float(image_x),
+                float(image_y),
+                float(annotation.x),
+                float(annotation.y),
+                float(annotation.x2),
+                float(annotation.y2),
+                max(6.0, float(annotation.line_width) + 4.0),
+            )
 
         if annotation.shape == "ellipse":
 
@@ -45376,6 +46859,20 @@ class MainWindow(QMainWindow):
     def _sky_explorer_manual_annotation_handle_at(self, annotation: _SkyExplorerManualAnnotation, image_x: float, image_y: float) -> str | None:
 
         if annotation.shape == "text":
+
+            return None
+
+        if annotation.shape == "ruler":
+
+            hit_radius = max(7.0, min(18.0, float(annotation.line_width) * 3.0 + 6.0))
+
+            if math.hypot(float(image_x) - float(annotation.x), float(image_y) - float(annotation.y)) <= hit_radius:
+
+                return "resize_start"
+
+            if math.hypot(float(image_x) - float(annotation.x2), float(image_y) - float(annotation.y2)) <= hit_radius:
+
+                return "resize_end"
 
             return None
 
@@ -45641,17 +47138,23 @@ class MainWindow(QMainWindow):
 
         annotation_opacity = max(0.05, min(1.0, float(self._sky_explorer_annotation_opacity)))
 
+        is_ruler = shape == "ruler"
+
         annotation = _SkyExplorerManualAnnotation(
 
             annotation_id=self._next_sky_explorer_manual_annotation_id(),
 
             shape=shape,
 
-            label="",
+            label="" if not is_ruler else "0 px",
 
             x=float(image_x),
 
             y=float(image_y),
+
+            x2=float(image_x),
+
+            y2=float(image_y),
 
             radius=2.0,
 
@@ -45668,7 +47171,9 @@ class MainWindow(QMainWindow):
 
             opacity=annotation_opacity,
 
-            show_label=False,
+            show_label=bool(is_ruler),
+
+            show_fill=not is_ruler,
 
         )
 
@@ -45676,11 +47181,23 @@ class MainWindow(QMainWindow):
 
         self._selected_sky_explorer_manual_annotation_id = annotation.annotation_id
 
+        if shape == "ellipse":
+
+            draw_operation = "draw_ellipse"
+
+        elif shape == "ruler":
+
+            draw_operation = "draw_ruler"
+
+        else:
+
+            draw_operation = "draw_circle"
+
         self._sky_explorer_manual_annotation_drag = _SkyExplorerManualAnnotationDrag(
 
             annotation_id=annotation.annotation_id,
 
-            operation="draw_ellipse" if shape == "ellipse" else "draw_circle",
+            operation=draw_operation,
 
             origin_x=float(image_x),
 
@@ -45828,7 +47345,17 @@ class MainWindow(QMainWindow):
 
             return
 
-        shape = "ellipse" if active_tool == "ellipse" else "circle"
+        if active_tool == "ellipse":
+
+            shape = "ellipse"
+
+        elif active_tool == "ruler":
+
+            shape = "ruler"
+
+        else:
+
+            shape = "circle"
 
         self._start_sky_explorer_drawn_manual_annotation(shape, image_x, image_y)
 
@@ -45870,6 +47397,68 @@ class MainWindow(QMainWindow):
 
                 y=float(initial_annotation.y) + delta_y,
 
+                x2=float(initial_annotation.x2) + delta_x,
+
+                y2=float(initial_annotation.y2) + delta_y,
+
+            )
+
+            if updated_annotation.shape == "ruler":
+
+                updated_annotation = replace(
+                    updated_annotation,
+                    label=self._sky_explorer_ruler_label_for_annotation(updated_annotation),
+                )
+
+        elif operation == "draw_ruler":
+
+            updated_annotation = replace(
+
+                initial_annotation,
+
+                x2=float(image_x),
+
+                y2=float(image_y),
+
+            )
+
+            updated_annotation = replace(
+                updated_annotation,
+                label=self._sky_explorer_ruler_label_for_annotation(updated_annotation),
+            )
+
+        elif operation == "resize_start":
+
+            updated_annotation = replace(
+
+                initial_annotation,
+
+                x=float(image_x),
+
+                y=float(image_y),
+
+            )
+
+            updated_annotation = replace(
+                updated_annotation,
+                label=self._sky_explorer_ruler_label_for_annotation(updated_annotation),
+            )
+
+        elif operation == "resize_end":
+
+            updated_annotation = replace(
+
+                initial_annotation,
+
+                x2=float(image_x),
+
+                y2=float(image_y),
+
+            )
+
+            updated_annotation = replace(
+                updated_annotation,
+                label=self._sky_explorer_ruler_label_for_annotation(updated_annotation),
             )
 
         elif operation in {"draw_circle", "resize_radius"}:
@@ -45983,9 +47572,33 @@ class MainWindow(QMainWindow):
 
         shape = str(annotation.shape or "circle")
 
-        marker_style = "ellipse" if shape == "ellipse" else ("text" if shape == "text" else "circle")
+        if shape == "ellipse":
 
-        show_label = True if shape == "text" else bool(annotation.show_label and annotation.label.strip())
+            marker_style = "ellipse"
+
+        elif shape == "text":
+
+            marker_style = "text"
+
+        elif shape == "ruler":
+
+            marker_style = "ruler"
+
+        else:
+
+            marker_style = "circle"
+
+        if shape == "ruler":
+
+            label_text = self._sky_explorer_ruler_label_for_annotation(annotation)
+
+            show_label = True
+
+        else:
+
+            label_text = annotation.label.strip() or ("Text" if shape == "text" else "Annotation")
+
+            show_label = True if shape == "text" else bool(annotation.show_label and annotation.label.strip())
 
         show_marker = True
 
@@ -45993,21 +47606,23 @@ class MainWindow(QMainWindow):
 
         stroke_opacity = annotation_opacity
 
-        fill_color = annotation.fill_color if annotation.show_fill and shape != "text" else None
+        fill_color = annotation.fill_color if annotation.show_fill and shape not in {"text", "ruler"} else None
 
         overlay_font = self._sky_explorer_manual_annotation_text_font(annotation)
+
+        ruler_length = math.hypot(float(annotation.x2) - float(annotation.x), float(annotation.y2) - float(annotation.y)) if shape == "ruler" else 0.0
 
         return ImageOverlay(
 
             source_id=f"{_SKY_EXPLORER_MANUAL_ANNOTATION_SOURCE_PREFIX}{annotation.annotation_id}",
 
-            name=annotation.label.strip() or ("Text" if shape == "text" else "Annotation"),
+            name=label_text,
 
             x=float(annotation.x),
 
             y=float(annotation.y),
 
-            aperture_radius=max(1.0, float(annotation.radius)),
+            aperture_radius=max(1.0, float(ruler_length) if shape == "ruler" else float(annotation.radius)),
 
             annulus_inner_radius=max(1.0, float(annotation.radius)),
 
@@ -46043,7 +47658,7 @@ class MainWindow(QMainWindow):
 
             accent_color=accent_color,
 
-            show_center_dot=shape != "text",
+            show_center_dot=shape not in {"text", "ruler"},
 
             outline_color="#111827" if shape != "text" else None,
 
@@ -46052,6 +47667,10 @@ class MainWindow(QMainWindow):
             ellipse_minor_radius=max(1.0, float(annotation.minor_radius)) if shape == "ellipse" else None,
 
             rotation_degrees=float(annotation.rotation_degrees),
+
+            endpoint_x=float(annotation.x2) if shape == "ruler" else None,
+
+            endpoint_y=float(annotation.y2) if shape == "ruler" else None,
 
         )
 
@@ -46228,6 +47847,8 @@ class MainWindow(QMainWindow):
 
         shape_combo.addItem("Ellipse", "ellipse")
 
+        shape_combo.addItem("Ruler", "ruler")
+
         resolved_shape = str(annotation.shape if annotation is not None else default_shape or "circle").strip().lower()
 
         shape_index = shape_combo.findData(resolved_shape)
@@ -46258,6 +47879,18 @@ class MainWindow(QMainWindow):
         x_spin = make_double_spin(annotation.x if annotation is not None else image_x, -100000.0, 100000.0)
 
         y_spin = make_double_spin(annotation.y if annotation is not None else image_y, -100000.0, 100000.0)
+
+        x2_spin = make_double_spin(
+            annotation.x2 if annotation is not None else (image_x + 40.0),
+            -100000.0,
+            100000.0,
+        )
+
+        y2_spin = make_double_spin(
+            annotation.y2 if annotation is not None else image_y,
+            -100000.0,
+            100000.0,
+        )
 
         radius_spin = make_double_spin(annotation.radius if annotation is not None else 28.0, 1.0, 10000.0)
 
@@ -46380,11 +48013,17 @@ class MainWindow(QMainWindow):
 
             is_ellipse = shape == "ellipse"
 
-            radius_spin.setEnabled(not is_text)
+            is_ruler = shape == "ruler"
+
+            radius_spin.setEnabled(not is_text and not is_ruler)
 
             minor_radius_spin.setEnabled(is_ellipse)
 
             rotation_spin.setEnabled(is_ellipse)
+
+            x2_spin.setEnabled(is_ruler)
+
+            y2_spin.setEnabled(is_ruler)
 
             line_width_spin.setEnabled(not is_text)
 
@@ -46392,19 +48031,23 @@ class MainWindow(QMainWindow):
 
             stroke_button.setEnabled(not is_text)
 
-            fill_button.setEnabled(not is_text)
+            fill_button.setEnabled(not is_text and not is_ruler)
 
             font_family_combo.setEnabled(is_text)
 
             text_style_combo.setEnabled(is_text)
 
-            show_fill_checkbox.setEnabled(not is_text)
+            show_fill_checkbox.setEnabled(not is_text and not is_ruler)
 
-            show_label_checkbox.setEnabled(not is_text)
+            show_label_checkbox.setEnabled(not is_text and not is_ruler)
 
-            if is_text:
+            if is_text or is_ruler:
 
                 show_label_checkbox.setChecked(True)
+
+            if is_ruler:
+
+                show_fill_checkbox.setChecked(False)
 
 
         shape_combo.currentIndexChanged.connect(lambda _index: sync_shape_controls())
@@ -46419,6 +48062,10 @@ class MainWindow(QMainWindow):
         form_layout.addRow("X", x_spin)
 
         form_layout.addRow("Y", y_spin)
+
+        form_layout.addRow("X2", x2_spin)
+
+        form_layout.addRow("Y2", y2_spin)
 
         form_layout.addRow("Radius", radius_spin)
 
@@ -46499,7 +48146,15 @@ class MainWindow(QMainWindow):
 
             resolved_minor_radius = max(10.0, text_bounds.height() * 0.5)
 
-        return _SkyExplorerManualAnnotation(
+        resolved_x = float(x_spin.value())
+
+        resolved_y = float(y_spin.value())
+
+        resolved_x2 = float(x2_spin.value()) if shape == "ruler" else resolved_x
+
+        resolved_y2 = float(y2_spin.value()) if shape == "ruler" else resolved_y
+
+        annotation_result = _SkyExplorerManualAnnotation(
 
             annotation_id=annotation_id,
 
@@ -46507,9 +48162,13 @@ class MainWindow(QMainWindow):
 
             label=label,
 
-            x=float(x_spin.value()),
+            x=resolved_x,
 
-            y=float(y_spin.value()),
+            y=resolved_y,
+
+            x2=resolved_x2,
+
+            y2=resolved_y2,
 
             radius=resolved_radius,
 
@@ -46533,10 +48192,46 @@ class MainWindow(QMainWindow):
 
             text_font_style=resolved_text_font_style,
 
-            show_label=True if shape == "text" else bool(show_label_checkbox.isChecked()),
+            show_label=True if shape in {"text", "ruler"} else bool(show_label_checkbox.isChecked()),
 
-            show_fill=False if shape == "text" else bool(show_fill_checkbox.isChecked()),
+            show_fill=False if shape in {"text", "ruler"} else bool(show_fill_checkbox.isChecked()),
 
+        )
+
+        if shape == "ruler":
+
+            annotation_result = replace(
+                annotation_result,
+                label=self._sky_explorer_ruler_label_for_annotation(annotation_result),
+            )
+
+        return annotation_result
+
+    def _sky_explorer_ruler_angular_separation_arcsec(self, annotation: _SkyExplorerManualAnnotation) -> float | None:
+
+        start = self._sky_explorer_world_coordinates_for_image_point(float(annotation.x), float(annotation.y))
+
+        end = self._sky_explorer_world_coordinates_for_image_point(float(annotation.x2), float(annotation.y2))
+
+        if start is None or end is None:
+
+            return None
+
+        try:
+
+            return sky_explorer_angular_separation_arcsec(start[0], start[1], end[0], end[1])
+
+        except Exception:
+
+            return None
+
+    def _sky_explorer_ruler_label_for_annotation(self, annotation: _SkyExplorerManualAnnotation) -> str:
+
+        pixel_distance = math.hypot(float(annotation.x2) - float(annotation.x), float(annotation.y2) - float(annotation.y))
+
+        return format_sky_explorer_ruler_distance_label(
+            pixel_distance=pixel_distance,
+            angular_separation_arcsec=self._sky_explorer_ruler_angular_separation_arcsec(annotation),
         )
 
     def _sky_explorer_hover_coordinate_formatter(self) -> Callable[[float, float], str | None] | None:
@@ -46594,6 +48289,10 @@ class MainWindow(QMainWindow):
         return wcs
 
     def _sky_explorer_world_coordinates_for_image_point(self, image_x: float, image_y: float) -> tuple[float, float] | None:
+
+        tiled = self._sky_explorer_world_coordinates_for_survey_tile_point(image_x, image_y)
+        if tiled is not None:
+            return tiled
 
         wcs = self._sky_explorer_image_wcs()
 
@@ -49321,9 +51020,7 @@ class MainWindow(QMainWindow):
 
 
 
-        photometry_mode_menu = settings_menu.addMenu("Photometry Mode")
-
-        self._photometry_mode_menu = photometry_mode_menu
+        # Keep Auto/Manual actions for differential photometry state sync; hide from Settings menu.
 
         self._mode_action_group = QActionGroup(self)
 
@@ -49344,10 +51041,6 @@ class MainWindow(QMainWindow):
         self._mode_action_group.addAction(self._mode_auto_action)
 
         self._mode_action_group.addAction(self._mode_manual_action)
-
-        photometry_mode_menu.addAction(self._mode_auto_action)
-
-        photometry_mode_menu.addAction(self._mode_manual_action)
 
 
 
@@ -49387,15 +51080,10 @@ class MainWindow(QMainWindow):
 
     def _show_about_dialog(self) -> None:
 
-        QMessageBox.information(
-            self,
-            f"About {APP_DISPLAY_NAME}",
-            f"Version {APP_VERSION}\n\n"
-            "Logo designed by Ege Palaz (https://palaz.se/).\n"
-            "Developed by Ogetay.\n"
-            "For more info, please visit: ogetay.com/citizen-astronomy-cast\n\n"
-            "Alpha-reviewer build only. Do not distribute.",
-        )
+        from photometry_app.core.packaged_format_smoke import about_dialog_content
+
+        title, message = about_dialog_content()
+        QMessageBox.information(self, title, message)
 
     def _check_for_updates(self) -> None:
 
@@ -50045,6 +51733,8 @@ class MainWindow(QMainWindow):
 
         self._update_hr_motion_group_button_tooltips()
 
+        self._sync_hr_display_coordinate_controls()
+
     def _sync_hr_plot_filter_controls(self) -> None:
 
         settings = getattr(self, "_settings", None)
@@ -50221,7 +51911,7 @@ class MainWindow(QMainWindow):
 
         self._update_asteroid_target_marker_color_button(
             self._asteroid_target_marker_text_color_button,
-            "#fff1f2" if settings is None else (str(settings.asteroid_target_marker_text_color or "#fff1f2").strip().lower() or "#fff1f2"),
+            "#ffffff" if settings is None else (str(settings.asteroid_target_marker_text_color or "#ffffff").strip().lower() or "#ffffff"),
         )
 
     def _update_asteroid_target_marker_outline_color_button(self) -> None:
@@ -50286,7 +51976,7 @@ class MainWindow(QMainWindow):
         settings = self._ensure_settings()
 
         selected_color = QColorDialog.getColor(
-            QColor(str(settings.asteroid_target_marker_text_color or "#fff1f2")),
+            QColor(str(settings.asteroid_target_marker_text_color or "#ffffff")),
             self,
             "Select Asteroid/Comet Target Marker Label Color",
         )
@@ -52931,6 +54621,21 @@ class MainWindow(QMainWindow):
 
         return content
 
+    def _create_display_menu_section(self, title: str, content: QWidget) -> QWidget:
+
+        section = QWidget()
+        section_layout = QVBoxLayout()
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(4)
+        title_label = QLabel(title)
+        title_font = QFont(title_label.font())
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        section_layout.addWidget(title_label)
+        section_layout.addWidget(content)
+        section.setLayout(section_layout)
+        return section
+
     def _create_differential_section_menu(self, button: QPushButton, content: QWidget) -> QMenu:
 
         menu = QMenu(button)
@@ -54447,6 +56152,59 @@ class MainWindow(QMainWindow):
 
             pass
 
+        self._force_stop_sky_explorer_survey_tile_workers(wait_ms=wait_ms)
+
+    def _force_stop_sky_explorer_survey_tile_workers(self, *, wait_ms: int = 2000) -> None:
+        for attr_name in (
+            "_sky_explorer_survey_field_workers",
+            "_sky_explorer_comparison_survey_workers",
+        ):
+            workers = list(getattr(self, attr_name, []) or ())
+            setattr(self, attr_name, [])
+            for worker in workers:
+                if worker is None:
+                    continue
+                try:
+                    worker.blockSignals(True)
+                except Exception:
+                    pass
+                try:
+                    if hasattr(worker, "isRunning") and worker.isRunning():
+                        request_interruption = getattr(worker, "requestInterruption", None)
+                        if callable(request_interruption):
+                            request_interruption()
+                        worker.wait(max(0, int(wait_ms)))
+                        if worker.isRunning():
+                            try:
+                                worker.terminate()
+                            except Exception:
+                                pass
+                            try:
+                                worker.wait(500)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+    def _clear_sky_explorer_survey_image_caches_on_exit(self) -> None:
+        """Drop session survey downloads so they are not kept after the app closes."""
+        cache_dir: Path | None = None
+        try:
+            if self._settings is not None:
+                cache_dir = Path(self._settings.cache_dir).expanduser()
+            elif hasattr(self, "_root_path_input"):
+                root_path = Path(self._root_path_input.text()).expanduser()
+                if root_path.exists():
+                    cache_dir = AppSettings.from_root(root_path).cache_dir
+        except Exception:
+            cache_dir = None
+        if cache_dir is None:
+            return
+        try:
+            clear_sky_explorer_survey_image_caches(cache_dir)
+        except Exception:
+            pass
+
     def _purge_sky_view_runtime_state(self) -> None:
 
         timer = getattr(self, "_sky_view_time_flow_timer", None)
@@ -54827,7 +56585,7 @@ class MainWindow(QMainWindow):
 
         if self._current_app_mode() == AppMode.SKY_EXPLORER:
 
-            self._browse_for_sky_explorer_source_image()
+            self._open_sky_explorer_source_picker(as_comparison=False)
 
             return
 
@@ -56073,9 +57831,47 @@ class MainWindow(QMainWindow):
 
             )
 
+    def _hr_prerequisites_warning_is_dismissed_for_current_version(self) -> bool:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return False
+
+        dismissed_version = str(getattr(settings, "hr_prerequisites_warning_dismissed_version", "") or "").strip()
+
+        return bool(dismissed_version) and dismissed_version == APP_VERSION
+
     def _show_hr_diagram_prerequisites_warning(self) -> None:
 
-        QMessageBox.information(self, "HR Diagram prerequisites", _HR_DIAGRAM_PREREQUISITES_MESSAGE)
+        if self._hr_prerequisites_warning_is_dismissed_for_current_version():
+
+            return
+
+        dialog = QMessageBox(self)
+
+        dialog.setIcon(QMessageBox.Icon.Information)
+
+        dialog.setWindowTitle("HR Diagram prerequisites")
+
+        dialog.setText(_HR_DIAGRAM_PREREQUISITES_MESSAGE)
+
+        dont_show_again = QCheckBox("Don't show again for this version")
+
+        dialog.setCheckBox(dont_show_again)
+
+        dialog.exec()
+
+        if not dont_show_again.isChecked():
+
+            return
+
+        settings = self._ensure_settings()
+
+        settings.hr_prerequisites_warning_dismissed_version = APP_VERSION
+
+        self._save_settings_snapshot()
 
     def _browse_for_asteroid_source_image(self, *, auto_generate: bool = True) -> None:
 
@@ -61436,7 +63232,7 @@ class MainWindow(QMainWindow):
         return {
             "line_color": self._asteroid_overlay_display_color(str(settings.asteroid_target_marker_line_color or "#ef4444")),
             "accent_color": self._asteroid_overlay_display_color(str(settings.asteroid_target_marker_accent_color or "#fca5a5")),
-            "text_color": self._asteroid_overlay_display_color(str(settings.asteroid_target_marker_text_color or "#fff1f2")),
+            "text_color": self._asteroid_overlay_display_color(str(settings.asteroid_target_marker_text_color or "#ffffff")),
             "outline_color": self._asteroid_overlay_display_color(str(settings.asteroid_target_marker_outline_color or "#ffffff")),
             "line_width": min(8.0, max(0.5, float(settings.asteroid_target_marker_line_width))),
         }
@@ -61555,7 +63351,45 @@ class MainWindow(QMainWindow):
 
                 self._asteroid_image_view.focus_on(*focus_coordinates, minimum_zoom_scale=3.0)
 
-    def _default_asteroid_image_export_path(self) -> Path:
+    def _sanitize_asteroid_export_object_name(self, value: str) -> str:
+
+        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "", str(value).strip())
+
+        cleaned = cleaned.rstrip(" .")
+
+        return cleaned or "asteroid"
+
+    def _asteroid_export_object_file_stem(self) -> str | None:
+
+        detection = self._selected_asteroid_detection()
+
+        if detection is not None:
+
+            name = str(detection.name or detection.designation or "").strip()
+
+            if name:
+
+                return self._sanitize_asteroid_export_object_name(name)
+
+        candidate = self._selected_asteroid_candidate()
+
+        if candidate is not None:
+
+            name = str(candidate.candidate_id or "").strip()
+
+            if name:
+
+                return self._sanitize_asteroid_export_object_name(name)
+
+        return None
+
+    def _default_asteroid_export_path(self, *, kind: str, extension: str, fallback_stem: str) -> Path:
+
+        object_stem = self._asteroid_export_object_file_stem()
+
+        file_stem = f"{object_stem}_{kind}" if object_stem else f"{fallback_stem}_{kind}"
+
+        file_name = f"{file_stem}.{extension}"
 
         source_label = self._asteroid_sequence_source_label
 
@@ -61563,51 +63397,63 @@ class MainWindow(QMainWindow):
 
             if source_label.is_dir():
 
-                return source_label / f"{source_label.name}_image.png"
+                return source_label / file_name
 
-            return source_label.with_name(f"{source_label.stem}_image.png")
+            return source_label.with_name(file_name)
 
         if self._current_asteroid_source_image is not None:
 
-            return self._current_asteroid_source_image.with_name(f"{self._current_asteroid_source_image.stem}_image.png")
+            return self._current_asteroid_source_image.with_name(file_name)
 
-        return Path.cwd() / "asteroid_image.png"
+        return Path.cwd() / file_name
+
+    def _default_asteroid_image_export_path(self) -> Path:
+
+        source_label = self._asteroid_sequence_source_label
+
+        fallback_stem = "asteroid"
+
+        if source_label is not None and source_label.exists():
+
+            fallback_stem = source_label.name if source_label.is_dir() else source_label.stem
+
+        elif self._current_asteroid_source_image is not None:
+
+            fallback_stem = self._current_asteroid_source_image.stem
+
+        return self._default_asteroid_export_path(kind="image", extension="png", fallback_stem=fallback_stem)
 
     def _default_asteroid_blink_export_path(self) -> Path:
 
         source_label = self._asteroid_sequence_source_label
 
+        fallback_stem = "asteroid"
+
         if source_label is not None and source_label.exists():
 
-            if source_label.is_dir():
+            fallback_stem = source_label.name if source_label.is_dir() else source_label.stem
 
-                return source_label / f"{source_label.name}_blink.gif"
+        elif self._current_asteroid_source_image is not None:
 
-            return source_label.with_name(f"{source_label.stem}_blink.gif")
+            fallback_stem = self._current_asteroid_source_image.stem
 
-        if self._current_asteroid_source_image is not None:
-
-            return self._current_asteroid_source_image.with_name(f"{self._current_asteroid_source_image.stem}_blink.gif")
-
-        return Path.cwd() / "asteroid_blink.gif"
+        return self._default_asteroid_export_path(kind="blink", extension="gif", fallback_stem=fallback_stem)
 
     def _default_asteroid_trail_export_path(self) -> Path:
 
         source_label = self._asteroid_sequence_source_label
 
+        fallback_stem = "asteroid"
+
         if source_label is not None and source_label.exists():
 
-            if source_label.is_dir():
+            fallback_stem = source_label.name if source_label.is_dir() else source_label.stem
 
-                return source_label / f"{source_label.name}_trail.gif"
+        elif self._current_asteroid_source_image is not None:
 
-            return source_label.with_name(f"{source_label.stem}_trail.gif")
+            fallback_stem = self._current_asteroid_source_image.stem
 
-        if self._current_asteroid_source_image is not None:
-
-            return self._current_asteroid_source_image.with_name(f"{self._current_asteroid_source_image.stem}_trail.gif")
-
-        return Path.cwd() / "asteroid_trail.gif"
+        return self._default_asteroid_export_path(kind="trail", extension="gif", fallback_stem=fallback_stem)
 
     def _export_asteroid_image_view(self) -> None:
 
@@ -63225,8 +65071,6 @@ class MainWindow(QMainWindow):
 
             settings = self._ensure_settings()
 
-            markers_enabled = True
-
             labels_enabled = bool(settings.asteroid_visual_label_all_objects)
 
             selected_row = self._selected_asteroid_result_row()
@@ -63239,9 +65083,11 @@ class MainWindow(QMainWindow):
 
             target_marker_enabled = selected_row is not None and bool(settings.asteroid_visual_show_target_marker)
 
-            if markers_enabled or labels_enabled or target_marker_enabled:
+            if labels_enabled or target_marker_enabled:
 
-                default_text_color = self._asteroid_overlay_display_color("#ffffff")
+                configured_colors = self._current_asteroid_target_marker_style()
+
+                label_text_color = str(configured_colors["text_color"])
 
                 other_style = self._current_asteroid_other_overlay_theme()
 
@@ -63253,12 +65099,15 @@ class MainWindow(QMainWindow):
 
                     is_selected = index == selected_row
 
-                    target_marker_style = self._current_asteroid_target_marker_style() if is_selected and target_marker_enabled else None
+                    target_marker_style = configured_colors if is_selected and target_marker_enabled else None
 
-                    # Target Marker mode: only the selected object gets a marker (any configured style).
-                    show_object_marker = bool(target_marker_style is not None) if target_marker_enabled else bool(markers_enabled)
+                    # Markers exist only via Target Marker (selected object). No fallback cross/circle markers.
+                    show_object_marker = target_marker_style is not None
 
-                    if not show_object_marker and not labels_enabled:
+                    # Show Labels applies to the selected object only.
+                    show_object_label = bool(labels_enabled and is_selected)
+
+                    if not show_object_marker and not show_object_label:
 
                         continue
 
@@ -63288,17 +65137,7 @@ class MainWindow(QMainWindow):
 
                     overlay_color = str(target_marker_style["line_color"]) if target_marker_style is not None else (str(overlay_style["line_color"]) if overlay_style is not None else default_color)
 
-                    if target_marker_style is not None:
-
-                        object_marker_style = configured_marker_style
-
-                    elif settings.asteroid_visual_show_all_crosshairs or is_selected:
-
-                        object_marker_style = "cross"
-
-                    else:
-
-                        object_marker_style = "circle"
+                    object_marker_style = configured_marker_style if target_marker_style is not None else "circle"
 
                     overlays.append(
 
@@ -63324,13 +65163,13 @@ class MainWindow(QMainWindow):
 
                             show_marker=show_object_marker,
 
-                            show_label=labels_enabled,
+                            show_label=show_object_label,
 
                             marker_style=object_marker_style,
 
                             pen_width=float(target_marker_style["line_width"]) if target_marker_style is not None else (float(overlay_style["line_width"]) if overlay_style is not None else 0.0),
 
-                            text_color=str(target_marker_style["text_color"]) if target_marker_style is not None else (str(overlay_style["text_color"]) if overlay_style is not None else default_text_color),
+                            text_color=label_text_color,
 
                             text_size=float(overlay_style["text_size"]) if overlay_style is not None else None,
 
@@ -63379,6 +65218,8 @@ class MainWindow(QMainWindow):
             self._current_asteroid_detection_result,
 
         )
+
+        show_target_marker = bool(settings.asteroid_visual_show_target_marker)
 
         target_marker_style = self._current_asteroid_target_marker_style()
 
@@ -63432,6 +65273,8 @@ class MainWindow(QMainWindow):
 
                     show_annulus=False,
 
+                    show_marker=show_target_marker,
+
                     show_label=True,
 
                     marker_style="target",
@@ -63470,6 +65313,10 @@ class MainWindow(QMainWindow):
 
             return []
 
+        settings = self._ensure_settings()
+
+        show_target_marker = bool(settings.asteroid_visual_show_target_marker)
+
         target_marker_style = self._current_asteroid_target_marker_style()
 
         marker_color = str(target_marker_style["line_color"])
@@ -63501,6 +65348,8 @@ class MainWindow(QMainWindow):
                 color=marker_color,
 
                 show_annulus=False,
+
+                show_marker=show_target_marker,
 
                 show_label=True,
 
@@ -66553,6 +68402,148 @@ class MainWindow(QMainWindow):
 
         self._refresh_hr_image_view(reset_view=False)
 
+    def _sync_hr_display_coordinate_controls(self) -> None:
+
+        if not hasattr(self, "_hr_show_ra_dec_checkbox"):
+
+            return
+
+        show_ra_dec = self._current_hr_show_ra_dec()
+
+        show_grid = self._current_hr_equatorial_grid_enabled()
+
+        ra_density = self._current_hr_equatorial_grid_ra_density()
+
+        dec_density = self._current_hr_equatorial_grid_dec_density()
+
+        self._hr_show_ra_dec_checkbox.blockSignals(True)
+
+        self._hr_show_grid_checkbox.blockSignals(True)
+
+        self._hr_grid_ra_density_spin.blockSignals(True)
+
+        self._hr_grid_dec_density_spin.blockSignals(True)
+
+        self._hr_show_ra_dec_checkbox.setChecked(show_ra_dec)
+
+        self._hr_show_grid_checkbox.setChecked(show_grid)
+
+        self._hr_grid_ra_density_spin.setValue(ra_density)
+
+        self._hr_grid_dec_density_spin.setValue(dec_density)
+
+        self._hr_show_ra_dec_checkbox.blockSignals(False)
+
+        self._hr_show_grid_checkbox.blockSignals(False)
+
+        self._hr_grid_ra_density_spin.blockSignals(False)
+
+        self._hr_grid_dec_density_spin.blockSignals(False)
+
+        self._sync_hr_grid_density_controls_enabled()
+
+    def _sync_hr_grid_density_controls_enabled(self) -> None:
+
+        if not hasattr(self, "_hr_show_grid_checkbox"):
+
+            return
+
+        enabled = self._hr_show_grid_checkbox.isChecked()
+
+        self._hr_grid_ra_density_label.setEnabled(enabled)
+
+        self._hr_grid_ra_density_spin.setEnabled(enabled)
+
+        self._hr_grid_dec_density_label.setEnabled(enabled)
+
+        self._hr_grid_dec_density_spin.setEnabled(enabled)
+
+    def _current_hr_show_ra_dec(self) -> bool:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return True
+
+        return bool(getattr(settings, "hr_show_ra_dec", True))
+
+    def _current_hr_equatorial_grid_enabled(self) -> bool:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return False
+
+        return bool(getattr(settings, "hr_equatorial_grid_enabled", False))
+
+    def _current_hr_equatorial_grid_ra_density(self) -> int:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return 5
+
+        return min(12, max(2, int(getattr(settings, "hr_equatorial_grid_ra_density", 5))))
+
+    def _current_hr_equatorial_grid_dec_density(self) -> int:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return 5
+
+        return min(12, max(2, int(getattr(settings, "hr_equatorial_grid_dec_density", 5))))
+
+    def _handle_hr_show_ra_dec_changed(self, _state: int = 0) -> None:
+
+        settings = self._ensure_settings()
+
+        settings.hr_show_ra_dec = self._hr_show_ra_dec_checkbox.isChecked()
+
+        self._save_settings_snapshot()
+
+        self._refresh_hr_image_view(reset_view=False)
+
+    def _handle_hr_show_grid_changed(self, _state: int = 0) -> None:
+
+        settings = self._ensure_settings()
+
+        settings.hr_equatorial_grid_enabled = self._hr_show_grid_checkbox.isChecked()
+
+        self._save_settings_snapshot()
+
+        self._sync_hr_grid_density_controls_enabled()
+
+        self._refresh_hr_image_view(reset_view=False)
+
+    def _handle_hr_grid_ra_density_changed(self, value: int) -> None:
+
+        settings = self._ensure_settings()
+
+        settings.hr_equatorial_grid_ra_density = min(12, max(2, int(value)))
+
+        self._save_settings_snapshot()
+
+        if self._hr_show_grid_checkbox.isChecked():
+
+            self._refresh_hr_image_view(reset_view=False)
+
+    def _handle_hr_grid_dec_density_changed(self, value: int) -> None:
+
+        settings = self._ensure_settings()
+
+        settings.hr_equatorial_grid_dec_density = min(12, max(2, int(value)))
+
+        self._save_settings_snapshot()
+
+        if self._hr_show_grid_checkbox.isChecked():
+
+            self._refresh_hr_image_view(reset_view=False)
+
     def _handle_hr_table_row_limit_changed(self, value: int) -> None:
 
         self._apply_hr_table_row_limit(value, persist=True)
@@ -67968,12 +69959,6 @@ class MainWindow(QMainWindow):
 
             return
 
-        if bool(modifiers & Qt.KeyboardModifier.ControlModifier) and not bool(modifiers & Qt.KeyboardModifier.ShiftModifier):
-
-            if self._select_hr_row_from_image_point(float(image_x), float(image_y)):
-
-                return
-
         if not bool(modifiers & Qt.KeyboardModifier.ShiftModifier):
 
             return
@@ -68007,6 +69992,25 @@ class MainWindow(QMainWindow):
         )
 
         self._refresh_hr_roi_draft_preview(update_controls=False)
+
+    def _handle_hr_image_double_clicked(self, image_x: float, image_y: float, button: object, modifiers: object) -> None:
+
+        if button != Qt.MouseButton.LeftButton:
+
+            return
+
+        # Shift+drag drafts ROI; ignore Shift+double-click so the two gestures stay separate.
+        if bool(modifiers & Qt.KeyboardModifier.ShiftModifier):
+
+            return
+
+        # A double-click's second press may have started an ROI draft before mouseDoubleClickEvent
+        # cancelled the view gesture; drop any unfinished draft so selection does not leave residue.
+        self._hr_roi_drag_origin = None
+
+        self._hr_active_roi_selection = None
+
+        self._select_hr_row_from_image_point(float(image_x), float(image_y))
 
     def _handle_hr_image_moved(self, image_x: float, image_y: float, buttons: object, _modifiers: object) -> None:
 
@@ -68121,6 +70125,24 @@ class MainWindow(QMainWindow):
 
             return None
 
+        # Hit radius is aperture-based, but also keep a minimum on-screen target so stars remain
+        # selectable when the full field is zoomed out (previously only worked well after focus-zoom).
+        image_scale = 1.0
+
+        if hasattr(self, "_hr_image_view"):
+
+            try:
+
+                image_scale = max(1e-6, float(self._hr_image_view.effective_image_scale()))
+
+            except Exception:
+
+                image_scale = 1.0
+
+        screen_hit_radius_px = 14.0
+
+        scale_based_radius = min(120.0, screen_hit_radius_px / image_scale)
+
         best_row: HrMeasurementRow | None = None
 
         best_distance_sq = float("inf")
@@ -68133,7 +70155,9 @@ class MainWindow(QMainWindow):
 
             distance_sq = (dx * dx) + (dy * dy)
 
-            selection_radius = max(6.0, min(18.0, float(getattr(row, "aperture_radius", 6.0)) * 1.75))
+            aperture_radius = max(6.0, min(18.0, float(getattr(row, "aperture_radius", 6.0)) * 1.75))
+
+            selection_radius = max(aperture_radius, scale_based_radius)
 
             if distance_sq > (selection_radius * selection_radius):
 
@@ -68653,6 +70677,8 @@ class MainWindow(QMainWindow):
 
         if self._current_hr_source_image is None or not self._current_hr_source_image.exists():
 
+            self._hr_image_view.set_hover_text_formatter(None)
+
             self._hr_image_view.set_message("Open an HR source image to inspect the field and draw an ROI filter.")
 
             self._hr_roi_summary_label.setText("No image ROI filter drafted yet. Generate will use the full measured field.")
@@ -68671,6 +70697,8 @@ class MainWindow(QMainWindow):
 
         except Exception:
 
+            self._hr_image_view.set_hover_text_formatter(None)
+
             self._hr_image_view.set_message("Could not render the selected HR source image preview.")
 
             self._update_hr_roi_summary()
@@ -68683,13 +70711,47 @@ class MainWindow(QMainWindow):
 
             return
 
+        if self._current_hr_show_ra_dec():
+
+            self._hr_image_view.set_hover_text_formatter(
+
+                self._image_hover_coordinate_formatter(self._current_hr_source_image)
+
+            )
+
+        else:
+
+            self._hr_image_view.set_hover_text_formatter(None)
+
+        grid_overlays = (
+
+            self._build_equatorial_grid_overlays(
+
+                self._current_hr_source_image,
+
+                display,
+
+                ra_density=self._current_hr_equatorial_grid_ra_density(),
+
+                dec_density=self._current_hr_equatorial_grid_dec_density(),
+
+                inverted=False,
+
+            )
+
+            if self._current_hr_equatorial_grid_enabled()
+
+            else []
+
+        )
+
         self._hr_image_view.set_content(
 
             display,
 
             overlays=self._current_hr_image_overlays(),
 
-            grid_overlays=[],
+            grid_overlays=grid_overlays,
 
             editor_enabled=False,
 
@@ -71034,7 +73096,13 @@ class MainWindow(QMainWindow):
 
             self._sky_explorer_survey_refine_timer.stop()
 
+        if hasattr(self, "_sky_explorer_survey_field_shift_timer"):
+
+            self._sky_explorer_survey_field_shift_timer.stop()
+
         self._force_stop_background_workers()
+
+        self._clear_sky_explorer_survey_image_caches_on_exit()
 
         self._close_update_download_progress_dialog()
 
@@ -71968,11 +74036,13 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Applied annotated image curves.", 3000)
 
-    def _current_equatorial_grid_colors(self) -> tuple[str, str]:
+    def _current_equatorial_grid_colors(self, *, inverted: bool | None = None) -> tuple[str, str]:
 
-        settings = self._active_settings()
+        if inverted is None:
 
-        inverted = bool(settings is not None and settings.image_display_inverted)
+            settings = self._active_settings()
+
+            inverted = bool(settings is not None and settings.image_display_inverted)
 
         if inverted:
 
@@ -88796,6 +90866,14 @@ class MainWindow(QMainWindow):
 
         display: AnnotatedImageDisplay,
 
+        *,
+
+        ra_density: int | None = None,
+
+        dec_density: int | None = None,
+
+        inverted: bool | None = None,
+
     ) -> list[EquatorialGridOverlay]:
 
         try:
@@ -88864,9 +90942,29 @@ class MainWindow(QMainWindow):
 
 
 
-        ra_step = self._equatorial_grid_step_degrees(ra_max - ra_min, self._current_equatorial_grid_ra_density())
+        resolved_ra_density = (
 
-        dec_step = self._equatorial_grid_step_degrees(dec_max - dec_min, self._current_equatorial_grid_dec_density())
+            min(12, max(2, int(ra_density)))
+
+            if ra_density is not None
+
+            else self._current_equatorial_grid_ra_density()
+
+        )
+
+        resolved_dec_density = (
+
+            min(12, max(2, int(dec_density)))
+
+            if dec_density is not None
+
+            else self._current_equatorial_grid_dec_density()
+
+        )
+
+        ra_step = self._equatorial_grid_step_degrees(ra_max - ra_min, resolved_ra_density)
+
+        dec_step = self._equatorial_grid_step_degrees(dec_max - dec_min, resolved_dec_density)
 
         ra_ticks = self._grid_tick_values(ra_min, ra_max, ra_step)
 
@@ -88878,7 +90976,7 @@ class MainWindow(QMainWindow):
 
         ra_line_samples = np.linspace(ra_min, ra_max, num=48)
 
-        ra_color, dec_color = self._current_equatorial_grid_colors()
+        ra_color, dec_color = self._current_equatorial_grid_colors(inverted=inverted)
 
 
 

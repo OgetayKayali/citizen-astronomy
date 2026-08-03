@@ -16,10 +16,12 @@ from photometry_app.core import survey_images
 from photometry_app.core.survey_images import (
     SURVEY_DEFINITIONS,
     SurveyImageRequest,
+    build_sky_explorer_field_wcs,
     retrieve_survey_image,
     scale_wcs_for_pixel_sampling,
     survey_definition_for_key,
     survey_target_rect_in_source_pixels,
+    write_survey_image_fits,
 )
 
 
@@ -212,6 +214,177 @@ class SurveyImagesTest(unittest.TestCase):
         self.assertAlmostEqual(target_rect[3], 15.0, places=6)
         self.assertNotEqual(target_rect[2], float(source_width))
 
+    def test_build_sky_explorer_field_wcs_centers_requested_tan_field(self) -> None:
+        wcs = build_sky_explorer_field_wcs(
+            ra_deg=123.45,
+            dec_deg=-22.5,
+            fov_arcmin=60.0,
+            width_px=800,
+            height_px=600,
+        )
+
+        self.assertEqual(list(wcs.wcs.ctype), ["RA---TAN", "DEC--TAN"])
+        self.assertEqual(wcs.array_shape, (600, 800))
+        self.assertEqual(wcs.pixel_shape, (800, 600))
+        self.assertAlmostEqual(float(wcs.wcs.crval[0]), 123.45, places=6)
+        self.assertAlmostEqual(float(wcs.wcs.crval[1]), -22.5, places=6)
+        self.assertAlmostEqual(float(wcs.wcs.crpix[0]), 400.5, places=6)
+        self.assertAlmostEqual(float(wcs.wcs.crpix[1]), 300.5, places=6)
+        self.assertLess(float(wcs.wcs.cdelt[0]), 0.0)
+        self.assertGreater(float(wcs.wcs.cdelt[1]), 0.0)
+        self.assertAlmostEqual(abs(float(wcs.wcs.cdelt[0])), 1.0 / 800.0, places=8)
+
+    def test_survey_field_neighbor_order_is_center_then_surrounding_ring(self) -> None:
+        from photometry_app.core.survey_images import sky_explorer_survey_field_neighbor_tile_indices
+
+        ordered = sky_explorer_survey_field_neighbor_tile_indices(0, 0, radius=1)
+
+        self.assertEqual(ordered[0], (0, 0))
+        self.assertEqual(len(ordered), 9)
+        self.assertEqual(set(ordered), {(i, j) for i in (-1, 0, 1) for j in (-1, 0, 1)})
+
+    def test_compose_survey_field_mosaic_places_east_tile_to_the_left(self) -> None:
+        from photometry_app.core.survey_images import (
+            SKY_EXPLORER_SURVEY_FIELD_DETAIL_PREVIEW,
+            SurveyFieldTileCacheEntry,
+            compose_sky_explorer_survey_field_mosaic,
+            prune_sky_explorer_survey_field_tiles,
+            sky_explorer_survey_field_preview_size,
+            sky_explorer_survey_field_tile_indices_for_sky,
+            sky_explorer_survey_field_tile_spec,
+        )
+
+        width, height = 4, 3
+        center = np.full((height, width), 10.0, dtype=np.float32)
+        east = np.full((height, width), 20.0, dtype=np.float32)
+        tiles = {
+            (0, 0): SurveyFieldTileCacheEntry(center, "refine"),
+            (1, 0): SurveyFieldTileCacheEntry(east, "refine"),
+        }
+        mosaic, mosaic_wcs = compose_sky_explorer_survey_field_mosaic(
+            tiles,
+            center_i=0,
+            center_j=0,
+            origin_ra_deg=270.63,
+            origin_dec_deg=-23.03,
+            fov_arcmin=30.0,
+            width_px=width,
+            height_px=height,
+            radius=1,
+        )
+
+        self.assertEqual(mosaic.shape, (9, 12))
+        np.testing.assert_array_equal(mosaic[3:6, 4:8], center)
+        np.testing.assert_array_equal(mosaic[3:6, 0:4], east)
+        # Empty cells stay black/zero; stretch is frozen from the first tile by the UI.
+        self.assertEqual(float(mosaic[0, 0]), 0.0)
+        self.assertAlmostEqual(float(mosaic_wcs.wcs.crval[0]), 270.63, places=5)
+
+        # Adding a neighbor must keep the prior center tile pixels.
+        north = np.full((height, width), 30.0, dtype=np.float32)
+        mosaic_with_north, _wcs = compose_sky_explorer_survey_field_mosaic(
+            {
+                **tiles,
+                (0, 1): SurveyFieldTileCacheEntry(north, "refine"),
+            },
+            center_i=0,
+            center_j=0,
+            origin_ra_deg=270.63,
+            origin_dec_deg=-23.03,
+            fov_arcmin=30.0,
+            width_px=width,
+            height_px=height,
+            radius=1,
+        )
+        np.testing.assert_array_equal(mosaic_with_north[3:6, 4:8], center)
+        np.testing.assert_array_equal(mosaic_with_north[6:9, 4:8], north)
+
+        preview = np.full((2, 2), 12.0, dtype=np.float32)
+        preview_mosaic, _wcs = compose_sky_explorer_survey_field_mosaic(
+            {(0, 0): SurveyFieldTileCacheEntry(preview, SKY_EXPLORER_SURVEY_FIELD_DETAIL_PREVIEW)},
+            center_i=0,
+            center_j=0,
+            origin_ra_deg=270.63,
+            origin_dec_deg=-23.03,
+            fov_arcmin=30.0,
+            width_px=width,
+            height_px=height,
+            radius=1,
+        )
+        self.assertEqual(preview_mosaic.shape, (9, 12))
+        self.assertAlmostEqual(float(preview_mosaic[3, 4]), 12.0, places=3)
+
+        from photometry_app.core.survey_images import sky_explorer_survey_field_frozen_levels
+
+        black, mid, white = sky_explorer_survey_field_frozen_levels(center)
+        self.assertGreaterEqual(mid, black)
+        self.assertGreaterEqual(white, mid)
+        self.assertFalse(
+            abs(black) <= 1e-6 and abs(mid - 0.5) <= 1e-6 and abs(white - 1.0) <= 1e-6
+        )
+
+        self.assertEqual(sky_explorer_survey_field_preview_size(1024, 1024), (256, 256))
+        self.assertEqual(sky_explorer_survey_field_preview_size(800, 600, max_edge=200), (200, 150))
+
+        east_spec = sky_explorer_survey_field_tile_spec(
+            origin_ra_deg=270.63,
+            origin_dec_deg=-23.03,
+            fov_arcmin=30.0,
+            tile_i=1,
+            tile_j=0,
+        )
+        tile_i, tile_j = sky_explorer_survey_field_tile_indices_for_sky(
+            ra_deg=east_spec.ra_deg,
+            dec_deg=east_spec.dec_deg,
+            origin_ra_deg=270.63,
+            origin_dec_deg=-23.03,
+            fov_arcmin=30.0,
+        )
+        self.assertEqual((tile_i, tile_j), (1, 0))
+
+        pruned = prune_sky_explorer_survey_field_tiles(
+            {
+                **tiles,
+                (5, 5): SurveyFieldTileCacheEntry(center, "preview"),
+                (-4, 2): SurveyFieldTileCacheEntry(center, "refine"),
+                (0, 1): SurveyFieldTileCacheEntry(center, "refine"),
+            },
+            center_i=0,
+            center_j=0,
+            max_tiles=3,
+        )
+        self.assertEqual(len(pruned), 3)
+        self.assertIn((0, 0), pruned)
+        self.assertNotIn((5, 5), pruned)
+
+    def test_write_survey_image_fits_preserves_wcs_and_rgb_plane_order(self) -> None:
+        wcs = build_sky_explorer_field_wcs(
+            ra_deg=83.8221,
+            dec_deg=-5.3911,
+            fov_arcmin=30.0,
+            width_px=5,
+            height_px=4,
+        )
+        rgb = np.arange(60, dtype=np.float32).reshape(4, 5, 3) + 1.0
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = write_survey_image_fits(
+                Path(temporary_directory) / "survey-field.fits",
+                image_data=rgb,
+                wcs=wcs,
+            )
+            with fits.open(output_path, memmap=False) as hdul:
+                data = np.array(hdul[0].data, copy=True)
+                loaded_wcs = WCS(hdul[0].header, naxis=2)
+
+        self.assertEqual(data.shape, (3, 4, 5))
+        np.testing.assert_array_equal(data[0], rgb[..., 0])
+        np.testing.assert_array_equal(data[1], rgb[..., 1])
+        np.testing.assert_array_equal(data[2], rgb[..., 2])
+        np.testing.assert_allclose(loaded_wcs.wcs.crval, wcs.wcs.crval)
+        np.testing.assert_allclose(loaded_wcs.wcs.crpix, wcs.wcs.crpix)
+        np.testing.assert_allclose(loaded_wcs.wcs.cdelt, wcs.wcs.cdelt)
+
     def test_scale_wcs_for_pixel_sampling_expands_cd_matrix_subsampled_footprint(self) -> None:
         source_wcs = WCS(naxis=2)
         source_wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
@@ -282,6 +455,19 @@ class SurveyImagesTest(unittest.TestCase):
 
         self.assertEqual(len(remaining_files), 64)
         self.assertEqual(oldest_files_removed, [True, True, True])
+
+    def test_clear_sky_explorer_survey_image_caches_removes_both_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            cache_dir = Path(temporary_directory)
+            surveys, fields = survey_images.sky_explorer_survey_image_cache_dirs(cache_dir)
+            surveys.mkdir()
+            fields.mkdir()
+            (surveys / "a.npz").write_bytes(b"survey")
+            (fields / "b.fits").write_bytes(b"field")
+            removed = survey_images.clear_sky_explorer_survey_image_caches(cache_dir)
+            self.assertEqual(removed, 2)
+            self.assertFalse(surveys.exists())
+            self.assertFalse(fields.exists())
 
 
 if __name__ == "__main__":

@@ -41,8 +41,23 @@ _OVERLAY_LABEL_CANDIDATE_ANGLES: tuple[float, ...] = (
     210.0,
 )
 
+# Relative to fit-to-view (_zoom_scale == 1.0). Lower allows seeing more sky when panning survey tiles.
+_MIN_ZOOM_SCALE = 1.0 / 3.0
+_MAX_ZOOM_SCALE = 32.0
 
 
+
+
+
+@dataclass(frozen=True)
+class SurveyTileLayerItem:
+    """Pre-stretched survey tile (or placeholder) drawn in image coordinates."""
+
+    rect: QRectF
+    qimage: QImage | None
+    state: str = ""
+    label: str = ""
+    layer_id: str = "primary"
 
 
 @dataclass(frozen=True)
@@ -120,6 +135,10 @@ class ImageOverlay:
     plot_style: ImagePlotStyle | None = None
 
     dynamic_metric_kind: str | None = None
+
+    endpoint_x: float | None = None
+
+    endpoint_y: float | None = None
 
 
 @dataclass(frozen=True)
@@ -368,6 +387,8 @@ class AnnotatedImageView(QWidget):
 
     imagePressed = Signal(float, float, object, object)
 
+    imageDoubleClicked = Signal(float, float, object, object)
+
     imageOverlayClicked = Signal(object)
 
     imageContextRequested = Signal(float, float, object, object)
@@ -403,6 +424,8 @@ class AnnotatedImageView(QWidget):
         self._comparison_target_rect: QRectF | None = None
 
         self._comparison_split_enabled = False
+
+        self._comparison_divider_visible = True
 
         self._comparison_loading = False
 
@@ -457,6 +480,12 @@ class AnnotatedImageView(QWidget):
         self._zoom_scale = 1.0
 
         self._view_center: QPointF | None = None
+
+        self._unbounded_pan = False
+
+        self._survey_tile_layers: list[SurveyTileLayerItem] = []
+
+        self._comparison_survey_tile_layers: list[SurveyTileLayerItem] = []
 
         self._pan_anchor: QPointF | None = None
 
@@ -568,6 +597,8 @@ class AnnotatedImageView(QWidget):
 
         self._view_center = None
 
+        self._unbounded_pan = False
+
         self._pan_anchor = None
 
         self._pan_center_start = None
@@ -603,6 +634,58 @@ class AnnotatedImageView(QWidget):
         self._hover_image_point = None
 
         self.update()
+
+    def set_unbounded_pan(self, enabled: bool) -> None:
+        """Allow panning past image edges (used for survey fields that lazy-recenter)."""
+        was_enabled = bool(self._unbounded_pan)
+        self._unbounded_pan = bool(enabled)
+        if was_enabled and not self._unbounded_pan and self._view_center is not None:
+            self._view_center = self._clamped_view_center()
+            self.update()
+            self.viewportChanged.emit()
+
+    def unbounded_pan_enabled(self) -> bool:
+        return bool(self._unbounded_pan)
+
+    def set_survey_tile_layers(self, layers: list[SurveyTileLayerItem] | None) -> None:
+        """Replace primary survey tile draw layers. Empty/None clears tile overlay mode."""
+        self._survey_tile_layers = list(layers or ())
+        self.update()
+
+    def survey_tile_layers(self) -> tuple[SurveyTileLayerItem, ...]:
+        return tuple(self._survey_tile_layers)
+
+    def clear_survey_tile_layers(self) -> None:
+        if not self._survey_tile_layers:
+            return
+        self._survey_tile_layers = []
+        self.update()
+
+    def set_comparison_survey_tile_layers(self, layers: list[SurveyTileLayerItem] | None) -> None:
+        """Replace comparison survey tile layers used with the wipe bar."""
+        self._comparison_survey_tile_layers = list(layers or ())
+        if self._comparison_survey_tile_layers:
+            self._comparison_split_enabled = True
+            if self._comparison_divider_visible and self._comparison_split_fraction <= 0.0:
+                self._comparison_split_fraction = 0.5
+            self.set_comparison_loading(False)
+        self.update()
+
+    def comparison_survey_tile_layers(self) -> tuple[SurveyTileLayerItem, ...]:
+        return tuple(self._comparison_survey_tile_layers)
+
+    def clear_comparison_survey_tile_layers(self) -> None:
+        if not self._comparison_survey_tile_layers:
+            return
+        self._comparison_survey_tile_layers = []
+        self.update()
+
+    def view_center_image_point(self) -> QPointF:
+        """Return the current pan center in image coordinates (unclamped when unbounded)."""
+        if self._unbounded_pan:
+            center = self._view_center or self._default_view_center()
+            return QPointF(float(center.x()), float(center.y()))
+        return self._clamped_view_center()
 
 
 
@@ -813,7 +896,25 @@ class AnnotatedImageView(QWidget):
 
             self._comparison_split_drag_active = False
 
+            self._comparison_divider_visible = True
+
         self.update()
+
+    def set_comparison_divider_visible(self, visible: bool) -> None:
+        """Show/hide the wipe bar. Hidden mode draws the comparison layer full-frame."""
+        visible = bool(visible)
+        if visible == self._comparison_divider_visible:
+            return
+        self._comparison_divider_visible = visible
+        if not visible:
+            self._comparison_split_drag_active = False
+            self._comparison_split_fraction = 0.0
+        elif self._comparison_split_fraction <= 0.0:
+            self._comparison_split_fraction = 0.5
+        self.update()
+
+    def comparison_divider_visible(self) -> bool:
+        return bool(self._comparison_divider_visible)
 
     def set_comparison_loading(self, loading: bool) -> None:
 
@@ -863,7 +964,11 @@ class AnnotatedImageView(QWidget):
 
         self.clear_comparison_survey_content()
 
+        self.clear_comparison_survey_tile_layers()
+
         self._comparison_split_enabled = False
+
+        self._comparison_divider_visible = True
 
         self._comparison_split_drag_active = False
 
@@ -885,7 +990,10 @@ class AnnotatedImageView(QWidget):
 
     def set_comparison_split_fraction(self, fraction: float) -> None:
 
-        resolved_fraction = min(0.98, max(0.02, float(fraction)))
+        if self._comparison_divider_visible:
+            resolved_fraction = min(0.98, max(0.02, float(fraction)))
+        else:
+            resolved_fraction = 0.0
 
         if math.isclose(resolved_fraction, self._comparison_split_fraction, abs_tol=1.0e-6):
 
@@ -1184,7 +1292,7 @@ class AnnotatedImageView(QWidget):
 
     def zoom_in(self) -> None:
 
-        self._zoom_scale = min(32.0, self._zoom_scale * 1.8)
+        self._zoom_scale = min(_MAX_ZOOM_SCALE, self._zoom_scale * 1.8)
 
         self.update()
 
@@ -1194,7 +1302,10 @@ class AnnotatedImageView(QWidget):
 
     def zoom_out(self) -> None:
 
-        self._zoom_scale = max(1.0, self._zoom_scale / 1.8)
+        next_zoom = max(_MIN_ZOOM_SCALE, self._zoom_scale / 1.8)
+        if abs(next_zoom - self._zoom_scale) <= 1e-9:
+            return
+        self._zoom_scale = next_zoom
 
         self.update()
 
@@ -1309,7 +1420,7 @@ class AnnotatedImageView(QWidget):
 
             painter.save()
 
-            painter.setClipRect(self._image_bounds_rect())
+            painter.setClipRect(self._overlay_clip_rect())
 
             for overlay in self._overlays:
 
@@ -1494,7 +1605,7 @@ class AnnotatedImageView(QWidget):
 
                 painter.save()
 
-                painter.setClipRect(self._image_bounds_rect())
+                painter.setClipRect(self._overlay_clip_rect())
 
                 for overlay in overlays:
 
@@ -1560,11 +1671,13 @@ class AnnotatedImageView(QWidget):
 
             return
 
-        self._view_center = QPointF(image_x, image_y)
-
         zoom_factor = 1.25 ** step
+        next_zoom = min(_MAX_ZOOM_SCALE, max(_MIN_ZOOM_SCALE, self._zoom_scale * zoom_factor))
+        if abs(next_zoom - self._zoom_scale) <= 1e-9:
+            return
 
-        self._zoom_scale = min(32.0, max(1.0, self._zoom_scale * zoom_factor))
+        self._view_center = QPointF(image_x, image_y)
+        self._zoom_scale = next_zoom
 
         self.update()
 
@@ -1588,13 +1701,31 @@ class AnnotatedImageView(QWidget):
 
         )
 
+    def _comparison_has_tile_layers(self) -> bool:
+        return bool(self._comparison_survey_tile_layers)
+
+    def _comparison_split_track_rect(self) -> QRectF:
+        """Widget-space rect that the wipe bar spans.
+
+        For unbounded survey mosaics, use the full image content area so the
+        divider runs top-to-bottom across the whole view, not only the central
+        WCS canvas plate.
+        """
+        if (
+            self._unbounded_pan
+            or self._survey_tile_layers
+            or self._comparison_survey_tile_layers
+        ):
+            return QRectF(self._image_content_rect())
+        return self._visible_image_widget_rect()
+
     def _comparison_split_widget_x(self) -> float | None:
 
-        if not self._comparison_is_active():
+        if not self._comparison_is_active() or not self._comparison_divider_visible:
 
             return None
 
-        visible_rect = self._visible_image_widget_rect()
+        visible_rect = self._comparison_split_track_rect()
 
         if visible_rect.isEmpty():
 
@@ -1604,9 +1735,13 @@ class AnnotatedImageView(QWidget):
 
     def _comparison_split_hit_test(self, point: QPointF) -> bool:
 
+        if not self._comparison_divider_visible:
+
+            return False
+
         split_x = self._comparison_split_widget_x()
 
-        visible_rect = self._visible_image_widget_rect()
+        visible_rect = self._comparison_split_track_rect()
 
         return (
 
@@ -1622,7 +1757,7 @@ class AnnotatedImageView(QWidget):
 
     def _update_comparison_split_from_widget_x(self, widget_x: float) -> None:
 
-        visible_rect = self._visible_image_widget_rect()
+        visible_rect = self._comparison_split_track_rect()
 
         if visible_rect.isEmpty() or visible_rect.width() <= 0.0:
 
@@ -1634,9 +1769,13 @@ class AnnotatedImageView(QWidget):
 
     def _draw_comparison_divider(self, painter: QPainter) -> None:
 
+        if not self._comparison_divider_visible:
+
+            return
+
         split_x = self._comparison_split_widget_x()
 
-        visible_rect = self._visible_image_widget_rect()
+        visible_rect = self._comparison_split_track_rect()
 
         if split_x is None or visible_rect.isEmpty():
 
@@ -1674,7 +1813,7 @@ class AnnotatedImageView(QWidget):
 
         split_x = self._comparison_split_widget_x()
 
-        visible_rect = self._visible_image_widget_rect()
+        visible_rect = self._comparison_split_track_rect()
 
         if split_x is None or visible_rect.isEmpty():
 
@@ -1754,11 +1893,13 @@ class AnnotatedImageView(QWidget):
 
         if self._display is None or self._qimage is None:
 
-            painter.setPen(QColor("white"))
+            if not self._survey_tile_layers:
 
-            painter.drawText(self.rect(), int(Qt.AlignmentFlag.AlignCenter), self._message)
+                painter.setPen(QColor("white"))
 
-            return
+                painter.drawText(self.rect(), int(Qt.AlignmentFlag.AlignCenter), self._message)
+
+                return
 
 
 
@@ -1792,37 +1933,59 @@ class AnnotatedImageView(QWidget):
 
         painter.translate(-center.x(), -center.y())
 
-        painter.drawImage(QRectF(0.0, 0.0, self._qimage.width(), self._qimage.height()), self._qimage)
+        if self._survey_tile_layers:
+            self._draw_survey_tile_layers(painter, self._survey_tile_layers)
+        elif self._qimage is not None:
+            painter.drawImage(QRectF(0.0, 0.0, self._qimage.width(), self._qimage.height()), self._qimage)
 
-        if self._comparison_has_survey_raster():
-
-            split_widget_x = self._comparison_split_widget_x()
-
-            if split_widget_x is not None and self._comparison_target_rect is not None and self._comparison_qimage is not None:
-
-                split_image_x = center.x() + ((split_widget_x - content_rect.center().x()) / scale)
-
-                painter.save()
-
-                painter.setClipRect(
-
-                    QRectF(
-
-                        split_image_x,
-
-                        0.0,
-
-                        max(0.0, float(self._qimage.width()) - split_image_x),
-
-                        float(self._qimage.height()),
-
+        if self._comparison_has_tile_layers():
+            if not self._comparison_divider_visible:
+                self._draw_survey_tile_layers(painter, self._comparison_survey_tile_layers)
+            else:
+                split_widget_x = self._comparison_split_widget_x()
+                if split_widget_x is not None:
+                    split_image_x = center.x() + ((split_widget_x - content_rect.center().x()) / scale)
+                    painter.save()
+                    painter.setClipRect(
+                        self._comparison_wipe_image_clip_rect(
+                            split_image_x=split_image_x,
+                            scale=scale,
+                            content_rect=content_rect,
+                            center=center,
+                        )
                     )
+                    self._draw_survey_tile_layers(painter, self._comparison_survey_tile_layers)
+                    painter.restore()
+        elif self._comparison_has_survey_raster():
 
-                )
+            if self._comparison_target_rect is not None and self._comparison_qimage is not None:
 
-                painter.drawImage(self._comparison_target_rect, self._comparison_qimage)
+                if not self._comparison_divider_visible:
 
-                painter.restore()
+                    painter.drawImage(self._comparison_target_rect, self._comparison_qimage)
+
+                else:
+
+                    split_widget_x = self._comparison_split_widget_x()
+
+                    if split_widget_x is not None:
+
+                        split_image_x = center.x() + ((split_widget_x - content_rect.center().x()) / scale)
+
+                        painter.save()
+
+                        painter.setClipRect(
+                            self._comparison_wipe_image_clip_rect(
+                                split_image_x=split_image_x,
+                                scale=scale,
+                                content_rect=content_rect,
+                                center=center,
+                            )
+                        )
+
+                        painter.drawImage(self._comparison_target_rect, self._comparison_qimage)
+
+                        painter.restore()
 
         self._draw_safe_margin(painter)
 
@@ -1833,8 +1996,8 @@ class AnnotatedImageView(QWidget):
         self._paint_decoration_overlays(
             painter,
             self._decoration_overlays,
-            float(self._qimage.width()),
-            float(self._qimage.height()),
+            float(self._qimage.width() if self._qimage is not None else 1),
+            float(self._qimage.height() if self._qimage is not None else 1),
         )
 
         motion_vector_clip_rect = image_clip_rect.adjusted(-48.0, -48.0, 48.0, 48.0)
@@ -1893,6 +2056,63 @@ class AnnotatedImageView(QWidget):
 
         self._draw_chart_overlay(painter, self._chart_overlay_widget_bounds())
 
+
+    def _draw_survey_tile_layers(
+        self,
+        painter: QPainter,
+        layers: list[SurveyTileLayerItem] | tuple[SurveyTileLayerItem, ...] | None = None,
+    ) -> None:
+        for item in (layers if layers is not None else self._survey_tile_layers):
+            if item.qimage is not None and not item.qimage.isNull():
+                painter.drawImage(item.rect, item.qimage)
+            if item.label:
+                painter.save()
+                painter.setPen(QColor(180, 190, 200, 220))
+                font = painter.font()
+                font.setPointSizeF(max(8.0, min(14.0, float(item.rect.width()) * 0.04)))
+                painter.setFont(font)
+                painter.drawText(item.rect, int(Qt.AlignmentFlag.AlignCenter), item.label)
+                painter.restore()
+
+    def _comparison_wipe_image_clip_rect(
+        self,
+        *,
+        split_image_x: float,
+        scale: float,
+        content_rect: QRectF,
+        center: QPointF,
+    ) -> QRectF:
+        """Image-space clip for the comparison half of the wipe (right of the split)."""
+        # Map the full widget content area into image space so neighbor tiles outside
+        # the central WCS canvas stay inside the wipe.
+        content_cx = float(content_rect.center().x())
+        content_cy = float(content_rect.center().y())
+        left = float(center.x()) + ((float(content_rect.left()) - content_cx) / scale)
+        right = float(center.x()) + ((float(content_rect.right()) - content_cx) / scale)
+        top = float(center.y()) + ((float(content_rect.top()) - content_cy) / scale)
+        bottom = float(center.y()) + ((float(content_rect.bottom()) - content_cy) / scale)
+        pad = max(abs(right - left), abs(bottom - top), 1.0)
+        clip_left = float(split_image_x)
+        clip_top = min(top, bottom) - pad
+        clip_right = max(left, right) + pad
+        clip_bottom = max(top, bottom) + pad
+        for item in (*self._survey_tile_layers, *self._comparison_survey_tile_layers):
+            clip_top = min(clip_top, float(item.rect.top()))
+            clip_right = max(clip_right, float(item.rect.right()))
+            clip_bottom = max(clip_bottom, float(item.rect.bottom()))
+        if self._comparison_target_rect is not None:
+            clip_top = min(clip_top, float(self._comparison_target_rect.top()))
+            clip_right = max(clip_right, float(self._comparison_target_rect.right()))
+            clip_bottom = max(clip_bottom, float(self._comparison_target_rect.bottom()))
+        if self._qimage is not None:
+            clip_right = max(clip_right, float(self._qimage.width()))
+            clip_bottom = max(clip_bottom, float(self._qimage.height()))
+        return QRectF(
+            clip_left,
+            clip_top,
+            max(0.0, clip_right - clip_left),
+            max(0.0, clip_bottom - clip_top),
+        )
 
     def _static_overlay_layers(self, scale: float, center: QPointF) -> tuple[QImage | None, QImage | None]:
 
@@ -2032,7 +2252,7 @@ class AnnotatedImageView(QWidget):
 
         painter.save()
 
-        painter.setClipRect(self._image_bounds_rect())
+        painter.setClipRect(self._overlay_clip_rect())
 
         for overlay in overlays:
 
@@ -2095,18 +2315,21 @@ class AnnotatedImageView(QWidget):
 
 
 
+        delta_y = float(event.angleDelta().y())
+        if delta_y > 0:
+            next_zoom = min(_MAX_ZOOM_SCALE, self._zoom_scale * 1.25)
+        elif delta_y < 0:
+            next_zoom = max(_MIN_ZOOM_SCALE, self._zoom_scale / 1.25)
+        else:
+            return
+
+        # At min/max FOV, ignore further wheel input so the view does not pan under the cursor.
+        if abs(next_zoom - self._zoom_scale) <= 1e-9:
+            return
+
         self._view_center = image_point
-
-        if event.angleDelta().y() > 0:
-
-            self._zoom_scale = min(32.0, self._zoom_scale * 1.25)
-
-        elif event.angleDelta().y() < 0:
-
-            self._zoom_scale = max(1.0, self._zoom_scale / 1.25)
-
+        self._zoom_scale = next_zoom
         self.update()
-
         self.viewportChanged.emit()
 
 
@@ -2290,6 +2513,45 @@ class AnnotatedImageView(QWidget):
             self._pending_overlay_click = self._overlay_at_image_point(image_point)
 
 
+    def mouseDoubleClickEvent(self, event: object) -> None:
+
+        if self._info_panel_rect().contains(event.position()):
+
+            return
+
+        image_point = self.widget_to_image(event.position().x(), event.position().y())
+
+        if image_point is None:
+
+            return
+
+        if event.button() != Qt.MouseButton.LeftButton:
+
+            return
+
+        # Cancel pan / ROI / overlay-click state started by the second press of the
+        # double-click sequence so this gesture does not drag or draft an ROI.
+        self._pan_anchor = None
+
+        self._pan_center_start = None
+
+        self._pan_drag_active = False
+
+        self._pending_overlay_click = None
+
+        self._gesture_roi_active = False
+
+        self._comparison_split_drag_active = False
+
+        self._direct_edit_active = False
+
+        self._editor_drag_active = False
+
+        self._editor_pending_click_button = None
+
+        self.imageDoubleClicked.emit(image_point.x(), image_point.y(), event.button(), event.modifiers())
+
+
     def _overlay_at_image_point(self, image_point: QPointF) -> ImageOverlay | None:
 
         best_overlay: ImageOverlay | None = None
@@ -2401,6 +2663,26 @@ class AnnotatedImageView(QWidget):
             normalized_dy = (float(image_point.y()) - hit_rect.center().y()) / half_height
 
             return normalized_dx * normalized_dx + normalized_dy * normalized_dy
+
+        if overlay.marker_style == "ruler":
+
+            end_x = float(overlay.endpoint_x) if overlay.endpoint_x is not None else float(overlay.x)
+
+            end_y = float(overlay.endpoint_y) if overlay.endpoint_y is not None else float(overlay.y)
+
+            hit_padding = max(4.0, padding + 2.0)
+
+            score = AnnotatedImageView._point_to_segment_distance_score(
+                float(image_point.x()),
+                float(image_point.y()),
+                float(overlay.x),
+                float(overlay.y),
+                end_x,
+                end_y,
+                hit_padding,
+            )
+
+            return score
 
         if overlay.marker_style == "rectangle":
 
@@ -2691,9 +2973,11 @@ class AnnotatedImageView(QWidget):
 
         image_y = center.y() + ((widget_y - content_rect.center().y()) / scale)
 
-        if not (0.0 <= image_x < self._qimage.width() and 0.0 <= image_y < self._qimage.height()):
-
-            return None
+        # Survey tile layers extend beyond the primary WCS canvas; with unbounded pan,
+        # accept image coordinates outside the central plate so neighboring tiles can be dragged.
+        if not self._unbounded_pan:
+            if not (0.0 <= image_x < self._qimage.width() and 0.0 <= image_y < self._qimage.height()):
+                return None
 
         return QPointF(image_x, image_y)
 
@@ -2814,6 +3098,80 @@ class AnnotatedImageView(QWidget):
                 candidate_fill_color.setAlphaF(max(0.0, min(1.0, float(overlay.fill_opacity))))
 
                 fill_brush_color = candidate_fill_color
+
+        if overlay.marker_style == "ruler":
+
+            end_x = float(overlay.endpoint_x) if overlay.endpoint_x is not None else float(overlay.x)
+
+            end_y = float(overlay.endpoint_y) if overlay.endpoint_y is not None else float(overlay.y)
+
+            start_point = QPointF(float(overlay.x), float(overlay.y))
+
+            end_point = QPointF(end_x, end_y)
+
+            dx = end_x - float(overlay.x)
+
+            dy = end_y - float(overlay.y)
+
+            length = math.hypot(dx, dy)
+
+            if outline_pen is not None:
+
+                painter.setPen(outline_pen)
+
+                painter.drawLine(start_point, end_point)
+
+            painter.setPen(pen)
+
+            painter.drawLine(start_point, end_point)
+
+            if length > 0.5:
+
+                direction_x = dx / length
+
+                direction_y = dy / length
+
+                tick = max(3.0, min(8.0, 0.08 * length))
+
+                perp_x = -direction_y * tick
+
+                perp_y = direction_x * tick
+
+                for point in (start_point, end_point):
+
+                    if outline_pen is not None:
+
+                        painter.setPen(outline_pen)
+
+                        painter.drawLine(
+                            QPointF(point.x() - perp_x, point.y() - perp_y),
+                            QPointF(point.x() + perp_x, point.y() + perp_y),
+                        )
+
+                    painter.setPen(pen)
+
+                    painter.drawLine(
+                        QPointF(point.x() - perp_x, point.y() - perp_y),
+                        QPointF(point.x() + perp_x, point.y() + perp_y),
+                    )
+
+            if overlay.show_handles or overlay.accent_color:
+
+                handle_color = QColor(overlay.accent_color) if overlay.accent_color else color
+
+                if handle_color.isValid():
+
+                    handle_color.setAlphaF(max(0.0, min(1.0, float(overlay.stroke_opacity))))
+
+                painter.setBrush(handle_color)
+
+                painter.setPen(QPen(QColor("black"), 0.0))
+
+                painter.drawEllipse(start_point, 1.5, 1.5)
+
+                painter.drawEllipse(end_point, 1.5, 1.5)
+
+            return
 
         if overlay.marker_style == "cross":
 
@@ -3376,6 +3734,66 @@ class AnnotatedImageView(QWidget):
 
             )
 
+        if overlay.marker_style == "ruler":
+
+            end_x = float(overlay.endpoint_x) if overlay.endpoint_x is not None else float(overlay.x)
+
+            end_y = float(overlay.endpoint_y) if overlay.endpoint_y is not None else float(overlay.y)
+
+            mid_x = 0.5 * (float(overlay.x) + end_x)
+
+            mid_y = 0.5 * (float(overlay.y) + end_y)
+
+            dx = end_x - float(overlay.x)
+
+            dy = end_y - float(overlay.y)
+
+            length = math.hypot(dx, dy)
+
+            text_bounds = self._overlay_label_text_bounds(painter, text)
+
+            gap = max(6.0, min(18.0, 0.5 * max(text_bounds.height(), 8.0)))
+
+            if length <= 1e-6:
+
+                offset_x, offset_y = 0.0, gap
+
+            else:
+
+                direction_x = dx / length
+
+                direction_y = dy / length
+
+                # Prefer the perpendicular that points "down" in image space (positive Y).
+
+                perp_x = -direction_y
+
+                perp_y = direction_x
+
+                if perp_y < 0.0:
+
+                    perp_x = -perp_x
+
+                    perp_y = -perp_y
+
+                offset_x = perp_x * gap
+
+                offset_y = perp_y * gap
+
+            return self._clamped_label_point(
+
+                map_image_point(QPointF(mid_x + offset_x, mid_y + offset_y)),
+
+                frame_rect=frame_rect,
+
+                painter=painter,
+
+                text=text,
+
+                text_bounds=text_bounds,
+
+            )
+
         radius = max(0.0, float(overlay.aperture_radius))
 
         gap = max(3.0, min(18.0, radius * 0.04))
@@ -3725,12 +4143,29 @@ class AnnotatedImageView(QWidget):
 
         return QRectF(0.0, 0.0, float(self._qimage.width()), float(self._qimage.height()))
 
+    def _overlay_clip_rect(self) -> QRectF:
+        """Clip overlays to the plate, or to the full survey mosaic when tiled."""
+        bounds = self._image_bounds_rect()
+        if not (self._unbounded_pan or self._survey_tile_layers or self._comparison_survey_tile_layers):
+            return bounds
+        clip = QRectF(bounds) if not bounds.isEmpty() else QRectF()
+        for item in (*self._survey_tile_layers, *self._comparison_survey_tile_layers):
+            clip = clip.united(QRectF(item.rect)) if not clip.isEmpty() else QRectF(item.rect)
+        if clip.isEmpty():
+            return bounds
+        # Pad so markers near tile seams are not clipped mid-stroke.
+        pad = max(clip.width(), clip.height(), 1.0) * 0.05
+        return clip.adjusted(-pad, -pad, pad, pad)
 
     def _visible_image_widget_rect(self) -> QRectF:
 
-        if self._qimage is None:
+        if self._qimage is None and not self._survey_tile_layers:
 
             return QRectF()
+
+        if self._unbounded_pan or self._survey_tile_layers:
+            # Full viewport: labels/annotations on neighbor mosaic tiles stay visible.
+            return QRectF(self._image_content_rect())
 
         top_left = self.image_to_widget(0.0, 0.0)
 
@@ -3750,6 +4185,28 @@ class AnnotatedImageView(QWidget):
         if visible_rect.isEmpty():
 
             return False
+
+        if overlay.marker_style == "ruler":
+
+            end_x = float(overlay.endpoint_x) if overlay.endpoint_x is not None else float(overlay.x)
+
+            end_y = float(overlay.endpoint_y) if overlay.endpoint_y is not None else float(overlay.y)
+
+            start_point = self.image_to_widget(float(overlay.x), float(overlay.y))
+
+            end_point = self.image_to_widget(end_x, end_y)
+
+            padding = max(8.0, float(overlay.pen_width) + 4.0)
+
+            left = min(start_point.x(), end_point.x()) - padding
+
+            top = min(start_point.y(), end_point.y()) - padding
+
+            right = max(start_point.x(), end_point.x()) + padding
+
+            bottom = max(start_point.y(), end_point.y()) + padding
+
+            return visible_rect.intersects(QRectF(left, top, right - left, bottom - top))
 
         center_point = self.image_to_widget(float(overlay.x), float(overlay.y))
 
@@ -3779,6 +4236,47 @@ class AnnotatedImageView(QWidget):
 
         return overlay_rect.intersects(visible_rect)
 
+
+    @staticmethod
+    def _point_to_segment_distance_score(
+        point_x: float,
+        point_y: float,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+        hit_padding: float,
+    ) -> float | None:
+
+        dx = float(end_x) - float(start_x)
+
+        dy = float(end_y) - float(start_y)
+
+        length_squared = dx * dx + dy * dy
+
+        if length_squared <= 1e-12:
+
+            distance = math.hypot(float(point_x) - float(start_x), float(point_y) - float(start_y))
+
+        else:
+
+            projection = ((float(point_x) - float(start_x)) * dx + (float(point_y) - float(start_y)) * dy) / length_squared
+
+            projection = max(0.0, min(1.0, projection))
+
+            closest_x = float(start_x) + projection * dx
+
+            closest_y = float(start_y) + projection * dy
+
+            distance = math.hypot(float(point_x) - closest_x, float(point_y) - closest_y)
+
+        padding = max(1.0, float(hit_padding))
+
+        if distance > padding:
+
+            return None
+
+        return (distance * distance) / (padding * padding)
 
     def _draw_rotated_ellipse(
 
@@ -4479,6 +4977,13 @@ class AnnotatedImageView(QWidget):
 
     def _default_view_center(self) -> QPointF:
 
+        if self._survey_tile_layers:
+            # Prefer the origin tile (near 0,0) if present; else first layer center.
+            for item in self._survey_tile_layers:
+                if abs(float(item.rect.x())) < 1.0 and abs(float(item.rect.y())) < 1.0:
+                    return item.rect.center()
+            return self._survey_tile_layers[0].rect.center()
+
         if self._qimage is None:
 
             return QPointF(0.0, 0.0)
@@ -4487,15 +4992,26 @@ class AnnotatedImageView(QWidget):
 
 
 
+    def effective_image_scale(self) -> float:
+
+        return float(self._effective_scale())
+
+
+
     def _effective_scale(self) -> float:
 
-        if self._qimage is None:
-
-            return 1.0
+        reference_width = 1.0
+        reference_height = 1.0
+        if self._qimage is not None:
+            reference_width = float(max(1, self._qimage.width()))
+            reference_height = float(max(1, self._qimage.height()))
+        elif self._survey_tile_layers:
+            reference_width = max(float(item.rect.width()) for item in self._survey_tile_layers)
+            reference_height = max(float(item.rect.height()) for item in self._survey_tile_layers)
 
         content_rect = self._image_content_rect()
 
-        fit_scale = min(content_rect.width() / max(1, self._qimage.width()), content_rect.height() / max(1, self._qimage.height()))
+        fit_scale = min(content_rect.width() / max(1.0, reference_width), content_rect.height() / max(1.0, reference_height))
 
         return max(0.01, fit_scale * self._zoom_scale)
 
@@ -4503,11 +5019,15 @@ class AnnotatedImageView(QWidget):
 
     def _clamped_view_center(self) -> QPointF:
 
-        if self._qimage is None:
+        if self._qimage is None and not self._survey_tile_layers:
 
             return QPointF(0.0, 0.0)
 
         center = self._view_center or self._default_view_center()
+
+        if self._unbounded_pan:
+
+            return QPointF(float(center.x()), float(center.y()))
 
         scale = self._effective_scale()
 

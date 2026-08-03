@@ -2,7 +2,22 @@
 
 Version history for Citizen Astronomy (CAst), newest first. Installer releases and delta updates are published on the [Releases](https://github.com/OgetayKayali/citizen-astronomy/releases) page.
 
-Current app version: **0.1.1-alpha.6**
+Current app version: **0.1.1-alpha.7**
+
+## 0.1.1-alpha.7
+
+- HR Diagram Display: Show RA/Dec (default on) and Show Grid with independent RA/Dec density controls; these do not affect Sky Explorer or Differential Photometry.
+- HR Diagram: double-click a star on the Source Image to select it on the plot and results table (works even before any plot selection, without interfering with pan or Shift+drag ROI).
+- HR Diagram: the prerequisites reminder can be dismissed with Don't show again for this version; the choice is saved and resets automatically after each app update.
+- Trajectory View Save: GIF/MP4 exports can use cinematic camera motion presets (Fixed, Slow orbit, Object chase) that keep your current zoom and start from the current view, and Meteor Stream debris keeps drifting in the export when Animate debris is on.
+- Asteroid/Comet: with Target Marker off, no markers are drawn; Show Labels names only the selected object using the Marker Appearance Label color (default white).
+- Settings: remove the Photometry Mode Auto/Manual submenu from the Settings menu (mode switching behavior is unchanged).
+- Asteroid/Comet: image, blink, and trail export dialogs default to filenames that include the selected object name (for example `(511) Davida_blink.mp4` or `2015 CU58_trail.gif`).
+- Settings → Sky Explorer: split the long options list into General and Visuals tabs so color/appearance controls stay on Visuals.
+- Sky Explorer: add a Ruler annotation tool that measures distance between two points in pixels, or in arcsec/arcmin/degrees (auto-scaled) when WCS is available, with the value shown under the line.
+- Sky Explorer: Open starts from an upload or a survey field (Settings RA/Dec/FOV/pixels, default Trifid); survey-as-primary uses independent per-tile loading (center preview→center refine before neighbors, then neighbor preview→detail, viewport-prioritized, non-blocking workers, per-tile STF that does not change when neighbors load, loaded tiles kept, no-data shown as hatch not black), Comparison on a survey primary uses the same center-first tiled wipe across the full mosaic (user-image Comparison still uses the viewport overlay wipe), and Explore catalogs the full mosaic with annotations that are not clipped at tile edges.
+- Sky Explorer: survey image downloads are kept only for the current session and are deleted when the app closes (and cleared again on the next startup if a previous exit left leftovers).
+- About and README credits: point more info to the GitHub project, credit Ogetay and Ege Palaz with updated links, and mark the build as Alpha build only.
 
 ## 0.1.1-alpha.6
 

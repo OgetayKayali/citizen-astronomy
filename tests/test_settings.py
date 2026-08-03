@@ -412,6 +412,16 @@ class SettingsTest(unittest.TestCase):
 
             self.assertTrue(loaded.hr_plot_require_parallax)
 
+            self.assertTrue(loaded.hr_show_ra_dec)
+
+            self.assertFalse(loaded.hr_equatorial_grid_enabled)
+
+            self.assertEqual(loaded.hr_equatorial_grid_ra_density, 5)
+
+            self.assertEqual(loaded.hr_equatorial_grid_dec_density, 5)
+
+            self.assertEqual(loaded.hr_prerequisites_warning_dismissed_version, "")
+
             self.assertEqual(loaded.hr_table_row_limit, 1000)
 
             self.assertEqual(loaded.hr_motion_vector_color, "#3d8bfd")
@@ -465,6 +475,16 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(loaded.discovery_min_candidate_score, 25.0)
 
             self.assertEqual(loaded.sky_explorer_simbad_search_radius_arcsec, 10.0)
+
+            self.assertEqual(loaded.sky_explorer_survey_field_ra_deg, 270.63)
+
+            self.assertEqual(loaded.sky_explorer_survey_field_dec_deg, -23.03)
+
+            self.assertEqual(loaded.sky_explorer_survey_field_fov_arcmin, 45.0)
+
+            self.assertEqual(loaded.sky_explorer_survey_field_width_px, 1024)
+
+            self.assertEqual(loaded.sky_explorer_survey_field_height_px, 1024)
 
             self.assertEqual(loaded.sky_explorer_gaia_max_magnitude, 17.0)
 
@@ -838,6 +858,16 @@ class SettingsTest(unittest.TestCase):
 
                 hr_plot_require_parallax=False,
 
+                hr_show_ra_dec=False,
+
+                hr_equatorial_grid_enabled=True,
+
+                hr_equatorial_grid_ra_density=7,
+
+                hr_equatorial_grid_dec_density=9,
+
+                hr_prerequisites_warning_dismissed_version="0.1.1-alpha.6",
+
                 hr_motion_vector_color="#ff8844",
 
                 hr_motion_vector_color_by_angle=True,
@@ -1088,6 +1118,16 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(loaded.hr_plot_fixed_marker_size, 10.5)
 
             self.assertFalse(loaded.hr_plot_require_parallax)
+
+            self.assertFalse(loaded.hr_show_ra_dec)
+
+            self.assertTrue(loaded.hr_equatorial_grid_enabled)
+
+            self.assertEqual(loaded.hr_equatorial_grid_ra_density, 7)
+
+            self.assertEqual(loaded.hr_equatorial_grid_dec_density, 9)
+
+            self.assertEqual(loaded.hr_prerequisites_warning_dismissed_version, "0.1.1-alpha.6")
 
             self.assertEqual(loaded.hr_table_row_limit, 321)
 
@@ -1824,6 +1864,16 @@ class SettingsTest(unittest.TestCase):
 
             settings.sky_explorer_simbad_search_radius_arcsec = 24.5
 
+            settings.sky_explorer_survey_field_ra_deg = 271.25
+
+            settings.sky_explorer_survey_field_dec_deg = -24.5
+
+            settings.sky_explorer_survey_field_fov_arcmin = 36.0
+
+            settings.sky_explorer_survey_field_width_px = 768
+
+            settings.sky_explorer_survey_field_height_px = 896
+
             settings.sky_explorer_gaia_max_magnitude = 16.7
 
             settings.sky_explorer_gaia_hard_cap_enabled = True
@@ -1888,6 +1938,16 @@ class SettingsTest(unittest.TestCase):
 
 
         self.assertEqual(loaded.sky_explorer_simbad_search_radius_arcsec, 24.5)
+
+        self.assertEqual(loaded.sky_explorer_survey_field_ra_deg, 271.25)
+
+        self.assertEqual(loaded.sky_explorer_survey_field_dec_deg, -24.5)
+
+        self.assertEqual(loaded.sky_explorer_survey_field_fov_arcmin, 36.0)
+
+        self.assertEqual(loaded.sky_explorer_survey_field_width_px, 768)
+
+        self.assertEqual(loaded.sky_explorer_survey_field_height_px, 896)
 
         self.assertEqual(loaded.sky_explorer_gaia_max_magnitude, 16.7)
 

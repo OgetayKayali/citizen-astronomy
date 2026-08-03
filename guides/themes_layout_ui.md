@@ -146,7 +146,6 @@ Mode-specific knobs (Discover thresholds, HR source caps, Sky Atlas display, and
 Under Settings for differential work:
 
 - **Alignment** — `Non-Aligned` vs `Aligned` (solve one representative frame and reuse geometry for an aligned stack)
-- **Mode** — `Auto` (catalog-driven targets) vs `Manual` (saved manual source definitions)
 
 ---
 

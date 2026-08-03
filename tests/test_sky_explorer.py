@@ -20,6 +20,9 @@ from photometry_app.core.sky_explorer import (
     SkyExplorerLayerSummary,
     SkyExplorerObject,
     _catalog_designation_key,
+    _expand_solved_field_for_survey_mosaic,
+    _is_sky_explorer_survey_tile_wcs_canvas,
+    _pixel_position_for_coordinates,
     _query_hyperleda_galaxy_objects,
     _query_simbad_objects,
     _filter_sky_explorer_objects_by_magnitude,
@@ -35,8 +38,11 @@ from photometry_app.core.sky_explorer import (
     _simbad_query_regions,
     _solar_system_object_from_result,
     explore_sky_image,
+    format_sky_explorer_angular_distance,
+    format_sky_explorer_ruler_distance_label,
     merge_sky_explorer_results,
     SkyExplorerResult,
+    sky_explorer_angular_separation_arcsec,
     sky_explorer_object_type_key_for_object,
     sky_explorer_object_type_key_for_catalog_type,
     sky_explorer_object_type_keys_for_object,
@@ -2576,6 +2582,28 @@ class SkyExplorerTest(unittest.TestCase):
             )
 
 
+class SkyExplorerRulerFormattingTest(unittest.TestCase):
+    def test_angular_distance_auto_selects_arcsec_arcmin_and_degrees(self) -> None:
+        self.assertEqual(format_sky_explorer_angular_distance(0.06), '0.06"')  # 0.001 arcmin
+        self.assertEqual(format_sky_explorer_angular_distance(120.0), "2.00'")
+        self.assertEqual(format_sky_explorer_angular_distance(520.0 * 60.0), "8.667°")
+
+    def test_ruler_label_prefers_angular_units_when_available(self) -> None:
+        self.assertEqual(
+            format_sky_explorer_ruler_distance_label(pixel_distance=42.0, angular_separation_arcsec=90.0),
+            "1.50'",
+        )
+        self.assertEqual(
+            format_sky_explorer_ruler_distance_label(pixel_distance=12.5, angular_separation_arcsec=None),
+            "12.5 px",
+        )
+
+    def test_sky_explorer_angular_separation_arcsec_is_positive(self) -> None:
+        separation = sky_explorer_angular_separation_arcsec(10.0, 20.0, 10.001, 20.0)
+        self.assertGreater(separation, 0.0)
+        self.assertLess(separation, 10.0)
+
+
 class SkyExplorerCatalogTypeMappingTest(unittest.TestCase):
     def test_sky_explorer_object_type_key_for_catalog_type_maps_simbad_codes(self) -> None:
         self.assertEqual(sky_explorer_object_type_key_for_catalog_type("HII"), "hii_region")
@@ -2586,3 +2614,63 @@ class SkyExplorerCatalogTypeMappingTest(unittest.TestCase):
             sky_explorer_object_type_key_for_catalog_type("Unknown", layer_key="general_objects"),
             "general_object",
         )
+
+
+class SkyExplorerSurveyMosaicExploreTest(unittest.TestCase):
+    def test_survey_tile_wcs_canvas_path_is_detected(self) -> None:
+        self.assertTrue(_is_sky_explorer_survey_tile_wcs_canvas(Path("dss2-tile-wcs-abcdef12.fits")))
+        self.assertFalse(_is_sky_explorer_survey_tile_wcs_canvas(Path("normal_plate.fits")))
+
+    def test_expand_solved_field_scales_radius_for_mosaic(self) -> None:
+        from photometry_app.core.survey_images import SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS
+
+        field = SolvedField(
+            center_ra_deg=270.0,
+            center_dec_deg=-23.0,
+            radius_deg=0.4,
+            width=100,
+            height=100,
+            wcs_path=Path("dss2-tile-wcs-abcdef12.fits"),
+        )
+        expanded = _expand_solved_field_for_survey_mosaic(field)
+        self.assertAlmostEqual(
+            expanded.radius_deg,
+            0.4 * float(2 * SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS + 1),
+            places=6,
+        )
+
+    def test_pixel_position_keeps_neighbor_tile_coords_for_survey_canvas(self) -> None:
+        from astropy.wcs import WCS
+
+        wcs = WCS(naxis=2)
+        wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        wcs.wcs.crval = [270.0, -23.0]
+        wcs.wcs.crpix = [50.5, 50.5]
+        wcs.wcs.cdelt = [-0.001, 0.001]
+        wcs.wcs.cunit = ["deg", "deg"]
+
+        solved = SolvedField(
+            center_ra_deg=270.0,
+            center_dec_deg=-23.0,
+            radius_deg=1.2,
+            width=100,
+            height=100,
+            wcs_path=Path("dss2-tile-wcs-abcdef12.fits"),
+        )
+        # Sky slightly east of center → negative x with cdelt[0] < 0, outside [0, W).
+        neighbor = _pixel_position_for_coordinates(270.08, -23.0, solved_field=solved, wcs=wcs)
+        self.assertIsNotNone(neighbor)
+        assert neighbor is not None
+        self.assertLess(neighbor[0], 0.0)
+
+        plate = SolvedField(
+            center_ra_deg=270.0,
+            center_dec_deg=-23.0,
+            radius_deg=0.4,
+            width=100,
+            height=100,
+            wcs_path=Path("user_image.fits"),
+        )
+        rejected = _pixel_position_for_coordinates(270.08, -23.0, solved_field=plate, wcs=wcs)
+        self.assertIsNone(rejected)
+
