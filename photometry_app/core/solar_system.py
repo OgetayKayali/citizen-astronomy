@@ -28,6 +28,8 @@ import re
 
 from pathlib import Path
 
+from photometry_app.platform_paths import application_cache_dir
+
 from typing import Protocol
 
 import warnings
@@ -4568,18 +4570,7 @@ def load_cached_major_planet_heliocentric_paths(
 
 
 def _major_planet_cache_directory() -> Path:
-
-    local_app_data = os.environ.get("LOCALAPPDATA")
-
-    if local_app_data:
-
-        base_dir = Path(local_app_data)
-
-    else:
-
-        base_dir = Path.home() / ".cache"
-
-    return base_dir / "CitizenPhotometry" / "solar_system"
+    return application_cache_dir() / "solar_system"
 
 
 

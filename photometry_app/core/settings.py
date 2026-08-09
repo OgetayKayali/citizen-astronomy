@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 from pathlib import Path
 
+from photometry_app.platform_paths import application_config_dir, application_state_dir
+
 
 
 from photometry_app.core.models import (
@@ -986,27 +988,14 @@ def _app_state_path() -> Path:
 
         return Path(override).expanduser()
 
-    local_app_data = os.getenv("LOCALAPPDATA")
-
-    if local_app_data:
-
-        return Path(local_app_data) / "CitizenPhotometry" / _APP_STATE_FILE_NAME
-
-    return Path.home() / ".citizen-photometry" / _APP_STATE_FILE_NAME
+    return application_state_dir() / _APP_STATE_FILE_NAME
 
 
 
 
 
 def default_settings_config_path() -> Path:
-
-    local_app_data = os.getenv("LOCALAPPDATA")
-
-    if local_app_data:
-
-        return Path(local_app_data) / "CitizenPhotometry" / _SETTINGS_FILE_NAME
-
-    return Path.home() / ".citizen-photometry" / _SETTINGS_FILE_NAME
+    return application_config_dir() / _SETTINGS_FILE_NAME
 
 
 
@@ -4382,6 +4371,5 @@ def _aperture_presets_to_payload(presets: list[AperturePreset]) -> list[dict[str
         for item in presets
 
     ]
-
 
 

@@ -1,6 +1,8 @@
-# Building an Installable Windows `.exe`
+# Building Citizen Astronomy Releases
 
-This guide explains how to build **Citizen Astronomy (CAst)** as a Windows executable and wrap it in an installable setup program.
+This guide explains how to build **Citizen Astronomy (CAst)** as a Windows installer or a Linux AppImage.
+
+## Windows installer
 
 The canonical release path uses:
 
@@ -249,3 +251,80 @@ This path is **not** the canonical alpha-review installer input. Prefer `Citizen
 | Velopack Setup/full/delta/feed | `packaging\dist\velopack\` |
 | PyInstaller spec | `CitizenAstronomyAlphaReview.spec` |
 | Legacy migration wrapper | `packaging\inno\CitizenAstronomyVelopackBootstrap.iss` |
+
+---
+
+## Linux AppImage
+
+The Linux release is a self-contained, self-updating AppImage. Build it on Linux
+so PyInstaller collects Linux-native Python, Qt, OpenGL, and scientific-library
+binaries.
+
+### Prerequisites
+
+- Python 3.11+ and a project virtual environment
+- The large runtime assets listed in the Windows prerequisites above for a
+  full-fidelity release. Linux test builds warn and continue without them.
+- PyInstaller
+- .NET SDK and Velopack CLI 1.2.0
+- `squashfs-tools` (`mksquashfs`)
+
+From the repository root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e . pyinstaller pytest
+dotnet tool install --global vpk --version 1.2.0
+```
+
+Fish users should activate with `source .venv/bin/activate.fish`, or skip
+activation and replace `python` with `.venv/bin/python`.
+
+Install `squashfs-tools` with your distribution package manager, for example
+`sudo apt install squashfs-tools` on Ubuntu/Debian or
+`sudo pacman -S squashfs-tools` on Arch Linux.
+
+Build and validate the AppImage:
+
+```bash
+./packaging/build_linux_appimage.sh
+```
+
+The script:
+
+1. Builds the same one-folder PyInstaller application used by the Windows release.
+2. Runs the headless About and packaged-format smoke checks.
+3. Packages the verified bundle with Velopack using the `alpha-linux` channel.
+4. Writes the AppImage and update feed to `packaging/dist/velopack-linux/`.
+
+To build with a different environment or output directory:
+
+```bash
+PYTHON=/path/to/python \
+OUTPUT_DIR=/path/to/output \
+./packaging/build_linux_appimage.sh
+```
+
+On rolling distributions, a PySide6 image-format plugin can require a
+compatibility library that the host no longer ships (for example
+`libtiff.so.5`). Put the required `.so` files in one directory and pass it as
+`LINUX_COMPAT_LIB_DIR=/path/to/compat-libs`; the build script copies them into
+the private AppImage runtime before smoke testing.
+
+Run the result:
+
+```bash
+chmod +x packaging/dist/velopack-linux/*.AppImage
+./packaging/dist/velopack-linux/*.AppImage
+```
+
+Linux settings follow the XDG Base Directory convention:
+
+| Data | Default path |
+|------|--------------|
+| Settings | `~/.config/citizen-astronomy/settings.json` |
+| UI state and startup log | `~/.local/state/citizen-astronomy/` |
+| Candidate training data | `~/.local/share/citizen-astronomy/` |
+| Scientific caches | `~/.cache/citizen-astronomy/` |

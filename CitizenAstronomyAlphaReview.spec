@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
 
@@ -28,28 +29,50 @@ def data_tree(relative_path: str, destination: str):
     return rows
 
 
+def optional_linux_data_file(relative_path: str, destination: str = "."):
+    try:
+        return [data_file(relative_path, destination)]
+    except FileNotFoundError:
+        if not sys.platform.startswith("linux"):
+            raise
+        print(f"Linux test bundle: optional runtime file is missing: {relative_path}")
+        return []
+
+
+def optional_linux_data_tree(relative_path: str, destination: str):
+    try:
+        return data_tree(relative_path, destination)
+    except FileNotFoundError:
+        if not sys.platform.startswith("linux"):
+            raise
+        print(f"Linux test bundle: optional runtime directory is missing: {relative_path}")
+        return []
+
+
 datas = [
     data_file("README.md"),
     data_file("LICENSE"),
     data_file("assets/citizen_astronomy.ico", "assets"),
     data_file("textures/milkyway_2020_4k_preview.png", "textures"),
     data_file("textures/constellation_figures_4k.tif", "textures"),
-    data_file("textures/moon_lroc_color_16bit_srgb_8k.tif", "textures"),
-    data_file("textures/moon_ldem_16.tif", "textures"),
 ]
+datas += optional_linux_data_file("textures/moon_lroc_color_16bit_srgb_8k.tif", "textures")
+datas += optional_linux_data_file("textures/moon_ldem_16.tif", "textures")
 datas += data_tree("guides", "guides")
 datas += data_tree("photometry_app/data", "photometry_app/data")
-datas += data_tree("assets/moon_tiles", "assets/moon_tiles")
+datas += optional_linux_data_tree("assets/moon_tiles", "assets/moon_tiles")
 _mode_launcher_assets = ROOT / "assets" / "mode_launcher"
 if _mode_launcher_assets.is_dir():
     datas += data_tree("assets/mode_launcher", "assets/mode_launcher")
-datas += data_tree(
+datas += optional_linux_data_tree(
     "textures/milky_way_tiles_32k_padded_lzw_benchmark",
     "textures/milky_way_tiles_32k_padded_lzw_benchmark",
 )
 datas += collect_data_files("astroquery", includes=["CITATION"])
 datas += collect_data_files("astroquery.simbad", includes=["data/query_criteria_fields.json"])
 datas += collect_data_files("photutils", includes=["CITATION.rst"])
+datas += collect_data_files("pyvo.samp", includes=["data/*"])
+datas += copy_metadata("photutils")
 datas += copy_metadata("xisf")
 datas += copy_metadata("lz4")
 datas += copy_metadata("zstandard")
@@ -65,7 +88,6 @@ hiddenimports = [
     "pyqtgraph.opengl",
     "OpenGL",
     "OpenGL.GL",
-    "OpenGL.platform.win32",
     "OpenGL_accelerate",
     "astroquery.vizier",
     "astroquery.simbad",
@@ -94,6 +116,14 @@ hiddenimports = [
     "imageio_ffmpeg",
     "matplotlib.backends.backend_qtagg",
 ]
+
+if sys.platform.startswith("win"):
+    hiddenimports.append("OpenGL.platform.win32")
+elif sys.platform.startswith("linux"):
+    hiddenimports += [
+        "OpenGL.platform.egl",
+        "OpenGL.platform.glx",
+    ]
 
 for package_name in ("lz4", "zstandard", "pyqtgraph", "imageio_ffmpeg", "velopack"):
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package_name)
