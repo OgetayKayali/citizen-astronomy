@@ -48,6 +48,7 @@ from photometry_app.core.survey_tiles import (
     compute_survey_tile_stf_parameters,
     is_survey_no_data_error,
     render_survey_tile_display_rgba,
+    survey_tile_fetch_fov_arcmin,
     survey_tile_fetch_size,
     survey_tile_sky_center,
 )
@@ -2169,6 +2170,8 @@ class ProcessWorker(QThread):
 
         analyze_best_targets: bool = False,
 
+        skip_wcs_sanity_diagnosis: bool = False,
+
         parent: object | None = None,
 
     ) -> None:
@@ -2184,6 +2187,8 @@ class ProcessWorker(QThread):
         self._settings_override = settings_override
 
         self._analyze_best_targets = bool(analyze_best_targets)
+
+        self._skip_wcs_sanity_diagnosis = bool(skip_wcs_sanity_diagnosis)
 
         self._pipeline = PhotometryPipeline()
 
@@ -2226,6 +2231,8 @@ class ProcessWorker(QThread):
                 settings_override=self._settings_override,
 
                 analyze_best_targets=self._analyze_best_targets,
+
+                skip_wcs_sanity_diagnosis=self._skip_wcs_sanity_diagnosis,
 
                 progress_callback=progress_callback,
 
@@ -3045,6 +3052,8 @@ class SkyExplorerSurveyFieldMosaicWorker(QThread):
                 fov_arcmin=self._fov_arcmin,
                 tile_i=self._center_i,
                 tile_j=self._center_j,
+                width_px=self._width_px,
+                height_px=self._height_px,
             )
             self.mosaic_completed.emit(
                 SkyExplorerSurveyFieldMosaicBuildResult(
@@ -3077,6 +3086,9 @@ class SkyExplorerSurveyTileWorker(QThread):
         resolution: SurveyTileResolution,
         request_generation: int,
         cache_dir: Path,
+        stretch_mode: str = "stf",
+        curve_points: tuple[tuple[float, float], ...] = (),
+        inverted: bool = False,
         parent: object | None = None,
     ) -> None:
         super().__init__(parent)
@@ -3085,6 +3097,9 @@ class SkyExplorerSurveyTileWorker(QThread):
         self._resolution = resolution
         self._request_generation = int(request_generation)
         self._cache_dir = Path(cache_dir)
+        self._stretch_mode = str(stretch_mode or "stf")
+        self._curve_points = tuple(curve_points or ())
+        self._inverted = bool(inverted)
 
     def run(self) -> None:
         started = perf_counter()
@@ -3093,7 +3108,15 @@ class SkyExplorerSurveyTileWorker(QThread):
         stf_ms = 0.0
         try:
             ra_deg, dec_deg = survey_tile_sky_center(self._tile_key)
+            # Fetch with fixed max sky overlap so Display feather can blend true
+            # overlapping sky instead of stretching tile edges into neighbors.
             fetch_width, fetch_height = survey_tile_fetch_size(
+                width_px=self._tile_key.width_px,
+                height_px=self._tile_key.height_px,
+                resolution=self._resolution,
+            )
+            fetch_fov_arcmin = survey_tile_fetch_fov_arcmin(
+                self._tile_key.fov_arcmin,
                 width_px=self._tile_key.width_px,
                 height_px=self._tile_key.height_px,
                 resolution=self._resolution,
@@ -3101,7 +3124,7 @@ class SkyExplorerSurveyTileWorker(QThread):
             field_wcs = build_sky_explorer_field_wcs(
                 ra_deg=ra_deg,
                 dec_deg=dec_deg,
-                fov_arcmin=self._tile_key.fov_arcmin,
+                fov_arcmin=fetch_fov_arcmin,
                 width_px=fetch_width,
                 height_px=fetch_height,
             )
@@ -3144,10 +3167,16 @@ class SkyExplorerSurveyTileWorker(QThread):
                 return
             download_ms = (perf_counter() - download_started) * 1000.0
             process_started = perf_counter()
-            stf = compute_survey_tile_stf_parameters(image_data)
+            stf = compute_survey_tile_stf_parameters(image_data, stretch_mode=self._stretch_mode)
             stf_ms = (perf_counter() - process_started) * 1000.0
             render_started = perf_counter()
-            display_rgba = render_survey_tile_display_rgba(image_data, stf)
+            display_rgba = render_survey_tile_display_rgba(
+                image_data,
+                stf,
+                stretch_mode=self._stretch_mode,
+                curve_points=self._curve_points,
+                inverted=self._inverted,
+            )
             process_ms = (perf_counter() - render_started) * 1000.0 + stf_ms
             self.tile_completed.emit(
                 SurveyTileLoadResult(
@@ -7891,7 +7920,7 @@ class UpdateDownloadWorker(QThread):
 
     update_download_failed = Signal(str)
 
-    progress_updated = Signal(int, int)
+    progress_updated = Signal(int, int, str)
 
 
 
@@ -7923,7 +7952,7 @@ class UpdateDownloadWorker(QThread):
 
                 self._update,
 
-                progress_callback=lambda downloaded, total: self.progress_updated.emit(downloaded, total),
+                progress_callback=lambda percent, total, phase: self.progress_updated.emit(percent, total, phase),
 
                 cancellation_requested=self._cancel_requested.is_set,
 

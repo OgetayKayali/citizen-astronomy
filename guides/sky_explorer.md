@@ -160,15 +160,15 @@ Placeholders appear until you have explored or selected something.
 
 ### Display
 
-The **Display** menu controls how your source image is stretched for viewing:
+The **Display** menu controls how your source image (including survey-field tiles) is stretched for viewing:
 
-- **Auto Stretch**
-- **None**
+- **STF** (default; darker midtones so bright nebulosity keeps structure)
+- **STF Bright** (stronger lift for faint fields)
 - **Asinh**
 - **Sqrt**
 - **Log**
 
-Also available: **Curves**, **Invert**, and **Reset**. Stretching is for inspection; catalog positions come from WCS, not from the display transform.
+Also available: **Curves**, **Invert**, **Feather** (0–100% soft-blend using overlapping sky on tile edges; default 55%), and **Reset**. Feather fetches each tile with extra sky around its true center and blends only that shared coverage, so stars stay aligned; it does not stretch tile edges. Curves refine the already-stretched preview (including survey tiles) for viewing only; catalog positions come from WCS, not from the display transform.
 
 ### Comparison
 

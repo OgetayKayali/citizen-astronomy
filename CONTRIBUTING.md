@@ -24,3 +24,13 @@ Open an issue on the GitHub repository with:
 - Steps to reproduce it
 - Your operating system and CAst version
 - Any relevant FITS/XISF file details (filter, dimensions, equipment)
+
+## Acknowledgements
+
+CAst has benefited enormously from people who shared their time, judgment, and data. A sincere thank you to:
+
+- **Emre Can Alagöz** — for continual support throughout development, and for months of thoughtful discussion and brainstorming that helped shape what CAst became.
+- **Julien de Winter** — for careful review and feedback on the Asteroid/Comet Detection mode, which strengthened the tools observers rely on for moving-object work.
+- **Enrique Boeneker** — for thoughtful review, feedback, and scientific guidance that improved Differential Photometry measurements, and for generously sharing example data that made those improvements possible.
+
+If you support CAst through review, testing, ideas, or shared observations: thank you. Contributions of every kind help keep citizen astronomy moving forward.

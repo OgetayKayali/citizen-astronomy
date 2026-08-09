@@ -50,7 +50,10 @@ class CatalogServiceTest(unittest.TestCase):
                 CatalogService,
                 "_query_vsx",
                 return_value=[],
-            ), patch.object(CatalogService, "_query_exoplanets", return_value=[]):
+            ), patch.object(CatalogService, "_query_exoplanets", return_value=[]), patch(
+                "photometry_app.core.standard_magnitude.enrich_gaia_stars_with_standard_catalogs",
+                return_value={"apass_matches": 0, "vsp_matches": 0, "vsp_chart_id": None},
+            ):
                 catalog = service.query_field_catalog(solved_field)
 
             self.assertEqual([star.source_id for star in catalog.gaia_stars], ["gaia-ref"])
@@ -152,7 +155,10 @@ class CatalogServiceTest(unittest.TestCase):
                 CatalogService,
                 "_query_vsx",
                 return_value=[],
-            ), patch.object(CatalogService, "_query_exoplanets", return_value=[]):
+            ), patch.object(CatalogService, "_query_exoplanets", return_value=[]), patch(
+                "photometry_app.core.standard_magnitude.enrich_gaia_stars_with_standard_catalogs",
+                return_value={"apass_matches": 0, "vsp_matches": 0, "vsp_chart_id": None},
+            ):
                 catalog = service.query_field_catalog(solved_field, progress_callback=progress_messages.append)
 
             self.assertEqual([star.source_id for star in catalog.gaia_stars], ["gaia-ref"])

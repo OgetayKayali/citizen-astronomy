@@ -46,7 +46,7 @@ The mode is organized around:
 | Area | Role |
 |---|---|
 | Top workflow row | **Open / Generate / Apply**, **Align**, **Discover**, **Trajectory View**, **Synthetic Track**, **Plots**, **Group**, **Frame** |
-| Image pane | Annotated field with overlays, blink controls, levels, stretch |
+| Image pane | Annotated field with overlays; **Display** includes stretch/curves plus Show RA/Dec and Show Grid (with RA/Dec density); Blink and Export sit beside Hide Info |
 | Predicted Objects table | Known predictions (and temporary discovery candidates) |
 | Work Log | Narrative progress for Generate, Align, Discover, Estimate |
 | Inspector | Frame, setup, field, and selected-object details |

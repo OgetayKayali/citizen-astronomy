@@ -22,7 +22,10 @@ class HistogramCurvesWidget(QWidget):
         self.setMinimumHeight(150)
         self.setMinimumWidth(260)
         self.setMouseTracking(True)
-        self.setToolTip("Drag the curve points. Click the graph to add a point, or right-click a point to remove it.")
+        self.setToolTip(
+            "Drag the curve points to reshape a smooth tone curve. "
+            "Click the graph to add a point, or right-click a point to remove it."
+        )
         self._histogram = np.zeros(128, dtype=float)
         self._points: list[tuple[float, float]] = [(0.0, 0.0), (1.0, 1.0)]
         self._active_index: int | None = None
@@ -85,8 +88,11 @@ class HistogramCurvesWidget(QWidget):
         painter.setPen(QPen(QColor("#6b7280"), 1.0, Qt.PenStyle.DashLine))
         painter.drawLine(plot_rect.bottomLeft(), plot_rect.topRight())
 
+        from photometry_app.core.plotting import sample_image_curve_polyline
+
         curve_path = QPainterPath()
-        for index, point in enumerate(self._points):
+        sampled_points = sample_image_curve_polyline(self._points, sample_count=max(48, int(plot_rect.width())))
+        for index, point in enumerate(sampled_points):
             widget_point = self._point_to_widget(point, plot_rect)
             if index == 0:
                 curve_path.moveTo(widget_point)

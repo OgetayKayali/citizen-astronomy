@@ -149,9 +149,16 @@ class CatalogService:
 
         exoplanet_max_magnitude: float | None = None,
 
+        aavso_chart_id: str | None = None,
+
         progress_callback: Callable[[str], None] | None = None,
 
     ) -> FieldCatalog:
+
+        from photometry_app.core.standard_magnitude import (
+            catalog_has_band_magnitudes,
+            enrich_gaia_stars_with_standard_catalogs,
+        )
 
         cache_path = self._cache_dir / self._field_catalog_cache_key(
             solved_field,
@@ -170,12 +177,30 @@ class CatalogService:
 
                 cached_catalog = self._load_cache(cache_path)
 
-                if not include_variable_stars or not _needs_variable_catalog_refresh(cached_catalog):
-
-                    if progress_callback is not None:
-
+                needs_variable_refresh = include_variable_stars and _needs_variable_catalog_refresh(cached_catalog)
+                if not needs_variable_refresh:
+                    if (
+                        include_gaia
+                        and cached_catalog.gaia_stars
+                        and not catalog_has_band_magnitudes(cached_catalog.gaia_stars)
+                    ):
+                        enrich_notes = enrich_gaia_stars_with_standard_catalogs(
+                            cached_catalog.gaia_stars,
+                            solved_field,
+                            aavso_chart_id=aavso_chart_id,
+                            mag_limit=gaia_max_magnitude,
+                            progress_callback=progress_callback,
+                        )
+                        self._store_cache(cache_path, cached_catalog)
+                        if progress_callback is not None:
+                            chart_id = enrich_notes.get("vsp_chart_id")
+                            chart_note = f" VSP chart {chart_id}." if chart_id else ""
+                            progress_callback(
+                                f"Loaded cached field catalog and refreshed band magnitudes: "
+                                f"{self._catalog_summary(cached_catalog)}.{chart_note}"
+                            )
+                    elif progress_callback is not None:
                         progress_callback(f"Loaded cached field catalog: {self._catalog_summary(cached_catalog)}.")
-
                     return cached_catalog
 
             except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
@@ -205,6 +230,18 @@ class CatalogService:
             )
             if progress_callback is not None:
                 progress_callback(f"Gaia DR3 lookup complete: {len(gaia_stars)} star(s) returned.")
+            enrich_notes = enrich_gaia_stars_with_standard_catalogs(
+                gaia_stars,
+                solved_field,
+                aavso_chart_id=aavso_chart_id,
+                mag_limit=gaia_max_magnitude,
+                progress_callback=progress_callback,
+            )
+            chart_id = enrich_notes.get("vsp_chart_id")
+            if progress_callback is not None and chart_id and not str(aavso_chart_id or "").strip():
+                progress_callback(
+                    f"AAVSO VSP returned chart {chart_id}; set Settings → AAVSO Sequence/Chart ID to reuse it."
+                )
 
         variable_stars: list[CatalogStar] = []
         if include_variable_stars:

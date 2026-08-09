@@ -41,8 +41,10 @@ _OVERLAY_LABEL_CANDIDATE_ANGLES: tuple[float, ...] = (
     210.0,
 )
 
-# Relative to fit-to-view (_zoom_scale == 1.0). Lower allows seeing more sky when panning survey tiles.
-_MIN_ZOOM_SCALE = 1.0 / 3.0
+# Relative to fit-to-view (_zoom_scale == 1.0).
+_DEFAULT_MIN_ZOOM_SCALE = 1.0
+# Sky Explorer survey mosaics (unbounded pan) may zoom out further to show neighboring sky.
+_UNBOUNDED_MIN_ZOOM_SCALE = 1.0 / 3.0
 _MAX_ZOOM_SCALE = 32.0
 
 
@@ -58,6 +60,8 @@ class SurveyTileLayerItem:
     state: str = ""
     label: str = ""
     layer_id: str = "primary"
+    # True when qimage was fetched with max sky overlap for feather blending.
+    has_sky_overlap: bool = False
 
 
 @dataclass(frozen=True)
@@ -487,6 +491,10 @@ class AnnotatedImageView(QWidget):
 
         self._comparison_survey_tile_layers: list[SurveyTileLayerItem] = []
 
+        self._survey_tile_feather = 0.0
+
+        self._survey_tile_feather_cache: dict[tuple[int, int], QImage] = {}
+
         self._pan_anchor: QPointF | None = None
 
         self._pan_center_start: QPointF | None = None
@@ -639,17 +647,27 @@ class AnnotatedImageView(QWidget):
         """Allow panning past image edges (used for survey fields that lazy-recenter)."""
         was_enabled = bool(self._unbounded_pan)
         self._unbounded_pan = bool(enabled)
-        if was_enabled and not self._unbounded_pan and self._view_center is not None:
-            self._view_center = self._clamped_view_center()
+        if was_enabled and not self._unbounded_pan:
+            # Restore the fit-to-image zoom floor used by non-survey modes.
+            if self._zoom_scale < _DEFAULT_MIN_ZOOM_SCALE:
+                self._zoom_scale = _DEFAULT_MIN_ZOOM_SCALE
+            if self._view_center is not None:
+                self._view_center = self._clamped_view_center()
             self.update()
             self.viewportChanged.emit()
 
     def unbounded_pan_enabled(self) -> bool:
         return bool(self._unbounded_pan)
 
+    def _min_zoom_scale(self) -> float:
+        if self._unbounded_pan:
+            return _UNBOUNDED_MIN_ZOOM_SCALE
+        return _DEFAULT_MIN_ZOOM_SCALE
+
     def set_survey_tile_layers(self, layers: list[SurveyTileLayerItem] | None) -> None:
         """Replace primary survey tile draw layers. Empty/None clears tile overlay mode."""
         self._survey_tile_layers = list(layers or ())
+        self._survey_tile_feather_cache.clear()
         self.update()
 
     def survey_tile_layers(self) -> tuple[SurveyTileLayerItem, ...]:
@@ -659,11 +677,13 @@ class AnnotatedImageView(QWidget):
         if not self._survey_tile_layers:
             return
         self._survey_tile_layers = []
+        self._survey_tile_feather_cache.clear()
         self.update()
 
     def set_comparison_survey_tile_layers(self, layers: list[SurveyTileLayerItem] | None) -> None:
         """Replace comparison survey tile layers used with the wipe bar."""
         self._comparison_survey_tile_layers = list(layers or ())
+        self._survey_tile_feather_cache.clear()
         if self._comparison_survey_tile_layers:
             self._comparison_split_enabled = True
             if self._comparison_divider_visible and self._comparison_split_fraction <= 0.0:
@@ -678,7 +698,20 @@ class AnnotatedImageView(QWidget):
         if not self._comparison_survey_tile_layers:
             return
         self._comparison_survey_tile_layers = []
+        self._survey_tile_feather_cache.clear()
         self.update()
+
+    def set_survey_tile_feather(self, amount: float) -> None:
+        """Soft-blend survey tile edges (0 = hard seams, 1 = strongest feather)."""
+        resolved = max(0.0, min(1.0, float(amount)))
+        if abs(resolved - self._survey_tile_feather) <= 1.0e-6:
+            return
+        self._survey_tile_feather = resolved
+        self._survey_tile_feather_cache.clear()
+        self.update()
+
+    def survey_tile_feather(self) -> float:
+        return float(self._survey_tile_feather)
 
     def view_center_image_point(self) -> QPointF:
         """Return the current pan center in image coordinates (unclamped when unbounded)."""
@@ -1302,7 +1335,7 @@ class AnnotatedImageView(QWidget):
 
     def zoom_out(self) -> None:
 
-        next_zoom = max(_MIN_ZOOM_SCALE, self._zoom_scale / 1.8)
+        next_zoom = max(self._min_zoom_scale(), self._zoom_scale / 1.8)
         if abs(next_zoom - self._zoom_scale) <= 1e-9:
             return
         self._zoom_scale = next_zoom
@@ -1672,7 +1705,7 @@ class AnnotatedImageView(QWidget):
             return
 
         zoom_factor = 1.25 ** step
-        next_zoom = min(_MAX_ZOOM_SCALE, max(_MIN_ZOOM_SCALE, self._zoom_scale * zoom_factor))
+        next_zoom = min(_MAX_ZOOM_SCALE, max(self._min_zoom_scale(), self._zoom_scale * zoom_factor))
         if abs(next_zoom - self._zoom_scale) <= 1e-9:
             return
 
@@ -2062,9 +2095,40 @@ class AnnotatedImageView(QWidget):
         painter: QPainter,
         layers: list[SurveyTileLayerItem] | tuple[SurveyTileLayerItem, ...] | None = None,
     ) -> None:
+        from photometry_app.core.survey_tiles import survey_tile_feather_crop_and_draw
+
+        feather = float(self._survey_tile_feather)
         for item in (layers if layers is not None else self._survey_tile_layers):
             if item.qimage is not None and not item.qimage.isNull():
-                painter.drawImage(item.rect, item.qimage)
+                if item.has_sky_overlap:
+                    # item.rect is the base cell. Fetched images include symmetric sky
+                    # margins; crop/draw grows those margins from the tile center.
+                    base_rect = QRectF(item.rect)
+                    _x0, _y0, _cw, _ch, draw_w, draw_h = survey_tile_feather_crop_and_draw(
+                        image_width=int(item.qimage.width()),
+                        image_height=int(item.qimage.height()),
+                        base_width=float(base_rect.width()),
+                        base_height=float(base_rect.height()),
+                        feather_amount=feather,
+                    )
+                    center = base_rect.center()
+                    draw_rect = QRectF(
+                        center.x() - (draw_w * 0.5),
+                        center.y() - (draw_h * 0.5),
+                        draw_w,
+                        draw_h,
+                    )
+                    draw_image = self._survey_tile_qimage_for_feather(
+                        item.qimage,
+                        feather_amount=feather,
+                        base_width=float(base_rect.width()),
+                        base_height=float(base_rect.height()),
+                    )
+                    if feather > 1.0e-6:
+                        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+                    painter.drawImage(draw_rect, draw_image)
+                else:
+                    painter.drawImage(item.rect, item.qimage)
             if item.label:
                 painter.save()
                 painter.setPen(QColor(180, 190, 200, 220))
@@ -2073,6 +2137,68 @@ class AnnotatedImageView(QWidget):
                 painter.setFont(font)
                 painter.drawText(item.rect, int(Qt.AlignmentFlag.AlignCenter), item.label)
                 painter.restore()
+
+    def _survey_tile_qimage_for_feather(
+        self,
+        qimage: QImage,
+        *,
+        feather_amount: float,
+        base_width: float,
+        base_height: float,
+    ) -> QImage:
+        from photometry_app.core.survey_tiles import (
+            apply_survey_tile_edge_feather,
+            survey_tile_feather_crop_and_draw,
+            survey_tile_overlap_scale,
+        )
+
+        cache_key = (
+            int(qimage.cacheKey()),
+            int(round(float(feather_amount) * 1000.0)),
+            int(round(float(base_width))),
+            int(round(float(base_height))),
+        )
+        cached = self._survey_tile_feather_cache.get(cache_key)
+        if cached is not None and not cached.isNull():
+            return cached
+
+        source = qimage.convertToFormat(QImage.Format.Format_RGBA8888)
+        width = int(source.width())
+        height = int(source.height())
+        if width <= 0 or height <= 0:
+            return qimage
+
+        x0, y0, crop_width, crop_height, _draw_w, _draw_h = survey_tile_feather_crop_and_draw(
+            image_width=width,
+            image_height=height,
+            base_width=base_width,
+            base_height=base_height,
+            feather_amount=feather_amount,
+        )
+        cropped = source.copy(x0, y0, crop_width, crop_height)
+        if float(feather_amount) <= 1.0e-6:
+            self._survey_tile_feather_cache[cache_key] = cropped
+            return cropped
+
+        bytes_per_line = int(cropped.bytesPerLine())
+        buffer = cropped.constBits()
+        array = np.frombuffer(buffer, dtype=np.uint8, count=bytes_per_line * crop_height).reshape(
+            crop_height, bytes_per_line
+        )
+        rgba = np.ascontiguousarray(array[:, : crop_width * 4].reshape(crop_height, crop_width, 4).copy())
+        rgba[..., 3] = apply_survey_tile_edge_feather(
+            rgba[..., 3],
+            width=crop_width,
+            height=crop_height,
+            feather_amount=feather_amount,
+            overlap_scale=survey_tile_overlap_scale(feather_amount),
+        )
+        feathered = QImage(rgba.data, crop_width, crop_height, rgba.strides[0], QImage.Format.Format_RGBA8888).copy()
+        self._survey_tile_feather_cache[cache_key] = feathered
+        if len(self._survey_tile_feather_cache) > 64:
+            for old_key in list(self._survey_tile_feather_cache.keys())[:16]:
+                self._survey_tile_feather_cache.pop(old_key, None)
+        return feathered
 
     def _comparison_wipe_image_clip_rect(
         self,
@@ -2319,7 +2445,7 @@ class AnnotatedImageView(QWidget):
         if delta_y > 0:
             next_zoom = min(_MAX_ZOOM_SCALE, self._zoom_scale * 1.25)
         elif delta_y < 0:
-            next_zoom = max(_MIN_ZOOM_SCALE, self._zoom_scale / 1.25)
+            next_zoom = max(self._min_zoom_scale(), self._zoom_scale / 1.25)
         else:
             return
 

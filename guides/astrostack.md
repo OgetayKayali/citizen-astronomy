@@ -67,7 +67,7 @@ If a crop is already present, the button changes state so you can reset it.
 Before exporting, you can tune the preview and add overlays:
 
 - **Display**
-- **Curves**
+- **Curves** (edits the already-stretched preview for viewing/export look only)
 - **Invert**
 - **Reset View**
 - **Reset Display**

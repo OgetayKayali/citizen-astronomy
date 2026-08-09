@@ -167,7 +167,11 @@ def solve_wcs_from_metadata_and_gaia(
     fitted_header["WCSRMS"] = (rms_pixels, "Gaia WCS fit RMS in pixels")
     fitted_header["SRCW"] = (seed.width, "Source image width in pixels")
     fitted_header["SRCH"] = (seed.height, "Source image height in pixels")
-    fits.PrimaryHDU(header=fitted_header).writeto(solved_path, overwrite=True)
+    fits.PrimaryHDU(header=fitted_header).writeto(
+        solved_path,
+        overwrite=True,
+        output_verify="silentfix",
+    )
 
     valid, validation_reasons = validate_wcs(fitted_header)
     solved_field = extract_solved_field(fitted_header, seed.width, seed.height, solved_path) if valid else None

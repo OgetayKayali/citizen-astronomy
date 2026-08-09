@@ -2,7 +2,9 @@ from __future__ import annotations
 
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+import math
 
 from pathlib import Path
 
@@ -131,6 +133,90 @@ class LightCurveRenderPoint:
 
 @dataclass(frozen=True)
 
+class LightCurveSeriesLayer:
+
+    label: str
+
+    role: str
+
+    color: str
+
+    points: tuple[LightCurveRenderPoint, ...] = ()
+
+    symbol: str = "o"
+
+    size: float = 8.0
+
+    style_key: str = ""
+
+    source_id: str = ""
+
+    filter_name: str = ""
+
+
+
+
+
+def light_curve_series_style_key(role: str, source_id: str, filter_name: str) -> str:
+
+    return f"{str(role or 'series').strip()}:{str(source_id or '').strip()}:{str(filter_name or 'unknown').strip()}"
+
+
+
+
+
+_LIGHT_CURVE_SYMBOL_CHOICES: tuple[tuple[str, str], ...] = (
+
+    ("Circle", "o"),
+
+    ("Square", "s"),
+
+    ("Triangle", "t"),
+
+    ("Diamond", "d"),
+
+    ("Star", "star"),
+
+    ("Plus", "+"),
+
+    ("Cross", "x"),
+
+    ("Pentagon", "p"),
+
+)
+
+
+
+
+
+def light_curve_matplotlib_marker(symbol: str) -> str:
+
+    return {
+
+        "o": "o",
+
+        "s": "s",
+
+        "t": "^",
+
+        "d": "D",
+
+        "star": "*",
+
+        "+": "P",
+
+        "x": "X",
+
+        "p": "p",
+
+    }.get(str(symbol or "o"), "o")
+
+
+
+
+
+@dataclass(frozen=True)
+
 class LightCurvePlotPayload:
 
     title: str
@@ -154,6 +240,12 @@ class LightCurvePlotPayload:
     index_labels: tuple[str, ...] = ()
 
     x_limits: tuple[float, float] | None = None
+
+    layers: tuple[LightCurveSeriesLayer, ...] = ()
+
+    status_note: str | None = None
+
+    show_legend: bool = False
 
 
 
@@ -189,7 +281,9 @@ _ANNOTATED_IMAGE_BACKGROUND_SIGMA = 1.25
 
 _ANNOTATED_IMAGE_STF_SHADOW_SIGMA = 2.8
 
-_ANNOTATED_IMAGE_STF_TARGET_BACKGROUND = 0.25
+_ANNOTATED_IMAGE_STF_TARGET_BACKGROUND = 0.12
+
+_ANNOTATED_IMAGE_STF_BRIGHT_TARGET_BACKGROUND = 0.25
 
 _ANNOTATED_IMAGE_STF_NATIVE_RANGE_FLOOR = 65535.0
 
@@ -625,6 +719,10 @@ def light_curve_axis_label(y_axis_mode: str) -> str:
 
         return "Calibrated Magnitude"
 
+    if y_axis_mode == "standard_magnitude":
+
+        return "Standard Magnitude"
+
     if y_axis_mode == "instrumental_magnitude":
 
         return "Instrumental Magnitude"
@@ -645,7 +743,12 @@ def light_curve_axis_label(y_axis_mode: str) -> str:
 
 def _is_magnitude_axis(y_axis_mode: str) -> bool:
 
-    return y_axis_mode in {"differential_magnitude", "calibrated_magnitude", "instrumental_magnitude"}
+    return y_axis_mode in {
+        "differential_magnitude",
+        "calibrated_magnitude",
+        "standard_magnitude",
+        "instrumental_magnitude",
+    }
 
 
 
@@ -1214,13 +1317,59 @@ def plot_light_curve_payload(
 
     if payload.points:
 
-        x_values = [point.x for point in payload.points]
-
         y_values = [point.y for point in payload.points]
 
-        y_errors = [point.y_error for point in payload.points]
+        if payload.layers:
 
-        _plot_series_markers(axis, x_values, y_values, y_errors, theme_colors, export_style=export_style)
+            for layer in payload.layers:
+
+                layer_x = [point.x for point in layer.points]
+
+                layer_y = [point.y for point in layer.points]
+
+                layer_errors = [point.y_error for point in layer.points]
+
+                marker = light_curve_matplotlib_marker(layer.symbol)
+
+                marker_size = 3.4 if layer.role == "target" else 2.6
+
+                alpha = 0.95 if layer.role == "target" else 0.75
+
+                _plot_series_markers(
+
+                    axis,
+
+                    layer_x,
+
+                    layer_y,
+
+                    layer_errors,
+
+                    {**theme_colors, "point_brush": layer.color, "point_pen": layer.color, "error_bar_color": layer.color},
+
+                    export_style=export_style,
+
+                    marker=marker,
+
+                    marker_size=marker_size,
+
+                    alpha=alpha,
+
+                    label=layer.label,
+
+                )
+
+            if payload.show_legend:
+
+                axis.legend(loc="best", fontsize=8, framealpha=0.85)
+
+        else:
+
+            x_values = [point.x for point in payload.points]
+
+            y_errors = [point.y_error for point in payload.points]
+
+            _plot_series_markers(axis, x_values, y_values, y_errors, theme_colors, export_style=export_style)
 
         if payload.fit_x_values is not None and payload.fit_y_values is not None:
 
@@ -1610,6 +1759,440 @@ def build_light_curve_plot_payload(
         index_labels=index_labels,
 
     )
+
+
+
+
+
+_OVERVIEW_SERIES_COLORS = (
+
+    "#e74c3c",
+
+    "#3498db",
+
+    "#2ecc71",
+
+    "#f39c12",
+
+    "#9b59b6",
+
+    "#1abc9c",
+
+    "#e67e22",
+
+    "#2980b9",
+
+    "#c0392b",
+
+    "#16a085",
+
+    "#8e44ad",
+
+    "#27ae60",
+
+    "#d35400",
+
+    "#2c3e50",
+
+    "#7f8c8d",
+
+)
+
+
+
+
+
+def build_overview_light_curve_plot_payload(
+
+    layers: list[object],
+
+    empty_message: str,
+
+    *,
+
+    title: str | None = None,
+
+    y_axis_mode: str = "differential_magnitude",
+
+    x_axis_mode: str = "datetime",
+
+    status_note: str | None = None,
+
+    style_overrides: dict[str, dict[str, str]] | None = None,
+
+) -> LightCurvePlotPayload:
+
+    """Build a multi-series Overview payload with absolute magnitudes (no fit)."""
+
+    resolved_x_axis_mode = "jd" if x_axis_mode == "phase" else x_axis_mode
+
+    y_axis_label = light_curve_axis_label(y_axis_mode)
+
+    invert_y = _is_magnitude_axis(y_axis_mode)
+
+    render_layers: list[LightCurveSeriesLayer] = []
+
+    all_points: list[LightCurveRenderPoint] = []
+
+    target_name = "Target"
+
+    color_index = 0
+
+    overrides = style_overrides or {}
+
+    for layer in layers:
+
+        role = str(getattr(layer, "role", "comparison") or "comparison")
+
+        legend_label = str(getattr(layer, "legend_label", "") or "Series")
+
+        series = getattr(layer, "series", None)
+
+        if series is None:
+
+            continue
+
+        if role == "target" and getattr(series, "source_name", None):
+
+            target_name = str(series.source_name)
+
+        timed_points: list[LightCurveRenderPoint] = []
+
+        for point in series.points:
+
+            value = _light_curve_point_value(point, y_axis_mode)
+
+            if point.observation_time is None or value is None:
+
+                continue
+
+            x_value = _time_axis_value(point.observation_time, resolved_x_axis_mode)
+
+            if x_value is None:
+
+                continue
+
+            timed_points.append(
+
+                LightCurveRenderPoint(
+
+                    x=x_value,
+
+                    y=value,
+
+                    y_error=_light_curve_point_error(point, y_axis_mode),
+
+                    fit_weight=_light_curve_point_fit_weight(point, y_axis_mode),
+
+                    source_point=point,
+
+                )
+
+            )
+
+        if not timed_points:
+
+            continue
+
+        color = _OVERVIEW_SERIES_COLORS[color_index % len(_OVERVIEW_SERIES_COLORS)]
+
+        color_index += 1
+
+        if role == "target":
+
+            symbol = "o"
+
+            size = 9.0
+
+        elif role == "check":
+
+            symbol = "d"
+
+            size = 7.0
+
+        else:
+
+            symbol = "t"
+
+            size = 6.5
+
+        source_id = str(getattr(series, "source_id", "") or "")
+
+        filter_name = str(getattr(series, "filter_name", "") or "unknown")
+
+        style_key = light_curve_series_style_key(role, source_id, filter_name)
+
+        override = overrides.get(style_key) or {}
+
+        if override.get("color"):
+
+            color = str(override["color"])
+
+        if override.get("symbol"):
+
+            symbol = str(override["symbol"])
+
+        render_layers.append(
+
+            LightCurveSeriesLayer(
+
+                label=legend_label,
+
+                role=role,
+
+                color=color,
+
+                points=tuple(timed_points),
+
+                symbol=symbol,
+
+                size=size,
+
+                style_key=style_key,
+
+                source_id=source_id,
+
+                filter_name=filter_name,
+
+            )
+
+        )
+
+        all_points.extend(timed_points)
+
+    resolved_title = title or f"{target_name} Overview"
+
+    if not render_layers:
+
+        return LightCurvePlotPayload(
+
+            title=resolved_title,
+
+            y_axis_label=y_axis_label,
+
+            x_axis_label="Julian Date (JD)" if resolved_x_axis_mode == "jd" else "Observation Time",
+
+            x_axis_mode="jd" if resolved_x_axis_mode == "jd" else "datetime",
+
+            invert_y=invert_y,
+
+            empty_message=empty_message,
+
+            status_note=status_note,
+
+            show_legend=True,
+
+        )
+
+    return LightCurvePlotPayload(
+
+        title=resolved_title,
+
+        y_axis_label=y_axis_label,
+
+        x_axis_label="Julian Date (JD)" if resolved_x_axis_mode == "jd" else "Observation Time",
+
+        x_axis_mode="jd" if resolved_x_axis_mode == "jd" else "datetime",
+
+        invert_y=invert_y,
+
+        points=tuple(all_points),
+
+        layers=tuple(render_layers),
+
+        status_note=status_note,
+
+        show_legend=True,
+
+    )
+
+
+
+
+
+def trim_light_curve_plot_payload_to_progress(payload: LightCurvePlotPayload, progress: float) -> LightCurvePlotPayload:
+
+    """Reveal points for animation. Multi-series uses shared X progress so all layers advance together."""
+
+    resolved_progress = min(1.0, max(0.0, float(progress)))
+
+    if not payload.points:
+
+        return replace(payload, empty_message=None, fit_x_values=None, fit_y_values=None)
+
+    if payload.layers:
+
+        sorted_x = sorted({float(point.x) for point in payload.points})
+
+        if resolved_progress <= 0.0:
+
+            empty_layers = tuple(replace(layer, points=()) for layer in payload.layers)
+
+            return replace(
+
+                payload,
+
+                points=(),
+
+                layers=empty_layers,
+
+                fit_x_values=None,
+
+                fit_y_values=None,
+
+                empty_message=None,
+
+            )
+
+        visible_x_count = max(1, int(math.ceil(resolved_progress * len(sorted_x))))
+
+        cutoff = sorted_x[min(len(sorted_x), visible_x_count) - 1]
+
+        trimmed_layers: list[LightCurveSeriesLayer] = []
+
+        trimmed_points: list[LightCurveRenderPoint] = []
+
+        for layer in payload.layers:
+
+            kept = tuple(point for point in layer.points if float(point.x) <= cutoff)
+
+            trimmed_layers.append(replace(layer, points=kept))
+
+            trimmed_points.extend(kept)
+
+        return replace(
+
+            payload,
+
+            points=tuple(trimmed_points),
+
+            layers=tuple(trimmed_layers),
+
+            fit_x_values=None,
+
+            fit_y_values=None,
+
+            empty_message=None,
+
+        )
+
+    visible_point_count = 0 if resolved_progress <= 0.0 else max(1, int(math.ceil(resolved_progress * len(payload.points))))
+
+    return replace(
+
+        payload,
+
+        points=tuple(payload.points[:visible_point_count]),
+
+        fit_x_values=None,
+
+        fit_y_values=None,
+
+        empty_message=None,
+
+    )
+
+
+
+
+
+def build_light_curve_animation_frame_payloads(
+
+    payload: LightCurvePlotPayload,
+
+    *,
+
+    frame_duration_ms: int,
+
+    minimum_duration_seconds: float,
+
+    initial_hold_frames: int = 8,
+
+    final_hold_frames: int = 18,
+
+    fit_stage_target_frames: int = 24,
+
+    baseline_target_frames: int = 125,
+
+) -> list[LightCurvePlotPayload]:
+
+    """Build progressive animation frames for a light-curve payload (single- or multi-series)."""
+
+    point_count = len(payload.points)
+
+    unique_x_count = len({float(point.x) for point in payload.points}) if payload.layers else point_count
+
+    reveal_count = unique_x_count if payload.layers else point_count
+
+    fit_point_count = 0 if payload.fit_x_values is None or payload.layers else int(len(payload.fit_x_values))
+
+    fit_stage_frames = 0 if fit_point_count <= 1 else int(fit_stage_target_frames)
+
+    point_stage_frames = max(
+
+        reveal_count,
+
+        max(0, int(baseline_target_frames) - int(initial_hold_frames) - int(final_hold_frames) - fit_stage_frames),
+
+    )
+
+    minimum_duration_ms = max(0.0, float(minimum_duration_seconds)) * 1000.0
+
+    minimum_frame_duration_ms = max(20, int(frame_duration_ms))
+
+    required_total_frames = max(1, int(math.ceil(minimum_duration_ms / minimum_frame_duration_ms)))
+
+    total_frames = int(initial_hold_frames) + point_stage_frames + fit_stage_frames + int(final_hold_frames)
+
+    resolved_final_hold_frames = int(final_hold_frames) + max(0, required_total_frames - total_frames)
+
+    frame_payloads: list[LightCurvePlotPayload] = []
+
+    empty_payload = trim_light_curve_plot_payload_to_progress(payload, 0.0)
+
+    frame_payloads.extend([empty_payload] * max(0, int(initial_hold_frames)))
+
+    if point_stage_frames > 0:
+
+        for frame_index in range(point_stage_frames):
+
+            progress = 1.0 if reveal_count <= 0 else min(1.0, float(frame_index + 1) / float(point_stage_frames))
+
+            frame_payloads.append(trim_light_curve_plot_payload_to_progress(payload, progress))
+
+    if fit_stage_frames > 0 and payload.fit_x_values is not None and payload.fit_y_values is not None:
+
+        for frame_index in range(fit_stage_frames):
+
+            visible_fit_count = min(
+
+                fit_point_count,
+
+                max(2, int(math.ceil(((frame_index + 1) * fit_point_count) / fit_stage_frames))),
+
+            )
+
+            frame_payloads.append(
+
+                replace(
+
+                    payload,
+
+                    fit_x_values=np.asarray(payload.fit_x_values[:visible_fit_count], dtype=float),
+
+                    fit_y_values=np.asarray(payload.fit_y_values[:visible_fit_count], dtype=float),
+
+                    empty_message=None,
+
+                )
+
+            )
+
+    final_payload = replace(payload, empty_message=None)
+
+    frame_payloads.extend([final_payload] * max(1, resolved_final_hold_frames))
+
+    return frame_payloads
 
 
 
@@ -2577,6 +3160,10 @@ def _light_curve_point_value(point: object, y_axis_mode: str) -> float | None:
 
         return point.calibrated_magnitude
 
+    if y_axis_mode == "standard_magnitude":
+
+        return getattr(point, "standard_magnitude", None)
+
     if y_axis_mode == "instrumental_magnitude":
 
         return point.instrumental_magnitude
@@ -2606,6 +3193,16 @@ def _light_curve_point_error(point: object, y_axis_mode: str) -> float | None:
         if point.calibrated_magnitude_error is not None:
 
             return point.calibrated_magnitude_error
+
+        return point.differential_magnitude_error
+
+    if y_axis_mode == "standard_magnitude":
+
+        standard_error = getattr(point, "standard_magnitude_error", None)
+
+        if standard_error is not None:
+
+            return standard_error
 
         return point.differential_magnitude_error
 
@@ -2683,11 +3280,21 @@ def _plot_series_markers(
 
     export_style: str = "themed",
 
+    *,
+
+    marker: str = "o",
+
+    marker_size: float | None = None,
+
+    alpha: float = 0.9,
+
+    label: str | None = None,
+
 ) -> None:
 
     finite_errors = np.asarray([error if error is not None else np.nan for error in y_errors], dtype=float)
 
-    marker_size = 2.8 if export_style == "scientific" else 3.0
+    resolved_marker_size = marker_size if marker_size is not None else (2.8 if export_style == "scientific" else 3.0)
 
     error_line_width = 0.7 if export_style == "scientific" else 0.8
 
@@ -2703,17 +3310,17 @@ def _plot_series_markers(
 
             yerr=finite_errors,
 
-            fmt="o",
+            fmt=marker,
 
             linestyle="None",
 
-            markersize=marker_size,
+            markersize=resolved_marker_size,
 
             elinewidth=error_line_width,
 
             capsize=0,
 
-            alpha=0.9,
+            alpha=alpha,
 
             color=theme_colors["point_pen"],
 
@@ -2725,6 +3332,8 @@ def _plot_series_markers(
 
             ecolor=theme_colors["error_bar_color"],
 
+            label=label,
+
         )
 
         return
@@ -2735,11 +3344,11 @@ def _plot_series_markers(
 
         y_values,
 
-        marker="o",
+        marker=marker,
 
         linestyle="None",
 
-        markersize=marker_size,
+        markersize=resolved_marker_size,
 
         color=theme_colors["point_pen"],
 
@@ -2748,6 +3357,10 @@ def _plot_series_markers(
         markeredgecolor=theme_colors["point_pen"],
 
         markeredgewidth=marker_edge_width,
+
+        alpha=alpha,
+
+        label=label,
 
     )
 
@@ -4036,7 +4649,7 @@ def render_image_path_for_display(image_path: Path, settings: AnnotatedImageRend
 
             normalized = np.asarray(preferred_linear, dtype=np.float32)
 
-    elif normalized_stretch_mode == "stf":
+    elif normalized_stretch_mode in {"stf", "stf_bright"}:
 
         auto_stretch_source_grayscale = _auto_stretch_source_normalized_data(grayscale_clean)
 
@@ -4050,15 +4663,15 @@ def render_image_path_for_display(image_path: Path, settings: AnnotatedImageRend
 
     normalized = _apply_image_level_points(normalized, render_settings)
 
-    normalized = _apply_image_curve_points(normalized, render_settings)
-
     stretched = _stretched_image_data(
         normalized,
         stretch_mode=render_settings.stretch_mode,
         statistics_normalized=auto_stretch_source_grayscale,
     )
 
-    adjusted = ((stretched - 0.5) * max(0.05, float(render_settings.contrast))) + 0.5 + float(render_settings.brightness)
+    curved = _apply_image_curve_points(stretched, render_settings)
+
+    adjusted = ((curved - 0.5) * max(0.05, float(render_settings.contrast))) + 0.5 + float(render_settings.brightness)
 
     adjusted = np.clip(adjusted, 0.0, 1.0)
 
@@ -4073,6 +4686,30 @@ def render_image_path_for_display(image_path: Path, settings: AnnotatedImageRend
 
 
 def render_annotated_image(display: AnnotatedImageDisplay, settings: AnnotatedImageRenderSettings | None = None) -> np.ndarray:
+
+    render_settings = settings or AnnotatedImageRenderSettings()
+
+    stretched = visual_stretch_preview(display, render_settings)
+
+    curved = _apply_image_curve_points(stretched, render_settings)
+
+    adjusted = ((curved - 0.5) * max(0.05, float(render_settings.contrast))) + 0.5 + float(render_settings.brightness)
+
+    adjusted = np.clip(adjusted, 0.0, 1.0)
+
+    if render_settings.inverted:
+
+        adjusted = 1.0 - adjusted
+
+    return np.ascontiguousarray((adjusted * 255.0).astype(np.uint8))
+
+
+
+
+
+def visual_stretch_preview(display: AnnotatedImageDisplay, settings: AnnotatedImageRenderSettings | None = None) -> np.ndarray:
+
+    """Return the float [0, 1] display after levels and stretch, before curves."""
 
     render_settings = settings or AnnotatedImageRenderSettings()
 
@@ -4102,7 +4739,7 @@ def render_annotated_image(display: AnnotatedImageDisplay, settings: AnnotatedIm
 
         normalized = linear_normalized
 
-    if stretch_mode == "asinh" and _using_default_image_levels(render_settings) and _using_default_image_curve(render_settings):
+    if stretch_mode == "asinh" and _using_default_image_levels(render_settings):
 
         if display.color_preview_normalized is not None:
 
@@ -4120,7 +4757,7 @@ def render_annotated_image(display: AnnotatedImageDisplay, settings: AnnotatedIm
 
                 stretched = np.asarray(display.norm(display.normalized_data), dtype=float)
 
-    elif stretch_mode == "stf" and _using_default_image_levels(render_settings) and _using_default_image_curve(render_settings):
+    elif stretch_mode == "stf" and _using_default_image_levels(render_settings):
 
         if display.color_preview_normalized is not None:
 
@@ -4141,25 +4778,23 @@ def render_annotated_image(display: AnnotatedImageDisplay, settings: AnnotatedIm
                     stretch_mode="stf",
                 )
 
+    elif stretch_mode == "stf_bright" and _using_default_image_levels(render_settings):
+
+        source = display.color_preview_normalized
+
+        if source is None:
+
+            source = display.preview_normalized if display.preview_normalized is not None else display.normalized_data
+
+        stretched = _stretched_image_data(source, stretch_mode="stf_bright")
+
     else:
 
         leveled = _apply_image_level_points(normalized, render_settings)
 
-        leveled = _apply_image_curve_points(leveled, render_settings)
-
         stretched = _stretched_image_data(leveled, stretch_mode=stretch_mode)
 
-
-
-    adjusted = ((stretched - 0.5) * max(0.05, float(render_settings.contrast))) + 0.5 + float(render_settings.brightness)
-
-    adjusted = np.clip(adjusted, 0.0, 1.0)
-
-    if render_settings.inverted:
-
-        adjusted = 1.0 - adjusted
-
-    return np.ascontiguousarray((adjusted * 255.0).astype(np.uint8))
+    return np.asarray(stretched, dtype=np.float32)
 
 
 
@@ -4299,6 +4934,108 @@ def _using_default_image_curve(render_settings: AnnotatedImageRenderSettings) ->
 
 
 
+def _tone_curve_interpolator(points: tuple[tuple[float, float], ...]):
+
+    """Build a shape-preserving cubic interpolator through Curves control points."""
+
+    x_values = np.asarray([point[0] for point in points], dtype=np.float64)
+
+    y_values = np.asarray([point[1] for point in points], dtype=np.float64)
+
+    if x_values.size < 2:
+
+        return None
+
+    if x_values.size == 2 and abs(float(x_values[1] - x_values[0])) <= 1e-12:
+
+        return None
+
+    from scipy.interpolate import PchipInterpolator
+
+    return PchipInterpolator(x_values, y_values, extrapolate=False)
+
+
+def evaluate_image_curve_points(
+    values: np.ndarray,
+    points: tuple[tuple[float, float], ...] | list[tuple[float, float]],
+) -> np.ndarray:
+
+    """Map normalized values through a smooth Curves tone curve."""
+
+    resolved = _resolved_image_curve_points(
+        AnnotatedImageRenderSettings(curve_points=tuple(points)),
+    )
+
+    if (
+        len(resolved) == 2
+        and abs(resolved[0][0] - 0.0) <= 1e-6
+        and abs(resolved[0][1] - 0.0) <= 1e-6
+        and abs(resolved[1][0] - 1.0) <= 1e-6
+        and abs(resolved[1][1] - 1.0) <= 1e-6
+    ):
+
+        return np.asarray(values, dtype=np.float32)
+
+    interpolator = _tone_curve_interpolator(resolved)
+
+    source = np.asarray(values, dtype=np.float64)
+
+    clipped = np.clip(source, 0.0, 1.0)
+
+    if interpolator is None:
+
+        x_values = np.asarray([point[0] for point in resolved], dtype=np.float64)
+
+        y_values = np.asarray([point[1] for point in resolved], dtype=np.float64)
+
+        mapped = np.interp(clipped.ravel(), x_values, y_values).reshape(clipped.shape)
+
+    else:
+
+        x_values = np.asarray([point[0] for point in resolved], dtype=np.float64)
+
+        y_values = np.asarray([point[1] for point in resolved], dtype=np.float64)
+
+        query = np.clip(clipped, float(x_values[0]), float(x_values[-1]))
+
+        mapped = np.asarray(interpolator(query), dtype=np.float64)
+
+        below = clipped < float(x_values[0])
+
+        above = clipped > float(x_values[-1])
+
+        if np.any(below):
+
+            mapped = np.where(below, float(y_values[0]), mapped)
+
+        if np.any(above):
+
+            mapped = np.where(above, float(y_values[-1]), mapped)
+
+    return np.clip(mapped, 0.0, 1.0).astype(np.float32, copy=False)
+
+
+def sample_image_curve_polyline(
+    points: tuple[tuple[float, float], ...] | list[tuple[float, float]],
+    *,
+    sample_count: int = 96,
+) -> tuple[tuple[float, float], ...]:
+
+    """Dense smooth polyline samples for Curves UI drawing."""
+
+    resolved = _resolved_image_curve_points(
+        AnnotatedImageRenderSettings(curve_points=tuple(points)),
+    )
+
+    count = max(2, int(sample_count))
+
+    x_samples = np.linspace(0.0, 1.0, num=count, dtype=np.float64)
+
+    y_samples = evaluate_image_curve_points(x_samples, resolved)
+
+    return tuple((float(x_value), float(y_value)) for x_value, y_value in zip(x_samples, y_samples, strict=True))
+
+
 def _apply_image_curve_points(normalized: np.ndarray, render_settings: AnnotatedImageRenderSettings) -> np.ndarray:
 
     if _using_default_image_curve(render_settings):
@@ -4307,15 +5044,7 @@ def _apply_image_curve_points(normalized: np.ndarray, render_settings: Annotated
 
     points = _resolved_image_curve_points(render_settings)
 
-    x_values = np.asarray([point[0] for point in points], dtype=np.float32)
-
-    y_values = np.asarray([point[1] for point in points], dtype=np.float32)
-
-    normalized_array = np.clip(np.asarray(normalized, dtype=np.float32), 0.0, 1.0)
-
-    mapped = np.interp(normalized_array.ravel(), x_values, y_values).reshape(normalized_array.shape)
-
-    return mapped.astype(np.float32, copy=False)
+    return evaluate_image_curve_points(normalized, points)
 
 
 
@@ -4466,7 +5195,19 @@ def _stretched_image_data(
 
     if normalized_mode == "stf":
 
-        return _stf_stretched_image_data(normalized, statistics_normalized=statistics_normalized)
+        return _stf_stretched_image_data(
+            normalized,
+            statistics_normalized=statistics_normalized,
+            target_background=_ANNOTATED_IMAGE_STF_TARGET_BACKGROUND,
+        )
+
+    if normalized_mode == "stf_bright":
+
+        return _stf_stretched_image_data(
+            normalized,
+            statistics_normalized=statistics_normalized,
+            target_background=_ANNOTATED_IMAGE_STF_BRIGHT_TARGET_BACKGROUND,
+        )
 
     if normalized_mode == "sqrt":
 
@@ -4480,12 +5221,18 @@ def _stretched_image_data(
 
 
 
-def _stf_stretched_image_data(normalized: np.ndarray, *, statistics_normalized: np.ndarray | None = None) -> np.ndarray:
+def _stf_stretched_image_data(
+    normalized: np.ndarray,
+    *,
+    statistics_normalized: np.ndarray | None = None,
+    target_background: float | None = None,
+) -> np.ndarray:
 
     normalized_array = np.clip(np.asarray(normalized, dtype=np.float32), 0.0, 1.0)
 
     midtones_balance, shadows_clip, highlights_clip = _adaptive_display_function_parameters(
         statistics_normalized if statistics_normalized is not None else normalized_array,
+        target_background=target_background,
     )
 
     return _apply_display_function(
@@ -4497,7 +5244,11 @@ def _stf_stretched_image_data(normalized: np.ndarray, *, statistics_normalized: 
 
 
 
-def _adaptive_display_function_parameters(normalized: np.ndarray) -> tuple[float, float, float]:
+def _adaptive_display_function_parameters(
+    normalized: np.ndarray,
+    *,
+    target_background: float | None = None,
+) -> tuple[float, float, float]:
 
     statistics_plane = np.asarray(normalized, dtype=np.float32)
 
@@ -4539,7 +5290,13 @@ def _adaptive_display_function_parameters(normalized: np.ndarray) -> tuple[float
 
         median_position = float(np.clip(median_value - shadows_clip, 0.0, 1.0))
 
-        target_value = _ANNOTATED_IMAGE_STF_TARGET_BACKGROUND
+        resolved_target = (
+            float(target_background)
+            if target_background is not None
+            else float(_ANNOTATED_IMAGE_STF_TARGET_BACKGROUND)
+        )
+
+        target_value = resolved_target
 
     else:
 
@@ -4549,7 +5306,13 @@ def _adaptive_display_function_parameters(normalized: np.ndarray) -> tuple[float
 
         median_position = float(np.clip(highlights_clip - median_value, 0.0, 1.0))
 
-        target_value = 1.0 - _ANNOTATED_IMAGE_STF_TARGET_BACKGROUND
+        resolved_target = (
+            float(target_background)
+            if target_background is not None
+            else float(_ANNOTATED_IMAGE_STF_TARGET_BACKGROUND)
+        )
+
+        target_value = 1.0 - resolved_target
 
 
 

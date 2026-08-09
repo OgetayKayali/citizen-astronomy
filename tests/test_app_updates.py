@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 from photometry_app.core import app_updates
 from photometry_app.core.app_updates import (
+    UPDATE_DOWNLOAD_PHASE_DOWNLOAD,
+    UPDATE_DOWNLOAD_PHASE_REBUILD,
     AvailableUpdate,
     DownloadedUpdate,
     UpdateConfigurationError,
@@ -15,6 +17,8 @@ from photometry_app.core.app_updates import (
     apply_update_and_restart,
     check_for_updates,
     download_update_package,
+    format_update_download_progress_label,
+    update_download_phase_for_progress,
 )
 
 
@@ -191,13 +195,13 @@ class VelopackDownloadApplyTest(unittest.TestCase):
         assert checked.available_update is not None
         self.update: AvailableUpdate = checked.available_update
 
-    def test_download_forwards_byte_progress_and_returns_staged_update(self) -> None:
+    def test_download_forwards_phase_progress_and_returns_staged_update(self) -> None:
         manager = FakeManager()
-        progress: list[tuple[int, int]] = []
+        progress: list[tuple[int, int, str]] = []
 
         downloaded = download_update_package(
             self.update,
-            progress_callback=lambda done, total: progress.append((done, total)),
+            progress_callback=lambda percent, total, phase: progress.append((percent, total, phase)),
             manager_factory=lambda: manager,
         )
 
@@ -206,14 +210,19 @@ class VelopackDownloadApplyTest(unittest.TestCase):
         self.assertEqual(downloaded.update, self.update)
         self.assertEqual(
             progress,
-            [(0, 1_000), (500, 1_000), (1_000, 1_000), (1_000, 1_000)],
+            [
+                (0, 1_000, UPDATE_DOWNLOAD_PHASE_DOWNLOAD),
+                (50, 1_000, UPDATE_DOWNLOAD_PHASE_DOWNLOAD),
+                (100, 1_000, UPDATE_DOWNLOAD_PHASE_REBUILD),
+                (100, 1_000, UPDATE_DOWNLOAD_PHASE_REBUILD),
+            ],
         )
 
     def test_download_can_be_cancelled_from_progress_callback(self) -> None:
         manager = FakeManager()
         cancel = False
 
-        def progress(_done: int, _total: int) -> None:
+        def progress(_percent: int, _total: int, _phase: str) -> None:
             nonlocal cancel
             cancel = True
 
@@ -224,6 +233,38 @@ class VelopackDownloadApplyTest(unittest.TestCase):
                 cancellation_requested=lambda: cancel,
                 manager_factory=lambda: manager,
             )
+
+    def test_update_download_phase_maps_delta_rebuild_at_seventy_percent(self) -> None:
+        self.assertEqual(
+            update_download_phase_for_progress(is_delta=True, percent=69),
+            UPDATE_DOWNLOAD_PHASE_DOWNLOAD,
+        )
+        self.assertEqual(
+            update_download_phase_for_progress(is_delta=True, percent=70),
+            UPDATE_DOWNLOAD_PHASE_REBUILD,
+        )
+        self.assertEqual(
+            update_download_phase_for_progress(is_delta=False, percent=85),
+            UPDATE_DOWNLOAD_PHASE_DOWNLOAD,
+        )
+
+    def test_format_update_download_progress_label_warns_about_rebuild_time(self) -> None:
+        download_label = format_update_download_progress_label(
+            is_delta=True,
+            percent=40,
+            download_size_bytes=4_000_000,
+        )
+        rebuild_label = format_update_download_progress_label(
+            is_delta=True,
+            percent=70,
+            download_size_bytes=4_000_000,
+        )
+
+        self.assertIn("Phase 1/2", download_label)
+        self.assertIn("might take a few minutes", download_label)
+        self.assertIn("Phase 2/2", rebuild_label)
+        self.assertIn("Rebuilding full update package", rebuild_label)
+        self.assertIn("might take a few minutes", rebuild_label)
 
     def test_corrupt_download_is_reported_as_verification_failure(self) -> None:
         manager = FakeManager()

@@ -119,7 +119,11 @@ def write_fits_copy(source_path: Path, destination: Path) -> Path:
         data = _collapse_multichannel_image_for_plate_solve(data)
     if data.ndim != 2:
         raise ValueError(f"Only 2D monochrome images are supported for plate solving: {source_path.name}")
-    fits.PrimaryHDU(data=data, header=header).writeto(destination, overwrite=True)
+    fits.PrimaryHDU(data=data, header=header).writeto(
+        destination,
+        overwrite=True,
+        output_verify="silentfix",
+    )
     return destination
 
 

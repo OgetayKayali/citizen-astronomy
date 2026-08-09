@@ -1531,9 +1531,17 @@ class HrMotionGroupDialog(QDialog):
 
 
 class ScanResultsSummaryDialog(QDialog):
-    def __init__(self, summaries: list[ObjectScanSummary], selected_object_name: str | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        summaries: list[ObjectScanSummary],
+        selected_object_name: str | None = None,
+        parent: QWidget | None = None,
+        *,
+        clear_object_cache_callback: Callable[[str], int] | None = None,
+    ) -> None:
         super().__init__(parent)
         self._summaries = list(summaries)
+        self._clear_object_cache_callback = clear_object_cache_callback
         self.setWindowTitle("Loaded Results")
         self.resize(760, 520)
         self._object_table = QTableWidget(len(summaries), 5)
@@ -1583,14 +1591,22 @@ class ScanResultsSummaryDialog(QDialog):
         self._update_note_preview()
 
         button_row = QHBoxLayout()
+        self._clear_object_cache_button = QPushButton("Clear Cache for Selected Object")
+        self._clear_object_cache_button.setEnabled(bool(summaries) and self._clear_object_cache_callback is not None)
+        self._clear_object_cache_button.setToolTip(
+            "Delete cached photometry results, solutions, and field catalogs for the selected object folder only. Settings are kept."
+        )
+        self._clear_object_cache_button.clicked.connect(self._clear_selected_object_cache)
+        button_row.addWidget(self._clear_object_cache_button)
         button_row.addStretch(1)
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.reject)
-        use_selected_button = QPushButton("Use Selected Object")
-        use_selected_button.setEnabled(bool(summaries))
-        use_selected_button.clicked.connect(self.accept)
+        self._use_selected_button = QPushButton("Use Selected Object")
+        self._use_selected_button.setEnabled(bool(summaries))
+        self._use_selected_button.clicked.connect(self.accept)
+        self._apply_use_selected_button_style()
         button_row.addWidget(close_button)
-        button_row.addWidget(use_selected_button)
+        button_row.addWidget(self._use_selected_button)
 
         layout = QVBoxLayout()
         layout.addWidget(description)
@@ -1606,6 +1622,57 @@ class ScanResultsSummaryDialog(QDialog):
             return None
         item = self._object_table.item(current_row, 0)
         return item.text() if item is not None else None
+
+    def _apply_use_selected_button_style(self) -> None:
+        accent = self.palette().color(QPalette.ColorRole.Highlight)
+        text_color = "#ffffff" if accent.lightness() < 128 else "#1f1f1f"
+        hover_color = accent.lighter(110).name().lower()
+        pressed_color = accent.darker(110).name().lower()
+        border_color = accent.darker(122).name().lower()
+        self._use_selected_button.setStyleSheet(
+            "QPushButton {"
+            f"background-color: {accent.name().lower()};"
+            f"color: {text_color};"
+            f"border: 1px solid {border_color};"
+            "padding: 4px 10px;"
+            "font-weight: 600;"
+            "}"
+            "QPushButton:hover {"
+            f"background-color: {hover_color};"
+            "}"
+            "QPushButton:pressed {"
+            f"background-color: {pressed_color};"
+            "}"
+        )
+
+    def _clear_selected_object_cache(self) -> None:
+        if self._clear_object_cache_callback is None:
+            return
+        object_name = self.selected_object_name()
+        if not object_name:
+            QMessageBox.information(self, "No object selected", "Select an object folder first.")
+            return
+        reply = QMessageBox.warning(
+            self,
+            "Clear Object Cache",
+            (
+                f"Delete cached results for “{object_name}”?\n\n"
+                "This removes processed photometry, measurements, and related solve/catalog cache for that folder only. "
+                "Saved aperture edits for this folder (for example a manual Target) are also reset so Generate can rebuild catalog targets.\n\n"
+                "Other settings are kept. This cannot be undone."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        removed = int(self._clear_object_cache_callback(object_name) or 0)
+        item_label = "item" if removed == 1 else "items"
+        if removed == 0:
+            message = f"No cached items were found for {object_name}."
+        else:
+            message = f"Cleared {removed} cached {item_label} for {object_name}. Run Generate again for a fresh catalog run."
+        QMessageBox.information(self, "Cache Cleared", message)
 
     def _update_note_preview(self) -> None:
         current_row = self._object_table.currentRow()
@@ -11765,7 +11832,8 @@ class SettingsDialog(QDialog):
         self._frame_edge_margin_percent_input.setSuffix("%")
         self._frame_edge_margin_percent_input.setValue(settings.frame_edge_margin_percent)
         self._image_display_stretch_mode_input = QComboBox()
-        self._image_display_stretch_mode_input.addItem("Auto Stretch", "stf")
+        self._image_display_stretch_mode_input.addItem("STF", "stf")
+        self._image_display_stretch_mode_input.addItem("STF Bright", "stf_bright")
         self._image_display_stretch_mode_input.addItem("Linear", "linear")
         self._image_display_stretch_mode_input.addItem("Asinh", "asinh")
         self._image_display_stretch_mode_input.addItem("Sqrt", "sqrt")
@@ -11923,6 +11991,56 @@ class SettingsDialog(QDialog):
         self._synthetic_tracking_advanced_enabled_input.setChecked(settings.synthetic_tracking_advanced_enabled)
         self._saturation_filter_enabled_input = QCheckBox("Skip saturated selected variable stars during analysis")
         self._saturation_filter_enabled_input.setChecked(settings.saturation_filter_enabled)
+        self._wcs_sanity_check_enabled_input = QCheckBox("Check embedded WCS against Gaia stars")
+        self._wcs_sanity_check_enabled_input.setChecked(bool(settings.wcs_sanity_check_enabled))
+        self._wcs_sanity_check_enabled_input.stateChanged.connect(self._update_wcs_sanity_inputs)
+        self._wcs_sanity_edge_margin_percent_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_edge_margin_percent_input,
+            float(settings.wcs_sanity_edge_margin_percent),
+            0.0,
+            90.0,
+            " %",
+        )
+        self._wcs_sanity_edge_margin_percent_input.setSingleStep(1.0)
+        self._wcs_sanity_approval_percent_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_approval_percent_input,
+            float(getattr(settings, "wcs_sanity_approval_percent", 90.0)),
+            1.0,
+            100.0,
+            " %",
+        )
+        self._wcs_sanity_approval_percent_input.setSingleStep(1.0)
+        self._wcs_sanity_max_median_residual_arcsec_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_max_median_residual_arcsec_input,
+            float(settings.wcs_sanity_max_median_residual_arcsec),
+            0.1,
+            60.0,
+            " arcsec",
+        )
+        self._wcs_sanity_max_median_residual_arcsec_input.setSingleStep(0.5)
+        self._wcs_sanity_gaia_min_magnitude_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_gaia_min_magnitude_input,
+            float(settings.wcs_sanity_gaia_min_magnitude),
+            -5.0,
+            30.0,
+            " mag",
+        )
+        self._wcs_sanity_gaia_min_magnitude_input.setSingleStep(0.5)
+        self._wcs_sanity_gaia_max_magnitude_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_gaia_max_magnitude_input,
+            float(settings.wcs_sanity_gaia_max_magnitude),
+            5.0,
+            30.0,
+            " mag",
+        )
+        self._wcs_sanity_gaia_max_magnitude_input.setSingleStep(0.5)
+        self._wcs_sanity_ccvals_repair_enabled_input = QCheckBox("Repair CRVAL from CCVALS when keywords disagree")
+        self._wcs_sanity_ccvals_repair_enabled_input.setChecked(bool(settings.wcs_sanity_ccvals_repair_enabled))
         self._interface_tips_enabled_input = QCheckBox("Show rotating tips in the status bar")
         self._interface_tips_enabled_input.setChecked(bool(getattr(settings, "interface_tips_enabled", True)))
         self._show_mode_launcher_on_startup_input = QCheckBox("Show mode picker on startup")
@@ -12101,7 +12219,10 @@ class SettingsDialog(QDialog):
         image_display_container = QWidget()
         image_display_container.setLayout(image_display_layout)
         form_layout.addRow("Image Display", image_display_container)
-        self._clear_cache_button = QPushButton("Clear Cache")
+        self._clear_cache_button = QPushButton("Clear All Cache…")
+        self._clear_cache_button.setToolTip(
+            "Delete all cached photometry results, solutions, and catalogs in the cache directory. Settings are kept."
+        )
         self._clear_cache_button.clicked.connect(self._clear_cache)
         self._clear_settings_button = QPushButton("Clear Settings")
         self._clear_settings_button.clicked.connect(self._clear_settings)
@@ -12172,6 +12293,7 @@ class SettingsDialog(QDialog):
         science_metadata_layout.addRow("Reduction Notes", self._reduction_notes_input)
         science_metadata_group.setLayout(science_metadata_layout)
         differential_photometry_layout.addWidget(science_metadata_group)
+
         differential_photometry_layout.addStretch(1)
         differential_photometry_tab.setLayout(differential_photometry_layout)
         self._differential_photometry_tab = differential_photometry_tab
@@ -12756,9 +12878,56 @@ class SettingsDialog(QDialog):
         sky_explorer_tab.setLayout(sky_explorer_layout)
         self._sky_explorer_settings_tab = sky_explorer_tab
         advanced_description = QLabel(
-            "Advanced controls for background source actions. Find Better Fit and Increase SNR both run from Source Results, and Increase SNR uses conservative period-aware binning to derive cleaner light curves while preserving original measurements internally."
+            "Advanced controls for WCS sanity checking, shared workers, Find Better Fit, and Increase SNR. "
+            "WCS sanity chooses how embedded plate solutions are read for Differential Photometry. "
+            "Find Better Fit and Increase SNR both run from Source Results, and Increase SNR uses conservative period-aware binning to derive cleaner light curves while preserving original measurements internally."
         )
         advanced_description.setWordWrap(True)
+        wcs_sanity_group = QGroupBox("WCS Sanity Check")
+        wcs_sanity_layout = QFormLayout()
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Enable",
+            self._wcs_sanity_check_enabled_input,
+            "When enabled, the first frame is checked with Gaia magnitude bins to choose a WCS reading method. Bin results are written to the Work Log. That method is then applied independently to every frame (accept embedded CRVAL/WCS, repair CRVAL from CCVALS, or re-solve each frame).",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Frame Margin",
+            self._wcs_sanity_edge_margin_percent_input,
+            "Fraction of the frame to exclude from the check, split equally on each edge. 25% keeps the central 75% for detections and Gaia matches.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Approval",
+            self._wcs_sanity_approval_percent_input,
+            "A magnitude bin passes when at least this percentage of its usable-frame Gaia stars match image detections. Bins are tried in order starting at Min Gaia Magnitude (first bin spans up to 5 mag, then 2-mag steps).",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Match Residual Limit",
+            self._wcs_sanity_max_median_residual_arcsec_input,
+            "Match search radius scale for counting an approved Gaia-to-image match inside a magnitude bin.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Min Gaia Magnitude",
+            self._wcs_sanity_gaia_min_magnitude_input,
+            "Bright end of the first magnitude bin. Default 5 starts with G=5-10, then 10-12, 12-14, and so on.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Max Gaia Magnitude",
+            self._wcs_sanity_gaia_max_magnitude_input,
+            "Faintest magnitude bin edge used by the sequential magnitude-bin checks.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "CCVALS Repair",
+            self._wcs_sanity_ccvals_repair_enabled_input,
+            "If the Gaia check fails and CCVALS disagrees with CRVAL, try repairing the WCS center from CCVALS before falling back to a full re-solve.",
+        )
+        wcs_sanity_group.setLayout(wcs_sanity_layout)
         advanced_form_layout = QFormLayout()
         self._advanced_form_layout = advanced_form_layout
         advanced_tooltips = [
@@ -12898,9 +13067,11 @@ class SettingsDialog(QDialog):
         advanced_group = QGroupBox("Advanced")
         advanced_group_layout = QVBoxLayout()
         advanced_group_layout.addWidget(advanced_description)
+        advanced_group_layout.addWidget(wcs_sanity_group)
         advanced_group_layout.addLayout(advanced_form_layout)
         advanced_group.setLayout(advanced_group_layout)
         self._advanced_settings_group = advanced_group
+        self._wcs_sanity_settings_group = wcs_sanity_group
         general_layout.addWidget(advanced_group)
         general_layout.addStretch(1)
         general_tab.setLayout(general_layout)
@@ -12931,6 +13102,7 @@ class SettingsDialog(QDialog):
         self.setLayout(root_layout)
         self._update_aperture_inputs()
         self._update_reference_limit_inputs()
+        self._update_wcs_sanity_inputs()
         self._update_preview_limit_inputs()
         self._update_snr_binning_inputs()
         self._update_asteroid_estimate_inputs()
@@ -12961,6 +13133,19 @@ class SettingsDialog(QDialog):
             show_mode_launcher_on_startup=self._show_mode_launcher_on_startup_input.isChecked(),
             keep_mode_state_on_switch=self._keep_mode_state_on_switch_input.isChecked(),
             nearby_reference_count=self._nearby_reference_count_input.value(),
+            wcs_sanity_check_enabled=self._wcs_sanity_check_enabled_input.isChecked(),
+            wcs_sanity_approval_percent=self._wcs_sanity_approval_percent_input.value(),
+            wcs_sanity_max_median_residual_arcsec=self._wcs_sanity_max_median_residual_arcsec_input.value(),
+            wcs_sanity_gaia_min_magnitude=min(
+                self._wcs_sanity_gaia_min_magnitude_input.value(),
+                self._wcs_sanity_gaia_max_magnitude_input.value(),
+            ),
+            wcs_sanity_gaia_max_magnitude=max(
+                self._wcs_sanity_gaia_min_magnitude_input.value(),
+                self._wcs_sanity_gaia_max_magnitude_input.value(),
+            ),
+            wcs_sanity_edge_margin_percent=self._wcs_sanity_edge_margin_percent_input.value(),
+            wcs_sanity_ccvals_repair_enabled=self._wcs_sanity_ccvals_repair_enabled_input.isChecked(),
             shared_parallel_workers=self._shared_parallel_workers_input.value(),
             sky_atlas_custom_overlay_cache_max_long_edge=self._sky_atlas_custom_overlay_cache_max_long_edge_input.value(),
             sky_explorer_simbad_search_radius_arcsec=self._sky_explorer_simbad_search_radius_arcsec_input.value(),
@@ -13224,10 +13409,15 @@ class SettingsDialog(QDialog):
 
     def _clear_cache(self) -> None:
         cache_dir = Path(self._cache_dir_input.text()).expanduser()
-        reply = QMessageBox.question(
+        reply = QMessageBox.warning(
             self,
-            "Clear Cache",
-            f"Delete all cached data in\n{cache_dir}\n\nThis cannot be undone.",
+            "Clear All Cache",
+            (
+                f"Delete ALL cached data in\n{cache_dir}\n\n"
+                "This permanently removes cached photometry results, astrometry solutions, and catalog downloads. "
+                "Your settings will not be changed.\n\n"
+                "This cannot be undone. Continue?"
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -13302,6 +13492,14 @@ class SettingsDialog(QDialog):
         self._keep_mode_state_on_switch_input.setChecked(bool(defaults.keep_mode_state_on_switch))
         self._cache_dir_input.setText(str(defaults.cache_dir))
         self._nearby_reference_count_input.setValue(defaults.nearby_reference_count)
+        self._wcs_sanity_check_enabled_input.setChecked(bool(defaults.wcs_sanity_check_enabled))
+        self._wcs_sanity_edge_margin_percent_input.setValue(float(defaults.wcs_sanity_edge_margin_percent))
+        self._wcs_sanity_approval_percent_input.setValue(float(getattr(defaults, "wcs_sanity_approval_percent", 90.0)))
+        self._wcs_sanity_max_median_residual_arcsec_input.setValue(float(defaults.wcs_sanity_max_median_residual_arcsec))
+        self._wcs_sanity_gaia_min_magnitude_input.setValue(float(defaults.wcs_sanity_gaia_min_magnitude))
+        self._wcs_sanity_gaia_max_magnitude_input.setValue(float(defaults.wcs_sanity_gaia_max_magnitude))
+        self._wcs_sanity_ccvals_repair_enabled_input.setChecked(bool(defaults.wcs_sanity_ccvals_repair_enabled))
+        self._update_wcs_sanity_inputs()
         self._shared_parallel_workers_input.setValue(resolve_shared_parallel_workers(defaults))
         self._sky_atlas_custom_overlay_cache_max_long_edge_input.setValue(
             int(defaults.sky_atlas_custom_overlay_cache_max_long_edge)
@@ -13602,6 +13800,18 @@ class SettingsDialog(QDialog):
         self._reference_star_max_magnitude_input.setEnabled(
             self._reference_star_magnitude_range_enabled_input.isChecked()
         )
+
+    def _update_wcs_sanity_inputs(self) -> None:
+        enabled = self._wcs_sanity_check_enabled_input.isChecked()
+        for widget in (
+            self._wcs_sanity_edge_margin_percent_input,
+            self._wcs_sanity_approval_percent_input,
+            self._wcs_sanity_max_median_residual_arcsec_input,
+            self._wcs_sanity_gaia_min_magnitude_input,
+            self._wcs_sanity_gaia_max_magnitude_input,
+            self._wcs_sanity_ccvals_repair_enabled_input,
+        ):
+            widget.setEnabled(enabled)
 
     def _update_hr_plot_size_inputs(self) -> None:
         size_mode = str(self._hr_plot_marker_size_mode_input.currentData() or "scaled")

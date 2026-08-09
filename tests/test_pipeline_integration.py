@@ -30,6 +30,7 @@ from astropy.io import fits
 
 
 
+from photometry_app.core.wcs_sanity import EmbeddedWcsPolicy, WcsSanityCheckResult
 from photometry_app.core.models import (
 
     CatalogStar,
@@ -1349,6 +1350,195 @@ class PipelineIntegrationTest(unittest.TestCase):
             self.assertEqual(len(SlowAstrometryClient.calls), 3)
 
             self.assertLess(elapsed, 0.5)
+
+    def test_resolve_summary_fields_uses_first_frame_wcs_policy_for_folder(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            object_dir = root / "Files" / "M42"
+
+            object_dir.mkdir(parents=True)
+
+            for index in range(3):
+
+                self._write_solved_fits(object_dir / f"frame_{index:03d}.fits")
+
+            (root / ".photometry-settings.json").write_text(
+
+                json.dumps(
+                    {
+                        "cache_dir": ".photometry-cache",
+                        "wcs_sanity_check_enabled": True,
+                    }
+                ),
+
+                encoding="utf-8",
+
+            )
+
+            pipeline = PhotometryPipeline()
+
+            report = pipeline.scan_workspace(root)
+
+            settings = AppSettings.from_root(root)
+
+            diagnose_calls = {"count": 0}
+
+            original_diagnose = pipeline._diagnose_folder_embedded_wcs_policy
+
+            def _counting_diagnose(probe_file, settings_arg, progress_callback=None):
+
+                diagnose_calls["count"] += 1
+
+                return original_diagnose(probe_file, settings_arg, progress_callback)
+
+            with (
+                patch.object(pipeline, "_diagnose_folder_embedded_wcs_policy", side_effect=_counting_diagnose),
+                patch(
+                    "photometry_app.core.wcs_sanity.evaluate_wcs_sanity",
+                    return_value=WcsSanityCheckResult(
+                        passed=True,
+                        status="passed",
+                        reasons=["probe matched"],
+                        match_count=5,
+                        candidate_count=5,
+                        median_residual_arcsec=0.4,
+                    ),
+                ),
+            ):
+
+                results = pipeline._resolve_summary_fields(report.object_summaries[0].files, settings)
+
+            self.assertEqual(diagnose_calls["count"], 1)
+
+            self.assertEqual(len(results), 3)
+
+            self.assertTrue(all(result.solved_field is not None for _, result in results))
+
+            self.assertTrue(
+                any("Folder WCS reading method: read embedded CRVAL/WCS" in reason for reason in results[0][1].reasons)
+            )
+
+    def test_resolve_summary_fields_skips_gaia_sanity_probe_when_requested(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            object_dir = root / "Files" / "M42"
+
+            object_dir.mkdir(parents=True)
+
+            for index in range(2):
+
+                self._write_solved_fits(object_dir / f"frame_{index:03d}.fits")
+
+            (root / ".photometry-settings.json").write_text(
+
+                json.dumps(
+                    {
+                        "cache_dir": ".photometry-cache",
+                        "wcs_sanity_check_enabled": True,
+                    }
+                ),
+
+                encoding="utf-8",
+
+            )
+
+            pipeline = PhotometryPipeline()
+
+            report = pipeline.scan_workspace(root)
+
+            settings = AppSettings.from_root(root)
+
+            diagnose_calls = {"count": 0}
+
+            quick_calls = {"count": 0}
+
+            def _counting_diagnose(*_args, **_kwargs):
+
+                diagnose_calls["count"] += 1
+
+                return EmbeddedWcsPolicy(mode="accept", reasons=["full diagnose"])
+
+            def _counting_quick(*_args, **_kwargs):
+
+                quick_calls["count"] += 1
+
+                return EmbeddedWcsPolicy(mode="accept", reasons=["quick policy"])
+
+            with (
+                patch.object(pipeline, "_diagnose_folder_embedded_wcs_policy", side_effect=_counting_diagnose),
+                patch.object(pipeline, "_quick_folder_embedded_wcs_policy", side_effect=_counting_quick),
+            ):
+
+                results = pipeline._resolve_summary_fields(
+                    report.object_summaries[0].files,
+                    settings,
+                    skip_wcs_sanity_diagnosis=True,
+                )
+
+            self.assertEqual(diagnose_calls["count"], 0)
+
+            self.assertEqual(quick_calls["count"], 1)
+
+            self.assertEqual(len(results), 2)
+
+    def test_resolve_summary_fields_solves_each_frame_when_first_frame_policy_is_resolve(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            object_dir = root / "Files" / "M42"
+
+            object_dir.mkdir(parents=True)
+
+            for index in range(3):
+
+                self._write_unsolved_fits(object_dir / f"frame_{index:03d}.fits")
+
+            (root / ".photometry-settings.json").write_text(
+
+                json.dumps(
+                    {
+                        "cache_dir": ".photometry-cache",
+                        "astrometry_api_key": "demo",
+                        "wcs_sanity_check_enabled": True,
+                        "assume_aligned_images": False,
+                    }
+                ),
+
+                encoding="utf-8",
+
+            )
+
+            pipeline = PhotometryPipeline()
+
+            report = pipeline.scan_workspace(root)
+
+            settings = AppSettings.from_root(root)
+
+            RecordingAstrometryClient.calls = []
+
+            with patch("photometry_app.core.pipeline.AstrometryNetClient", RecordingAstrometryClient):
+
+                results = pipeline._resolve_summary_fields(report.object_summaries[0].files, settings)
+
+            self.assertEqual(len(RecordingAstrometryClient.calls), 3)
+
+            self.assertEqual(len(results), 3)
+
+            self.assertTrue(all(result.solved_field is not None for _, result in results))
+
+            self.assertFalse(any("Reused plate solve from aligned frame" in " ".join(result.reasons) for _, result in results))
+
+            wcs_paths = {result.solved_field.wcs_path for _, result in results if result.solved_field is not None}
+
+            self.assertEqual(len(wcs_paths), 3)
 
     def test_resolve_summary_fields_uses_metadata_seeded_gaia_without_api_key(self) -> None:
 

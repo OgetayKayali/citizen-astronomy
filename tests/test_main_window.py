@@ -36,7 +36,7 @@ from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QImage, QMous
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtTest import QTest
 
-from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QCheckBox, QDialog, QFrame, QGroupBox, QHeaderView, QHBoxLayout, QLabel, QLayoutItem, QMenu, QMessageBox, QProgressDialog, QPushButton, QSizePolicy, QStyle, QStyleOptionSpinBox, QTableWidget, QTableWidgetItem, QTableWidgetSelectionRange, QVBoxLayout, QWidget, QWidgetAction
+from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QCheckBox, QDialog, QFrame, QGroupBox, QHeaderView, QHBoxLayout, QLabel, QLayoutItem, QMenu, QMessageBox, QProgressDialog, QPushButton, QSizePolicy, QStyle, QStyleOptionSpinBox, QTableWidget, QTableWidgetItem, QTableWidgetSelectionRange, QToolButton, QVBoxLayout, QWidget, QWidgetAction
 
 
 
@@ -455,6 +455,102 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.window._handle_differential_primary_button_clicked()
 
         open_workflow.assert_called_once_with()
+
+
+
+    def test_differential_workflow_dialog_clear_cache_enabled_when_folder_ready(self) -> None:
+
+        choose_folder = MagicMock()
+
+        generate = MagicMock()
+
+        clear_cache = MagicMock(return_value=2)
+
+        dialog = _DifferentialWorkflowDialog(
+            self.window,
+            choose_folder,
+            generate,
+            clear_object_cache_callback=clear_cache,
+        )
+
+        try:
+
+            self.assertFalse(dialog._clear_cache_button.isEnabled())
+
+            dialog.set_ready("DY Her Data", 117)
+
+            self.assertTrue(dialog._clear_cache_button.isEnabled())
+
+            with (
+                patch("photometry_app.ui.main_window.QMessageBox.warning", return_value=QMessageBox.StandardButton.Yes),
+                patch("photometry_app.ui.main_window.QMessageBox.information") as info_mock,
+            ):
+
+                dialog._handle_clear_cache_clicked()
+
+            clear_cache.assert_called_once_with("DY Her Data")
+
+            info_mock.assert_called_once()
+
+            self.assertIn("Cleared 2 cached items for DY Her Data.", info_mock.call_args.args[2])
+
+            self.assertIn("Generate again", info_mock.call_args.args[2])
+
+        finally:
+
+            dialog.close()
+
+
+
+    def test_clear_differential_object_cache_resets_saved_apertures(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            object_dir = root / "DY Her Data"
+
+            object_dir.mkdir(parents=True, exist_ok=True)
+
+            self.window._root_path_input.setText(str(root))
+
+            self.window._settings = AppSettings.from_root(root)
+
+            self.window._settings.manual_photometry_configs = {
+                "DY Her Data": ManualPhotometryConfig(
+                    object_name="DY Her Data",
+                    keep_comparison_stars=False,
+                    sources=[
+                        ManualSourceConfig(
+                            source_id="manual-target-1",
+                            name="Target",
+                            role=ManualSourceRole.TARGET,
+                            ra_deg=1.0,
+                            dec_deg=2.0,
+                            reference_frame_name="frame.fits",
+                            reference_x=10.0,
+                            reference_y=20.0,
+                            aperture_radius=5.0,
+                            annulus_inner_radius=8.0,
+                            annulus_outer_radius=12.0,
+                            catalog="manual",
+                        )
+                    ],
+                )
+            }
+            self.window._settings.selected_catalog_source_ids = {"DY Her Data": ["vsx:123"]}
+
+            with patch.object(self.window, "_save_settings_snapshot") as save_mock:
+
+                removed = self.window._clear_differential_object_cache("DY Her Data")
+
+            self.assertGreaterEqual(removed, 1)
+
+            self.assertNotIn("DY Her Data", self.window._settings.manual_photometry_configs or {})
+
+            self.assertNotIn("DY Her Data", self.window._settings.selected_catalog_source_ids or {})
+
+            save_mock.assert_called()
 
 
 
@@ -3079,12 +3175,6 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         )
 
-        self.window._settings.manual_photometry_configs = {
-
-            "Demo": ManualPhotometryConfig(object_name="Demo", keep_comparison_stars=False, sources=[target])
-
-        }
-
         self.window._current_processing_report = ProcessingReport(
 
             object_name="Demo",
@@ -3104,6 +3194,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         with patch.object(self.window, "_render_image_panel"):
 
             self.window._edit_apertures_checkbox.setChecked(True)
+
+        # Enabling the editor clears apertures; restore the drag fixture afterward.
+        self.window._settings.manual_photometry_configs = {
+
+            "Demo": ManualPhotometryConfig(object_name="Demo", keep_comparison_stars=False, sources=[target])
+
+        }
 
         with (
 
@@ -3137,19 +3234,498 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             item_lookup = {item.label: item.value for item in section.items}
 
-            self.assertEqual(item_lookup["Source"], "Target")
+            self.assertEqual(item_lookup["Source"], "Demo")
 
             self.assertEqual(item_lookup["Pixel Position"], "(80.00, 90.00)")
 
             self.window._handle_image_release(Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
 
-        self.assertEqual(target.name, "Target")
+        self.assertEqual(target.name, "Demo")
 
         self.assertEqual(target.reference_x, 80.0)
 
         self.assertEqual(target.reference_y, 90.0)
 
         self.assertIsNone(self.window._manual_drag_preview)
+
+
+
+    def test_refresh_processing_views_syncs_series_to_selected_source(self) -> None:
+
+        series_a = LightCurveSeries(
+            object_name="Demo",
+            source_id="vsx-1",
+            source_name="Alpha",
+            filter_name="V",
+            points=[
+                LightCurvePoint(
+                    observation_time=datetime(2026, 3, 16, 1, 0, 0),
+                    file_path=Path("a.fits"),
+                    differential_magnitude=0.1,
+                    instrumental_magnitude=-9.0,
+                    flux=1000.0,
+                    flux_error=10.0,
+                    calibrated_magnitude=12.0,
+                    standard_magnitude=12.1,
+                )
+            ],
+        )
+        series_b = LightCurveSeries(
+            object_name="Demo",
+            source_id="vsx-2",
+            source_name="Beta",
+            filter_name="V",
+            points=[
+                LightCurvePoint(
+                    observation_time=datetime(2026, 3, 16, 1, 0, 0),
+                    file_path=Path("b.fits"),
+                    differential_magnitude=0.2,
+                    instrumental_magnitude=-9.0,
+                    flux=1100.0,
+                    flux_error=10.0,
+                    calibrated_magnitude=12.2,
+                    standard_magnitude=12.3,
+                )
+            ],
+        )
+        measurement_time = datetime(2026, 3, 16, 1, 0, 0)
+        report = ProcessingReport(
+            object_name="Demo",
+            files_processed=1,
+            solved_files=1,
+            field_catalog=FieldCatalog(
+                center_ra_deg=10.0,
+                center_dec_deg=20.0,
+                radius_deg=1.0,
+                variable_stars=[
+                    CatalogStar("vsx", "vsx-1", "Alpha", 10.0, 20.0, 12.0, True),
+                    CatalogStar("vsx", "vsx-2", "Beta", 11.0, 21.0, 12.2, True),
+                ],
+            ),
+            measurements=[
+                PhotometryMeasurement(
+                    source_id="vsx-1",
+                    source_name="Alpha",
+                    catalog="vsx",
+                    object_name="Demo",
+                    file_path=Path("a.fits"),
+                    observation_time=measurement_time,
+                    filter_name="V",
+                    ra_deg=10.0,
+                    dec_deg=20.0,
+                    x=50.0,
+                    y=60.0,
+                    flux=1000.0,
+                    flux_error=10.0,
+                    instrumental_magnitude=-9.0,
+                    differential_magnitude=0.1,
+                    is_variable=True,
+                    is_reference=False,
+                ),
+                PhotometryMeasurement(
+                    source_id="vsx-2",
+                    source_name="Beta",
+                    catalog="vsx",
+                    object_name="Demo",
+                    file_path=Path("b.fits"),
+                    observation_time=measurement_time,
+                    filter_name="V",
+                    ra_deg=11.0,
+                    dec_deg=21.0,
+                    x=52.0,
+                    y=62.0,
+                    flux=1100.0,
+                    flux_error=10.0,
+                    instrumental_magnitude=-9.0,
+                    differential_magnitude=0.2,
+                    is_variable=True,
+                    is_reference=False,
+                ),
+            ],
+            light_curves=[series_a, series_b],
+        )
+        self.window._current_processing_report = report
+        self._show_differential_light_curve_axis()
+        self.window._populate_source_table(report)
+        self.assertGreaterEqual(self.window._source_table.rowCount(), 2)
+        beta_row = next(
+            row
+            for row in range(self.window._source_table.rowCount())
+            if self.window._source_row_key(row) == "vsx:vsx-2"
+        )
+        self.window._source_table.clearSelection()
+        self.window._source_table.selectRow(beta_row)
+        self.window._source_table.setCurrentCell(beta_row, 0)
+        # Pretend the series combo is still parked on the first source after rebuild.
+        self.window._populate_series_selector([series_a, series_b])
+        self.window._series_selector.setCurrentIndex(0)
+        with (
+            patch.object(self.window, "_filtered_light_curves", return_value=[series_a, series_b]),
+            patch.object(self.window, "_plot_selected_series") as plot_selected,
+            patch.object(self.window, "_render_image_panel"),
+            patch.object(self.window, "_render_selected_details"),
+            patch.object(self.window, "_populate_image_frame_selector"),
+            patch.object(self.window, "_sync_differential_training_controls"),
+            patch.object(self.window, "_update_measure_button_state"),
+        ):
+            self.window._refresh_processing_views()
+        current_series = self.window._series_selector.currentData()
+        self.assertIsNotNone(current_series)
+        assert current_series is not None
+        self.assertEqual(current_series.source_id, "vsx-2")
+        plot_selected.assert_called()
+
+
+
+    def test_aperture_editor_uses_double_shift_and_ctrl_click_roles(self) -> None:
+
+        image_path = Path("frame_01.fits")
+
+        # Keep Comparison Stars defaults on; Shift-click must still add comps and unlock Keep.
+        self.window._settings.manual_photometry_configs = {
+
+            "Demo": ManualPhotometryConfig(object_name="Demo", keep_comparison_stars=True, sources=[])
+
+        }
+
+        self.window._current_processing_report = ProcessingReport(
+
+            object_name="Demo",
+
+            files_processed=1,
+
+            solved_files=1,
+
+            field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, variable_stars=[]),
+
+            measurements=[],
+
+            light_curves=[],
+
+        )
+
+        with patch.object(self.window, "_render_image_panel"):
+
+            self.window._edit_apertures_checkbox.setChecked(True)
+
+        with (
+
+            patch.object(self.window, "_current_image_path", return_value=image_path),
+
+            patch.object(self.window, "_pixel_to_sky", side_effect=lambda _path, x_value, y_value: (x_value / 10.0, y_value / 10.0)),
+
+            patch.object(self.window, "_render_image_panel"),
+
+            patch.object(self.window, "_save_settings_snapshot"),
+
+        ):
+
+            # Plain left-click on empty sky should not place a target anymore.
+            self.window._handle_image_press(10.0, 20.0, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+
+            self.window._handle_image_release(Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+
+            config = self.window._manual_config_for_object("Demo")
+
+            assert config is not None
+
+            self.assertIsNone(config.target_source)
+
+            self.window._handle_image_double_clicked(40.0, 50.0, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+
+            self.assertEqual(len(config.target_sources), 1)
+
+            first_target = config.target_sources[0]
+
+            self.assertEqual(first_target.reference_x, 40.0)
+
+            self.assertEqual(first_target.reference_y, 50.0)
+
+            self.assertTrue(first_target.source_id.startswith("manual-target"))
+
+            # A second double-click adds another target instead of overwriting the first.
+            self.window._handle_image_double_clicked(45.0, 55.0, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+
+            self.assertEqual(len(config.target_sources), 2)
+
+            self.assertEqual(config.target_sources[0].reference_x, 40.0)
+
+            self.assertEqual(config.target_sources[1].reference_x, 45.0)
+
+            self.window._handle_image_press(70.0, 80.0, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier)
+
+            self.assertEqual(len(config.comparison_sources), 1)
+
+            self.assertEqual(config.comparison_sources[0].reference_x, 70.0)
+
+            self.assertFalse(config.keep_comparison_stars)
+
+            self.assertFalse(self.window._keep_comparison_stars_checkbox.isChecked())
+
+            self.window._handle_image_press(90.0, 100.0, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ControlModifier)
+
+            self.assertIsNotNone(config.check_source)
+
+            assert config.check_source is not None
+
+            self.assertEqual(config.check_source.reference_x, 90.0)
+
+            self.assertEqual(config.check_source.reference_y, 100.0)
+
+            check_source = config.check_source
+
+            assert check_source is not None
+
+            with patch.object(
+                self.window,
+                "_manual_overlay_positions_for_image",
+                return_value={check_source.source_id: (90.0, 100.0)},
+            ):
+                hit_source, hit_part = self.window._manual_hit_test(image_path, 90.0, 100.0)
+
+            self.assertIs(hit_source, check_source)
+
+            self.assertEqual(hit_part, "center")
+
+            self.window._delete_manual_source(check_source)
+
+            self.assertIsNone(config.check_source)
+
+
+
+    def test_manual_overlay_positions_prefer_reference_pixels_on_reference_frame(self) -> None:
+
+        image_path = Path("frame_01.fits")
+
+        source = ManualSourceConfig(
+
+            source_id="manual-comp-1",
+
+            name="Comp 1",
+
+            role=ManualSourceRole.COMPARISON,
+
+            ra_deg=999.0,
+
+            dec_deg=999.0,
+
+            reference_frame_name=image_path.name,
+
+            reference_x=123.5,
+
+            reference_y=456.5,
+
+            aperture_radius=6.0,
+
+            annulus_inner_radius=9.0,
+
+            annulus_outer_radius=13.0,
+
+        )
+
+        config = ManualPhotometryConfig(object_name="Demo", keep_comparison_stars=False, sources=[source])
+
+        with patch.object(self.window, "_celestial_wcs_for_manual_image", side_effect=AssertionError("should use reference pixels")):
+
+            positions = self.window._manual_overlay_positions_for_image(image_path, config)
+
+        self.assertEqual(positions["manual-comp-1"], (123.5, 456.5))
+
+
+
+    def test_aperture_editor_empty_sources_do_not_show_automatic_overlays(self) -> None:
+
+        image_path = Path("frame_01.fits")
+
+        measurement = PhotometryMeasurement(
+
+            source_id="vsx-1",
+
+            source_name="DY Her",
+
+            catalog="vsx",
+
+            object_name="Demo",
+
+            file_path=image_path,
+
+            observation_time=None,
+
+            filter_name="V",
+
+            ra_deg=10.0,
+
+            dec_deg=20.0,
+
+            x=50.0,
+
+            y=60.0,
+
+            flux=1000.0,
+
+            flux_error=10.0,
+
+            instrumental_magnitude=12.0,
+
+            differential_magnitude=0.1,
+
+            is_variable=True,
+
+            is_reference=False,
+
+            aperture_radius=5.0,
+
+            annulus_inner_radius=8.0,
+
+            annulus_outer_radius=12.0,
+
+        )
+
+        comparison = PhotometryMeasurement(
+
+            source_id="cmp-1",
+
+            source_name="Comp",
+
+            catalog="gaia-dr3",
+
+            object_name="Demo",
+
+            file_path=image_path,
+
+            observation_time=None,
+
+            filter_name="V",
+
+            ra_deg=11.0,
+
+            dec_deg=21.0,
+
+            x=75.0,
+
+            y=80.0,
+
+            flux=900.0,
+
+            flux_error=10.0,
+
+            instrumental_magnitude=12.1,
+
+            differential_magnitude=None,
+
+            is_variable=False,
+
+            is_reference=True,
+
+            aperture_radius=5.0,
+
+            annulus_inner_radius=8.0,
+
+            annulus_outer_radius=12.0,
+
+        )
+
+        self.window._current_processing_report = ProcessingReport(
+
+            object_name="Demo",
+
+            files_processed=1,
+
+            solved_files=1,
+
+            field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, variable_stars=[]),
+
+            measurements=[],
+
+            light_curves=[],
+
+        )
+
+        with (
+
+            patch.object(self.window, "_render_image_panel"),
+
+            patch.object(self.window, "_selected_object_name", return_value="Demo"),
+
+        ):
+
+            self.window._edit_apertures_checkbox.setChecked(True)
+
+            overlays = self.window._build_image_overlays(image_path, measurement, [comparison])
+
+        self.assertEqual(overlays, [])
+
+
+
+    def test_seed_manual_sources_restores_catalog_target_when_only_manual_target_exists(self) -> None:
+
+        self.window._settings.manual_photometry_configs = {
+            "Demo": ManualPhotometryConfig(
+                object_name="Demo",
+                keep_comparison_stars=False,
+                sources=[
+                    ManualSourceConfig(
+                        source_id="manual-target-1",
+                        name="Target",
+                        role=ManualSourceRole.TARGET,
+                        ra_deg=1.0,
+                        dec_deg=2.0,
+                        reference_frame_name="frame.fits",
+                        reference_x=10.0,
+                        reference_y=20.0,
+                        aperture_radius=5.0,
+                        annulus_inner_radius=8.0,
+                        annulus_outer_radius=12.0,
+                        catalog="manual",
+                    )
+                ],
+            )
+        }
+        measurement = PhotometryMeasurement(
+            source_id="vsx-123",
+            source_name="DY Her",
+            catalog="vsx",
+            object_name="Demo",
+            file_path=Path("frame.fits"),
+            observation_time=None,
+            filter_name="V",
+            ra_deg=146.0,
+            dec_deg=56.0,
+            x=30.0,
+            y=40.0,
+            flux=1000.0,
+            flux_error=10.0,
+            instrumental_magnitude=12.0,
+            differential_magnitude=0.1,
+            is_variable=True,
+            is_reference=False,
+            aperture_radius=5.0,
+            annulus_inner_radius=8.0,
+            annulus_outer_radius=12.0,
+        )
+        with (
+            patch.object(
+                self.window,
+                "_image_context",
+                return_value=(Path("frame.fits"), measurement, [], "ok"),
+            ),
+            patch.object(self.window, "_save_settings_snapshot"),
+            patch.object(self.window, "_selected_object_name", return_value="Demo"),
+        ):
+            self.assertTrue(self.window._seed_manual_sources_from_current_context(include_target=False))
+
+        config = self.window._manual_config_for_object("Demo")
+        assert config is not None
+        catalog_targets = [
+            item for item in config.sources if item.role == ManualSourceRole.TARGET and not item.source_id.startswith("manual-")
+        ]
+        manual_targets = [item for item in config.sources if item.source_id.startswith("manual-")]
+        self.assertEqual(len(catalog_targets), 1)
+        self.assertEqual(catalog_targets[0].name, "DY Her")
+        self.assertEqual(catalog_targets[0].source_id, "vsx-123")
+        self.assertEqual(catalog_targets[0].catalog, "vsx")
+        self.assertEqual(len(manual_targets), 1)
+        self.assertEqual(manual_targets[0].name, "Target")
 
 
 
@@ -3692,6 +4268,31 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
+    def test_loaded_results_dialog_can_clear_cache_for_selected_object(self) -> None:
+
+        cleared: list[str] = []
+
+        dialog = ScanResultsSummaryDialog(
+            [ObjectScanSummary(object_name="Alpha", files=[]), ObjectScanSummary(object_name="Beta", files=[])],
+            selected_object_name="Beta",
+            parent=self.window,
+            clear_object_cache_callback=lambda name: cleared.append(name) or 3,
+        )
+
+        self.assertTrue(dialog._clear_object_cache_button.isEnabled())
+        with (
+            patch("photometry_app.ui.dialogs.QMessageBox.warning", return_value=QMessageBox.StandardButton.Yes),
+            patch("photometry_app.ui.dialogs.QMessageBox.information") as info_mock,
+        ):
+            dialog._clear_selected_object_cache()
+
+        self.assertEqual(cleared, ["Beta"])
+        info_mock.assert_called_once()
+        self.assertIn("Cleared 3 cached items for Beta.", info_mock.call_args.args[2])
+        dialog.close()
+
+
+
     def test_scan_completed_shows_loaded_results_summary_dialog_and_selects_chosen_object(self) -> None:
 
         report = ScanReport(
@@ -3838,9 +4439,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             [self.window._measurement_filter_combo.itemText(index) for index in range(self.window._measurement_filter_combo.count())],
 
-            ["All", "B", "R"],
+            ["All", "Overview", "B", "R"],
 
         )
+
+        self.assertEqual(self.window._measurement_filter_combo.currentData(), "overview")
 
 
 
@@ -5241,11 +5844,17 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_light_curve_y_axis_defaults_to_calibrated_magnitude(self) -> None:
+    def test_light_curve_y_axis_defaults_to_standard_magnitude(self) -> None:
 
-        self.assertEqual(self.window._current_light_curve_y_axis_mode(), "calibrated_magnitude")
+        self.assertEqual(self.window._current_light_curve_y_axis_mode(), "standard_magnitude")
 
-        self.assertEqual(self.window._light_curve_y_axis_selector.currentText(), "Calibrated Magnitude")
+        self.assertEqual(self.window._light_curve_y_axis_selector.currentText(), "Standard Magnitude")
+
+        calibrated_index = self.window._light_curve_y_axis_selector.findData("calibrated_magnitude")
+
+        self.assertGreaterEqual(calibrated_index, 0)
+
+        self.assertEqual(self.window._light_curve_y_axis_selector.itemText(calibrated_index), "Calibrated Magnitude")
 
 
 
@@ -6287,7 +6896,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_edit_apertures_seeds_current_comparisons_when_keep_enabled(self) -> None:
+    def test_edit_apertures_starts_empty_without_seeding_automatic_sources(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:
 
@@ -6409,6 +7018,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
                 patch.object(self.window, "_render_image_panel"),
 
+                patch.object(self.window, "_seed_manual_sources_from_current_context") as seed_manual,
+
             ):
 
                 self.window._edit_apertures_checkbox.setChecked(True)
@@ -6421,11 +7032,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             assert manual_config is not None
 
-            self.assertTrue(manual_config.keep_comparison_stars)
+            seed_manual.assert_not_called()
 
-            self.assertEqual(manual_config.target_source.source_id, "vsx-1")
+            self.assertFalse(manual_config.keep_comparison_stars)
 
-            self.assertEqual([item.source_id for item in manual_config.comparison_sources], ["cmp-1"])
+            self.assertEqual(manual_config.sources, [])
+
+            self.assertFalse(self.window._keep_comparison_stars_checkbox.isChecked())
 
 
 
@@ -6527,9 +7140,93 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-            with patch.object(self.window, "_render_image_panel"):
+            with (
 
+                patch.object(self.window, "_render_image_panel"),
+
+                patch.object(self.window, "_seed_manual_sources_from_current_context", return_value=True),
+
+            ):
+
+                # Enabling Aperture Editor clears to a blank independent set; restore retained
+                # sources afterward so unchecking Keep Comparison Stars can be tested alone.
                 self.window._edit_apertures_checkbox.setChecked(True)
+
+                self.window._settings.manual_photometry_configs = {
+
+                    "Demo": ManualPhotometryConfig(
+
+                        object_name="Demo",
+
+                        mode=ObjectPhotometryMode.AUTO,
+
+                        keep_comparison_stars=True,
+
+                        sources=[
+
+                            ManualSourceConfig(
+
+                                source_id="target-1",
+
+                                name="Target",
+
+                                role=ManualSourceRole.TARGET,
+
+                                ra_deg=10.0,
+
+                                dec_deg=20.0,
+
+                                reference_frame_name="frame_01.fits",
+
+                                reference_x=50.0,
+
+                                reference_y=60.0,
+
+                                aperture_radius=6.0,
+
+                                annulus_inner_radius=9.0,
+
+                                annulus_outer_radius=13.0,
+
+                            ),
+
+                            ManualSourceConfig(
+
+                                source_id="cmp-1",
+
+                                name="Comparison",
+
+                                role=ManualSourceRole.COMPARISON,
+
+                                ra_deg=11.0,
+
+                                dec_deg=21.0,
+
+                                reference_frame_name="frame_01.fits",
+
+                                reference_x=75.0,
+
+                                reference_y=80.0,
+
+                                aperture_radius=6.0,
+
+                                annulus_inner_radius=9.0,
+
+                                annulus_outer_radius=13.0,
+
+                            ),
+
+                        ],
+
+                    )
+
+                }
+
+                self.window._keep_comparison_stars_checkbox.blockSignals(True)
+
+                self.window._keep_comparison_stars_checkbox.setChecked(True)
+
+                self.window._keep_comparison_stars_checkbox.blockSignals(False)
 
                 self.window._keep_comparison_stars_checkbox.setChecked(False)
 
@@ -6549,7 +7246,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_edit_apertures_preserves_existing_manual_comparisons_when_keep_disabled(self) -> None:
+    def test_edit_apertures_clears_existing_sources_for_independent_entry(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:
 
@@ -6661,7 +7358,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertFalse(manual_config.keep_comparison_stars)
 
-            self.assertEqual([item.source_id for item in manual_config.comparison_sources], ["manual-comp-1"])
+            self.assertEqual(manual_config.sources, [])
 
 
 
@@ -7858,7 +8555,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertEqual(merged_report.manual_config.mode, ObjectPhotometryMode.AUTO)
 
-            self.assertEqual(self.window._light_curve_y_axis_selector.currentData(), "differential_magnitude")
+            self.assertEqual(self.window._light_curve_y_axis_selector.currentData(), "standard_magnitude")
+
+            self.assertEqual(self.window._measurement_filter_combo.currentData(), "overview")
 
             self.assertIn(("Target", "manual"), self.window._selected_source_targets())
 
@@ -7873,6 +8572,31 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             }
 
             self.assertIn("manual-target-1", selector_source_ids)
+
+            # Switching away and back must re-select the manual target for Overview plotting.
+            vsx_row = next(
+                row
+                for row in range(self.window._source_table.rowCount())
+                if (self.window._source_row_key(row) or "").startswith("vsx:")
+            )
+            manual_row = next(
+                row
+                for row in range(self.window._source_table.rowCount())
+                if (self.window._source_row_key(row) or "") == "manual:manual-target-1"
+            )
+            with patch.object(self.window, "_plot_overview_series") as plot_overview:
+                self.window._source_table.selectRow(vsx_row)
+                self.window._handle_source_selection_changed()
+                self.window._source_table.selectRow(manual_row)
+                self.window._handle_source_selection_changed()
+            self.assertEqual(self.window._selected_source_id(), "manual-target-1")
+            plot_overview.assert_called()
+            self.assertEqual(
+                self.window._series_selector.currentData().source_id
+                if isinstance(self.window._series_selector.currentData(), LightCurveSeries)
+                else None,
+                "manual-target-1",
+            )
 
             catalog_overlays = self.window._build_image_overlays(Path("frame_01.fits"), auto_measurement, [auto_comp_measurement])
 
@@ -8018,6 +8742,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertEqual(begin_processing.call_args.args, (root, "Demo"))
 
+            self.assertFalse(begin_processing.call_args.kwargs.get("preserve_views", False))
+
             self.assertNotIn("Demo", self.window._settings.selected_catalog_source_ids)
 
             manual_config = self.window._manual_config_for_object("Demo")
@@ -8029,6 +8755,83 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertEqual(manual_config.mode, ObjectPhotometryMode.AUTO)
 
             self.assertEqual(begin_processing.call_args.kwargs["manual_config_override"].mode, ObjectPhotometryMode.MANUAL)
+
+
+
+    def test_recompute_manual_photometry_preserves_views_when_results_already_loaded(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            self.window._root_path_input.setText(str(root))
+
+            self.window._settings = AppSettings.from_root(root)
+
+            self.window._settings.manual_photometry_configs = {
+                "Demo": ManualPhotometryConfig(
+                    object_name="Demo",
+                    mode=ObjectPhotometryMode.AUTO,
+                    keep_comparison_stars=False,
+                    sources=[
+                        ManualSourceConfig(
+                            source_id="manual-target-1",
+                            name="Target",
+                            role=ManualSourceRole.TARGET,
+                            ra_deg=10.0,
+                            dec_deg=20.0,
+                            reference_frame_name="frame_01.fits",
+                            reference_x=50.0,
+                            reference_y=60.0,
+                            aperture_radius=6.0,
+                            annulus_inner_radius=9.0,
+                            annulus_outer_radius=13.0,
+                        ),
+                        ManualSourceConfig(
+                            source_id="manual-comp-1",
+                            name="Comp",
+                            role=ManualSourceRole.COMPARISON,
+                            ra_deg=11.0,
+                            dec_deg=21.0,
+                            reference_frame_name="frame_01.fits",
+                            reference_x=70.0,
+                            reference_y=80.0,
+                            aperture_radius=6.0,
+                            annulus_inner_radius=9.0,
+                            annulus_outer_radius=13.0,
+                        ),
+                    ],
+                )
+            }
+            self.window._current_report = ScanReport(
+                root_path=root,
+                object_summaries=[ObjectScanSummary(object_name="Demo", files=[])],
+            )
+            self.window._object_table.setRowCount(1)
+            self.window._object_table.setItem(0, 0, QTableWidgetItem("Demo"))
+            self.window._object_table.setCurrentCell(0, 0)
+            self.window._current_processing_report = ProcessingReport(
+                object_name="Demo",
+                files_processed=1,
+                solved_files=1,
+                field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, variable_stars=[]),
+                measurements=[],
+                light_curves=[],
+            )
+            self.window._source_table.setRowCount(1)
+            self.window._source_table.setItem(0, 0, QTableWidgetItem("Target"))
+
+            with (
+                patch.object(self.window, "_save_settings_snapshot"),
+                patch.object(self.window, "_sync_manual_controls"),
+                patch.object(self.window, "_begin_processing") as begin_processing,
+            ):
+                self.window._recompute_manual_photometry()
+
+            begin_processing.assert_called_once()
+            self.assertTrue(begin_processing.call_args.kwargs.get("preserve_views"))
+            self.assertEqual(self.window._source_table.rowCount(), 1)
+            self.assertEqual(self.window._source_table.item(0, 0).text(), "Target")
 
 
 
@@ -8134,7 +8937,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIn("Open Folder", action_titles)
 
-        self.assertIn("Clear Cache", action_titles)
+        self.assertIn("Clear All Cache…", action_titles)
 
         self.assertNotIn("Open File", action_titles)
 
@@ -8206,7 +9009,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
                 return_value=QMessageBox.StandardButton.Yes,
 
-            ),
+            ) as question,
 
             patch.object(self.window, "_start_update_download") as start_download,
 
@@ -8219,6 +9022,56 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             )
 
         start_download.assert_called_once_with(available_update)
+
+        prompt_text = question.call_args.args[2]
+
+        self.assertIn("Delta update download", prompt_text)
+
+        self.assertIn("rebuilds the full update package locally", prompt_text)
+
+        self.assertIn("might take a few minutes", prompt_text)
+
+
+
+    def test_update_download_progress_shows_rebuild_phase_warning(self) -> None:
+
+        from PySide6.QtWidgets import QProgressDialog
+
+
+
+        progress_dialog = QProgressDialog("Downloading...", "Cancel", 0, 100, self.window)
+
+        self.window._update_download_progress_dialog = progress_dialog
+
+        self.window._update_download_is_delta = True
+
+
+
+        self.window._handle_update_download_progress(40, 4_000_000, "download")
+
+        self.assertEqual(progress_dialog.maximum(), 100)
+
+        self.assertIn("Phase 1/2", progress_dialog.labelText())
+
+        self.assertIn("might take a few minutes", progress_dialog.labelText())
+
+
+
+        self.window._handle_update_download_progress(70, 4_000_000, "rebuild")
+
+        self.assertEqual(progress_dialog.maximum(), 0)
+
+        self.assertIn("Phase 2/2", progress_dialog.labelText())
+
+        self.assertIn("Rebuilding full update package", progress_dialog.labelText())
+
+        self.assertIn("might take a few minutes", progress_dialog.labelText())
+
+
+
+        progress_dialog.close()
+
+        self.window._update_download_progress_dialog = None
 
     def test_startup_update_check_runs_in_automatic_mode(self) -> None:
 
@@ -8300,7 +9153,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIn("Open File", action_titles)
 
-        self.assertIn("Clear Cache", action_titles)
+        self.assertIn("Clear All Cache…", action_titles)
 
         self.assertNotIn("Open Folder", action_titles)
 
@@ -8326,25 +9179,81 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIn("Open Folder", action_titles)
 
-        self.assertIn("Clear Cache", action_titles)
+        self.assertIn("Clear All Cache…", action_titles)
 
 
 
-    def test_clear_selected_dataset_cache_warns_when_nothing_is_selected(self) -> None:
+    def test_clear_all_application_cache_warns_and_cancels_without_deleting(self) -> None:
 
-        with patch("photometry_app.ui.main_window.QMessageBox.warning") as warning_mock:
+        with tempfile.TemporaryDirectory() as temp_dir:
 
-            self.window._clear_selected_dataset_cache()
+            cache_dir = Path(temp_dir) / "cache"
 
-        warning_mock.assert_called_once_with(
+            cache_dir.mkdir(parents=True, exist_ok=True)
 
-            self.window,
+            marker = cache_dir / "keep_me.json"
 
-            "No dataset selected",
+            marker.write_text("{}", encoding="utf-8")
 
-            "Open or select a dataset first before clearing its cache.",
+            self.window._settings = AppSettings.from_root(Path(temp_dir))
 
-        )
+            self.window._settings.cache_dir = cache_dir
+
+            self.window._root_path_input.setText(temp_dir)
+
+            with patch("photometry_app.ui.main_window.QMessageBox.warning", return_value=QMessageBox.StandardButton.No) as warning_mock:
+
+                self.window._clear_all_application_cache()
+
+            warning_mock.assert_called_once()
+
+            self.assertEqual(warning_mock.call_args.args[1], "Clear All Cache")
+
+            self.assertTrue(marker.exists())
+
+
+
+    def test_clear_all_application_cache_deletes_cache_and_keeps_settings_path(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            cache_dir = root / ".photometry-cache"
+
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            (cache_dir / "processed").mkdir()
+
+            (cache_dir / "processed" / "Demo.json").write_text("{}", encoding="utf-8")
+
+            settings = AppSettings.from_root(root)
+
+            settings.cache_dir = cache_dir
+
+            self.window._settings = settings
+
+            self.window._root_path_input.setText(str(root))
+
+            self.window._current_processing_report = object()
+
+            with (
+
+                patch("photometry_app.ui.main_window.QMessageBox.warning", return_value=QMessageBox.StandardButton.Yes),
+
+                patch("photometry_app.ui.main_window.QMessageBox.information") as info_mock,
+
+            ):
+
+                self.window._clear_all_application_cache()
+
+            self.assertFalse((cache_dir / "processed" / "Demo.json").exists())
+
+            self.assertTrue(cache_dir.exists())
+
+            self.assertIsNone(self.window._current_processing_report)
+
+            info_mock.assert_called_once()
 
 
 
@@ -8376,7 +9285,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             (cache_dir / f"{source_cache_key}_solved.fits").write_text("fits", encoding="utf-8")
 
-            self.window._clear_selected_dataset_cache()
+            cleared = self.window._clear_selected_dataset_cache_for_mode(AppMode.ASTEROID_COMET_DETECTION)
+
+            self.assertIsNotNone(cleared)
 
             self.assertFalse((cache_dir / f"{source_cache_key}.json").exists())
 
@@ -29705,6 +30616,57 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertLess(toolbar_layout.indexOf(self.window._asteroid_blink_controls_group), toolbar_layout.indexOf(self.window._asteroid_info_panel_toggle_button))
 
+        self.assertEqual(
+            toolbar_layout.indexOf(self.window._asteroid_blink_controls_group) + 1,
+            toolbar_layout.indexOf(self.window._asteroid_info_panel_toggle_button),
+        )
+
+        self.assertIsInstance(self.window._asteroid_blink_button, QToolButton)
+
+        self.assertIsInstance(self.window._asteroid_export_button, QToolButton)
+
+        self.assertEqual(self.window._asteroid_blink_button.minimumWidth(), self.window._asteroid_export_button.minimumWidth())
+
+        self.assertEqual(self.window._asteroid_blink_button.maximumWidth(), self.window._asteroid_export_button.maximumWidth())
+
+        self.assertGreaterEqual(self.window._asteroid_blink_button.minimumWidth(), 88)
+
+        self.assertEqual(
+            self.window._asteroid_blink_button.toolButtonStyle(),
+            Qt.ToolButtonStyle.ToolButtonTextOnly,
+        )
+
+        self.assertEqual(
+            self.window._asteroid_export_button.toolButtonStyle(),
+            Qt.ToolButtonStyle.ToolButtonTextOnly,
+        )
+
+
+
+    def test_asteroid_display_menu_includes_ra_dec_and_grid_controls(self) -> None:
+
+        self.assertEqual(self.window._asteroid_show_ra_dec_checkbox.text(), "Show RA/Dec")
+
+        self.assertTrue(self.window._asteroid_show_ra_dec_checkbox.isChecked())
+
+        self.assertEqual(self.window._asteroid_show_grid_checkbox.text(), "Show Grid")
+
+        self.assertFalse(self.window._asteroid_show_grid_checkbox.isChecked())
+
+        self.assertEqual(self.window._asteroid_grid_ra_density_spin.minimum(), 2)
+
+        self.assertEqual(self.window._asteroid_grid_ra_density_spin.maximum(), 12)
+
+        self.assertEqual(self.window._asteroid_grid_dec_density_spin.minimum(), 2)
+
+        self.assertEqual(self.window._asteroid_grid_dec_density_spin.maximum(), 12)
+
+        self.assertFalse(self.window._asteroid_grid_ra_density_spin.isEnabled())
+
+        self.assertTrue(self.window._asteroid_display_controls_group.isAncestorOf(self.window._asteroid_show_ra_dec_checkbox))
+
+        self.assertTrue(self.window._asteroid_display_controls_group.isAncestorOf(self.window._asteroid_show_grid_checkbox))
+
 
 
     def test_asteroid_status_label_is_hidden_from_layout(self) -> None:
@@ -29961,41 +30923,21 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIsNotNone(display_controls_layout_obj)
 
-        display_controls_layout = cast(QHBoxLayout, display_controls_layout_obj)
+        self.assertIsInstance(display_controls_layout_obj, QVBoxLayout)
 
-        self.assertGreaterEqual(display_controls_layout.indexOf(self.window._asteroid_image_stretch_combo), 0)
+        self.assertTrue(self.window._asteroid_display_controls_group.isAncestorOf(self.window._asteroid_image_stretch_combo))
 
-        self.assertGreater(
+        self.assertTrue(self.window._asteroid_display_controls_group.isAncestorOf(self.window._asteroid_adjust_levels_button))
 
-            display_controls_layout.indexOf(self.window._asteroid_adjust_levels_button),
+        self.assertTrue(self.window._asteroid_display_controls_group.isAncestorOf(self.window._asteroid_image_invert_checkbox))
 
-            display_controls_layout.indexOf(self.window._asteroid_image_stretch_combo),
+        self.assertTrue(self.window._asteroid_display_controls_group.isAncestorOf(self.window._asteroid_image_reset_view_button))
 
-        )
+        self.assertTrue(self.window._asteroid_display_controls_group.isAncestorOf(self.window._asteroid_show_ra_dec_checkbox))
 
-        self.assertGreater(
+        self.assertTrue(self.window._asteroid_display_controls_group.isAncestorOf(self.window._asteroid_show_grid_checkbox))
 
-            display_controls_layout.indexOf(self.window._asteroid_image_invert_checkbox),
-
-            display_controls_layout.indexOf(self.window._asteroid_adjust_levels_button),
-
-        )
-
-        self.assertGreater(
-
-            display_controls_layout.indexOf(self.window._asteroid_image_reset_view_button),
-
-            display_controls_layout.indexOf(self.window._asteroid_image_invert_checkbox),
-
-        )
-
-        self.assertGreater(
-
-            display_controls_layout.indexOf(self.window._asteroid_image_reset_display_button),
-
-            display_controls_layout.indexOf(self.window._asteroid_image_reset_view_button),
-
-        )
+        self.assertTrue(self.window._asteroid_display_controls_group.isAncestorOf(self.window._asteroid_image_reset_display_button))
 
         results_layout_obj = self.window._asteroid_results_group.layout()
 
@@ -30005,13 +30947,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIs(results_layout.itemAt(0).widget(), self.window._asteroid_results_splitter)
 
-        image_layout_obj = self.window._asteroid_image_group.layout()
+        image_content_layout_obj = self.window._asteroid_image_content.layout()
 
-        self.assertIsNotNone(image_layout_obj)
+        self.assertIsNotNone(image_content_layout_obj)
 
-        image_layout = cast(QVBoxLayout, image_layout_obj)
+        image_content_layout = cast(QVBoxLayout, image_content_layout_obj)
 
-        self.assertIs(image_layout.itemAt(0).layout(), self.window._asteroid_image_controls_layout)
+        self.assertIs(image_content_layout.itemAt(0).layout(), self.window._asteroid_image_controls_layout)
 
     def test_asteroid_busy_state_uses_shared_processing_progress_bar(self) -> None:
 

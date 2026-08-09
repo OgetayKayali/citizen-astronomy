@@ -14,11 +14,11 @@ import numpy as np
 
 import pyqtgraph as pg
 
-from PySide6.QtCore import QEvent, QPointF, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, Signal
 
-from PySide6.QtGui import QColor, QFont, QImage, QMouseEvent, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QImage, QMouseEvent, QPainter, QPen, QPixmap
 
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QColorDialog, QLabel, QMenu, QVBoxLayout, QWidget
 
 
 
@@ -32,9 +32,17 @@ from photometry_app.core.plotting import (
 
     LightCurveRenderPoint,
 
+    LightCurveSeriesLayer,
+
+    _LIGHT_CURVE_SYMBOL_CHOICES,
+
     _is_magnitude_axis,
 
     build_light_curve_plot_payload,
+
+    build_overview_light_curve_plot_payload,
+
+    light_curve_series_style_key,
 
     light_curve_y_limits,
 
@@ -181,6 +189,14 @@ class LightCurvePlotWidget(QWidget):
         self._series: LightCurveSeries | None = None
 
         self._scatter_item: pg.ScatterPlotItem | None = None
+
+        self._scatter_items: list[pg.ScatterPlotItem] = []
+
+        self._legend_item: pg.LegendItem | None = None
+
+        self._series_style_overrides: dict[str, dict[str, str]] = {}
+
+        self._selected_style_key: str | None = None
 
         self._selected_point_item = pg.ScatterPlotItem(size=12, pen=pg.mkPen("#ff9f1c", width=1.5), brush=pg.mkBrush(255, 255, 255, 0))
 
@@ -486,6 +502,20 @@ class LightCurvePlotWidget(QWidget):
 
             if isinstance(event, QMouseEvent):
 
+                if (
+
+                    event.type() == QEvent.Type.MouseButtonPress
+
+                    and event.button() == Qt.MouseButton.RightButton
+
+                    and not self._ctrl_drag_active
+
+                ):
+
+                    if self._show_series_style_menu_at(event.globalPosition().toPoint(), event.position()):
+
+                        return True
+
                 if event.type() == QEvent.Type.MouseButtonPress and self._should_begin_segment_drag(event):
 
                     start_x = self._view_x_from_mouse_event(event)
@@ -525,6 +555,10 @@ class LightCurvePlotWidget(QWidget):
                 self._sync_plot_corner_buttons(force_hide=True)
 
         return super().eventFilter(watched, event)
+
+    def series_style_overrides(self) -> dict[str, dict[str, str]]:
+
+        return {key: dict(value) for key, value in self._series_style_overrides.items()}
 
 
 
@@ -577,6 +611,58 @@ class LightCurvePlotWidget(QWidget):
                 phase_period_hours=phase_period_hours,
 
                 phase_anchor_mode=phase_anchor_mode,
+
+            )
+
+        )
+
+
+
+    def plot_overview(
+
+        self,
+
+        layers: list[object],
+
+        empty_message: str,
+
+        *,
+
+        y_axis_mode: str = "differential_magnitude",
+
+        x_axis_mode: str = "datetime",
+
+        status_note: str | None = None,
+
+        title: str | None = None,
+
+    ) -> None:
+
+        self._series = None
+
+        self._phase_opacity_floor = 0.24
+
+        self._recent_period_error_bars_only = False
+
+        self._phase_period_days = None
+
+        self._render_payload(
+
+            build_overview_light_curve_plot_payload(
+
+                layers,
+
+                empty_message,
+
+                title=title,
+
+                y_axis_mode=y_axis_mode,
+
+                x_axis_mode=x_axis_mode,
+
+                status_note=status_note,
+
+                style_overrides=self._series_style_overrides,
 
             )
 
@@ -913,6 +999,10 @@ class LightCurvePlotWidget(QWidget):
 
         self._scatter_item = None
 
+        self._scatter_items = []
+
+        self._legend_item = None
+
         self._error_bar_items = []
 
         self._remove_segment_region_item()
@@ -969,51 +1059,69 @@ class LightCurvePlotWidget(QWidget):
 
 
 
-        if payload.fit_x_values is not None and payload.fit_y_values is not None:
+        if payload.layers:
 
-            self._plot_item.addItem(
+            self._render_overview_layers(payload)
 
-                pg.PlotDataItem(payload.fit_x_values, payload.fit_y_values, pen=pg.mkPen(self._theme_colors["fit_curve_color"], width=1.8))
+        else:
+
+            if payload.fit_x_values is not None and payload.fit_y_values is not None:
+
+                self._plot_item.addItem(
+
+                    pg.PlotDataItem(payload.fit_x_values, payload.fit_y_values, pen=pg.mkPen(self._theme_colors["fit_curve_color"], width=1.8))
+
+                )
+
+
+
+            finite_error_points = [point for point in payload.points if point.y_error is not None]
+
+            if payload.x_axis_mode == "phase" and self._recent_period_error_bars_only:
+
+                finite_error_points = self._recent_period_error_points(finite_error_points)
+
+            if finite_error_points:
+
+                self._add_error_bar_items(payload, finite_error_points)
+
+
+
+            style_key = self._current_series_style_key()
+
+            override = self._series_style_overrides.get(style_key or "") or {}
+
+            symbol = str(override.get("symbol") or "o")
+
+            color = str(override.get("color") or self._theme_colors["point_brush"])
+
+            pen_color = str(override.get("color") or self._theme_colors["point_pen"])
+
+            spots = self._scatter_spots(payload)
+
+            self._scatter_item = pg.ScatterPlotItem(
+
+                spots=spots,
+
+                size=8,
+
+                symbol=symbol,
+
+                pen=pg.mkPen(pen_color, width=1.0),
+
+                brush=pg.mkBrush(color),
+
+                hoverPen=pg.mkPen(self._theme_colors["hover_pen"], width=1.6),
+
+                hoverBrush=pg.mkBrush(self._theme_colors["hover_brush"]),
 
             )
 
+            self._scatter_item.sigClicked.connect(self._handle_scatter_clicked)
+
+            self._plot_item.addItem(self._scatter_item)
 
 
-        finite_error_points = [point for point in payload.points if point.y_error is not None]
-
-        if payload.x_axis_mode == "phase" and self._recent_period_error_bars_only:
-
-            finite_error_points = self._recent_period_error_points(finite_error_points)
-
-        if finite_error_points:
-
-            self._add_error_bar_items(payload, finite_error_points)
-
-
-
-        spots = self._scatter_spots(payload)
-
-        self._scatter_item = pg.ScatterPlotItem(
-
-            spots=spots,
-
-            size=8,
-
-            symbol="o",
-
-            pen=pg.mkPen(self._theme_colors["point_pen"], width=1.0),
-
-            brush=pg.mkBrush(self._theme_colors["point_brush"]),
-
-            hoverPen=pg.mkPen(self._theme_colors["hover_pen"], width=1.6),
-
-            hoverBrush=pg.mkBrush(self._theme_colors["hover_brush"]),
-
-        )
-
-        self._scatter_item.sigClicked.connect(self._handle_scatter_clicked)
-
-        self._plot_item.addItem(self._scatter_item)
 
         self._plot_item.enableAutoRange()
 
@@ -1029,11 +1137,107 @@ class LightCurvePlotWidget(QWidget):
 
             self._plot_item.getViewBox().setYRange(*y_limits, padding=0.0)
 
-        self._status_label.setText("Drag to pan, wheel to zoom, click a point to sync the matching measurement, and Ctrl+drag to isolate a segment.")
+        status_text = (
+
+            "Drag to pan, wheel to zoom, click a point to sync the matching measurement, "
+
+            "right-click a series for Icon/Color, and Ctrl+drag to isolate a segment."
+
+        )
+
+        if payload.status_note:
+
+            status_text = f"{payload.status_note} {status_text}"
+
+        self._status_label.setText(status_text)
 
         self._update_fit_period_badge()
 
         self._sync_plot_corner_buttons()
+
+
+
+    def _render_overview_layers(self, payload: LightCurvePlotPayload) -> None:
+
+        if payload.show_legend:
+
+            self._legend_item = self._plot_item.addLegend(offset=(10, 10))
+
+        point_offset = 0
+
+        for layer in payload.layers:
+
+            color, symbol = self._resolved_layer_style(layer)
+
+            finite_error_points = [point for point in layer.points if point.y_error is not None]
+
+            if finite_error_points:
+
+                error_item = pg.ErrorBarItem(
+
+                    x=np.asarray([point.x for point in finite_error_points], dtype=float),
+
+                    y=np.asarray([point.y for point in finite_error_points], dtype=float),
+
+                    top=np.asarray([point.y_error or 0.0 for point in finite_error_points], dtype=float),
+
+                    bottom=np.asarray([point.y_error or 0.0 for point in finite_error_points], dtype=float),
+
+                    beam=self._error_bar_beam_width(payload),
+
+                    pen=pg.mkPen(color, width=1.0),
+
+                )
+
+                self._plot_item.addItem(error_item)
+
+                self._error_bar_items.append(error_item)
+
+            spots = [
+
+                {
+
+                    "pos": (point.x, point.y),
+
+                    "data": point_offset + index,
+
+                    "pen": pg.mkPen(color, width=1.2 if layer.role == "target" else 0.8),
+
+                    "brush": pg.mkBrush(QColor(color)),
+
+                }
+
+                for index, point in enumerate(layer.points)
+
+            ]
+
+            scatter = pg.ScatterPlotItem(
+
+                spots=spots,
+
+                size=layer.size,
+
+                symbol=symbol,
+
+                hoverPen=pg.mkPen(self._theme_colors["hover_pen"], width=1.6),
+
+                hoverBrush=pg.mkBrush(self._theme_colors["hover_brush"]),
+
+                name=layer.label,
+
+            )
+
+            scatter.sigClicked.connect(self._handle_scatter_clicked)
+
+            self._plot_item.addItem(scatter)
+
+            self._scatter_items.append(scatter)
+
+            if self._scatter_item is None:
+
+                self._scatter_item = scatter
+
+            point_offset += len(layer.points)
 
 
 
@@ -1263,6 +1467,14 @@ class LightCurvePlotWidget(QWidget):
 
     def _scatter_spots(self, payload: LightCurvePlotPayload) -> list[dict[str, object]]:
 
+        style_key = self._current_series_style_key()
+
+        override = self._series_style_overrides.get(style_key or "") or {}
+
+        default_pen = str(override.get("color") or self._theme_colors["point_pen"])
+
+        default_brush = str(override.get("color") or self._theme_colors["point_brush"])
+
         if payload.x_axis_mode != "phase":
 
             return [{"pos": (point.x, point.y), "data": index} for index, point in enumerate(payload.points)]
@@ -1281,9 +1493,9 @@ class LightCurvePlotWidget(QWidget):
 
             alpha = alpha_by_index.get(index, maximum_alpha)
 
-            pen_color = QColor(self._theme_colors["point_pen"])
+            pen_color = QColor(default_pen)
 
-            brush_color = QColor(self._theme_colors["point_brush"])
+            brush_color = QColor(default_brush)
 
             pen_color.setAlpha(alpha)
 
@@ -1501,7 +1713,7 @@ class LightCurvePlotWidget(QWidget):
 
     def _handle_scatter_clicked(self, _item: object, points: list[object], _event: object) -> None:
 
-        if not points or self._payload is None or self._series is None:
+        if not points or self._payload is None:
 
             return
 
@@ -1513,11 +1725,231 @@ class LightCurvePlotWidget(QWidget):
 
         payload_point = self._payload.points[point_index]
 
+        self._selected_style_key = self._style_key_for_point_index(point_index)
+
         self._selected_point_item.setData([payload_point.x], [payload_point.y])
 
-        self._status_label.setText(self._format_point_summary(payload_point))
+        self._status_label.setText(self._format_point_summary(payload_point, point_index=point_index))
 
-        self.pointSelected.emit(self._measurement_key(payload_point))
+        self.pointSelected.emit(self._measurement_key(payload_point, point_index=point_index))
+
+    def _resolved_layer_style(self, layer: LightCurveSeriesLayer) -> tuple[str, str]:
+
+        override = self._series_style_overrides.get(layer.style_key) or {}
+
+        color = str(override.get("color") or layer.color)
+
+        symbol = str(override.get("symbol") or layer.symbol)
+
+        return color, symbol
+
+    def _current_series_style_key(self) -> str | None:
+
+        if self._series is None:
+
+            return self._selected_style_key
+
+        return light_curve_series_style_key("target", self._series.source_id, self._series.filter_name)
+
+    def _style_key_for_point_index(self, point_index: int) -> str | None:
+
+        if self._payload is None:
+
+            return None
+
+        if self._payload.layers:
+
+            offset = 0
+
+            for layer in self._payload.layers:
+
+                next_offset = offset + len(layer.points)
+
+                if offset <= point_index < next_offset:
+
+                    return layer.style_key or light_curve_series_style_key(layer.role, layer.source_id, layer.filter_name)
+
+                offset = next_offset
+
+            return None
+
+        return self._current_series_style_key()
+
+    def _layer_for_point_index(self, point_index: int) -> LightCurveSeriesLayer | None:
+
+        if self._payload is None or not self._payload.layers:
+
+            return None
+
+        offset = 0
+
+        for layer in self._payload.layers:
+
+            next_offset = offset + len(layer.points)
+
+            if offset <= point_index < next_offset:
+
+                return layer
+
+            offset = next_offset
+
+        return None
+
+    def _point_index_for_render_point(self, target: LightCurveRenderPoint) -> int | None:
+
+        if self._payload is None:
+
+            return None
+
+        for index, point in enumerate(self._payload.points):
+
+            if point is target or (
+
+                point.x == target.x
+
+                and point.y == target.y
+
+                and point.source_point.file_path == target.source_point.file_path
+
+            ):
+
+                return index
+
+        return None
+
+    def _show_series_style_menu_at(self, global_pos: QPoint, local_pos: QPointF) -> bool:
+
+        if self._payload is None or not self._payload.points:
+
+            return False
+
+        scene_position = self._plot_widget.mapToScene(local_pos.toPoint())
+
+        nearest_point = self._nearest_point(scene_position)
+
+        if nearest_point is None:
+
+            return False
+
+        point_index = self._point_index_for_render_point(nearest_point)
+
+        if point_index is None:
+
+            return False
+
+        style_key = self._style_key_for_point_index(point_index)
+
+        if not style_key:
+
+            return False
+
+        layer = self._layer_for_point_index(point_index)
+
+        if layer is not None:
+
+            current_color, current_symbol = self._resolved_layer_style(layer)
+
+            series_label = layer.label
+
+        else:
+
+            override = self._series_style_overrides.get(style_key) or {}
+
+            current_symbol = str(override.get("symbol") or "o")
+
+            current_color = str(override.get("color") or self._theme_colors["point_brush"])
+
+            series_label = (
+
+                f"{self._series.source_name} [{self._series.filter_name}]"
+
+                if self._series is not None
+
+                else "Series"
+
+            )
+
+        self._selected_style_key = style_key
+
+        self._selected_point_item.setData([nearest_point.x], [nearest_point.y])
+
+        self._status_label.setText(self._format_point_summary(nearest_point, point_index=point_index))
+
+        menu = QMenu(self)
+
+        menu.setTitle(series_label)
+
+        header = menu.addAction(series_label)
+
+        header.setEnabled(False)
+
+        menu.addSeparator()
+
+        icon_menu = menu.addMenu("Icon")
+
+        symbol_group = QActionGroup(menu)
+
+        symbol_group.setExclusive(True)
+
+        for label, symbol in _LIGHT_CURVE_SYMBOL_CHOICES:
+
+            action = QAction(label, menu)
+
+            action.setCheckable(True)
+
+            action.setChecked(symbol == current_symbol)
+
+            action.setData(symbol)
+
+            symbol_group.addAction(action)
+
+            icon_menu.addAction(action)
+
+            action.triggered.connect(lambda checked=False, key=style_key, value=symbol: self._set_series_symbol(key, value))
+
+        color_action = menu.addAction("Color…")
+
+        color_action.triggered.connect(lambda: self._choose_series_color(style_key, current_color))
+
+        menu.exec(global_pos)
+
+        return True
+
+    def _set_series_symbol(self, style_key: str, symbol: str) -> None:
+
+        override = dict(self._series_style_overrides.get(style_key) or {})
+
+        override["symbol"] = str(symbol)
+
+        self._series_style_overrides[style_key] = override
+
+        if self._payload is not None:
+
+            self._render_payload(self._payload)
+
+    def _choose_series_color(self, style_key: str, current_color: str) -> None:
+
+        initial = QColor(current_color)
+
+        if not initial.isValid():
+
+            initial = QColor(self._theme_colors["point_brush"])
+
+        selected = QColorDialog.getColor(initial, self, "Series Color")
+
+        if not selected.isValid():
+
+            return
+
+        override = dict(self._series_style_overrides.get(style_key) or {})
+
+        override["color"] = selected.name(QColor.NameFormat.HexRgb)
+
+        self._series_style_overrides[style_key] = override
+
+        if self._payload is not None:
+
+            self._render_payload(self._payload)
 
 
 
@@ -1541,13 +1973,19 @@ class LightCurvePlotWidget(QWidget):
 
         if nearest_point is None:
 
-            self._status_label.setText("Drag to pan, wheel to zoom, and click a point to sync the matching measurement.")
+            self._status_label.setText(
+
+                "Drag to pan, wheel to zoom, click a point to sync the matching measurement, and right-click a series for Icon/Color."
+
+            )
 
             self._hide_tooltip()
 
             return
 
-        self._status_label.setText(self._format_point_summary(nearest_point))
+        point_index = self._point_index_for_render_point(nearest_point)
+
+        self._status_label.setText(self._format_point_summary(nearest_point, point_index=point_index))
 
         self._show_tooltip(self._format_point_tooltip(nearest_point), scene_position)
 
@@ -1581,7 +2019,7 @@ class LightCurvePlotWidget(QWidget):
 
 
 
-    def _format_point_summary(self, point: LightCurveRenderPoint) -> str:
+    def _format_point_summary(self, point: LightCurveRenderPoint, *, point_index: int | None = None) -> str:
 
         observation = point.source_point.observation_time.isoformat(sep=" ") if point.source_point.observation_time else point.source_point.file_path.name
 
@@ -1591,11 +2029,21 @@ class LightCurvePlotWidget(QWidget):
 
         filter_name = self._series.filter_name if self._series is not None else "-"
 
+        if point_index is not None:
+
+            layer = self._layer_for_point_index(point_index)
+
+            if layer is not None:
+
+                source_name = layer.label
+
+                filter_name = layer.filter_name or filter_name
+
         x_value = self._format_x_value(point)
 
         x_label = "JD" if self._payload is not None and self._payload.x_axis_mode == "jd" else "X"
 
-        return f"{source_name} [{filter_name}] | {observation} | {x_label}={x_value} | {point.source_point.file_path.name} | {point.y:.4f}{error_text}"
+        return f"{source_name} | {observation} | {x_label}={x_value} | {point.source_point.file_path.name} | {point.y:.4f}{error_text}"
 
 
 
@@ -1643,11 +2091,21 @@ class LightCurvePlotWidget(QWidget):
 
 
 
-    def _measurement_key(self, point: LightCurveRenderPoint) -> tuple[str, str, str, str]:
+    def _measurement_key(self, point: LightCurveRenderPoint, *, point_index: int | None = None) -> tuple[str, str, str, str]:
 
         source_id = self._series.source_id if self._series is not None else ""
 
         filter_name = self._series.filter_name if self._series is not None else ""
+
+        if point_index is not None:
+
+            layer = self._layer_for_point_index(point_index)
+
+            if layer is not None:
+
+                source_id = layer.source_id or source_id
+
+                filter_name = layer.filter_name or filter_name
 
         observation = point.source_point.observation_time.isoformat(sep=" ") if point.source_point.observation_time else "-"
 

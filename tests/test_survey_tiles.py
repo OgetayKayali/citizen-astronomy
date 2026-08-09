@@ -9,6 +9,7 @@ import numpy as np
 from photometry_app.core.survey_tiles import (
     SurveyTileResolution,
     SurveyTileState,
+    apply_survey_tile_edge_feather,
     build_viewport_survey_tile_work,
     compute_survey_tile_stf_parameters,
     initial_survey_tile_work_order,
@@ -16,9 +17,16 @@ from photometry_app.core.survey_tiles import (
     make_survey_tile_key,
     make_survey_tile_placeholder_rgba,
     render_survey_tile_display_rgba,
+    survey_tile_draw_rect,
+    survey_tile_feather_crop_and_draw,
+    survey_tile_fetch_fov_arcmin,
+    survey_tile_fetch_size,
     survey_tile_indices_for_image_point,
+    survey_tile_max_overlap_scale,
+    survey_tile_overlap_scale,
     survey_tile_pixel_rect,
     survey_tile_request_priority,
+    survey_tile_sky_center,
 )
 
 
@@ -93,6 +101,161 @@ class SurveyTilesTest(unittest.TestCase):
         rgba = render_survey_tile_display_rgba(constant, stf)
         self.assertTrue(np.isfinite(rgba).all())
         self.assertEqual(rgba.shape, (32, 32, 4))
+
+    def test_stretch_mode_changes_tile_display(self) -> None:
+        rng = np.random.default_rng(1)
+        data = rng.normal(80.0, 12.0, (48, 48)).astype(np.float32)
+        data[10:18, 10:18] += 400.0
+        stf = compute_survey_tile_stf_parameters(data, stretch_mode="stf")
+        stf_bright = compute_survey_tile_stf_parameters(data, stretch_mode="stf_bright")
+        rgba_stf = render_survey_tile_display_rgba(data, stf, stretch_mode="stf")
+        rgba_bright = render_survey_tile_display_rgba(data, stf_bright, stretch_mode="stf_bright")
+        rgba_log = render_survey_tile_display_rgba(data, stf, stretch_mode="log")
+        rgba_inverted = render_survey_tile_display_rgba(data, stf, stretch_mode="stf", inverted=True)
+
+        self.assertGreater(float(np.mean(rgba_bright[..., :3])), float(np.mean(rgba_stf[..., :3])))
+        self.assertFalse(np.array_equal(rgba_stf, rgba_log))
+        np.testing.assert_array_equal(rgba_inverted[..., :3], 255 - rgba_stf[..., :3])
+        np.testing.assert_array_equal(rgba_inverted[..., 3], rgba_stf[..., 3])
+
+    def test_edge_feather_fades_border_pixels(self) -> None:
+        alpha = np.full((48, 48), 255, dtype=np.uint8)
+        feathered = apply_survey_tile_edge_feather(
+            alpha, width=48, height=48, feather_amount=0.7, overlap_scale=survey_tile_overlap_scale(0.7),
+        )
+        self.assertLess(int(feathered[0, 24]), 255)
+        self.assertLess(int(feathered[24, 0]), 255)
+        self.assertEqual(int(feathered[24, 24]), 255)
+        unchanged = apply_survey_tile_edge_feather(alpha, width=48, height=48, feather_amount=0.0)
+        np.testing.assert_array_equal(unchanged, alpha)
+
+    def test_overlap_fetch_keeps_plate_scale_and_centers_draw_rect(self) -> None:
+        max_scale = survey_tile_max_overlap_scale()
+        self.assertGreater(max_scale, 1.0)
+        self.assertAlmostEqual(survey_tile_overlap_scale(0.0), 1.0, places=6)
+        self.assertAlmostEqual(survey_tile_overlap_scale(1.0), max_scale, places=6)
+
+        base_w, base_h = 100, 80
+        fetch_w, fetch_h = survey_tile_fetch_size(
+            width_px=base_w, height_px=base_h, resolution=SurveyTileResolution.REFINE,
+        )
+        self.assertEqual((fetch_w - base_w) % 2, 0)
+        self.assertEqual((fetch_h - base_h) % 2, 0)
+        self.assertGreater(fetch_w, base_w)
+        self.assertGreater(fetch_h, base_h)
+        fetch_fov = survey_tile_fetch_fov_arcmin(
+            45.0, width_px=base_w, height_px=base_h, resolution=SurveyTileResolution.REFINE,
+        )
+        self.assertAlmostEqual(fetch_fov / 45.0, max(fetch_w / base_w, fetch_h / base_h), places=6)
+
+        x0, y0, width, height = survey_tile_pixel_rect(1, -1, width_px=base_w, height_px=base_h)
+        dx0, dy0, dwidth, dheight = survey_tile_draw_rect(
+            1, -1, width_px=base_w, height_px=base_h, overlap_scale=max_scale,
+        )
+        self.assertAlmostEqual(x0 + width / 2.0, dx0 + dwidth / 2.0, places=6)
+        self.assertAlmostEqual(y0 + height / 2.0, dy0 + dheight / 2.0, places=6)
+        self.assertAlmostEqual(dwidth / width, max_scale, places=6)
+        self.assertAlmostEqual(dheight / height, max_scale, places=6)
+
+    def test_feather_crop_expands_symmetrically_from_center(self) -> None:
+        base_w, base_h = 100, 80
+        fetch_w, fetch_h = survey_tile_fetch_size(
+            width_px=base_w, height_px=base_h, resolution=SurveyTileResolution.REFINE,
+        )
+        hard = survey_tile_feather_crop_and_draw(
+            image_width=fetch_w, image_height=fetch_h,
+            base_width=float(base_w), base_height=float(base_h), feather_amount=0.0,
+        )
+        soft = survey_tile_feather_crop_and_draw(
+            image_width=fetch_w, image_height=fetch_h,
+            base_width=float(base_w), base_height=float(base_h), feather_amount=1.0,
+        )
+        mid = survey_tile_feather_crop_and_draw(
+            image_width=fetch_w, image_height=fetch_h,
+            base_width=float(base_w), base_height=float(base_h), feather_amount=0.55,
+        )
+        # Hard crop is the centered base footprint.
+        self.assertEqual(hard[2], base_w)
+        self.assertEqual(hard[3], base_h)
+        self.assertEqual(hard[0], (fetch_w - base_w) // 2)
+        self.assertEqual(hard[1], (fetch_h - base_h) // 2)
+        self.assertAlmostEqual(hard[4], float(base_w), places=6)
+        # Full feather uses the whole overlapped image, still centered.
+        self.assertEqual(soft[:4], (0, 0, fetch_w, fetch_h))
+        # Intermediate feather keeps equal left/right (and top/bottom) margins.
+        self.assertEqual(mid[0], fetch_w - mid[0] - mid[2])
+        self.assertEqual(mid[1], fetch_h - mid[1] - mid[3])
+        # Draw size grows with crop while staying proportional to the base cell.
+        self.assertGreater(mid[4], hard[4])
+        self.assertLess(mid[4], soft[4])
+
+    def test_adjacent_overlap_tiles_share_sky_along_seam(self) -> None:
+        """Overlapped neighbor plates must agree on sky at the shared base-cell boundary."""
+        from photometry_app.core.survey_images import build_sky_explorer_field_wcs
+
+        origin_ra, origin_dec = 270.63, -23.03
+        fov_arcmin = 30.0
+        width_px = height_px = 120
+        key0 = make_survey_tile_key(
+            survey_key="dss2_blue",
+            tile_i=0,
+            tile_j=0,
+            origin_ra_deg=origin_ra,
+            origin_dec_deg=origin_dec,
+            fov_arcmin=fov_arcmin,
+            width_px=width_px,
+            height_px=height_px,
+        )
+        key1 = make_survey_tile_key(
+            survey_key="dss2_blue",
+            tile_i=1,
+            tile_j=0,
+            origin_ra_deg=origin_ra,
+            origin_dec_deg=origin_dec,
+            fov_arcmin=fov_arcmin,
+            width_px=width_px,
+            height_px=height_px,
+        )
+        ra0, dec0 = survey_tile_sky_center(key0)
+        ra1, dec1 = survey_tile_sky_center(key1)
+        fetch_w, fetch_h = survey_tile_fetch_size(
+            width_px=width_px, height_px=height_px, resolution=SurveyTileResolution.REFINE,
+        )
+        fetch_fov = survey_tile_fetch_fov_arcmin(
+            fov_arcmin, width_px=width_px, height_px=height_px, resolution=SurveyTileResolution.REFINE,
+        )
+        wcs0 = build_sky_explorer_field_wcs(
+            ra_deg=ra0, dec_deg=dec0, fov_arcmin=fetch_fov, width_px=fetch_w, height_px=fetch_h,
+        )
+        wcs1 = build_sky_explorer_field_wcs(
+            ra_deg=ra1, dec_deg=dec1, fov_arcmin=fetch_fov, width_px=fetch_w, height_px=fetch_h,
+        )
+        x0, y0, crop_w, crop_h, _dw, _dh = survey_tile_feather_crop_and_draw(
+            image_width=fetch_w, image_height=fetch_h,
+            base_width=float(width_px), base_height=float(height_px), feather_amount=0.0,
+        )
+        mid_y = y0 + 0.5 * float(crop_h - 1)
+        # Origin left base edge ↔ east-tile right base edge.
+        sky0 = wcs0.pixel_to_world_values(float(x0) - 0.5, mid_y)
+        sky1 = wcs1.pixel_to_world_values(float(fetch_w - x0) - 0.5, mid_y)
+        self.assertAlmostEqual(float(sky0[0]) % 360.0, float(sky1[0]) % 360.0, places=5)
+        self.assertAlmostEqual(float(sky0[1]), float(sky1[1]), places=5)
+
+    def test_curves_apply_after_survey_tile_stretch(self) -> None:
+        from photometry_app.core.survey_tiles import stretch_survey_tile_float
+
+        rng = np.random.default_rng(2)
+        data = rng.normal(90.0, 15.0, (40, 40)).astype(np.float32)
+        data[8:14, 8:14] += 350.0
+        stf = compute_survey_tile_stf_parameters(data, stretch_mode="stf")
+        stretched = stretch_survey_tile_float(data, stf, stretch_mode="stf")
+        curve_points = ((0.0, 0.0), (0.5, 0.2), (1.0, 1.0))
+        curved = render_survey_tile_display_rgba(
+            data, stf, stretch_mode="stf", curve_points=curve_points,
+        )
+        baseline = render_survey_tile_display_rgba(data, stf, stretch_mode="stf")
+        self.assertLess(float(np.mean(curved[..., :3])), float(np.mean(baseline[..., :3])))
+        self.assertGreater(float(np.mean(stretched)), 0.0)
 
     def test_no_data_placeholder_is_not_plain_black(self) -> None:
         rgba = make_survey_tile_placeholder_rgba(width=40, height=30, state=SurveyTileState.NO_DATA)

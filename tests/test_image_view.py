@@ -2472,7 +2472,80 @@ class ImageViewInfoPanelTest(unittest.TestCase):
         self.assertGreaterEqual(reclamped.x(), 0.0)
         self.assertLessEqual(reclamped.x(), 100.0)
 
+    def test_default_zoom_out_stops_at_fit_to_image(self) -> None:
+        view = AnnotatedImageView()
+        view.resize(400, 300)
+        view._qimage = QImage(100, 80, QImage.Format.Format_ARGB32)
+        view._zoom_scale = 1.0
+        view._view_center = QPointF(50.0, 40.0)
 
+        view.zoom_out()
+        self.assertAlmostEqual(view._zoom_scale, 1.0, places=9)
+
+        view.zoom_at(50.0, 40.0, -4.0)
+        self.assertAlmostEqual(view._zoom_scale, 1.0, places=9)
+
+    def test_unbounded_pan_allows_zoom_out_below_fit(self) -> None:
+        view = AnnotatedImageView()
+        view.resize(400, 300)
+        view._qimage = QImage(100, 80, QImage.Format.Format_ARGB32)
+        view._zoom_scale = 1.0
+        view._view_center = QPointF(50.0, 40.0)
+
+        view.set_unbounded_pan(True)
+        view.zoom_out()
+        self.assertLess(view._zoom_scale, 1.0)
+        self.assertGreaterEqual(view._zoom_scale, 1.0 / 3.0 - 1e-9)
+
+        # Drive toward the unbounded floor.
+        for _ in range(8):
+            view.zoom_out()
+        self.assertAlmostEqual(view._zoom_scale, 1.0 / 3.0, places=6)
+
+        view.set_unbounded_pan(False)
+        self.assertAlmostEqual(view._zoom_scale, 1.0, places=9)
+
+    def test_survey_tile_feather_crops_overlap_without_stretching(self) -> None:
+        from photometry_app.core.survey_tiles import survey_tile_fetch_size, SurveyTileResolution
+
+        base_w = base_h = 100
+        fetch_w, fetch_h = survey_tile_fetch_size(
+            width_px=base_w, height_px=base_h, resolution=SurveyTileResolution.REFINE,
+        )
+        rgba = np.full((fetch_h, fetch_w, 4), 180, dtype=np.uint8)
+        rgba[..., 3] = 255
+        qimage = QImage(rgba.data, fetch_w, fetch_h, rgba.strides[0], QImage.Format.Format_RGBA8888).copy()
+        view = AnnotatedImageView()
+        view.set_survey_tile_feather(0.0)
+        hard = view._survey_tile_qimage_for_feather(
+            qimage,
+            feather_amount=0.0,
+            base_width=float(base_w),
+            base_height=float(base_h),
+        )
+        self.assertEqual(hard.width(), base_w)
+        self.assertEqual(hard.height(), base_h)
+
+        view.set_survey_tile_feather(0.6)
+        feathered = view._survey_tile_qimage_for_feather(
+            qimage,
+            feather_amount=0.6,
+            base_width=float(base_w),
+            base_height=float(base_h),
+        )
+        self.assertGreater(feathered.width(), hard.width())
+        self.assertLessEqual(feathered.width(), fetch_w)
+        self.assertEqual(feathered.width() % 2, hard.width() % 2)
+        source = feathered.convertToFormat(QImage.Format.Format_RGBA8888)
+        width = source.width()
+        height = source.height()
+        buffer = source.constBits()
+        array = np.frombuffer(buffer, dtype=np.uint8, count=source.bytesPerLine() * height).reshape(
+            height, source.bytesPerLine()
+        )
+        pixels = array[:, : width * 4].reshape(height, width, 4)
+        self.assertLess(int(pixels[0, width // 2, 3]), 255)
+        self.assertEqual(int(pixels[height // 2, width // 2, 3]), 255)
 
     def test_unbounded_pan_allows_widget_to_image_outside_primary_plate(self) -> None:
         from pathlib import Path

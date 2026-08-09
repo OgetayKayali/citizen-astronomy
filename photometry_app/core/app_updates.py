@@ -17,6 +17,12 @@ _REPOSITORY_PATTERN = re.compile(
 )
 _SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 _MAXIMUM_DELTAS_BEFORE_FULL_FALLBACK = 10
+# Velopack reports 0-100 progress for download_updates. For delta chains it maps
+# the network transfer into roughly 0-70, then holds at 70 while Update.exe
+# reconstructs the full package from the local base, then jumps to 100.
+UPDATE_DOWNLOAD_PHASE_DOWNLOAD = "download"
+UPDATE_DOWNLOAD_PHASE_REBUILD = "rebuild"
+_UPDATE_DELTA_REBUILD_PROGRESS_PERCENT = 70
 
 
 class AppUpdateError(RuntimeError):
@@ -239,10 +245,45 @@ def _validate_asset_sha256(asset: _VelopackAsset, label: str) -> None:
         raise UpdateVerificationError(f"The {label} has an invalid SHA-256 digest.")
 
 
+def update_download_phase_for_progress(*, is_delta: bool, percent: int) -> str:
+    """Map Velopack percent progress onto a user-facing download/rebuild phase."""
+
+    bounded_percent = max(0, min(100, int(percent)))
+    if is_delta and bounded_percent >= _UPDATE_DELTA_REBUILD_PROGRESS_PERCENT:
+        return UPDATE_DOWNLOAD_PHASE_REBUILD
+    return UPDATE_DOWNLOAD_PHASE_DOWNLOAD
+
+
+def format_update_download_progress_label(
+    *,
+    is_delta: bool,
+    percent: int,
+    download_size_bytes: int = 0,
+) -> str:
+    """Build the progress-dialog label for the current Velopack update phase."""
+
+    phase = update_download_phase_for_progress(is_delta=is_delta, percent=percent)
+    bounded_percent = max(0, min(100, int(percent)))
+    size_mib = max(0, int(download_size_bytes)) / (1024 * 1024)
+    size_text = f" ({size_mib:.1f} MiB)" if size_mib > 0 else ""
+
+    if phase == UPDATE_DOWNLOAD_PHASE_REBUILD:
+        return (
+            "Phase 2/2: Rebuilding full update package from local files...\n"
+            "This might take a few minutes."
+        )
+    if is_delta:
+        return (
+            f"Phase 1/2: Downloading delta package... {bounded_percent}%{size_text}\n"
+            "After this, rebuilding the full package might take a few minutes."
+        )
+    return f"Downloading full update package... {bounded_percent}%{size_text}"
+
+
 def download_update_package(
     update: AvailableUpdate,
     *,
-    progress_callback: Callable[[int, int], None] | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
     cancellation_requested: Callable[[], bool] | None = None,
     manager_factory: UpdateManagerFactory | None = None,
 ) -> DownloadedUpdate:
@@ -252,14 +293,15 @@ def download_update_package(
         raise TypeError("update must be an AvailableUpdate.")
 
     total_bytes = max(0, int(update.download_size))
+    is_delta = bool(update.is_delta)
 
     def _progress(percent: int) -> None:
         if cancellation_requested is not None and cancellation_requested():
             raise UpdateDownloadCancelled("Update download canceled.")
         bounded_percent = max(0, min(100, int(percent)))
-        downloaded = int(round(total_bytes * bounded_percent / 100.0))
+        phase = update_download_phase_for_progress(is_delta=is_delta, percent=bounded_percent)
         if progress_callback is not None:
-            progress_callback(downloaded, total_bytes)
+            progress_callback(bounded_percent, total_bytes, phase)
 
     if cancellation_requested is not None and cancellation_requested():
         raise UpdateDownloadCancelled("Update download canceled.")
@@ -278,7 +320,8 @@ def download_update_package(
         _raise_update_error(exc, operation="download")
 
     if progress_callback is not None:
-        progress_callback(total_bytes, total_bytes)
+        final_phase = update_download_phase_for_progress(is_delta=is_delta, percent=100)
+        progress_callback(100, total_bytes, final_phase)
     return DownloadedUpdate(update=update)
 
 
@@ -327,6 +370,8 @@ __all__ = [
     "AppUpdateError",
     "AvailableUpdate",
     "DownloadedUpdate",
+    "UPDATE_DOWNLOAD_PHASE_DOWNLOAD",
+    "UPDATE_DOWNLOAD_PHASE_REBUILD",
     "UpdateCheckResult",
     "UpdateConfigurationError",
     "UpdateDownloadCanceled",
@@ -336,4 +381,6 @@ __all__ = [
     "apply_update_and_restart",
     "check_for_updates",
     "download_update_package",
+    "format_update_download_progress_label",
+    "update_download_phase_for_progress",
 ]

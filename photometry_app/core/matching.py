@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import math
 from statistics import median
 
@@ -85,6 +85,8 @@ def apply_differential_photometry(
             key = (str(measurement.file_path), measurement.filter_name)
             grouped_references[key].append(measurement)
 
+    from photometry_app.core.standard_magnitude import compute_standard_magnitude_context
+
     updated: list[PhotometryMeasurement] = []
     for measurement in measurements:
         differential_magnitude = measurement.differential_magnitude
@@ -94,6 +96,13 @@ def apply_differential_photometry(
         zero_point_magnitude = measurement.zero_point_magnitude
         zero_point_magnitude_error = measurement.zero_point_magnitude_error
         zero_point_source_count = measurement.zero_point_source_count
+        standard_magnitude = measurement.standard_magnitude
+        standard_magnitude_error = measurement.standard_magnitude_error
+        standard_zero_point_magnitude = measurement.standard_zero_point_magnitude
+        standard_zero_point_magnitude_error = measurement.standard_zero_point_magnitude_error
+        standard_zero_point_source_count = measurement.standard_zero_point_source_count
+        standard_catalog_band = measurement.standard_catalog_band
+        standard_catalog_source = measurement.standard_catalog_source
         flags = list(measurement.flags)
         comparison_source_ids = list(measurement.comparison_source_ids)
         comparison_source_names = list(measurement.comparison_source_names)
@@ -106,6 +115,13 @@ def apply_differential_photometry(
             zero_point_magnitude = None
             zero_point_magnitude_error = None
             zero_point_source_count = 0
+            standard_magnitude = None
+            standard_magnitude_error = None
+            standard_zero_point_magnitude = None
+            standard_zero_point_magnitude_error = None
+            standard_zero_point_source_count = 0
+            standard_catalog_band = None
+            standard_catalog_source = None
             key = (str(measurement.file_path), measurement.filter_name)
             reference_rows = grouped_references.get(key, [])
             if comparison_source_ids:
@@ -134,6 +150,15 @@ def apply_differential_photometry(
                         measurement,
                         nearby_references,
                     )
+                    (
+                        standard_magnitude,
+                        standard_magnitude_error,
+                        standard_zero_point_magnitude,
+                        standard_zero_point_magnitude_error,
+                        standard_zero_point_source_count,
+                        standard_catalog_band,
+                        standard_catalog_source,
+                    ) = compute_standard_magnitude_context(measurement, nearby_references)
                     quality_weight = _measurement_quality_weight(differential_magnitude_error, measurement.quality_score)
             else:
                 flags.append("No nearby reference stars with positive flux.")
@@ -148,6 +173,13 @@ def apply_differential_photometry(
                 zero_point_magnitude=zero_point_magnitude,
                 zero_point_magnitude_error=zero_point_magnitude_error,
                 zero_point_source_count=zero_point_source_count,
+                standard_magnitude=standard_magnitude,
+                standard_magnitude_error=standard_magnitude_error,
+                standard_zero_point_magnitude=standard_zero_point_magnitude,
+                standard_zero_point_magnitude_error=standard_zero_point_magnitude_error,
+                standard_zero_point_source_count=standard_zero_point_source_count,
+                standard_catalog_band=standard_catalog_band,
+                standard_catalog_source=standard_catalog_source,
                 flags=_deduplicate_strings(flags),
                 comparison_source_ids=comparison_source_ids,
                 comparison_source_names=comparison_source_names,
@@ -457,11 +489,183 @@ def build_light_curve_series_for_target(
     return _build_light_curve_series_from_rows(rows, filter_name)
 
 
-def _build_light_curve_series_from_rows(rows: list[PhotometryMeasurement], filter_name: str) -> LightCurveSeries:
+@dataclass(frozen=True, slots=True)
+class OverviewLightCurveLayer:
+    role: str  # target | comparison | check
+    legend_label: str
+    series: LightCurveSeries
+
+
+def build_overview_light_curve_layers(
+    measurements: list[PhotometryMeasurement],
+    target_source_id: str,
+    *,
+    max_comparison_stars: int = 8,
+) -> tuple[list[OverviewLightCurveLayer], str | None]:
+    """Build multi-series Overview layers for one science target."""
+    target_id = str(target_source_id).strip()
+    if not target_id:
+        return [], "Select a target source to show the Overview light curve."
+
+    target_rows = [
+        measurement
+        for measurement in measurements
+        if measurement.source_id == target_id and not measurement.is_reference and measurement_has_usable_value(measurement)
+    ]
+    if not target_rows:
+        return [], "Select a science target (not a bare comparison star) to show the Overview light curve."
+
+    target_name = target_rows[0].source_name or target_id
+    comparison_counts: dict[str, int] = defaultdict(int)
+    comparison_names: dict[str, str] = {}
+    for measurement in target_rows:
+        for index, source_id in enumerate(measurement.comparison_source_ids):
+            resolved_id = str(source_id).strip()
+            if not resolved_id:
+                continue
+            comparison_counts[resolved_id] += 1
+            if resolved_id not in comparison_names:
+                if index < len(measurement.comparison_source_names) and measurement.comparison_source_names[index]:
+                    comparison_names[resolved_id] = str(measurement.comparison_source_names[index])
+                else:
+                    comparison_names[resolved_id] = resolved_id
+
+    check_ids: dict[str, str] = {}
+    for measurement in measurements:
+        if not measurement.is_check:
+            continue
+        if measurement.source_id == target_id:
+            continue
+        check_ids.setdefault(measurement.source_id, measurement.source_name or measurement.source_id)
+
+    ranked_comps = sorted(comparison_counts.items(), key=lambda item: (-item[1], comparison_names.get(item[0], item[0]).lower()))
+    comp_candidates = [source_id for source_id, _count in ranked_comps if source_id not in check_ids]
+    truncated = max(0, len(comp_candidates) - max(0, int(max_comparison_stars)))
+    selected_comps = comp_candidates[: max(0, int(max_comparison_stars))]
+
+    frame_contexts = _overview_frame_contexts(target_rows)
+    layers: list[OverviewLightCurveLayer] = []
+    layers.extend(
+        _overview_layers_for_source(
+            target_rows,
+            role="target",
+            display_name=target_name,
+            frame_contexts=frame_contexts,
+        )
+    )
+
+    for source_id in selected_comps:
+        comp_rows = [
+            measurement
+            for measurement in measurements
+            if measurement.source_id == source_id and measurement_has_usable_value(measurement)
+        ]
+        layers.extend(
+            _overview_layers_for_source(
+                comp_rows,
+                role="comparison",
+                display_name=_short_overview_name(comparison_names.get(source_id, source_id)),
+                frame_contexts=frame_contexts,
+            )
+        )
+
+    for source_id, source_name in sorted(check_ids.items(), key=lambda item: item[1].lower()):
+        check_rows = [
+            measurement
+            for measurement in measurements
+            if measurement.source_id == source_id and measurement_has_usable_value(measurement)
+        ]
+        layers.extend(
+            _overview_layers_for_source(
+                check_rows,
+                role="check",
+                display_name=_short_overview_name(source_name),
+                frame_contexts=frame_contexts,
+            )
+        )
+
+    if not layers:
+        return [], "No Overview series available for the selected target."
+
+    status_note = None
+    if truncated > 0:
+        status_note = f"Overview shows {len(selected_comps)} of {len(comp_candidates)} comparison stars."
+    return layers, status_note
+
+
+@dataclass(frozen=True, slots=True)
+class _OverviewFrameContext:
+    comparison_reference_flux: float | None
+    zero_point_magnitude: float | None
+    zero_point_magnitude_error: float | None
+    standard_zero_point_magnitude: float | None
+    standard_zero_point_magnitude_error: float | None
+
+
+def _overview_frame_contexts(target_rows: list[PhotometryMeasurement]) -> dict[tuple[str, str | None], _OverviewFrameContext]:
+    contexts: dict[tuple[str, str | None], _OverviewFrameContext] = {}
+    for row in target_rows:
+        contexts[(str(row.file_path), row.filter_name)] = _OverviewFrameContext(
+            comparison_reference_flux=row.comparison_reference_flux,
+            zero_point_magnitude=row.zero_point_magnitude,
+            zero_point_magnitude_error=row.zero_point_magnitude_error,
+            standard_zero_point_magnitude=row.standard_zero_point_magnitude,
+            standard_zero_point_magnitude_error=row.standard_zero_point_magnitude_error,
+        )
+    return contexts
+
+
+def _overview_layers_for_source(
+    rows: list[PhotometryMeasurement],
+    *,
+    role: str,
+    display_name: str,
+    frame_contexts: dict[tuple[str, str | None], _OverviewFrameContext] | None = None,
+) -> list[OverviewLightCurveLayer]:
+    if not rows:
+        return []
+    grouped: dict[str, list[PhotometryMeasurement]] = defaultdict(list)
+    for measurement in rows:
+        grouped[measurement.filter_name or "unknown"].append(measurement)
+
+    layers: list[OverviewLightCurveLayer] = []
+    for filter_name in sorted(grouped.keys(), key=str.lower):
+        series = _build_light_curve_series_from_rows(
+            grouped[filter_name],
+            filter_name,
+            role=role,
+            frame_contexts=frame_contexts,
+        )
+        if role == "target":
+            legend_label = f"{display_name} [{filter_name}]"
+        elif role == "check":
+            legend_label = f"Check {display_name} [{filter_name}]"
+        else:
+            legend_label = f"Comp {display_name} [{filter_name}]"
+        layers.append(OverviewLightCurveLayer(role=role, legend_label=legend_label, series=series))
+    return layers
+
+
+def _short_overview_name(name: str, *, max_length: int = 18) -> str:
+    text = str(name or "").strip() or "source"
+    if len(text) <= max_length:
+        return text
+    return f"{text[: max_length - 1]}…"
+
+
+def _build_light_curve_series_from_rows(
+    rows: list[PhotometryMeasurement],
+    filter_name: str,
+    *,
+    role: str = "target",
+    frame_contexts: dict[tuple[str, str | None], _OverviewFrameContext] | None = None,
+) -> LightCurveSeries:
     ordered_rows = sorted(rows, key=lambda row: row.observation_time or row.file_path.name)
     first = ordered_rows[0]
     points = [
-        LightCurvePoint(
+        _overview_light_curve_point_from_row(row, role=role, frame_contexts=frame_contexts)
+        if role in {"comparison", "check"} and frame_contexts
+        else LightCurvePoint(
             observation_time=row.observation_time,
             file_path=row.file_path,
             differential_magnitude=row.differential_magnitude,
@@ -470,6 +674,8 @@ def _build_light_curve_series_from_rows(rows: list[PhotometryMeasurement], filte
             flux_error=row.flux_error,
             calibrated_magnitude=row.calibrated_magnitude,
             calibrated_magnitude_error=row.calibrated_magnitude_error,
+            standard_magnitude=row.standard_magnitude,
+            standard_magnitude_error=row.standard_magnitude_error,
             comparison_reference_flux=row.comparison_reference_flux,
             differential_magnitude_error=row.differential_magnitude_error,
             quality_score=row.quality_score,
@@ -488,6 +694,89 @@ def _build_light_curve_series_from_rows(rows: list[PhotometryMeasurement], filte
         points=points,
         candidate_score=_candidate_score_from_metrics(variability_metrics),
         variability_metrics=variability_metrics,
+    )
+
+
+def _overview_light_curve_point_from_row(
+    row: PhotometryMeasurement,
+    *,
+    role: str,
+    frame_contexts: dict[tuple[str, str | None], _OverviewFrameContext],
+) -> LightCurvePoint:
+    """Build Overview points for comps/check, filling differential/calibrated/standard from the target ensemble."""
+    del role  # reserved for future role-specific display rules
+    differential_magnitude = row.differential_magnitude
+    differential_magnitude_error = row.differential_magnitude_error
+    calibrated_magnitude = row.calibrated_magnitude
+    calibrated_magnitude_error = row.calibrated_magnitude_error
+    standard_magnitude = row.standard_magnitude
+    standard_magnitude_error = row.standard_magnitude_error
+    comparison_reference_flux = row.comparison_reference_flux
+    context = frame_contexts.get((str(row.file_path), row.filter_name))
+    if context is not None:
+        reference_flux = context.comparison_reference_flux
+        if (
+            differential_magnitude is None
+            and row.flux is not None
+            and row.flux > 0
+            and reference_flux is not None
+            and reference_flux > 0
+        ):
+            differential_magnitude = -2.5 * math.log10(row.flux / reference_flux)
+            differential_magnitude_error = _differential_magnitude_error(
+                row.flux,
+                row.flux_error,
+                reference_flux,
+                row.flux_error,
+            )
+            if differential_magnitude_error is None:
+                differential_magnitude_error = _instrumental_magnitude_error(row)
+            comparison_reference_flux = reference_flux
+        if (
+            calibrated_magnitude is None
+            and row.instrumental_magnitude is not None
+            and context.zero_point_magnitude is not None
+        ):
+            calibrated_magnitude = float(row.instrumental_magnitude + context.zero_point_magnitude)
+            if row.flux is not None and row.flux > 0 and row.flux_error is not None and row.flux_error >= 0:
+                target_mag_error = (2.5 / math.log(10.0)) * (row.flux_error / row.flux)
+                if context.zero_point_magnitude_error is not None:
+                    calibrated_magnitude_error = float(
+                        compute_differential_mag_error(target_mag_error, context.zero_point_magnitude_error)
+                    )
+                else:
+                    calibrated_magnitude_error = float(target_mag_error)
+        if (
+            standard_magnitude is None
+            and row.instrumental_magnitude is not None
+            and context.standard_zero_point_magnitude is not None
+        ):
+            standard_magnitude = float(row.instrumental_magnitude + context.standard_zero_point_magnitude)
+            if row.flux is not None and row.flux > 0 and row.flux_error is not None and row.flux_error >= 0:
+                target_mag_error = (2.5 / math.log(10.0)) * (row.flux_error / row.flux)
+                if context.standard_zero_point_magnitude_error is not None:
+                    standard_magnitude_error = float(
+                        compute_differential_mag_error(target_mag_error, context.standard_zero_point_magnitude_error)
+                    )
+                else:
+                    standard_magnitude_error = float(target_mag_error)
+    return LightCurvePoint(
+        observation_time=row.observation_time,
+        file_path=row.file_path,
+        differential_magnitude=differential_magnitude,
+        instrumental_magnitude=row.instrumental_magnitude,
+        flux=row.flux,
+        flux_error=row.flux_error,
+        calibrated_magnitude=calibrated_magnitude,
+        calibrated_magnitude_error=calibrated_magnitude_error,
+        standard_magnitude=standard_magnitude,
+        standard_magnitude_error=standard_magnitude_error,
+        comparison_reference_flux=comparison_reference_flux,
+        differential_magnitude_error=differential_magnitude_error,
+        quality_score=row.quality_score,
+        quality_weight=row.quality_weight,
+        excluded_from_analysis=row.excluded_from_analysis,
+        exclusion_reasons=list(row.exclusion_reasons),
     )
 
 

@@ -564,6 +564,8 @@ def measure_manual_sources(
 
     saturation_filter_enabled: bool = True,
 
+    catalog_by_source_id: dict[str, CatalogStar] | None = None,
+
 ) -> list[PhotometryMeasurement]:
 
     header = read_header(wcs_path)
@@ -602,7 +604,11 @@ def measure_manual_sources(
 
     measurements: list[PhotometryMeasurement] = []
 
+    catalog_lookup = catalog_by_source_id or {}
+
     for source in manual_config.sources:
+
+        catalog_star = catalog_lookup.get(source.source_id)
 
         predicted_x, predicted_y = _coerce_pixel_coordinates(*wcs.world_to_pixel_values(source.ra_deg, source.dec_deg))
 
@@ -647,6 +653,8 @@ def measure_manual_sources(
                     comparison_names if source.role != ManualSourceRole.COMPARISON else [],
 
                     centroid_shift_pixels=centroid_shift,
+
+                    catalog_star=catalog_star,
 
                 )
 
@@ -761,6 +769,8 @@ def measure_manual_sources(
                 saturation_threshold=saturation_threshold,
 
                 saturated_pixel_count=saturated_pixel_count,
+
+                catalog_star=catalog_star,
 
                 is_saturated=is_saturated,
 
@@ -1594,6 +1604,8 @@ def _build_measurement(
 
         catalog_magnitude=star.magnitude,
 
+        band_magnitudes=_copy_star_band_magnitudes(star),
+
         flags=flags,
 
         aperture_radius=aperture_radius,
@@ -1668,6 +1680,8 @@ def _build_manual_measurement(
 
     is_saturated: bool = False,
 
+    catalog_star: CatalogStar | None = None,
+
 ) -> PhotometryMeasurement:
 
     quality_weight = None
@@ -1676,13 +1690,29 @@ def _build_manual_measurement(
 
         quality_weight = 1.0 / (flux_error * flux_error)
 
+    if str(source.source_id or "").startswith("manual-"):
+
+        catalog_name = "manual"
+
+    else:
+
+        catalog_name = str((catalog_star.catalog if catalog_star is not None else None) or source.catalog or "manual")
+
+    catalog_magnitude = None
+
+    if catalog_star is not None and catalog_star.magnitude is not None:
+
+        catalog_magnitude = float(catalog_star.magnitude)
+
+    band_magnitudes = _copy_star_band_magnitudes(catalog_star) if catalog_star is not None else {}
+
     return PhotometryMeasurement(
 
         source_id=source.source_id,
 
         source_name=source.name,
 
-        catalog="manual",
+        catalog=catalog_name,
 
         object_name=scan_result.object_folder,
 
@@ -1712,7 +1742,9 @@ def _build_manual_measurement(
 
         is_reference=source.role == ManualSourceRole.COMPARISON,
 
-        catalog_magnitude=None,
+        catalog_magnitude=catalog_magnitude,
+
+        band_magnitudes=band_magnitudes,
 
         is_check=source.role == ManualSourceRole.CHECK,
 
@@ -1748,3 +1780,9 @@ def _build_manual_measurement(
 
     )
 
+
+def _copy_star_band_magnitudes(star: CatalogStar) -> dict[str, dict[str, object]]:
+    from photometry_app.core.standard_magnitude import copy_band_magnitudes, seed_gaia_g_band_magnitude
+
+    seed_gaia_g_band_magnitude(star)
+    return copy_band_magnitudes(star)

@@ -272,6 +272,7 @@ def sky_explorer_survey_field_tile_step_deg(
 ) -> tuple[float, float]:
     """Return (ra_step_deg eastward, dec_step_deg northward) for one survey field tile."""
     fov_deg = max(1.0e-6, float(fov_arcmin) / 60.0)
+    # Match spherical RA from TAN pixel_to_world at tile edges (≈ fov / cos(dec)).
     cos_dec = max(0.05, abs(math.cos(math.radians(float(origin_dec_deg)))))
     return fov_deg / cos_dec, fov_deg
 
@@ -283,8 +284,11 @@ def sky_explorer_survey_field_tile_spec(
     fov_arcmin: float,
     tile_i: int,
     tile_j: int,
+    width_px: int | None = None,
+    height_px: int | None = None,
 ) -> SurveyFieldTileSpec:
     """Map integer tile indices to a sky center. +i is east (+RA), +j is north (+Dec)."""
+    del width_px, height_px  # optional; step is FOV-based for square TAN plates
     ra_step, dec_step = sky_explorer_survey_field_tile_step_deg(
         fov_arcmin=fov_arcmin,
         origin_dec_deg=origin_dec_deg,
@@ -301,8 +305,11 @@ def sky_explorer_survey_field_tile_indices_for_sky(
     origin_ra_deg: float,
     origin_dec_deg: float,
     fov_arcmin: float,
+    width_px: int | None = None,
+    height_px: int | None = None,
 ) -> tuple[int, int]:
     """Nearest tile indices for a sky position relative to the mosaic origin."""
+    del width_px, height_px
     ra_step, dec_step = sky_explorer_survey_field_tile_step_deg(
         fov_arcmin=fov_arcmin,
         origin_dec_deg=origin_dec_deg,
@@ -393,6 +400,8 @@ def compose_sky_explorer_survey_field_mosaic(
         fov_arcmin=fov_arcmin,
         tile_i=center_i,
         tile_j=center_j,
+        width_px=width,
+        height_px=height,
     )
     normalized_tiles = {
         key: _coerce_survey_field_tile_entry(value)

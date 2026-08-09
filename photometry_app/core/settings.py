@@ -120,7 +120,7 @@ _SETTINGS_FILE_NAME = "settings.json"
 
 _SETTINGS_CONFIG_PATH_KEY = "settings_config_path"
 
-_ANNOTATED_IMAGE_STRETCH_MODES = {"linear", "asinh", "stf", "sqrt", "log"}
+_ANNOTATED_IMAGE_STRETCH_MODES = {"linear", "asinh", "stf", "stf_bright", "sqrt", "log"}
 
 _HR_MARKER_SIZE_MODES = {"scaled", "fixed"}
 
@@ -568,6 +568,26 @@ class AppSettings:
 
     frame_edge_margin_percent: float = 5.0
 
+    wcs_sanity_check_enabled: bool = True
+
+    wcs_sanity_candidate_count: int = 10
+
+    wcs_sanity_min_matches: int = 5
+
+    wcs_sanity_approval_percent: float = 90.0
+
+    wcs_sanity_max_median_residual_arcsec: float = 3.0
+
+    wcs_sanity_gaia_min_magnitude: float = 5.0
+
+    wcs_sanity_gaia_max_magnitude: float = 18.0
+
+    wcs_sanity_edge_margin_percent: float = 25.0
+
+    wcs_sanity_isolation_arcsec: float = 8.0
+
+    wcs_sanity_ccvals_repair_enabled: bool = True
+
     saturation_filter_enabled: bool = True
 
     image_frame_margin_enabled: bool = True
@@ -637,6 +657,14 @@ class AppSettings:
     asteroid_target_marker_line_width: float = 4.0
 
     asteroid_blink_frame_duration_ms: int = 50
+
+    asteroid_show_ra_dec: bool = True
+
+    asteroid_equatorial_grid_enabled: bool = False
+
+    asteroid_equatorial_grid_ra_density: int = 5
+
+    asteroid_equatorial_grid_dec_density: int = 5
 
     asteroid_gif_export_scale_percent: int = 100
 
@@ -1186,6 +1214,14 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
     if reference_star_min_magnitude is not None and reference_star_max_magnitude is not None and reference_star_min_magnitude > reference_star_max_magnitude:
 
         reference_star_min_magnitude, reference_star_max_magnitude = reference_star_max_magnitude, reference_star_min_magnitude
+
+    wcs_sanity_gaia_min_magnitude = min(30.0, max(-5.0, float(payload.get("wcs_sanity_gaia_min_magnitude", 5.0))))
+
+    wcs_sanity_gaia_max_magnitude = min(30.0, max(-5.0, float(payload.get("wcs_sanity_gaia_max_magnitude", 18.0))))
+
+    if wcs_sanity_gaia_min_magnitude > wcs_sanity_gaia_max_magnitude:
+
+        wcs_sanity_gaia_min_magnitude, wcs_sanity_gaia_max_magnitude = wcs_sanity_gaia_max_magnitude, wcs_sanity_gaia_min_magnitude
 
     observer_code = _coerce_metadata_text(payload.get("observer_code"))
 
@@ -1860,6 +1896,30 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
         frame_edge_margin_percent=min(49.0, max(0.0, float(payload.get("frame_edge_margin_percent", 5.0)))),
 
+        wcs_sanity_check_enabled=bool(payload.get("wcs_sanity_check_enabled", True)),
+
+        wcs_sanity_candidate_count=min(50, max(3, int(payload.get("wcs_sanity_candidate_count", 10)))),
+
+        wcs_sanity_min_matches=min(30, max(1, int(payload.get("wcs_sanity_min_matches", 5)))),
+
+        wcs_sanity_approval_percent=min(
+            100.0, max(1.0, float(payload.get("wcs_sanity_approval_percent", 90.0)))
+        ),
+
+        wcs_sanity_max_median_residual_arcsec=min(
+            60.0, max(0.1, float(payload.get("wcs_sanity_max_median_residual_arcsec", 3.0)))
+        ),
+
+        wcs_sanity_gaia_min_magnitude=wcs_sanity_gaia_min_magnitude,
+
+        wcs_sanity_gaia_max_magnitude=wcs_sanity_gaia_max_magnitude,
+
+        wcs_sanity_edge_margin_percent=min(90.0, max(0.0, float(payload.get("wcs_sanity_edge_margin_percent", 25.0)))),
+
+        wcs_sanity_isolation_arcsec=min(120.0, max(0.0, float(payload.get("wcs_sanity_isolation_arcsec", 8.0)))),
+
+        wcs_sanity_ccvals_repair_enabled=bool(payload.get("wcs_sanity_ccvals_repair_enabled", True)),
+
         saturation_filter_enabled=bool(payload.get("saturation_filter_enabled", True)),
 
         image_frame_margin_enabled=bool(payload.get("image_frame_margin_enabled", True)),
@@ -1929,6 +1989,14 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         asteroid_target_marker_line_width=min(8.0, max(0.5, float(payload.get("asteroid_target_marker_line_width", 4.0)))),
 
         asteroid_blink_frame_duration_ms=min(2000, max(50, int(payload.get("asteroid_blink_frame_duration_ms", 50)))),
+
+        asteroid_show_ra_dec=bool(payload.get("asteroid_show_ra_dec", True)),
+
+        asteroid_equatorial_grid_enabled=bool(payload.get("asteroid_equatorial_grid_enabled", False)),
+
+        asteroid_equatorial_grid_ra_density=min(12, max(2, int(payload.get("asteroid_equatorial_grid_ra_density", 5)))),
+
+        asteroid_equatorial_grid_dec_density=min(12, max(2, int(payload.get("asteroid_equatorial_grid_dec_density", 5)))),
 
         asteroid_gif_export_scale_percent=min(400, max(25, int(payload.get("asteroid_gif_export_scale_percent", 100)))),
 
@@ -2433,6 +2501,28 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
 
         "frame_edge_margin_percent": min(49.0, max(0.0, float(settings.frame_edge_margin_percent))),
 
+        "wcs_sanity_check_enabled": bool(settings.wcs_sanity_check_enabled),
+
+        "wcs_sanity_candidate_count": min(50, max(3, int(settings.wcs_sanity_candidate_count))),
+
+        "wcs_sanity_min_matches": min(30, max(1, int(settings.wcs_sanity_min_matches))),
+
+        "wcs_sanity_approval_percent": min(100.0, max(1.0, float(settings.wcs_sanity_approval_percent))),
+
+        "wcs_sanity_max_median_residual_arcsec": min(
+            60.0, max(0.1, float(settings.wcs_sanity_max_median_residual_arcsec))
+        ),
+
+        "wcs_sanity_gaia_min_magnitude": min(30.0, max(-5.0, float(settings.wcs_sanity_gaia_min_magnitude))),
+
+        "wcs_sanity_gaia_max_magnitude": min(30.0, max(-5.0, float(settings.wcs_sanity_gaia_max_magnitude))),
+
+        "wcs_sanity_edge_margin_percent": min(90.0, max(0.0, float(settings.wcs_sanity_edge_margin_percent))),
+
+        "wcs_sanity_isolation_arcsec": min(120.0, max(0.0, float(settings.wcs_sanity_isolation_arcsec))),
+
+        "wcs_sanity_ccvals_repair_enabled": bool(settings.wcs_sanity_ccvals_repair_enabled),
+
         "saturation_filter_enabled": bool(settings.saturation_filter_enabled),
 
         "image_frame_margin_enabled": bool(settings.image_frame_margin_enabled),
@@ -2508,6 +2598,14 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "asteroid_target_marker_line_width": min(8.0, max(0.5, float(settings.asteroid_target_marker_line_width))),
 
         "asteroid_blink_frame_duration_ms": min(2000, max(50, int(settings.asteroid_blink_frame_duration_ms))),
+
+        "asteroid_show_ra_dec": bool(settings.asteroid_show_ra_dec),
+
+        "asteroid_equatorial_grid_enabled": bool(settings.asteroid_equatorial_grid_enabled),
+
+        "asteroid_equatorial_grid_ra_density": min(12, max(2, int(settings.asteroid_equatorial_grid_ra_density))),
+
+        "asteroid_equatorial_grid_dec_density": min(12, max(2, int(settings.asteroid_equatorial_grid_dec_density))),
 
         "astrostack_parallel_workers": max(0, int(settings.astrostack_parallel_workers)),
 

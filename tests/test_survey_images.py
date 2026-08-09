@@ -341,6 +341,20 @@ class SurveyImagesTest(unittest.TestCase):
             fov_arcmin=30.0,
         )
         self.assertEqual((tile_i, tile_j), (1, 0))
+        from photometry_app.core.survey_images import build_sky_explorer_field_wcs
+
+        origin_wcs = build_sky_explorer_field_wcs(
+            ra_deg=270.63, dec_deg=-23.03, fov_arcmin=30.0, width_px=width, height_px=height,
+        )
+        east_wcs = build_sky_explorer_field_wcs(
+            ra_deg=east_spec.ra_deg, dec_deg=east_spec.dec_deg, fov_arcmin=30.0,
+            width_px=width, height_px=height,
+        )
+        mid_y = 0.5 * float(height - 1)
+        sky_left_origin = origin_wcs.pixel_to_world_values(-0.5, mid_y)
+        sky_right_east = east_wcs.pixel_to_world_values(float(width) - 0.5, mid_y)
+        self.assertAlmostEqual(float(sky_left_origin[0]) % 360.0, float(sky_right_east[0]) % 360.0, places=5)
+        self.assertAlmostEqual(float(sky_left_origin[1]), float(sky_right_east[1]), places=5)
 
         pruned = prune_sky_explorer_survey_field_tiles(
             {

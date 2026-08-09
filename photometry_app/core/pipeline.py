@@ -6,7 +6,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed
 
 from collections.abc import Callable
 
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 
 import json
@@ -73,6 +73,8 @@ from photometry_app.core.models import (
 
     ScanReport,
 
+    SolvedField,
+
     VariableSelectionPreview,
 
     VariableStarDesignationFamily,
@@ -94,6 +96,13 @@ from photometry_app.core.solar_system import estimate_visible_magnitude_limit
 from photometry_app.core.local_wcs import infer_metadata_wcs_seed, solve_wcs_from_metadata_and_gaia
 
 from photometry_app.core.wcs import AstrometryNetClient, AstrometrySolveHints, extract_solved_field, infer_astrometry_solve_hints, is_pixinsight_staralignment_output, validate_wcs
+from photometry_app.core.wcs_sanity import (
+    EmbeddedWcsPolicy,
+    apply_embedded_wcs_policy,
+    diagnose_embedded_wcs_policy,
+    evaluate_ccvals_keyword_sanity,
+    options_from_settings,
+)
 
 
 
@@ -774,6 +783,8 @@ class PhotometryPipeline:
 
         analyze_best_targets: bool = False,
 
+        skip_wcs_sanity_diagnosis: bool = False,
+
         progress_callback: Callable[[str], None] | None = None,
 
         cancel_requested: Callable[[], bool] | None = None,
@@ -825,7 +836,12 @@ class PhotometryPipeline:
 
 
 
-        solved_results = self._resolve_summary_fields(summary.files, settings, progress_callback)
+        solved_results = self._resolve_summary_fields(
+            summary.files,
+            settings,
+            progress_callback,
+            skip_wcs_sanity_diagnosis=skip_wcs_sanity_diagnosis,
+        )
 
         notes: list[str] = []
 
@@ -895,7 +911,12 @@ class PhotometryPipeline:
 
         try:
 
-            field_catalog = self._best_field_catalog_for_solved_results(catalog_service, solved_results, progress_callback)
+            field_catalog = self._best_field_catalog_for_solved_results(
+                catalog_service,
+                solved_results,
+                progress_callback,
+                aavso_chart_id=settings.aavso_chart_id,
+            )
 
         except Exception as exc:
 
@@ -989,6 +1010,13 @@ class PhotometryPipeline:
 
             selected_exoplanets = list(field_catalog.exoplanets)
 
+        selected_variable_stars, folder_match_notes = _ensure_object_folder_variable_stars(
+            selected_variable_stars,
+            field_catalog.variable_stars,
+            object_name,
+        )
+        notes.extend(folder_match_notes)
+
         selected_field_catalog = FieldCatalog(
 
             center_ra_deg=field_catalog.center_ra_deg,
@@ -1012,6 +1040,16 @@ class PhotometryPipeline:
         manual_reference_entries: list[CatalogStar] = []
 
         if using_manual_mode and manual_config is not None:
+            manual_config, coord_notes = _refresh_manual_config_sky_coordinates(
+                manual_config,
+                solved_results,
+                representative_field,
+            )
+            for coord_note in coord_notes:
+                notes.append(coord_note)
+                _emit_progress(progress_callback, coord_note)
+            # Signature includes RA/Dec; recompute after WCS-corrected sky coords.
+            photometry_settings_signature = _photometry_settings_signature(settings, manual_config)
 
             notes.append(
 
@@ -1036,6 +1074,15 @@ class PhotometryPipeline:
             )
 
         elif auto_manual_config is not None:
+            auto_manual_config, coord_notes = _refresh_manual_config_sky_coordinates(
+                auto_manual_config,
+                solved_results,
+                representative_field,
+            )
+            for coord_note in coord_notes:
+                notes.append(coord_note)
+                _emit_progress(progress_callback, coord_note)
+            photometry_settings_signature = _photometry_settings_signature(settings, auto_manual_config)
 
             manual_variable_entries = _manual_catalog_entries(auto_manual_config, ManualSourceRole.TARGET, ManualSourceRole.CHECK)
 
@@ -1163,6 +1210,24 @@ class PhotometryPipeline:
 
             reference_stars = _manual_catalog_entries(manual_config, ManualSourceRole.COMPARISON)
 
+            band_matches = _enrich_manual_catalog_entries_from_field(
+                reference_stars,
+                field_catalog,
+                solved_field=representative_field,
+                aavso_chart_id=settings.aavso_chart_id,
+                progress_callback=progress_callback,
+            )
+
+            if selected_field_catalog.variable_stars:
+
+                band_matches += _enrich_manual_catalog_entries_from_field(
+                    selected_field_catalog.variable_stars,
+                    field_catalog,
+                    solved_field=representative_field,
+                    aavso_chart_id=settings.aavso_chart_id,
+                    progress_callback=progress_callback,
+                )
+
             photometry_variable_stars = selected_field_catalog.variable_stars
 
             photometry_reference_stars = reference_stars
@@ -1174,6 +1239,17 @@ class PhotometryPipeline:
                 f"Manual mode active: using {len(reference_stars)} saved comparison star(s) for differential photometry.",
 
             )
+
+            if band_matches:
+
+                notes.append(
+                    f"Matched scientific catalog magnitudes (VSP/APASS/Gaia) onto {band_matches} "
+                    "manual aperture source(s) for Standard Magnitude."
+                )
+                _emit_progress(
+                    progress_callback,
+                    f"Matched scientific catalog magnitudes onto {band_matches} manual aperture source(s).",
+                )
 
         else:
 
@@ -1188,6 +1264,33 @@ class PhotometryPipeline:
                 maximum_magnitude=settings.reference_star_max_magnitude,
 
             )
+
+            if manual_reference_entries:
+
+                band_matches = _enrich_manual_catalog_entries_from_field(
+                    manual_reference_entries,
+                    field_catalog,
+                    solved_field=representative_field,
+                    aavso_chart_id=settings.aavso_chart_id,
+                    progress_callback=progress_callback,
+                )
+
+                if manual_variable_entries:
+
+                    band_matches += _enrich_manual_catalog_entries_from_field(
+                        manual_variable_entries,
+                        field_catalog,
+                        solved_field=representative_field,
+                        aavso_chart_id=settings.aavso_chart_id,
+                        progress_callback=progress_callback,
+                    )
+
+                if band_matches:
+
+                    notes.append(
+                        f"Matched scientific catalog magnitudes (VSP/APASS/Gaia) onto {band_matches} "
+                        "manual aperture source(s) for Standard Magnitude."
+                    )
 
             reference_stars = [*automatic_reference_stars, *manual_reference_entries]
 
@@ -1322,6 +1425,8 @@ class PhotometryPipeline:
                         settings,
 
                         auto_manual_config,
+
+                        [*manual_variable_entries, *manual_reference_entries],
 
                     ): task
 
@@ -1489,6 +1594,23 @@ class PhotometryPipeline:
 
 
 
+        enriched_catalog_lookup = {
+            star.source_id: star
+            for star in [
+                *photometry_variable_stars,
+                *photometry_reference_stars,
+                *manual_variable_entries,
+                *manual_reference_entries,
+                *(reference_stars if using_manual_mode else []),
+            ]
+        }
+        stamped = _stamp_catalog_bands_onto_measurements(measurements, enriched_catalog_lookup)
+        if stamped:
+            _emit_progress(
+                progress_callback,
+                f"Applied catalog band magnitudes to {stamped} measurement row(s) for Standard Magnitude.",
+            )
+
         _emit_progress(progress_callback, f"Applying differential photometry to {len(measurements)} measurement row(s).")
 
         measurements = apply_differential_photometry(measurements, nearby_reference_count=settings.nearby_reference_count)
@@ -1569,6 +1691,10 @@ class PhotometryPipeline:
 
         progress_callback: Callable[[str], None] | None = None,
 
+        *,
+
+        skip_wcs_sanity_diagnosis: bool = False,
+
     ) -> list[tuple[FileScanResult, PlateSolveResult]]:
 
         solve_cache_dir = settings.cache_dir / "astrometry"
@@ -1579,41 +1705,60 @@ class PhotometryPipeline:
 
         pending_grouped: dict[tuple[str, int, int, str, float | None, float | None], list[_PendingAstrometrySolve]] = {}
 
+        embedded_policy: EmbeddedWcsPolicy | None = None
+        if files:
+            if skip_wcs_sanity_diagnosis:
+                embedded_policy = self._quick_folder_embedded_wcs_policy(files[0], settings, progress_callback)
+            else:
+                embedded_policy = self._diagnose_folder_embedded_wcs_policy(files[0], settings, progress_callback)
+            if embedded_policy.mode == "accept":
+                policy_summary = "read embedded CRVAL/WCS on every frame"
+            elif embedded_policy.mode == "ccvals_repair":
+                policy_summary = "repair CRVAL from CCVALS on every frame"
+            else:
+                policy_summary = "re-solve every frame individually"
+            _emit_progress(
+                progress_callback,
+                (
+                    f"First-frame WCS reading check on {files[0].path.name} selected '{embedded_policy.mode}' "
+                    f"for {len(files)} frame(s): {policy_summary}."
+                ),
+            )
+
+        accepted_count = 0
+        skipped_count = 0
         for index, file_result in enumerate(files, start=1):
-
-            _emit_progress(progress_callback, f"[WCS {index}/{len(files)}] Inspecting {file_result.path.name}.")
-
-            immediate_result, pending_request = self._prepare_wcs_resolution(index - 1, file_result, settings)
+            immediate_result, pending_request = self._prepare_wcs_resolution(
+                index - 1,
+                file_result,
+                settings,
+                embedded_policy=embedded_policy,
+            )
 
             if immediate_result is not None:
-
                 solved_results[index - 1] = (file_result, immediate_result)
-
                 if immediate_result.solved_field is not None:
-
-                    _emit_progress(progress_callback, f"[WCS {index}/{len(files)}] Solved field ready for {file_result.path.name}.")
-
+                    accepted_count += 1
                 else:
-
-                    reason = immediate_result.reasons[-1] if immediate_result.reasons else "No usable celestial WCS was found."
-
-                    _emit_progress(progress_callback, f"[WCS {index}/{len(files)}] Skipped {file_result.path.name}: {reason}")
-
+                    skipped_count += 1
                 continue
-
-
 
             if pending_request is None:
-
                 continue
-
             if pending_request.reuse_key is None:
-
                 pending_individual.append(pending_request)
-
             else:
-
                 pending_grouped.setdefault(pending_request.reuse_key, []).append(pending_request)
+
+        if accepted_count or skipped_count:
+            _emit_progress(
+                progress_callback,
+                (
+                    f"Applied first-frame WCS reading method to folder frames: "
+                    f"{accepted_count} ready, {skipped_count} skipped, "
+                    f"{len(pending_individual) + sum(len(group) for group in pending_grouped.values())} queued for solve."
+                ),
+            )
 
 
 
@@ -1641,16 +1786,11 @@ class PhotometryPipeline:
 
             solve_plan = "no available WCS fallback"
 
-        _emit_progress(
-
-            progress_callback,
-
-            (
-                f"Solving {len(representative_requests)} unresolved field(s) via {solve_plan}, "
-                f"using up to {min(_DEFAULT_ASTROMETRY_PARALLEL_SUBMISSIONS, len(representative_requests))} concurrent solve(s)."
-            ),
-
+        solve_message = (
+            f"Solving {len(representative_requests)} unresolved field(s) via {solve_plan}, "
+            f"using up to {min(_DEFAULT_ASTROMETRY_PARALLEL_SUBMISSIONS, len(representative_requests))} concurrent solve(s)."
         )
+        _emit_progress(progress_callback, solve_message)
 
         representative_results = self._solve_pending_requests(
 
@@ -1740,6 +1880,92 @@ class PhotometryPipeline:
 
 
 
+    def _diagnose_folder_embedded_wcs_policy(
+        self,
+        probe_file: FileScanResult,
+        settings: AppSettings,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> EmbeddedWcsPolicy:
+        options = options_from_settings(settings)
+        try:
+            header, width, height = _read_header(probe_file.path)
+        except Exception as exc:
+            return EmbeddedWcsPolicy(
+                mode="resolve",
+                reasons=[f"Could not read probe frame for WCS reading check: {exc}"],
+            )
+
+        if not options.enabled:
+            valid, reasons = validate_wcs(header, probe_file.path)
+            if valid:
+                return EmbeddedWcsPolicy(
+                    mode="accept",
+                    reasons=[*reasons, "WCS sanity check disabled; trusting embedded WCS reading method for the folder."],
+                )
+            return EmbeddedWcsPolicy(
+                mode="resolve",
+                reasons=[*reasons, "WCS sanity check disabled; probe frame has no usable embedded WCS."],
+            )
+
+        _emit_progress(
+            progress_callback,
+            f"Checking WCS reading method using probe frame {probe_file.path.name}.",
+        )
+        return diagnose_embedded_wcs_policy(
+            probe_file.path,
+            header,
+            width,
+            height,
+            cache_dir=settings.cache_dir / "astrometry" / "wcs-sanity",
+            options=options,
+            catalog_service=CatalogService(settings.cache_dir / "catalogs"),
+            progress_callback=progress_callback,
+        )
+
+    def _quick_folder_embedded_wcs_policy(
+        self,
+        probe_file: FileScanResult,
+        settings: AppSettings,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> EmbeddedWcsPolicy:
+        """Pick a folder WCS reading method from header keywords only (no Gaia probe)."""
+        reuse_note = "Reusing the folder WCS reading method without repeating the Gaia sanity probe."
+        try:
+            header, _width, _height = _read_header(probe_file.path)
+        except Exception as exc:
+            return EmbeddedWcsPolicy(
+                mode="resolve",
+                reasons=[f"Could not read probe frame for quick WCS reading check: {exc}", reuse_note],
+            )
+
+        _emit_progress(
+            progress_callback,
+            f"Reusing WCS reading method from probe frame {probe_file.path.name} (skipping Gaia sanity re-check).",
+        )
+        options = options_from_settings(settings)
+        valid, reasons = validate_wcs(header, probe_file.path)
+        keyword_result = evaluate_ccvals_keyword_sanity(header)
+        if keyword_result is not None:
+            reasons = [*reasons, *keyword_result.reasons]
+            for reason in keyword_result.reasons:
+                _emit_progress(progress_callback, reason)
+            if not keyword_result.passed and options.ccvals_repair_enabled:
+                method_reason = "Folder WCS reading method: repair CRVAL from CCVALS on each frame."
+                _emit_progress(progress_callback, method_reason)
+                return EmbeddedWcsPolicy(
+                    mode="ccvals_repair",
+                    reasons=[*reasons, reuse_note, method_reason],
+                )
+        if valid:
+            method_reason = "Folder WCS reading method: read embedded CRVAL/WCS on each frame."
+            _emit_progress(progress_callback, method_reason)
+            return EmbeddedWcsPolicy(mode="accept", reasons=[*reasons, reuse_note, method_reason])
+        method_reason = (
+            "Folder WCS reading method: re-solve each frame because the probe embedded WCS is unusable."
+        )
+        _emit_progress(progress_callback, method_reason)
+        return EmbeddedWcsPolicy(mode="resolve", reasons=[*reasons, reuse_note, method_reason])
+
     def _prepare_wcs_resolution(
 
         self,
@@ -1750,6 +1976,8 @@ class PhotometryPipeline:
 
         settings: AppSettings,
 
+        embedded_policy: EmbeddedWcsPolicy | None = None,
+
     ) -> tuple[PlateSolveResult | None, _PendingAstrometrySolve | None]:
 
         try:
@@ -1758,29 +1986,30 @@ class PhotometryPipeline:
 
             valid_wcs, reasons = validate_wcs(header, file_result.path)
 
-            if valid_wcs:
+            policy = embedded_policy or EmbeddedWcsPolicy(mode="resolve", reasons=["No folder WCS policy was available."])
 
-                solved_field = extract_solved_field(header, width, height, file_result.path)
-
-                return (
-
-                    PlateSolveResult(
-
-                        source_path=file_result.path,
-
-                        status=WcsStatus.SOLVED if solved_field else WcsStatus.UNSOLVED,
-
-                        solved_field=solved_field,
-
-                        reasons=reasons,
-
-                    ),
-
-                    None,
-
+            if valid_wcs and policy.mode in {"accept", "ccvals_repair"}:
+                policy_resolution = apply_embedded_wcs_policy(
+                    file_result.path,
+                    header,
+                    width,
+                    height,
+                    policy=policy,
+                    cache_dir=settings.cache_dir / "astrometry" / "wcs-sanity",
                 )
-
-
+                if policy_resolution.accepted and policy_resolution.solved_field is not None:
+                    return (
+                        PlateSolveResult(
+                            source_path=file_result.path,
+                            status=WcsStatus.SOLVED,
+                            solved_field=policy_resolution.solved_field,
+                            reasons=_deduplicate([*reasons, *policy_resolution.reasons]),
+                        ),
+                        None,
+                    )
+                reasons = _deduplicate([*reasons, *policy_resolution.reasons])
+            elif policy.mode == "resolve":
+                reasons = _deduplicate([*reasons, *policy.reasons])
 
             local_seed_available = infer_metadata_wcs_seed(header, width, height) is not None
 
@@ -2208,6 +2437,8 @@ class PhotometryPipeline:
 
         auto_manual_config: ManualPhotometryConfig | None = None,
 
+        enriched_manual_catalog_stars: list[CatalogStar] | None = None,
+
     ) -> _ComputedPhotometryTask:
 
         solve_result = task.solve_result
@@ -2219,6 +2450,11 @@ class PhotometryPipeline:
 
 
         if using_manual_mode and manual_config is not None:
+
+            catalog_by_source_id = {
+                star.source_id: star
+                for star in [*variable_stars, *reference_stars]
+            }
 
             computed_measurements = measure_manual_sources(
 
@@ -2233,6 +2469,8 @@ class PhotometryPipeline:
                 frame_edge_margin_percent=settings.frame_edge_margin_percent,
 
                 saturation_filter_enabled=settings.saturation_filter_enabled,
+
+                catalog_by_source_id=catalog_by_source_id,
 
             )
 
@@ -2284,6 +2522,13 @@ class PhotometryPipeline:
 
         if auto_manual_config is not None:
 
+            manual_catalog_by_source_id = {
+                star.source_id: star
+                for star in (enriched_manual_catalog_stars or [])
+            }
+            for star in [*variable_stars, *reference_stars]:
+                manual_catalog_by_source_id.setdefault(star.source_id, star)
+
             computed_measurements.extend(
 
                 measure_manual_sources(
@@ -2299,6 +2544,8 @@ class PhotometryPipeline:
                     frame_edge_margin_percent=settings.frame_edge_margin_percent,
 
                     saturation_filter_enabled=settings.saturation_filter_enabled,
+
+                    catalog_by_source_id=manual_catalog_by_source_id,
 
                 )
 
@@ -2350,6 +2597,10 @@ class PhotometryPipeline:
 
         progress_callback: Callable[[str], None] | None = None,
 
+        *,
+
+        aavso_chart_id: str | None = None,
+
     ) -> FieldCatalog:
 
         solved_fields = [result.solved_field for _, result in solved_results if result.solved_field is not None]
@@ -2378,7 +2629,11 @@ class PhotometryPipeline:
 
             seen_keys.add(key)
 
-            catalog = catalog_service.query_field_catalog(solved_field)
+            catalog = catalog_service.query_field_catalog(
+                solved_field,
+                aavso_chart_id=aavso_chart_id,
+                progress_callback=progress_callback,
+            )
 
             score = len(catalog.variable_stars) * 100000 + len(catalog.gaia_stars)
 
@@ -2978,6 +3233,84 @@ def _select_aavso_recommended_variable_stars(
 
     return selected, notes
 
+
+
+_OBJECT_FOLDER_NAME_NOISE_WORDS = frozenset(
+    {
+        "data",
+        "dataset",
+        "images",
+        "image",
+        "fits",
+        "light",
+        "lights",
+        "raw",
+        "calib",
+        "calibrated",
+        "stack",
+        "stacked",
+        "folder",
+        "target",
+        "object",
+    }
+)
+
+
+def _object_folder_name_tokens(object_name: str) -> list[str]:
+    cleaned = str(object_name or "").strip().lower().replace("_", " ").replace("-", " ")
+    return [
+        token
+        for token in cleaned.split()
+        if token and token not in _OBJECT_FOLDER_NAME_NOISE_WORDS and not token.isdigit()
+    ]
+
+
+def _catalog_star_matches_object_folder(entry: CatalogStar, object_name: str) -> bool:
+    star_name = str(getattr(entry, "name", "") or "").strip().lower()
+    if not star_name:
+        return False
+    folder = str(object_name or "").strip().lower()
+    if not folder:
+        return False
+    if star_name == folder or star_name in folder or folder in star_name:
+        return True
+    tokens = _object_folder_name_tokens(object_name)
+    if not tokens:
+        return False
+    needle = " ".join(tokens)
+    if needle and (needle in star_name or star_name in needle):
+        return True
+    if len(tokens) >= 2:
+        short_needle = " ".join(tokens[:2])
+        if short_needle in star_name:
+            return True
+    return False
+
+
+def _ensure_object_folder_variable_stars(
+    selected: list[CatalogStar],
+    field_variables: list[CatalogStar],
+    object_name: str,
+) -> tuple[list[CatalogStar], list[str]]:
+    """Keep folder-named targets (e.g. DY Her from 'DY Her Data') even when filters would drop them."""
+    selected_keys = {_catalog_source_key(entry) for entry in selected}
+    extras: list[CatalogStar] = []
+    for entry in field_variables:
+        if not _catalog_star_matches_object_folder(entry, object_name):
+            continue
+        key = _catalog_source_key(entry)
+        if key in selected_keys:
+            continue
+        selected_keys.add(key)
+        extras.append(entry)
+    if not extras:
+        return list(selected), []
+    names = ", ".join(str(entry.name or entry.source_id) for entry in extras[:5])
+    note = (
+        f"Included {len(extras)} variable star(s) matching folder name '{object_name}'"
+        f"{'' if len(extras) <= 5 else '…'}: {names}."
+    )
+    return [*extras, *selected], [note]
 
 
 def _select_brightest_variable_stars(
@@ -3623,6 +3956,22 @@ def _measurement_to_payload(measurement: PhotometryMeasurement) -> dict[str, obj
 
         "zero_point_source_count": measurement.zero_point_source_count,
 
+        "standard_magnitude": measurement.standard_magnitude,
+
+        "standard_magnitude_error": measurement.standard_magnitude_error,
+
+        "standard_zero_point_magnitude": measurement.standard_zero_point_magnitude,
+
+        "standard_zero_point_magnitude_error": measurement.standard_zero_point_magnitude_error,
+
+        "standard_zero_point_source_count": measurement.standard_zero_point_source_count,
+
+        "standard_catalog_band": measurement.standard_catalog_band,
+
+        "standard_catalog_source": measurement.standard_catalog_source,
+
+        "band_magnitudes": measurement.band_magnitudes,
+
         "is_variable": measurement.is_variable,
 
         "is_reference": measurement.is_reference,
@@ -3725,6 +4074,26 @@ def _measurement_from_payload(payload: dict[str, object]) -> PhotometryMeasureme
 
         zero_point_source_count=int(payload.get("zero_point_source_count", 0) or 0),
 
+        standard_magnitude=float(payload["standard_magnitude"]) if payload.get("standard_magnitude") is not None else None,
+
+        standard_magnitude_error=float(payload["standard_magnitude_error"]) if payload.get("standard_magnitude_error") is not None else None,
+
+        standard_zero_point_magnitude=float(payload["standard_zero_point_magnitude"]) if payload.get("standard_zero_point_magnitude") is not None else None,
+
+        standard_zero_point_magnitude_error=float(payload["standard_zero_point_magnitude_error"]) if payload.get("standard_zero_point_magnitude_error") is not None else None,
+
+        standard_zero_point_source_count=int(payload.get("standard_zero_point_source_count", 0) or 0),
+
+        standard_catalog_band=str(payload["standard_catalog_band"]) if payload.get("standard_catalog_band") is not None else None,
+
+        standard_catalog_source=str(payload["standard_catalog_source"]) if payload.get("standard_catalog_source") is not None else None,
+
+        band_magnitudes={
+            str(band): dict(entry)
+            for band, entry in dict(payload.get("band_magnitudes") or {}).items()
+            if isinstance(entry, dict)
+        },
+
         is_variable=bool(payload["is_variable"]),
 
         is_reference=bool(payload["is_reference"]),
@@ -3777,6 +4146,78 @@ def _measurement_from_payload(payload: dict[str, object]) -> PhotometryMeasureme
 
 
 
+def _refresh_manual_config_sky_coordinates(
+    manual_config: ManualPhotometryConfig,
+    solved_results: list[tuple[FileScanResult, PlateSolveResult]],
+    representative_field: SolvedField,
+) -> tuple[ManualPhotometryConfig, list[str]]:
+    """Recompute manual aperture RA/Dec from saved pixels using the folder's solved/repaired WCS.
+
+    NINA headers can disagree between CRVAL and CCVALS by >1'. Apertures placed against the raw
+    header store wrong sky coordinates, so VSP/APASS/Gaia matching and WCS-projected photometry fail.
+    """
+    from astropy.wcs import WCS
+
+    from photometry_app.core.image_io import read_header
+
+    wcs_path = representative_field.wcs_path
+    reference_name = str(manual_config.reference_frame_name or "").strip()
+    if reference_name:
+        for file_result, plate_result in solved_results:
+            if file_result.path.name == reference_name and plate_result.solved_field is not None:
+                wcs_path = plate_result.solved_field.wcs_path
+                break
+    try:
+        if wcs_path.suffix.lower() in {".fit", ".fits"}:
+            wcs = WCS(read_header(wcs_path))
+        else:
+            from astropy.io import fits as fits_module
+
+            wcs = WCS(fits_module.getheader(wcs_path))
+    except Exception as exc:
+        return manual_config, [f"Could not refresh manual aperture sky coordinates from solved WCS: {exc}"]
+
+    if not getattr(wcs, "has_celestial", False):
+        return manual_config, ["Could not refresh manual aperture sky coordinates: solved WCS is not celestial."]
+
+    updated_sources: list[ManualSourceConfig] = []
+    shifts_arcsec: list[float] = []
+    for source in manual_config.sources:
+        try:
+            ra_value, dec_value = wcs.pixel_to_world_values(float(source.reference_x), float(source.reference_y))
+            ra_deg = float(ra_value)
+            dec_deg = float(dec_value)
+        except Exception:
+            updated_sources.append(source)
+            continue
+        try:
+            from astropy import units as u
+            from astropy.coordinates import SkyCoord
+
+            shift = float(
+                SkyCoord(source.ra_deg * u.deg, source.dec_deg * u.deg, frame="icrs")
+                .separation(SkyCoord(ra_deg * u.deg, dec_deg * u.deg, frame="icrs"))
+                .arcsec
+            )
+        except Exception:
+            shift = 0.0
+        shifts_arcsec.append(shift)
+        updated_sources.append(replace(source, ra_deg=ra_deg, dec_deg=dec_deg))
+
+    if not updated_sources:
+        return manual_config, []
+
+    max_shift = max(shifts_arcsec) if shifts_arcsec else 0.0
+    notes: list[str] = []
+    if max_shift >= 0.5:
+        notes.append(
+            f"Refreshed manual aperture sky coordinates from reference pixels using solved WCS "
+            f"(max correction {max_shift:.1f}\"; needed for VSP/APASS matching and photometry)."
+        )
+    updated = replace(manual_config, sources=updated_sources)
+    return updated, notes
+
+
 def _manual_catalog_entries(manual_config: ManualPhotometryConfig, *roles: ManualSourceRole) -> list[CatalogStar]:
 
     wanted_roles = set(roles)
@@ -3789,13 +4230,17 @@ def _manual_catalog_entries(manual_config: ManualPhotometryConfig, *roles: Manua
 
             continue
 
+        source_id = str(item.source_id or "")
+
+        catalog_name = "manual" if source_id.startswith("manual-") else str(item.catalog or "manual")
+
         entries.append(
 
             CatalogStar(
 
-                catalog="manual",
+                catalog=catalog_name,
 
-                source_id=item.source_id,
+                source_id=source_id,
 
                 name=item.name,
 
@@ -3814,6 +4259,118 @@ def _manual_catalog_entries(manual_config: ManualPhotometryConfig, *roles: Manua
         )
 
     return entries
+
+
+def _enrich_manual_catalog_entries_from_field(
+    entries: list[CatalogStar],
+    field_catalog: FieldCatalog,
+    *,
+    solved_field: SolvedField | None = None,
+    aavso_chart_id: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+    separation_arcsec: float = 5.0,
+) -> int:
+    """Sky-match manual apertures to Gaia, then APASS + AAVSO VSP for scientific Standard Magnitude bands."""
+    if not entries:
+        return 0
+    from photometry_app.core.standard_magnitude import (
+        enrich_stars_with_standard_catalogs,
+        get_band_magnitudes,
+        merge_band_magnitudes_by_sky_match,
+        prefer_catalog_display_magnitude,
+        seed_gaia_g_band_magnitude,
+    )
+
+    donors = list(field_catalog.gaia_stars)
+    # Gaia field stars often store only G in `magnitude`; seed that into band metadata so merges succeed.
+    for donor in donors:
+        seed_gaia_g_band_magnitude(donor)
+    if donors:
+        merge_band_magnitudes_by_sky_match(
+            entries,
+            donors,
+            source="gaia-g",
+            separation_arcsec=separation_arcsec,
+        )
+        # Also copy a primary magnitude for calibrated-magnitude / Gaia-G fallback.
+        try:
+            from astropy import units as u
+            from astropy.coordinates import SkyCoord
+
+            target_coords = SkyCoord(
+                ra=[star.ra_deg for star in entries] * u.deg,
+                dec=[star.dec_deg for star in entries] * u.deg,
+            )
+            donor_coords = SkyCoord(
+                ra=[star.ra_deg for star in donors] * u.deg,
+                dec=[star.dec_deg for star in donors] * u.deg,
+            )
+            idx, separation, _ = target_coords.match_to_catalog_sky(donor_coords)
+            max_sep = float(separation_arcsec) * u.arcsec
+            for target_index, donor_index in enumerate(idx):
+                if separation[target_index] > max_sep:
+                    continue
+                donor = donors[int(donor_index)]
+                target = entries[target_index]
+                if target.magnitude is None and donor.magnitude is not None:
+                    target.magnitude = float(donor.magnitude)
+                seed_gaia_g_band_magnitude(target)
+        except Exception:
+            for entry in entries:
+                seed_gaia_g_band_magnitude(entry)
+
+    if solved_field is not None:
+        enrich_notes = enrich_stars_with_standard_catalogs(
+            entries,
+            solved_field,
+            aavso_chart_id=aavso_chart_id,
+            progress_callback=progress_callback,
+            separation_arcsec=separation_arcsec,
+            label="manual aperture",
+        )
+        apass_matches = int(enrich_notes.get("apass_matches") or 0)
+        vsp_matches = int(enrich_notes.get("vsp_matches") or 0)
+        if progress_callback is not None and (apass_matches or vsp_matches):
+            progress_callback(
+                f"Manual apertures matched to scientific catalogs: "
+                f"{vsp_matches} VSP, {apass_matches} APASS (within {separation_arcsec:.1f}\")."
+            )
+
+    for entry in entries:
+        prefer_catalog_display_magnitude(entry)
+    return sum(1 for entry in entries if entry.magnitude is not None or get_band_magnitudes(entry))
+
+
+def _stamp_catalog_bands_onto_measurements(
+    measurements: list[PhotometryMeasurement],
+    catalog_by_source_id: dict[str, CatalogStar],
+) -> int:
+    """Copy enriched catalog band magnitudes onto measurement rows (including cache hits)."""
+    if not measurements or not catalog_by_source_id:
+        return 0
+    from photometry_app.core.standard_magnitude import copy_band_magnitudes, seed_gaia_g_band_magnitude
+
+    stamped = 0
+    for index, measurement in enumerate(measurements):
+        catalog_star = catalog_by_source_id.get(measurement.source_id)
+        if catalog_star is None:
+            continue
+        seed_gaia_g_band_magnitude(catalog_star)
+        band_magnitudes = copy_band_magnitudes(catalog_star)
+        catalog_magnitude = (
+            float(catalog_star.magnitude) if catalog_star.magnitude is not None else measurement.catalog_magnitude
+        )
+        if not band_magnitudes and catalog_magnitude is None:
+            continue
+        if measurement.band_magnitudes == band_magnitudes and measurement.catalog_magnitude == catalog_magnitude:
+            continue
+        measurements[index] = replace(
+            measurement,
+            catalog_magnitude=catalog_magnitude,
+            band_magnitudes=band_magnitudes or dict(measurement.band_magnitudes or {}),
+        )
+        stamped += 1
+    return stamped
 
 
 

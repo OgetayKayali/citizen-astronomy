@@ -44,7 +44,15 @@ After scanning, a Loaded Results dialog lets you choose which object to analyze.
 
 Every frame needs a valid World Coordinate System so that CAst can identify which star is which across multiple images. CAst validates the WCS by checking for `CTYPE1`/`CTYPE2` keywords containing RA/DEC projections, along with `CRVAL`, `CRPIX`, and CD or PC matrix keywords.
 
-If a frame lacks a valid WCS, CAst can solve it through the **astrometry.net** API. The solver uploads the image with hints (center coordinates, scale bounds, parity) and retrieves the solved WCS. For large images (6000+ pixels), a 4x downsample is used to speed up the solve. Frames sharing the same alignment (e.g., PixInsight StarAlignment outputs) can share a single solved WCS.
+For a multi-frame folder, CAst picks one **folder WCS reading method** from the first frame using a central-field Gaia magnitude-bin check (bright bins first: G≈5–10, then 10–12, then 12–14…; default 90% approval in the central 75% of the frame). That method is then applied independently to every frame:
+
+- **Accept embedded CRVAL/WCS** when the header sky solution already matches Gaia.
+- **Repair CRVAL from CCVALS** when the pointing keywords disagree with the WCS (common on some NINA headers with non-standard float cards).
+- **Re-solve each frame** through **astrometry.net** when neither embedded nor repaired WCS is trustworthy.
+
+Advanced Settings expose the bin thresholds and approval fraction; the Work Log records per-bin pass/fail so you can see why a method was chosen. Generate/Apply reuse the chosen method and skip repeating the full Gaia probe when you are only re-measuring with preserved views.
+
+If a frame still lacks a usable WCS, CAst can solve it through the **astrometry.net** API. The solver uploads the image with hints (center coordinates, scale bounds, parity) and retrieves the solved WCS. For large images (6000+ pixels), a 4x downsample is used to speed up the solve. Frames sharing the same alignment (e.g., PixInsight StarAlignment outputs) can share a single solved WCS.
 
 ### Step 3: Catalog Queries
 
@@ -160,7 +168,19 @@ $$
 
 This ensemble approach minimizes the noise contribution from any single comparison star. If no valid flux errors are available, an unweighted median is used as a fallback.
 
-Manual mode allows you to explicitly designate which stars serve as target, comparison, or check, with individually configurable aperture radii.
+### Manual Aperture Editor
+
+Automatic Source Results remain available when you select a catalog target. For a fully custom reduction, turn on **Aperture Editor** (top-right of the image panel):
+
+- The editor starts **empty and independent** of the currently selected automatic target and comparison stars. Enabling it clears any previous manual apertures for that folder so you begin a new entry.
+- **Double-click** places a manual target; **Shift-click** a comparison; **Ctrl-click** a check star. Drag to move; use the handles to resize aperture and annulus.
+- Right-click a manual aperture (or its Source Results row) for **Delete** and **Change Name**.
+- Optional **Keep Comparison Stars** can seed comparisons from the automatic ensemble later; it is off by default when the editor opens.
+- Place and drag keep the aperture on the clicked pixels on the reference frame (sky coordinates are derived with the same repaired/solved WCS used for photometry so apertures do not jump).
+
+**Apply** remeasures with your manual set while keeping existing light curves and Source Results on screen until the new results arrive. Before measuring, CAst refreshes each manual aperture’s RA/Dec from its reference pixels using the folder’s repaired/solved WCS (so NINA CRVAL/CCVALS offsets do not leave comps off-star), then sky-matches comparisons to AAVSO VSP / APASS / Gaia for scientific Standard Magnitude.
+
+**Clear Cache for This Folder** (Open workflow) also resets that folder’s saved apertures so the next Generate rebuilds catalog targets instead of keeping a stale manual “Target”. **File → Clear All Cache…** hard-clears cached data (with a warning) while keeping settings.
 
 ### Differential Magnitude
 
@@ -172,25 +192,32 @@ $$
 
 This is the core measurement. Because both the target and comparison stars are observed through the same atmosphere at the same time, first-order atmospheric extinction cancels out. Thin clouds, haze, and transparency variations affect all stars equally and divide away.
 
-### Zero-Point Calibration
+### Zero-Point Calibration and Magnitude Axes
 
-When comparison stars have known catalog magnitudes (from Gaia DR3), CAst can compute a photometric zero point:
+When comparison stars have known catalog magnitudes, CAst can compute a photometric zero point:
 
 $$
 \text{ZP} = m_{\text{catalog}} - m_{\text{inst}}
 $$
 
-If multiple reference stars have catalog magnitudes with valid uncertainties, the zero point is an **inverse-variance weighted average**. Otherwise, the **median** is used. The calibrated magnitude is:
+If multiple reference stars have catalog magnitudes with valid uncertainties, the zero point is an **inverse-variance weighted average**. Otherwise, the **median** is used.
+
+The light-curve Y-axis offers three related views:
+
+- **Differential Magnitude** -- $\Delta m$ relative to the comparison ensemble (no absolute scale).
+- **Calibrated Magnitude** -- instrumental magnitude plus a Gaia G-based zero point:
 
 $$
-m_{\text{cal}} = m_{\text{inst}} + \text{ZP}
+m_{\text{cal}} = m_{\text{inst}} + \text{ZP}_{\text{Gaia G}}
 $$
+
+- **Standard Magnitude** (default after Generate/Apply) -- zero-points each filter against **band-matched** comparison-star catalog magnitudes, preferring AAVSO VSP charts, then APASS, then Gaia G when a scientific band match is unavailable. Overview comparison and check series use the target’s standard zero-point on this axis so the QC view stays consistent.
 
 When a zero point is available, the AAVSO export uses `MTYPE=STD` (standard). Otherwise, it falls back to `MTYPE=DIF` (differential).
 
 ![W UMa results](images/WUMa.jpg)
 
-The above is the results screen after Generate completes its work and scans all the known variables in the field. Selecting a Source from the Source Results will show the object in the sky along with its automatically selected comparison stars. These comparison stars will show up at the bottom of the Source Results as a sticky row. You may manually define the apertures and make your own measurement by clicking the "Aperture Editor" on the top-right corner. Although the mode provides a fully automated algorithm, a completely manual and fully customizable advanced options are available for expert users.
+After Generate finishes, Source Results lists the known variables (and discovery candidates) found in the field. Selecting a row shows that target on the image with its automatically selected comparison stars (sticky rows at the bottom of Source Results) and updates the light curve to that selection. Filter → **Overview** plots the selected target in every filter plus its comparison stars and check star (legend on, no period fit) for a Phoranso/AAVSO-style QC view; right-click any series to change Icon and Color. Export → Animation can reveal all Overview series together over time. Use **Aperture Editor** (above) when you want a fully manual, independent reduction instead of the automatic ensemble.
 
 ---
 
@@ -452,7 +479,7 @@ A full `File > Export Report` produces a comprehensive science bundle:
 
 ### What differential photometry does not do
 
-- **Absolute photometry.** Without photometric standard fields observed at multiple airmasses, the zero point is approximate. The calibration relies on Gaia catalog magnitudes, which are in the Gaia photometric system and may not match your filter precisely.
+- **Absolute photometry.** Without photometric standard fields observed at multiple airmasses, the zero point is still approximate. **Standard Magnitude** prefers band-matched AAVSO VSP / APASS comparison magnitudes when available, and otherwise falls back toward Gaia G; **Calibrated Magnitude** remains Gaia G–based and may not match your filter precisely.
 - **Atmospheric extinction correction.** First-order extinction cancels in the differential, but second-order (color-dependent) extinction is not modeled. For wide-band filters on targets with extreme colors, this can introduce systematic errors at the ~0.01 mag level.
 - **Transformation to standard systems.** The export supports a `TRANS` flag, but CAst does not yet compute color transformation coefficients. True transformed photometry requires standard field observations.
 - **Crowded-field photometry.** Aperture photometry works well in uncrowded fields but struggles when stars overlap. PSF-fitting photometry, which models the point-spread function to deblend overlapping sources, is not implemented.

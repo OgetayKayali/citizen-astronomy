@@ -180,6 +180,14 @@ class PhotometryMeasurement:
     zero_point_magnitude: float | None = None
     zero_point_magnitude_error: float | None = None
     zero_point_source_count: int = 0
+    standard_magnitude: float | None = None
+    standard_magnitude_error: float | None = None
+    standard_zero_point_magnitude: float | None = None
+    standard_zero_point_magnitude_error: float | None = None
+    standard_zero_point_source_count: int = 0
+    standard_catalog_band: str | None = None
+    standard_catalog_source: str | None = None
+    band_magnitudes: dict[str, dict[str, object]] = field(default_factory=dict)
     is_check: bool = False
     flags: list[str] = field(default_factory=list)
     comparison_source_ids: list[str] = field(default_factory=list)
@@ -392,6 +400,10 @@ class ManualPhotometryConfig:
         return next((item for item in self.sources if item.role == ManualSourceRole.TARGET), None)
 
     @property
+    def target_sources(self) -> list[ManualSourceConfig]:
+        return [item for item in self.sources if item.role == ManualSourceRole.TARGET]
+
+    @property
     def comparison_sources(self) -> list[ManualSourceConfig]:
         return [item for item in self.sources if item.role == ManualSourceRole.COMPARISON]
 
@@ -426,6 +438,8 @@ class LightCurvePoint:
     flux_error: float | None
     calibrated_magnitude: float | None = None
     calibrated_magnitude_error: float | None = None
+    standard_magnitude: float | None = None
+    standard_magnitude_error: float | None = None
     comparison_reference_flux: float | None = None
     differential_magnitude_error: float | None = None
     quality_score: float = 1.0

@@ -146,6 +146,24 @@ class SettingsTest(unittest.TestCase):
 
         self.assertEqual(loaded.image_display_stretch_mode, "stf")
 
+    def test_settings_round_trip_stf_bright_image_display_stretch_mode(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir) / "workspace"
+
+            root.mkdir()
+
+            settings = AppSettings.from_root(root)
+
+            settings.image_display_stretch_mode = "stf_bright"
+
+            settings.save(root)
+
+            loaded = AppSettings.from_root(root)
+
+        self.assertEqual(loaded.image_display_stretch_mode, "stf_bright")
+
     def test_legacy_asinh_image_display_default_migrates_to_auto_stretch(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -361,6 +379,14 @@ class SettingsTest(unittest.TestCase):
             self.assertIsNone(loaded.asteroid_results_splitter_sizes)
 
             self.assertEqual(loaded.asteroid_blink_frame_duration_ms, 50)
+
+            self.assertTrue(loaded.asteroid_show_ra_dec)
+
+            self.assertFalse(loaded.asteroid_equatorial_grid_enabled)
+
+            self.assertEqual(loaded.asteroid_equatorial_grid_ra_density, 5)
+
+            self.assertEqual(loaded.asteroid_equatorial_grid_dec_density, 5)
 
             self.assertEqual(loaded.asteroid_gif_export_scale_percent, 100)
 
@@ -916,6 +942,14 @@ class SettingsTest(unittest.TestCase):
 
                 asteroid_blink_frame_duration_ms=500,
 
+                asteroid_show_ra_dec=False,
+
+                asteroid_equatorial_grid_enabled=True,
+
+                asteroid_equatorial_grid_ra_density=8,
+
+                asteroid_equatorial_grid_dec_density=6,
+
                 asteroid_gif_export_scale_percent=150,
 
                 asteroid_gif_export_loop_forever=False,
@@ -1176,6 +1210,14 @@ class SettingsTest(unittest.TestCase):
             self.assertFalse(loaded.asteroid_visual_invert_annotation_colors)
 
             self.assertEqual(loaded.asteroid_blink_frame_duration_ms, 500)
+
+            self.assertFalse(loaded.asteroid_show_ra_dec)
+
+            self.assertTrue(loaded.asteroid_equatorial_grid_enabled)
+
+            self.assertEqual(loaded.asteroid_equatorial_grid_ra_density, 8)
+
+            self.assertEqual(loaded.asteroid_equatorial_grid_dec_density, 6)
 
             self.assertEqual(loaded.asteroid_gif_export_scale_percent, 150)
 
@@ -1682,6 +1724,92 @@ class SettingsTest(unittest.TestCase):
 
 
             self.assertFalse(loaded.saturation_filter_enabled)
+
+
+
+    def test_settings_round_trip_preserves_wcs_sanity_options(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            settings = AppSettings(
+
+                astrometry_api_key=None,
+
+                cache_dir=root / ".photometry-cache",
+
+                config_path=root / ".photometry-settings.json",
+
+                assume_aligned_images=False,
+
+                nearby_reference_count=5,
+
+                photometry_aperture_mode=PhotometryApertureMode.FWHM_SCALED,
+
+                aperture_radius_pixels=5.0,
+
+                annulus_inner_radius_pixels=8.0,
+
+                annulus_outer_radius_pixels=12.0,
+
+                aperture_radius_fwhm_scale=1.6,
+
+                annulus_inner_radius_fwhm_scale=3.0,
+
+                annulus_outer_radius_fwhm_scale=4.5,
+
+                variable_star_limit_mode=VariableStarLimitMode.PERCENT,
+
+                variable_star_limit_value=25,
+
+                variable_star_designation_filters=[VariableStarDesignationFamily.NAMED],
+
+                wcs_sanity_check_enabled=False,
+
+                wcs_sanity_candidate_count=12,
+
+                wcs_sanity_min_matches=6,
+
+                wcs_sanity_approval_percent=88.0,
+
+                wcs_sanity_max_median_residual_arcsec=2.5,
+
+                wcs_sanity_gaia_min_magnitude=9.5,
+
+                wcs_sanity_gaia_max_magnitude=13.0,
+
+                wcs_sanity_edge_margin_percent=25.0,
+
+                wcs_sanity_isolation_arcsec=10.0,
+
+                wcs_sanity_ccvals_repair_enabled=False,
+
+            )
+
+            settings.save(root)
+
+            loaded = AppSettings.from_root(root)
+
+            self.assertFalse(loaded.wcs_sanity_check_enabled)
+
+            self.assertEqual(loaded.wcs_sanity_candidate_count, 12)
+
+            self.assertEqual(loaded.wcs_sanity_min_matches, 6)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_approval_percent, 88.0)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_max_median_residual_arcsec, 2.5)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_gaia_min_magnitude, 9.5)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_gaia_max_magnitude, 13.0)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_edge_margin_percent, 25.0)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_isolation_arcsec, 10.0)
+
+            self.assertFalse(loaded.wcs_sanity_ccvals_repair_enabled)
 
 
 

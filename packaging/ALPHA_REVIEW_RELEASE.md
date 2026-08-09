@@ -119,7 +119,10 @@ Velopack:
 5. uses the external `Update.exe` to replace `current` atomically and restart.
 
 The prompt shows whether the selected transfer is a delta or full package and
-its actual byte size. If the reviewer downloads an update but chooses not to
+its actual byte size. For deltas, it also warns that after the download Velopack
+rebuilds the full package locally and that this might take a few minutes. The
+progress dialog shows Phase 1/2 (download) then Phase 2/2 (rebuild) with a busy
+bar during reconstruction. If the reviewer downloads an update but chooses not to
 restart immediately, Velopack applies that already-verified package on the next
 launch. Development/source runs are intentionally not updateable;
 the UI reports that a Velopack-managed installation is required.

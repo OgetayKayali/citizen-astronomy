@@ -5,7 +5,11 @@ from dataclasses import replace
 import numpy as np
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QPushButton, QVBoxLayout
 
-from photometry_app.core.plotting import AnnotatedImageDisplay, AnnotatedImageRenderSettings
+from photometry_app.core.plotting import (
+    AnnotatedImageDisplay,
+    AnnotatedImageRenderSettings,
+    visual_stretch_preview,
+)
 from photometry_app.ui.curves_widget import HistogramCurvesWidget
 from photometry_app.ui.image_view import AnnotatedImageView
 
@@ -36,8 +40,9 @@ class CurvesDialog(QDialog):
         self._curves_widget = HistogramCurvesWidget(self)
         self._curves_widget.curveChanged.connect(self._update_preview)
 
-        histogram_source = self._display.color_preview_normalized if self._display.color_preview_normalized is not None else self._display.preview_normalized
-        self._curves_widget.set_histogram_data(histogram_source)
+        # Histogram matches the already-stretched view (curves edit that visual layer only).
+        histogram_settings = replace(initial_settings, curve_points=())
+        self._curves_widget.set_histogram_data(visual_stretch_preview(self._display, histogram_settings))
         self._curves_widget.set_curve_points(_initial_curve_points(initial_settings))
 
         layout = QVBoxLayout()
@@ -124,9 +129,11 @@ def _downsample_annotated_display(display: AnnotatedImageDisplay) -> AnnotatedIm
         normalized_data=_downsample_array(display.normalized_data, stride),
         preview_normalized=_downsample_optional_array(display.preview_normalized, stride),
         asinh_preview=_downsample_optional_array(display.asinh_preview, stride),
+        auto_stretch_preview=_downsample_optional_array(display.auto_stretch_preview, stride),
         linear_preview_normalized=_downsample_optional_array(display.linear_preview_normalized, stride),
         color_preview_normalized=_downsample_optional_array(display.color_preview_normalized, stride),
         color_asinh_preview=_downsample_optional_array(display.color_asinh_preview, stride),
+        color_auto_stretch_preview=_downsample_optional_array(display.color_auto_stretch_preview, stride),
         color_linear_preview_normalized=_downsample_optional_array(display.color_linear_preview_normalized, stride),
     )
 

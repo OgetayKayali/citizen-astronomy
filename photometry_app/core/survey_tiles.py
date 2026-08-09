@@ -33,6 +33,14 @@ SURVEY_TILE_STF_LOWER_PERCENTILE = 0.5
 SURVEY_TILE_STF_UPPER_PERCENTILE = 99.8
 SURVEY_TILE_STF_MIN_DYNAMIC_RANGE = 1.0e-6
 SURVEY_TILE_NO_DATA_MARKER = "no_survey_coverage"
+SURVEY_TILE_STRETCH_MODES = frozenset({"stf", "stf_bright", "asinh", "sqrt", "log"})
+SURVEY_TILE_STF_TARGET_BACKGROUND = 0.12
+SURVEY_TILE_STF_BRIGHT_TARGET_BACKGROUND = 0.25
+# Display feather: 0-1 amount. Tiles are fetched with fixed max sky overlap; the UI
+# amount controls how much of that overlap is drawn and alpha-blended (no stretching).
+SURVEY_TILE_FEATHER_DEFAULT = 0.55
+# Overlap on each side as a fraction of the base tile size at feather=1.
+SURVEY_TILE_FEATHER_EXPAND_FRACTION = 0.12
 
 
 class SurveyTileResolution(str, Enum):
@@ -185,6 +193,17 @@ class SurveyTileDrawItem:
     label: str = ""
 
 
+def survey_tile_overlap_scale(feather_amount: float = 1.0) -> float:
+    """Return linear size scale for a tile fetch/draw relative to the base cell."""
+    amount = max(0.0, min(1.0, float(feather_amount)))
+    return 1.0 + (2.0 * amount * SURVEY_TILE_FEATHER_EXPAND_FRACTION)
+
+
+def survey_tile_max_overlap_scale() -> float:
+    """Fixed fetch scale so tiles always contain enough sky to feather without stretching."""
+    return survey_tile_overlap_scale(1.0)
+
+
 def survey_tile_pixel_rect(
     tile_i: int,
     tile_j: int,
@@ -204,6 +223,33 @@ def survey_tile_pixel_rect(
     x0 = -float(tile_i) * width
     y0 = float(tile_j) * height
     return x0, y0, width, height
+
+
+def survey_tile_draw_rect(
+    tile_i: int,
+    tile_j: int,
+    *,
+    width_px: int,
+    height_px: int,
+    overlap_scale: float = 1.0,
+) -> tuple[float, float, float, float]:
+    """
+    Image-pixel rect for drawing a tile, optionally larger than the base cell.
+
+    The rect stays centered on the same sky center as survey_tile_pixel_rect; only
+    the covered sky area grows when overlap_scale > 1.
+    """
+    x0, y0, width, height = survey_tile_pixel_rect(
+        tile_i, tile_j, width_px=width_px, height_px=height_px,
+    )
+    scale = max(1.0, float(overlap_scale))
+    if scale <= 1.0 + 1e-9:
+        return x0, y0, width, height
+    center_x = x0 + (width * 0.5)
+    center_y = y0 + (height * 0.5)
+    draw_width = width * scale
+    draw_height = height * scale
+    return center_x - (draw_width * 0.5), center_y - (draw_height * 0.5), draw_width, draw_height
 
 
 def survey_tile_indices_for_image_point(
@@ -232,7 +278,26 @@ def is_survey_no_data_error(message: str) -> bool:
     )
 
 
-def compute_survey_tile_stf_parameters(image_data: np.ndarray) -> SurveyTileStfParameters:
+def normalize_survey_tile_stretch_mode(stretch_mode: str | None) -> str:
+    mode = str(stretch_mode or "stf").strip().lower()
+    if mode == "linear":
+        # Sky Explorer no longer offers None/linear; keep tiles on STF.
+        return "stf"
+    return mode if mode in SURVEY_TILE_STRETCH_MODES else "stf"
+
+
+def survey_tile_stf_target_background(stretch_mode: str | None) -> float:
+    mode = normalize_survey_tile_stretch_mode(stretch_mode)
+    if mode == "stf_bright":
+        return SURVEY_TILE_STF_BRIGHT_TARGET_BACKGROUND
+    return SURVEY_TILE_STF_TARGET_BACKGROUND
+
+
+def compute_survey_tile_stf_parameters(
+    image_data: np.ndarray,
+    *,
+    stretch_mode: str = "stf",
+) -> SurveyTileStfParameters:
     """Compute PixInsight-like STF parameters from one tile alone."""
     from photometry_app.core.plotting import (
         _adaptive_display_function_parameters,
@@ -240,6 +305,7 @@ def compute_survey_tile_stf_parameters(image_data: np.ndarray) -> SurveyTileStfP
         _auto_stretch_source_normalized_data,
     )
 
+    mode = normalize_survey_tile_stretch_mode(stretch_mode)
     pixels = _normalized_tile_array(image_data)
     if pixels.ndim == 3:
         plane = np.mean(pixels[..., : min(3, pixels.shape[-1])], axis=-1)
@@ -281,10 +347,18 @@ def compute_survey_tile_stf_parameters(image_data: np.ndarray) -> SurveyTileStfP
         auto_source = _auto_stretch_source_normalized_data(np.nan_to_num(stats_plane, nan=np.nanmedian(normalized)))
     else:
         auto_source = _auto_stretch_source_normalized_data(normalized)
-    midtones, shadows, highlights = _adaptive_display_function_parameters(auto_source)
-    # Keep stretch bright but bounded: avoid near-zero shadows that blow noise to white.
-    shadows = float(np.clip(shadows, 0.0, 0.35))
-    highlights = float(np.clip(highlights, max(shadows + 0.05, 0.55), 1.0))
+    midtones, shadows, highlights = _adaptive_display_function_parameters(
+        auto_source,
+        target_background=survey_tile_stf_target_background(mode),
+    )
+    if mode == "stf_bright":
+        # Brighter survey look: keep midtones lifted but avoid near-zero shadows blowing noise.
+        shadows = float(np.clip(shadows, 0.0, 0.35))
+        highlights = float(np.clip(highlights, max(shadows + 0.05, 0.55), 1.0))
+    else:
+        # Default STF: slightly darker so bright nebulosity keeps structure.
+        shadows = float(np.clip(shadows, 0.0, 0.45))
+        highlights = float(np.clip(highlights, max(shadows + 0.05, 0.65), 1.0))
     midtones = float(np.clip(midtones, 0.05, 0.95))
     return SurveyTileStfParameters(
         vmin=vmin,
@@ -296,30 +370,95 @@ def compute_survey_tile_stf_parameters(image_data: np.ndarray) -> SurveyTileStfP
     )
 
 
-def render_survey_tile_display_rgba(
+def stretch_survey_tile_float(
     image_data: np.ndarray,
-    stf: SurveyTileStfParameters,
+    stf: SurveyTileStfParameters | None = None,
+    *,
+    stretch_mode: str = "stf",
 ) -> np.ndarray:
-    """Apply stored per-tile STF and return contiguous HxWx4 uint8 RGBA."""
-    from photometry_app.core.plotting import _apply_display_function
+    """Return float [0, 1] tile after stretch (before curves/invert)."""
+    from photometry_app.core.plotting import _apply_display_function, _stretched_image_data
 
+    mode = normalize_survey_tile_stretch_mode(stretch_mode)
     pixels = _normalized_tile_array(image_data)
     color = pixels.ndim == 3 and pixels.shape[-1] >= 3
     if color:
         working = pixels[..., :3].astype(np.float32, copy=False)
     else:
         working = pixels.astype(np.float32, copy=False)
-    span = max(SURVEY_TILE_STF_MIN_DYNAMIC_RANGE, float(stf.vmax) - float(stf.vmin))
-    normalized = np.clip((working - float(stf.vmin)) / span, 0.0, 1.0)
-    stretched = _apply_display_function(
-        normalized,
-        midtones_balance=float(stf.midtones_balance),
-        shadows_clip=float(stf.shadows_clip),
-        highlights_clip=float(stf.highlights_clip),
+
+    if mode in {"stf", "stf_bright"}:
+        resolved_stf = stf if stf is not None else compute_survey_tile_stf_parameters(image_data, stretch_mode=mode)
+    else:
+        # Non-STF modes share vmin/vmax normalization with STF, then apply the named transfer.
+        resolved_stf = stf if stf is not None else compute_survey_tile_stf_parameters(image_data, stretch_mode="stf")
+    span = max(SURVEY_TILE_STF_MIN_DYNAMIC_RANGE, float(resolved_stf.vmax) - float(resolved_stf.vmin))
+    normalized = np.clip((working - float(resolved_stf.vmin)) / span, 0.0, 1.0)
+    if mode in {"stf", "stf_bright"}:
+        return np.asarray(
+            _apply_display_function(
+                normalized,
+                midtones_balance=float(resolved_stf.midtones_balance),
+                shadows_clip=float(resolved_stf.shadows_clip),
+                highlights_clip=float(resolved_stf.highlights_clip),
+            ),
+            dtype=np.float32,
+        )
+    return np.asarray(_stretched_image_data(normalized, stretch_mode=mode), dtype=np.float32)
+
+
+def apply_survey_tile_edge_feather(
+    alpha: np.ndarray,
+    *,
+    width: int,
+    height: int,
+    feather_amount: float,
+    overlap_scale: float | None = None,
+) -> np.ndarray:
+    """Fade tile alpha near edges across the sky-overlap margin (no geometric stretch)."""
+    resolved_feather = max(0.0, min(1.0, float(feather_amount)))
+    if resolved_feather <= 1.0e-6:
+        return alpha
+    scale = float(overlap_scale) if overlap_scale is not None else survey_tile_overlap_scale(resolved_feather)
+    scale = max(1.0, scale)
+    # Fade across the per-side overlap band of this (possibly cropped) image.
+    overlap_fraction = max(0.0, (scale - 1.0) / (2.0 * scale))
+    feather_pixels = resolved_feather * float(min(width, height)) * overlap_fraction
+    if feather_pixels <= 1.0:
+        return alpha
+    y_coords = np.arange(height, dtype=np.float32)[:, None]
+    x_coords = np.arange(width, dtype=np.float32)[None, :]
+    edge_distance = np.minimum(
+        np.minimum(y_coords, float(height - 1) - y_coords),
+        np.minimum(x_coords, float(width - 1) - x_coords),
     )
+    normalized = np.clip(edge_distance / np.float32(feather_pixels), np.float32(0.0), np.float32(1.0))
+    feather_mask = normalized * normalized * (np.float32(3.0) - np.float32(2.0) * normalized)
+    alpha_channel = alpha.astype(np.float32, copy=False)
+    return np.clip(alpha_channel * feather_mask, np.float32(0.0), np.float32(255.0)).astype(np.uint8)
+
+
+def render_survey_tile_display_rgba(
+    image_data: np.ndarray,
+    stf: SurveyTileStfParameters | None = None,
+    *,
+    stretch_mode: str = "stf",
+    curve_points: tuple[tuple[float, float], ...] = (),
+    inverted: bool = False,
+) -> np.ndarray:
+    """Stretch one tile for display and return contiguous HxWx4 uint8 RGBA."""
+    from photometry_app.core.plotting import evaluate_image_curve_points
+
+    pixels = _normalized_tile_array(image_data)
+    color = pixels.ndim == 3 and pixels.shape[-1] >= 3
+    stretched = stretch_survey_tile_float(image_data, stf, stretch_mode=stretch_mode)
+    if curve_points:
+        stretched = evaluate_image_curve_points(stretched, curve_points)
     rgb8 = np.ascontiguousarray(np.clip(stretched * 255.0, 0.0, 255.0).astype(np.uint8))
     if rgb8.ndim == 2:
         rgb8 = np.repeat(rgb8[:, :, None], 3, axis=2)
+    if inverted:
+        rgb8 = np.ascontiguousarray(255 - rgb8)
     alpha = np.full(rgb8.shape[:2], 255, dtype=np.uint8)
     # Transparent where source was non-finite so seams do not paint opaque black.
     if color:
@@ -485,14 +624,88 @@ def survey_tile_fetch_size(
     width_px: int,
     height_px: int,
     resolution: SurveyTileResolution,
+    overlap_scale: float | None = None,
 ) -> tuple[int, int]:
     if resolution is SurveyTileResolution.PREVIEW:
-        return sky_explorer_survey_field_preview_size(
+        base_width, base_height = sky_explorer_survey_field_preview_size(
             width_px,
             height_px,
             max_edge=SKY_EXPLORER_SURVEY_FIELD_PREVIEW_MAX_EDGE,
         )
-    return max(1, int(width_px)), max(1, int(height_px))
+    else:
+        base_width, base_height = max(1, int(width_px)), max(1, int(height_px))
+    scale = survey_tile_max_overlap_scale() if overlap_scale is None else max(1.0, float(overlap_scale))
+    if scale <= 1.0 + 1e-9:
+        return base_width, base_height
+    # Symmetric margins so feather crops expand about the image center.
+    expand = max(0.0, (scale - 1.0) * 0.5)
+    margin_w = max(0, int(round(base_width * expand)))
+    margin_h = max(0, int(round(base_height * expand)))
+    return base_width + 2 * margin_w, base_height + 2 * margin_h
+
+
+def survey_tile_fetch_fov_arcmin(
+    fov_arcmin: float,
+    *,
+    width_px: int,
+    height_px: int,
+    resolution: SurveyTileResolution,
+    overlap_scale: float | None = None,
+) -> float:
+    """FOV for a tile fetch that keeps plate scale while adding sky overlap."""
+    base_w, base_h = (
+        sky_explorer_survey_field_preview_size(
+            width_px, height_px, max_edge=SKY_EXPLORER_SURVEY_FIELD_PREVIEW_MAX_EDGE,
+        )
+        if resolution is SurveyTileResolution.PREVIEW
+        else (max(1, int(width_px)), max(1, int(height_px)))
+    )
+    fetch_w, fetch_h = survey_tile_fetch_size(
+        width_px=width_px,
+        height_px=height_px,
+        resolution=resolution,
+        overlap_scale=overlap_scale,
+    )
+    # Match the actual pixel scale of the fetch size (not the nominal expand constant).
+    scale = max(fetch_w / float(base_w), fetch_h / float(base_h))
+    return max(1.0e-6, float(fov_arcmin) * scale)
+
+
+def survey_tile_feather_crop_and_draw(
+    *,
+    image_width: int,
+    image_height: int,
+    base_width: float,
+    base_height: float,
+    feather_amount: float,
+) -> tuple[int, int, int, int, float, float]:
+    """
+    Return centered crop (x0, y0, crop_w, crop_h) and mosaic draw size (draw_w, draw_h).
+
+    Fetched images include symmetric overlap margins. Feather grows those margins
+    evenly from the center so stars at the tile center stay fixed.
+    """
+    img_w = max(1, int(image_width))
+    img_h = max(1, int(image_height))
+    base_w = max(1.0, float(base_width))
+    base_h = max(1.0, float(base_height))
+    amount = max(0.0, min(1.0, float(feather_amount)))
+    expand = SURVEY_TILE_FEATHER_EXPAND_FRACTION
+    margin_w = max(0, int(round(img_w * expand / (1.0 + 2.0 * expand))))
+    margin_h = max(0, int(round(img_h * expand / (1.0 + 2.0 * expand))))
+    margin_w = min(margin_w, max(0, (img_w - 1) // 2))
+    margin_h = min(margin_h, max(0, (img_h - 1) // 2))
+    fetch_base_w = max(1, img_w - 2 * margin_w)
+    fetch_base_h = max(1, img_h - 2 * margin_h)
+    vis_margin_w = max(0, min(margin_w, int(round(amount * float(margin_w)))))
+    vis_margin_h = max(0, min(margin_h, int(round(amount * float(margin_h)))))
+    x0 = margin_w - vis_margin_w
+    y0 = margin_h - vis_margin_h
+    crop_w = fetch_base_w + 2 * vis_margin_w
+    crop_h = fetch_base_h + 2 * vis_margin_h
+    draw_w = base_w * (float(crop_w) / float(fetch_base_w))
+    draw_h = base_h * (float(crop_h) / float(fetch_base_h))
+    return x0, y0, crop_w, crop_h, draw_w, draw_h
 
 
 def make_survey_tile_key(
@@ -529,6 +742,8 @@ def survey_tile_sky_center(
         fov_arcmin=key.fov_arcmin,
         tile_i=key.tile_i,
         tile_j=key.tile_j,
+        width_px=key.width_px,
+        height_px=key.height_px,
     )
     return float(spec.ra_deg), float(spec.dec_deg)
 

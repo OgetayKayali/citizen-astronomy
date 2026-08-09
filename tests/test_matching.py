@@ -5,7 +5,13 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from photometry_app.core.matching import apply_differential_photometry, apply_measurement_quality_analysis, build_light_curve_series, select_reference_stars
+from photometry_app.core.matching import (
+    apply_differential_photometry,
+    apply_measurement_quality_analysis,
+    build_light_curve_series,
+    build_overview_light_curve_layers,
+    select_reference_stars,
+)
 from photometry_app.core.models import CatalogStar, PhotometryMeasurement
 
 
@@ -507,3 +513,142 @@ class MatchingTest(unittest.TestCase):
         self.assertTrue(outlier.excluded_from_analysis)
         self.assertLess(outlier.quality_score, 0.35)
         self.assertTrue(any("Low SNR" in flag or "outlier" in flag.lower() for flag in outlier.flags))
+
+    def test_build_overview_light_curve_layers_includes_target_comps_and_check(self) -> None:
+        root = Path("C:/synthetic")
+        t0 = datetime(2026, 3, 16, 1, 0, 0)
+
+        def _row(
+            *,
+            source_id: str,
+            source_name: str,
+            filter_name: str,
+            minute: int,
+            is_reference: bool = False,
+            is_check: bool = False,
+            comparison_source_ids: list[str] | None = None,
+            comparison_source_names: list[str] | None = None,
+            flux: float = 1000.0,
+            file_name: str | None = None,
+            comparison_reference_flux: float | None = None,
+            zero_point_magnitude: float | None = None,
+            differential_magnitude: float | None = None,
+        ) -> PhotometryMeasurement:
+            resolved_file = file_name or f"{filter_name}_{minute}.fit"
+            return PhotometryMeasurement(
+                source_id=source_id,
+                source_name=source_name,
+                catalog="vsx" if not is_reference else "gaia-dr3",
+                object_name="DY Her",
+                file_path=root / resolved_file,
+                observation_time=t0.replace(minute=minute),
+                filter_name=filter_name,
+                ra_deg=10.0,
+                dec_deg=20.0,
+                x=100.0,
+                y=100.0,
+                flux=flux,
+                flux_error=10.0,
+                instrumental_magnitude=-7.5 if not is_reference else -8.0,
+                differential_magnitude=(0.1 if differential_magnitude is None and not is_reference else differential_magnitude),
+                calibrated_magnitude=None if is_reference else 12.0,
+                zero_point_magnitude=zero_point_magnitude,
+                comparison_reference_flux=comparison_reference_flux,
+                is_variable=not is_reference,
+                is_reference=is_reference,
+                is_check=is_check,
+                comparison_source_ids=list(comparison_source_ids or []),
+                comparison_source_names=list(comparison_source_names or []),
+                flags=[],
+            )
+
+        measurements = [
+            _row(
+                source_id="target-1",
+                source_name="DY Her",
+                filter_name="V",
+                minute=0,
+                file_name="frame_v.fit",
+                comparison_source_ids=["comp-a", "comp-b", "comp-c"],
+                comparison_source_names=["Comp A", "Comp B", "Comp C"],
+                comparison_reference_flux=2000.0,
+                zero_point_magnitude=19.5,
+            ),
+            _row(
+                source_id="target-1",
+                source_name="DY Her",
+                filter_name="B",
+                minute=1,
+                file_name="frame_b.fit",
+                comparison_source_ids=["comp-a", "comp-b"],
+                comparison_source_names=["Comp A", "Comp B"],
+                comparison_reference_flux=2100.0,
+                zero_point_magnitude=19.8,
+            ),
+            _row(source_id="comp-a", source_name="Comp A", filter_name="V", minute=0, is_reference=True, flux=2000.0, file_name="frame_v.fit"),
+            _row(source_id="comp-a", source_name="Comp A", filter_name="B", minute=1, is_reference=True, flux=2100.0, file_name="frame_b.fit"),
+            _row(source_id="comp-b", source_name="Comp B", filter_name="V", minute=0, is_reference=True, flux=1800.0, file_name="frame_v.fit"),
+            _row(source_id="comp-c", source_name="Comp C", filter_name="V", minute=0, is_reference=True, flux=1700.0, file_name="frame_v.fit"),
+            _row(
+                source_id="check-1",
+                source_name="Check Star",
+                filter_name="V",
+                minute=0,
+                is_reference=True,
+                is_check=True,
+                flux=1900.0,
+                file_name="frame_v.fit",
+            ),
+        ]
+
+        layers, status_note = build_overview_light_curve_layers(measurements, "target-1", max_comparison_stars=2)
+
+        labels = [layer.legend_label for layer in layers]
+        roles = [layer.role for layer in layers]
+        self.assertIn("DY Her [V]", labels)
+        self.assertIn("DY Her [B]", labels)
+        self.assertTrue(any(label.startswith("Comp ") and "[V]" in label for label in labels))
+        self.assertIn("Check Check Star [V]", labels)
+        self.assertEqual(roles.count("target"), 2)
+        self.assertEqual(roles.count("check"), 1)
+        self.assertLessEqual(roles.count("comparison"), 3)
+        self.assertIsNotNone(status_note)
+        assert status_note is not None
+        self.assertIn("2 of 3", status_note)
+
+        comp_layers = [layer for layer in layers if layer.role == "comparison"]
+        self.assertTrue(comp_layers)
+        for layer in comp_layers:
+            for point in layer.series.points:
+                self.assertIsNotNone(point.differential_magnitude)
+                self.assertIsNotNone(point.calibrated_magnitude)
+
+    def test_build_overview_light_curve_layers_requires_science_target(self) -> None:
+        root = Path("C:/synthetic")
+        measurement = PhotometryMeasurement(
+            source_id="comp-a",
+            source_name="Comp A",
+            catalog="gaia-dr3",
+            object_name="DY Her",
+            file_path=root / "comp.fit",
+            observation_time=datetime(2026, 3, 16, 1, 0, 0),
+            filter_name="V",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            x=100.0,
+            y=100.0,
+            flux=2000.0,
+            flux_error=10.0,
+            instrumental_magnitude=-8.0,
+            differential_magnitude=None,
+            is_variable=False,
+            is_reference=True,
+            flags=[],
+        )
+
+        layers, status_note = build_overview_light_curve_layers([measurement], "comp-a")
+
+        self.assertEqual(layers, [])
+        self.assertIsNotNone(status_note)
+        assert status_note is not None
+        self.assertIn("science target", status_note.lower())

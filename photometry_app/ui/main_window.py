@@ -113,6 +113,7 @@ from photometry_app.core.discovery import *
 from photometry_app.core.exporters import (
     export_annotated_images,
     export_light_curve_plot,
+    export_light_curve_plot_payload,
     export_light_curve_plots,
     measurement_airmass,
     measurement_check_diagnostics,
@@ -190,6 +191,7 @@ from photometry_app.core.survey_images import (
     write_survey_image_fits,
 )
 from photometry_app.core.survey_tiles import (
+    SURVEY_TILE_FEATHER_DEFAULT,
     SURVEY_TILE_MAX_NETWORK_WORKERS,
     SURVEY_TILE_MAX_QUEUED_REQUESTS,
     SURVEY_TILE_MAX_RETRIES,
@@ -202,9 +204,12 @@ from photometry_app.core.survey_tiles import (
     SurveyTileResultStatus,
     SurveyTileState,
     build_viewport_survey_tile_work,
+    compute_survey_tile_stf_parameters,
     initial_survey_tile_work_order,
     make_survey_tile_key,
     make_survey_tile_placeholder_rgba,
+    render_survey_tile_display_rgba,
+    stretch_survey_tile_float,
     survey_tile_indices_for_image_point,
     survey_tile_pixel_rect,
     survey_tile_request_priority,
@@ -24194,6 +24199,8 @@ class _DifferentialWorkflowDialog(QDialog):
 
         terminate_callback: Callable[[], None] | None = None,
 
+        clear_object_cache_callback: Callable[[str], int] | None = None,
+
     ) -> None:
 
         super().__init__(parent)
@@ -24203,6 +24210,10 @@ class _DifferentialWorkflowDialog(QDialog):
         self._generate_callback = generate_callback
 
         self._terminate_callback = terminate_callback
+
+        self._clear_object_cache_callback = clear_object_cache_callback
+
+        self._ready_object_name: str | None = None
 
         self._is_busy = False
 
@@ -24271,6 +24282,31 @@ class _DifferentialWorkflowDialog(QDialog):
         folder_row.addWidget(self._folder_path_label, stretch=1)
 
         folder_layout.addLayout(folder_row)
+
+        cache_row = QHBoxLayout()
+
+        cache_row.setSpacing(8)
+
+        self._clear_cache_button = QPushButton("Clear Cache for This Folder")
+
+        # Match Folder button chrome so it reads as a control, not path text.
+        self._clear_cache_button.setObjectName("workflowFolderButton")
+
+        self._clear_cache_button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self._clear_cache_button.setEnabled(False)
+
+        self._clear_cache_button.setToolTip(
+            "Delete cached photometry results, solutions, and field catalogs for this folder only. Settings are kept."
+        )
+
+        self._clear_cache_button.clicked.connect(self._handle_clear_cache_clicked)
+
+        cache_row.addWidget(self._clear_cache_button)
+
+        cache_row.addStretch(1)
+
+        folder_layout.addLayout(cache_row)
 
         self._folder_status_label = _ElidedLabel("Select the image folder to begin.")
 
@@ -24706,6 +24742,8 @@ class _DifferentialWorkflowDialog(QDialog):
 
     def _reset_dialog_state(self) -> None:
 
+        self._ready_object_name = None
+
         self._folder_path_label.set_elided_text("No folder selected.")
 
         self._folder_status_label.set_elided_text("Select the image folder to begin.")
@@ -24717,6 +24755,8 @@ class _DifferentialWorkflowDialog(QDialog):
         self._tip_label.setStyleSheet("")
 
         self._folder_button.setEnabled(True)
+
+        self._clear_cache_button.setEnabled(False)
 
         self._generate_button.setEnabled(False)
 
@@ -24743,6 +24783,66 @@ class _DifferentialWorkflowDialog(QDialog):
     def _handle_generate_clicked(self) -> None:
 
         self._generate_callback(self.options())
+
+
+
+    def _handle_clear_cache_clicked(self) -> None:
+
+        if self._clear_object_cache_callback is None:
+
+            return
+
+        object_name = str(self._ready_object_name or "").strip()
+
+        if not object_name:
+
+            QMessageBox.information(self, "No folder ready", "Open a folder first, then clear its cache.")
+
+            return
+
+        reply = QMessageBox.warning(
+
+            self,
+
+            "Clear Object Cache",
+
+            (
+
+                f"Delete cached results for “{object_name}”?\n\n"
+
+                "This removes processed photometry, measurements, and related solve/catalog cache for that folder only. "
+
+                "Saved aperture edits for this folder (for example a manual Target) are also reset so Generate can rebuild catalog targets.\n\n"
+
+                "Other settings are kept. This cannot be undone."
+
+            ),
+
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+
+            QMessageBox.StandardButton.No,
+
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+
+            return
+
+        removed = int(self._clear_object_cache_callback(object_name) or 0)
+
+        item_label = "item" if removed == 1 else "items"
+
+        if removed == 0:
+
+            message = f"No cached items were found for {object_name}."
+
+        else:
+
+            message = f"Cleared {removed} cached {item_label} for {object_name}. Run Generate again for a fresh catalog run."
+
+        self._folder_status_label.set_elided_text(message)
+
+        QMessageBox.information(self, "Cache Cleared", message)
 
 
 
@@ -24822,7 +24922,11 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self.set_folder_path(path)
 
+        self._ready_object_name = None
+
         self._folder_button.setEnabled(False)
+
+        self._clear_cache_button.setEnabled(False)
 
         self._generate_button.setEnabled(False)
 
@@ -24848,7 +24952,13 @@ class _DifferentialWorkflowDialog(QDialog):
 
     def set_ready(self, object_name: str, file_count: int) -> None:
 
+        self._ready_object_name = str(object_name or "").strip() or None
+
         self._folder_button.setEnabled(True)
+
+        self._clear_cache_button.setEnabled(
+            self._ready_object_name is not None and self._clear_object_cache_callback is not None
+        )
 
         self._generate_button.setEnabled(True)
 
@@ -24875,6 +24985,8 @@ class _DifferentialWorkflowDialog(QDialog):
     def set_busy(self, title: str, detail: str) -> None:
 
         self._folder_button.setEnabled(False)
+
+        self._clear_cache_button.setEnabled(False)
 
         self._generate_button.setEnabled(False)
 
@@ -24909,6 +25021,10 @@ class _DifferentialWorkflowDialog(QDialog):
     def set_finished(self, detail: str) -> None:
 
         self._folder_button.setEnabled(True)
+
+        self._clear_cache_button.setEnabled(
+            self._ready_object_name is not None and self._clear_object_cache_callback is not None
+        )
 
         self._generate_button.setEnabled(True)
 
@@ -24949,6 +25065,10 @@ class _DifferentialWorkflowDialog(QDialog):
     def set_failed(self, detail: str, *, can_generate: bool = True) -> None:
 
         self._folder_button.setEnabled(True)
+
+        self._clear_cache_button.setEnabled(
+            self._ready_object_name is not None and self._clear_object_cache_callback is not None
+        )
 
         self._generate_button.setEnabled(can_generate)
 
@@ -26774,11 +26894,15 @@ class MainWindow(QMainWindow):
 
         self._light_curve_y_axis_selector.addItem("Calibrated Magnitude", "calibrated_magnitude")
 
+        self._light_curve_y_axis_selector.addItem("Standard Magnitude", "standard_magnitude")
+
         self._light_curve_y_axis_selector.addItem("Flux (counts)", "flux")
 
         self._light_curve_y_axis_selector.addItem("Relative Flux", "relative_flux")
 
-        self._light_curve_y_axis_selector.setCurrentIndex(1)
+        standard_index = self._light_curve_y_axis_selector.findData("standard_magnitude")
+
+        self._light_curve_y_axis_selector.setCurrentIndex(standard_index if standard_index >= 0 else 2)
 
         self._light_curve_y_axis_selector.currentIndexChanged.connect(self._handle_fit_control_changed)
 
@@ -27008,7 +27132,7 @@ class MainWindow(QMainWindow):
 
         self._keep_comparison_stars_checkbox.setToolTip(
 
-            "Keep the current comparison-star ensemble locked while editing target and check apertures"
+            "When checked, target edits keep the current comparison ensemble. Shift-click or Delete on a comparison turns this off so you can edit comps manually."
 
         )
 
@@ -27385,6 +27509,8 @@ class MainWindow(QMainWindow):
         self._image_view.imageReleased.connect(self._handle_image_release)
 
         self._image_view.imageMoved.connect(self._handle_image_motion)
+
+        self._image_view.imageDoubleClicked.connect(self._handle_image_double_clicked)
 
         self._image_view.imageContextRequested.connect(self._handle_image_context_requested)
 
@@ -29122,9 +29248,15 @@ class MainWindow(QMainWindow):
 
         self._asteroid_frame_selector.currentIndexChanged.connect(self._handle_asteroid_frame_changed)
 
-        self._asteroid_blink_button = QPushButton("Blink")
+        self._asteroid_blink_button = QToolButton(self)
+
+        self._asteroid_blink_button.setText("Blink")
 
         self._asteroid_blink_button.setCheckable(True)
+
+        self._asteroid_blink_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+
+        self._asteroid_blink_button.setAutoRaise(False)
 
         self._asteroid_blink_button.toggled.connect(self._handle_asteroid_blink_toggled)
 
@@ -29135,6 +29267,8 @@ class MainWindow(QMainWindow):
         self._asteroid_export_button.setToolTip("Export the current asteroid/comet image, blink animation, or target-aligned trail animation.")
 
         self._asteroid_export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+
+        self._asteroid_export_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
 
         self._asteroid_export_button.setAutoRaise(False)
 
@@ -29159,6 +29293,8 @@ class MainWindow(QMainWindow):
         self._asteroid_export_menu.addAction(self._asteroid_export_trail_action)
 
         self._asteroid_export_button.setMenu(self._asteroid_export_menu)
+
+        self._sync_asteroid_playback_control_button_styles()
 
         self._asteroid_synthetic_track_button = QPushButton("Synthetic Track")
 
@@ -29320,6 +29456,62 @@ class MainWindow(QMainWindow):
 
         self._asteroid_blink_controls_layout = asteroid_blink_controls_layout
 
+        self._asteroid_show_ra_dec_checkbox = QCheckBox("Show RA/Dec")
+
+        self._asteroid_show_ra_dec_checkbox.setToolTip(
+
+            "Show live RA/Dec coordinates at the top-left of the asteroid/comet image when WCS is available."
+
+        )
+
+        self._asteroid_show_ra_dec_checkbox.setChecked(True)
+
+        self._asteroid_show_ra_dec_checkbox.checkStateChanged.connect(self._handle_asteroid_show_ra_dec_changed)
+
+        self._asteroid_show_grid_checkbox = QCheckBox("Show Grid")
+
+        self._asteroid_show_grid_checkbox.setToolTip(
+
+            "Show RA/Dec grid lines on the asteroid/comet image when WCS is available."
+
+        )
+
+        self._asteroid_show_grid_checkbox.setChecked(False)
+
+        self._asteroid_show_grid_checkbox.checkStateChanged.connect(self._handle_asteroid_show_grid_changed)
+
+        self._asteroid_grid_ra_density_label = QLabel("RA Density")
+
+        self._asteroid_grid_ra_density_spin = QSpinBox()
+
+        self._asteroid_grid_ra_density_spin.setRange(2, 12)
+
+        self._asteroid_grid_ra_density_spin.setValue(5)
+
+        self._asteroid_grid_ra_density_spin.setToolTip(
+
+            "Target number of RA grid intervals across the image when Show Grid is enabled."
+
+        )
+
+        self._asteroid_grid_ra_density_spin.valueChanged.connect(self._handle_asteroid_grid_ra_density_changed)
+
+        self._asteroid_grid_dec_density_label = QLabel("Dec Density")
+
+        self._asteroid_grid_dec_density_spin = QSpinBox()
+
+        self._asteroid_grid_dec_density_spin.setRange(2, 12)
+
+        self._asteroid_grid_dec_density_spin.setValue(5)
+
+        self._asteroid_grid_dec_density_spin.setToolTip(
+
+            "Target number of Dec grid intervals across the image when Show Grid is enabled."
+
+        )
+
+        self._asteroid_grid_dec_density_spin.valueChanged.connect(self._handle_asteroid_grid_dec_density_changed)
+
         self._asteroid_display_controls_group = self._create_display_menu_content(
 
             self._asteroid_image_stretch_combo,
@@ -29331,6 +29523,34 @@ class MainWindow(QMainWindow):
             trailing_widgets=(self._asteroid_image_reset_view_button, self._asteroid_image_reset_display_button),
 
         )
+
+        asteroid_display_layout = self._asteroid_display_controls_group.layout()
+
+        if isinstance(asteroid_display_layout, QVBoxLayout):
+
+            asteroid_display_layout.addWidget(self._asteroid_show_ra_dec_checkbox)
+
+            asteroid_display_layout.addWidget(self._asteroid_show_grid_checkbox)
+
+            asteroid_grid_density_row = QGridLayout()
+
+            asteroid_grid_density_row.setContentsMargins(0, 0, 0, 0)
+
+            asteroid_grid_density_row.setHorizontalSpacing(10)
+
+            asteroid_grid_density_row.setVerticalSpacing(6)
+
+            asteroid_grid_density_row.addWidget(self._asteroid_grid_ra_density_label, 0, 0)
+
+            asteroid_grid_density_row.addWidget(self._asteroid_grid_ra_density_spin, 0, 1)
+
+            asteroid_grid_density_row.addWidget(self._asteroid_grid_dec_density_label, 1, 0)
+
+            asteroid_grid_density_row.addWidget(self._asteroid_grid_dec_density_spin, 1, 1)
+
+            asteroid_display_layout.addLayout(asteroid_grid_density_row)
+
+        self._sync_asteroid_grid_density_controls_enabled()
 
         self._asteroid_display_section_menu = self._create_differential_section_menu(
 
@@ -29668,17 +29888,17 @@ class MainWindow(QMainWindow):
 
         view_controls_layout.addWidget(self._asteroid_object_controls_group)
 
-        view_controls_layout.addSpacing(10)
+        view_controls_layout.addStretch(1)
 
         view_controls_layout.addWidget(self._asteroid_blink_controls_group)
-
-        view_controls_layout.addStretch(1)
 
         view_controls_layout.addWidget(self._asteroid_info_panel_toggle_button)
 
         self._asteroid_image_controls_layout = view_controls_layout
 
         self._asteroid_playback_controls_layout = self._asteroid_blink_controls_layout
+
+        self._sync_asteroid_playback_control_button_styles()
 
 
 
@@ -38141,9 +38361,9 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_stretch_combo = QComboBox()
 
-        self._sky_explorer_image_stretch_combo.addItem("Auto Stretch", "stf")
+        self._sky_explorer_image_stretch_combo.addItem("STF", "stf")
 
-        self._sky_explorer_image_stretch_combo.addItem("None", "linear")
+        self._sky_explorer_image_stretch_combo.addItem("STF Bright", "stf_bright")
 
         self._sky_explorer_image_stretch_combo.addItem("Asinh", "asinh")
 
@@ -38166,6 +38386,33 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_invert_checkbox.toggled.connect(self._handle_sky_explorer_image_display_controls_changed)
 
+        self._sky_explorer_tile_feather_row = QWidget()
+        feather_row_layout = QHBoxLayout(self._sky_explorer_tile_feather_row)
+        feather_row_layout.setContentsMargins(0, 0, 0, 0)
+        feather_row_layout.setSpacing(10)
+        feather_label = QLabel("Feather:")
+        feather_label.setMinimumWidth(self.fontMetrics().horizontalAdvance("Stretch:") + 8)
+        feather_label.setToolTip("Soft-blend survey tile edges using overlapping sky (stars stay aligned). 0% = hard seams.")
+        self._sky_explorer_tile_feather_slider = QSlider(Qt.Orientation.Horizontal)
+        self._sky_explorer_tile_feather_slider.setRange(0, 100)
+        self._sky_explorer_tile_feather_slider.setValue(int(round(SURVEY_TILE_FEATHER_DEFAULT * 100.0)))
+        self._sky_explorer_tile_feather_slider.setToolTip(
+            "Soft-blend survey tile edges using overlapping sky (stars stay aligned). 0% = hard seams."
+        )
+        self._sky_explorer_tile_feather_spin = QSpinBox()
+        self._sky_explorer_tile_feather_spin.setRange(0, 100)
+        self._sky_explorer_tile_feather_spin.setSuffix("%")
+        self._sky_explorer_tile_feather_spin.setValue(int(round(SURVEY_TILE_FEATHER_DEFAULT * 100.0)))
+        self._sky_explorer_tile_feather_spin.setMaximumWidth(72)
+        self._sky_explorer_tile_feather_spin.setToolTip(
+            "Soft-blend survey tile edges using overlapping sky (stars stay aligned). 0% = hard seams."
+        )
+        self._sky_explorer_tile_feather_slider.valueChanged.connect(self._handle_sky_explorer_tile_feather_slider_changed)
+        self._sky_explorer_tile_feather_spin.valueChanged.connect(self._handle_sky_explorer_tile_feather_spin_changed)
+        feather_row_layout.addWidget(feather_label)
+        feather_row_layout.addWidget(self._sky_explorer_tile_feather_slider, 1)
+        feather_row_layout.addWidget(self._sky_explorer_tile_feather_spin)
+
         self._sky_explorer_image_reset_display_button = QPushButton("Reset")
 
         self._sky_explorer_image_reset_display_button.clicked.connect(self._reset_sky_explorer_image_display_controls)
@@ -38175,6 +38422,7 @@ class MainWindow(QMainWindow):
             self._sky_explorer_adjust_levels_button,
             self._sky_explorer_image_invert_checkbox,
             trailing_widgets=(self._sky_explorer_image_reset_display_button,),
+            extra_rows=(self._sky_explorer_tile_feather_row,),
         )
         self._sky_explorer_display_controls_group = QWidget()
         self._sky_explorer_display_section_menu = self._create_differential_section_menu(
@@ -38183,8 +38431,8 @@ class MainWindow(QMainWindow):
         )
 
         self._sky_explorer_survey_stretch_combo = QComboBox()
-        self._sky_explorer_survey_stretch_combo.addItem("Auto Stretch", "stf")
-        self._sky_explorer_survey_stretch_combo.addItem("None", "linear")
+        self._sky_explorer_survey_stretch_combo.addItem("STF", "stf")
+        self._sky_explorer_survey_stretch_combo.addItem("STF Bright", "stf_bright")
         self._sky_explorer_survey_stretch_combo.addItem("Asinh", "asinh")
         self._sky_explorer_survey_stretch_combo.addItem("Sqrt", "sqrt")
         self._sky_explorer_survey_stretch_combo.addItem("Log", "log")
@@ -38442,6 +38690,7 @@ class MainWindow(QMainWindow):
         self._sky_explorer_image_view = AnnotatedImageView(self)
 
         self._sky_explorer_image_view.set_message("Open a source image to explore the field.")
+        self._apply_sky_explorer_tile_feather()
 
         self._sky_explorer_image_view.imagePressed.connect(self._handle_sky_explorer_image_pressed)
 
@@ -39060,6 +39309,7 @@ class MainWindow(QMainWindow):
             )
             self._sky_explorer_image_view.focus_on(float(width_px) / 2.0, float(height_px) / 2.0)
         self._sky_explorer_image_view.set_unbounded_pan(True)
+        self._apply_sky_explorer_tile_feather()
         self._sync_sky_explorer_comparison_divider_visibility()
         self._refresh_sky_explorer_survey_tile_layers()
         self._sync_sky_explorer_primary_button()
@@ -39080,7 +39330,7 @@ class MainWindow(QMainWindow):
             raise RuntimeError("Survey field origin is not set.")
         center_spec = sky_explorer_survey_field_tile_spec(
             origin_ra_deg=origin_ra, origin_dec_deg=origin_dec, fov_arcmin=fov_arcmin,
-            tile_i=center_i, tile_j=center_j,
+            tile_i=center_i, tile_j=center_j, width_px=width_px, height_px=height_px,
         )
         field_wcs = build_sky_explorer_field_wcs(
             ra_deg=center_spec.ra_deg, dec_deg=center_spec.dec_deg, fov_arcmin=fov_arcmin,
@@ -39359,10 +39609,15 @@ class MainWindow(QMainWindow):
         )
         inflight_key = (int(tile_i), int(tile_j), str(resolution.value))
         self._sky_explorer_survey_field_inflight.add(inflight_key)
+        image_settings = self._current_sky_explorer_image_render_settings()
         worker = SkyExplorerSurveyTileWorker(
             session_id=self._sky_explorer_survey_field_session_id,
             tile_key=tile_key, resolution=resolution, request_generation=generation,
-            cache_dir=self._ensure_settings().cache_dir, parent=self,
+            cache_dir=self._ensure_settings().cache_dir,
+            stretch_mode=image_settings.stretch_mode,
+            curve_points=image_settings.curve_points,
+            inverted=image_settings.inverted,
+            parent=self,
         )
         self._sky_explorer_survey_field_workers.append(worker)
         worker.tile_completed.connect(self._handle_sky_explorer_survey_tile_completed)
@@ -39541,6 +39796,7 @@ class MainWindow(QMainWindow):
                     rect=QRectF(float(x0), float(y0), float(width), float(height)),
                     qimage=qimage, state=str(record.state.value), label=label,
                     layer_id="primary",
+                    has_sky_overlap=bool(record.is_ready),
                 )
             )
         self._sky_explorer_image_view.set_survey_tile_layers(layers)
@@ -39724,12 +39980,16 @@ class MainWindow(QMainWindow):
         )
         inflight_key = (int(tile_i), int(tile_j), str(resolution.value))
         self._sky_explorer_comparison_survey_inflight.add(inflight_key)
+        survey_settings = self._current_sky_explorer_survey_render_settings()
         worker = SkyExplorerSurveyTileWorker(
             session_id=self._sky_explorer_comparison_survey_session_id,
             tile_key=tile_key,
             resolution=resolution,
             request_generation=generation,
             cache_dir=self._ensure_settings().cache_dir,
+            stretch_mode=survey_settings.stretch_mode,
+            curve_points=survey_settings.curve_points,
+            inverted=survey_settings.inverted,
             parent=self,
         )
         self._sky_explorer_comparison_survey_workers.append(worker)
@@ -39896,6 +40156,7 @@ class MainWindow(QMainWindow):
                     state=str(record.state.value),
                     label=label,
                     layer_id="comparison",
+                    has_sky_overlap=bool(record.is_ready),
                 )
             )
         self._sky_explorer_image_view.set_comparison_survey_tile_layers(layers)
@@ -43255,6 +43516,9 @@ class MainWindow(QMainWindow):
 
             inverted = bool(settings.image_display_inverted)
 
+        if str(stretch_mode).strip().lower() == "linear":
+            stretch_mode = "stf"
+
         self._sky_explorer_image_stretch_combo.blockSignals(True)
 
         self._sky_explorer_image_invert_checkbox.blockSignals(True)
@@ -43286,6 +43550,9 @@ class MainWindow(QMainWindow):
         self._sky_explorer_adjust_levels_button.setEnabled(has_image)
 
         self._sky_explorer_image_invert_checkbox.setEnabled(has_image)
+
+        if hasattr(self, "_sky_explorer_tile_feather_row"):
+            self._sky_explorer_tile_feather_row.setEnabled(has_image)
 
         self._sky_explorer_image_reset_display_button.setEnabled(has_image)
 
@@ -44212,12 +44479,15 @@ class MainWindow(QMainWindow):
     def _current_sky_explorer_image_render_settings(self) -> AnnotatedImageRenderSettings:
 
         stretch_mode = self._sky_explorer_image_stretch_combo.currentData()
+        resolved_stretch = str(stretch_mode) if isinstance(stretch_mode, str) and stretch_mode else "stf"
+        if resolved_stretch == "linear":
+            resolved_stretch = "stf"
 
         black_point, midtone_point, white_point = self._sky_explorer_image_levels
 
         return AnnotatedImageRenderSettings(
 
-            stretch_mode=str(stretch_mode) if isinstance(stretch_mode, str) and stretch_mode else "stf",
+            stretch_mode=resolved_stretch,
 
             black_point=black_point,
 
@@ -44234,16 +44504,45 @@ class MainWindow(QMainWindow):
     def _handle_sky_explorer_image_display_controls_changed(self) -> None:
 
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
+        if self._sky_explorer_primary_survey_key:
+            self._restretch_sky_explorer_survey_field_tiles()
+
+    def _handle_sky_explorer_tile_feather_slider_changed(self, value: int) -> None:
+        if hasattr(self, "_sky_explorer_tile_feather_spin"):
+            self._sky_explorer_tile_feather_spin.blockSignals(True)
+            self._sky_explorer_tile_feather_spin.setValue(int(value))
+            self._sky_explorer_tile_feather_spin.blockSignals(False)
+        self._apply_sky_explorer_tile_feather()
+
+    def _handle_sky_explorer_tile_feather_spin_changed(self, value: int) -> None:
+        if hasattr(self, "_sky_explorer_tile_feather_slider"):
+            self._sky_explorer_tile_feather_slider.blockSignals(True)
+            self._sky_explorer_tile_feather_slider.setValue(int(value))
+            self._sky_explorer_tile_feather_slider.blockSignals(False)
+        self._apply_sky_explorer_tile_feather()
+
+    def _sky_explorer_tile_feather_amount(self) -> float:
+        if hasattr(self, "_sky_explorer_tile_feather_spin"):
+            return max(0.0, min(1.0, float(self._sky_explorer_tile_feather_spin.value()) / 100.0))
+        return float(SURVEY_TILE_FEATHER_DEFAULT)
+
+    def _apply_sky_explorer_tile_feather(self) -> None:
+        if not hasattr(self, "_sky_explorer_image_view"):
+            return
+        self._sky_explorer_image_view.set_survey_tile_feather(self._sky_explorer_tile_feather_amount())
 
     def _current_sky_explorer_survey_render_settings(self) -> AnnotatedImageRenderSettings:
 
         stretch_mode = self._sky_explorer_survey_stretch_combo.currentData()
+        resolved_stretch = str(stretch_mode) if isinstance(stretch_mode, str) and stretch_mode else "stf"
+        if resolved_stretch == "linear":
+            resolved_stretch = "stf"
 
         black_point, midtone_point, white_point = self._sky_explorer_survey_levels
 
         return AnnotatedImageRenderSettings(
 
-            stretch_mode=str(stretch_mode) if isinstance(stretch_mode, str) and stretch_mode else "stf",
+            stretch_mode=resolved_stretch,
 
             black_point=black_point,
 
@@ -44260,6 +44559,8 @@ class MainWindow(QMainWindow):
     def _handle_sky_explorer_survey_display_controls_changed(self) -> None:
 
         self._apply_sky_explorer_survey_comparison()
+        if self._sky_explorer_comparison_survey_tiles:
+            self._restretch_sky_explorer_comparison_survey_tiles()
 
     def _reset_sky_explorer_survey_display_controls(self) -> None:
 
@@ -44284,34 +44585,49 @@ class MainWindow(QMainWindow):
         self._sky_explorer_survey_curve_points = ()
 
         self._apply_sky_explorer_survey_comparison()
+        if self._sky_explorer_comparison_survey_tiles:
+            self._restretch_sky_explorer_comparison_survey_tiles()
 
     def _open_sky_explorer_survey_levels_dialog(self) -> None:
 
-        display = self._sky_explorer_survey_display
+        try:
+            render_settings = self._current_sky_explorer_survey_render_settings()
+            display = self._sky_explorer_survey_display
+            dialog_settings = render_settings
+            source_path = self._current_sky_explorer_source_image
+            if self._sky_explorer_comparison_survey_tiles and source_path is not None and Path(source_path).exists():
+                tile_image = self._pick_survey_tile_image_for_curves(
+                    self._sky_explorer_comparison_survey_tiles,
+                    preferred_tile=self._sky_explorer_survey_field_last_view_tile,
+                )
+                if tile_image is not None:
+                    display = self._build_curves_display_from_survey_tile(
+                        tile_image,
+                        stretch_mode=render_settings.stretch_mode,
+                        image_path=Path(source_path),
+                    )
+                    dialog_settings = replace(render_settings, stretch_mode="linear")
 
-        if display is None:
+            if display is None:
+                QMessageBox.information(
+                    self,
+                    "Survey unavailable",
+                    "Choose a survey and wait for its image to load before adjusting curves.",
+                )
+                return
 
-            QMessageBox.information(
-
-                self,
-
-                "Survey unavailable",
-
-                "Choose a survey and wait for its image to load before adjusting curves.",
-
+            dialog = CurvesDialog(
+                display=display,
+                initial_settings=dialog_settings,
+                parent=self,
             )
-
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Curves unavailable",
+                f"Could not prepare the survey preview for curve adjustment.\n\n{exc}",
+            )
             return
-
-        dialog = CurvesDialog(
-
-            display=display,
-
-            initial_settings=self._current_sky_explorer_survey_render_settings(),
-
-            parent=self,
-
-        )
 
         if dialog.exec() != int(QDialog.DialogCode.Accepted):
 
@@ -44332,6 +44648,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_survey_curve_points = selected_settings.curve_points
 
         self._apply_sky_explorer_survey_comparison()
+        if self._sky_explorer_comparison_survey_tiles:
+            self._restretch_sky_explorer_comparison_survey_tiles()
 
     def _build_sky_explorer_survey_display(self, result: object) -> AnnotatedImageDisplay:
 
@@ -46518,9 +46836,132 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_curve_points = ()
 
+        default_feather_percent = int(round(SURVEY_TILE_FEATHER_DEFAULT * 100.0))
+        if hasattr(self, "_sky_explorer_tile_feather_slider"):
+            self._sky_explorer_tile_feather_slider.blockSignals(True)
+            self._sky_explorer_tile_feather_slider.setValue(default_feather_percent)
+            self._sky_explorer_tile_feather_slider.blockSignals(False)
+        if hasattr(self, "_sky_explorer_tile_feather_spin"):
+            self._sky_explorer_tile_feather_spin.blockSignals(True)
+            self._sky_explorer_tile_feather_spin.setValue(default_feather_percent)
+            self._sky_explorer_tile_feather_spin.blockSignals(False)
+        self._apply_sky_explorer_tile_feather()
+
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
+        if self._sky_explorer_primary_survey_key:
+            self._restretch_sky_explorer_survey_field_tiles()
 
         self.statusBar().showMessage("Reset Sky Explorer image display controls.", 3000)
+
+    def _restretch_survey_tile_records(
+        self,
+        records: dict[tuple[int, int], SurveyTileRecord],
+        *,
+        stretch_mode: str,
+        curve_points: tuple[tuple[float, float], ...] = (),
+        inverted: bool,
+    ) -> None:
+        mode = str(stretch_mode or "stf")
+        points = tuple(curve_points or ())
+        for record in records.values():
+            if record.preview_image is not None:
+                preview_stf = compute_survey_tile_stf_parameters(record.preview_image, stretch_mode=mode)
+                record.preview_stf = preview_stf
+                record.preview_display = render_survey_tile_display_rgba(
+                    record.preview_image,
+                    preview_stf,
+                    stretch_mode=mode,
+                    curve_points=points,
+                    inverted=inverted,
+                )
+            if record.refine_image is not None:
+                refine_stf = compute_survey_tile_stf_parameters(record.refine_image, stretch_mode=mode)
+                record.refine_stf = refine_stf
+                record.refine_display = render_survey_tile_display_rgba(
+                    record.refine_image,
+                    refine_stf,
+                    stretch_mode=mode,
+                    curve_points=points,
+                    inverted=inverted,
+                )
+
+    def _restretch_sky_explorer_survey_field_tiles(self) -> None:
+        if not self._sky_explorer_survey_field_tiles:
+            return
+        settings = self._current_sky_explorer_image_render_settings()
+        self._restretch_survey_tile_records(
+            self._sky_explorer_survey_field_tiles,
+            stretch_mode=settings.stretch_mode,
+            curve_points=settings.curve_points,
+            inverted=settings.inverted,
+        )
+        self._sky_explorer_survey_field_qimage_cache = {}
+        self._refresh_sky_explorer_survey_tile_layers()
+
+    def _restretch_sky_explorer_comparison_survey_tiles(self) -> None:
+        if not self._sky_explorer_comparison_survey_tiles:
+            return
+        settings = self._current_sky_explorer_survey_render_settings()
+        self._restretch_survey_tile_records(
+            self._sky_explorer_comparison_survey_tiles,
+            stretch_mode=settings.stretch_mode,
+            curve_points=settings.curve_points,
+            inverted=settings.inverted,
+        )
+        self._sky_explorer_comparison_survey_qimage_cache = {}
+        self._refresh_sky_explorer_comparison_survey_tile_layers()
+
+    def _pick_survey_tile_image_for_curves(
+        self,
+        records: dict[tuple[int, int], SurveyTileRecord],
+        *,
+        preferred_tile: tuple[int, int] | None = None,
+    ) -> np.ndarray | None:
+        ordered_keys: list[tuple[int, int]] = []
+        if preferred_tile is not None:
+            ordered_keys.append((int(preferred_tile[0]), int(preferred_tile[1])))
+        ordered_keys.extend(sorted(records.keys()))
+        seen: set[tuple[int, int]] = set()
+        for key in ordered_keys:
+            if key in seen:
+                continue
+            seen.add(key)
+            record = records.get(key)
+            if record is None:
+                continue
+            if record.refine_image is not None:
+                return np.asarray(record.refine_image)
+            if record.preview_image is not None:
+                return np.asarray(record.preview_image)
+        return None
+
+    def _build_curves_display_from_survey_tile(
+        self,
+        image_data: np.ndarray,
+        *,
+        stretch_mode: str,
+        image_path: Path,
+    ) -> AnnotatedImageDisplay:
+        stf = compute_survey_tile_stf_parameters(image_data, stretch_mode=stretch_mode)
+        stretched = stretch_survey_tile_float(image_data, stf, stretch_mode=stretch_mode)
+        if stretched.ndim == 3:
+            gray = np.mean(stretched[..., : min(3, stretched.shape[-1])], axis=-1)
+            color = np.asarray(stretched[..., :3], dtype=float)
+        else:
+            gray = np.asarray(stretched, dtype=float)
+            color = None
+        return AnnotatedImageDisplay(
+            image_path=Path(image_path),
+            normalized_data=gray,
+            norm=lambda data: np.asarray(data, dtype=float),
+            preview_normalized=gray,
+            auto_stretch_preview=gray,
+            linear_preview_normalized=gray,
+            color_preview_normalized=color,
+            color_auto_stretch_preview=color,
+            color_linear_preview_normalized=color,
+            recommended_stretch_mode="linear",
+        )
 
     def _open_sky_explorer_levels_dialog(self) -> None:
 
@@ -46529,24 +46970,39 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            render_settings = self._current_sky_explorer_image_render_settings()
+            display: AnnotatedImageDisplay | None = None
+            dialog_settings = render_settings
+            source_path = Path(self._current_sky_explorer_source_image)
+            if self._sky_explorer_primary_survey_key and self._sky_explorer_survey_field_tiles:
+                tile_image = self._pick_survey_tile_image_for_curves(
+                    self._sky_explorer_survey_field_tiles,
+                    preferred_tile=self._sky_explorer_survey_field_last_view_tile,
+                )
+                if tile_image is not None:
+                    display = self._build_curves_display_from_survey_tile(
+                        tile_image,
+                        stretch_mode=render_settings.stretch_mode,
+                        image_path=source_path,
+                    )
+                    # Tile payload is already stretched; Curves edits that visual layer only.
+                    dialog_settings = replace(render_settings, stretch_mode="linear")
 
-            display = self._cached_annotated_image_display(self._current_sky_explorer_source_image)
+            if display is None:
+                display = self._cached_annotated_image_display(source_path)
 
+            dialog = CurvesDialog(
+                display=display,
+                initial_settings=dialog_settings,
+                parent=self,
+            )
         except Exception as exc:
-
-            QMessageBox.warning(self, "Curves unavailable", f"Could not prepare the Sky Explorer preview for curve adjustment.\n\n{exc}")
-
+            QMessageBox.warning(
+                self,
+                "Curves unavailable",
+                f"Could not prepare the Sky Explorer preview for curve adjustment.\n\n{exc}",
+            )
             return
-
-        dialog = CurvesDialog(
-
-            display=display,
-
-            initial_settings=self._current_sky_explorer_image_render_settings(),
-
-            parent=self,
-
-        )
 
         if dialog.exec() != int(QDialog.DialogCode.Accepted):
 
@@ -46567,6 +47023,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_image_curve_points = selected_settings.curve_points
 
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
+        if self._sky_explorer_primary_survey_key:
+            self._restretch_sky_explorer_survey_field_tiles()
 
         self.statusBar().showMessage("Applied Sky Explorer image curves.", 3000)
 
@@ -50532,9 +50990,13 @@ class MainWindow(QMainWindow):
 
 
 
-        self._clear_cache_action = QAction("Clear Cache", self)
+        self._clear_cache_action = QAction("Clear All Cache…", self)
 
-        self._clear_cache_action.triggered.connect(self._clear_selected_dataset_cache)
+        self._clear_cache_action.setToolTip(
+            "Delete all cached photometry results, astrometry solutions, and catalog downloads. Settings are kept."
+        )
+
+        self._clear_cache_action.triggered.connect(self._clear_all_application_cache)
 
 
 
@@ -51173,6 +51635,13 @@ class MainWindow(QMainWindow):
 
         size_text = f"\n{package_label} download: {download_size / (1024 * 1024):.1f} MiB" if download_size > 0 else ""
 
+        rebuild_warning = (
+            "\nAfter the download, Citizen Astronomy rebuilds the full update package locally. "
+            "This might take a few minutes."
+            if package_kind == "delta"
+            else ""
+        )
+
         notes_text = f"\n\n{notes}" if notes else ""
 
         choice = QMessageBox.question(
@@ -51181,7 +51650,7 @@ class MainWindow(QMainWindow):
 
             "Update Available",
 
-            f"Citizen Astronomy {version} is available.{size_text}{notes_text}\n\nDownload this update now?",
+            f"Citizen Astronomy {version} is available.{size_text}{rebuild_warning}{notes_text}\n\nDownload this update now?",
 
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
 
@@ -51219,19 +51688,37 @@ class MainWindow(QMainWindow):
 
             return
 
+        from photometry_app.core.app_updates import format_update_download_progress_label
+
         self._check_for_updates_action.setEnabled(False)
 
         version = str(getattr(available_update, "version", "update"))
 
-        progress_dialog = QProgressDialog(f"Downloading Citizen Astronomy {version}...", "Cancel", 0, 100, self)
+        package_kind = str(getattr(available_update, "package_kind", "full")).strip().lower()
 
-        progress_dialog.setWindowTitle("Downloading Update")
+        is_delta = package_kind == "delta"
+
+        download_size = int(getattr(available_update, "download_size", 0) or 0)
+
+        self._update_download_is_delta = is_delta
+
+        initial_label = format_update_download_progress_label(
+            is_delta=is_delta,
+            percent=0,
+            download_size_bytes=download_size,
+        )
+
+        progress_dialog = QProgressDialog(initial_label, "Cancel", 0, 100, self)
+
+        progress_dialog.setWindowTitle(f"Updating Citizen Astronomy {version}")
 
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
 
         progress_dialog.setAutoClose(False)
 
         progress_dialog.setAutoReset(False)
+
+        progress_dialog.setMinimumDuration(0)
 
         progress_dialog.setValue(0)
 
@@ -51257,7 +51744,13 @@ class MainWindow(QMainWindow):
 
 
 
-    def _handle_update_download_progress(self, downloaded_bytes: int, total_bytes: int) -> None:
+    def _handle_update_download_progress(self, percent: int, total_bytes: int, phase: str = "") -> None:
+
+        from photometry_app.core.app_updates import (
+            UPDATE_DOWNLOAD_PHASE_REBUILD,
+            format_update_download_progress_label,
+            update_download_phase_for_progress,
+        )
 
         progress_dialog = self._update_download_progress_dialog
 
@@ -51265,27 +51758,34 @@ class MainWindow(QMainWindow):
 
             return
 
-        if total_bytes > 0:
+        is_delta = bool(getattr(self, "_update_download_is_delta", False))
 
-            percent = max(0, min(100, int(round(downloaded_bytes * 100.0 / total_bytes))))
+        bounded_percent = max(0, min(100, int(percent)))
 
-            progress_dialog.setRange(0, 100)
+        resolved_phase = str(phase or "").strip() or update_download_phase_for_progress(
+            is_delta=is_delta,
+            percent=bounded_percent,
+        )
 
-            progress_dialog.setValue(percent)
-
-            progress_dialog.setLabelText(
-
-                f"Downloading update... {downloaded_bytes / (1024 * 1024):.1f} / "
-
-                f"{total_bytes / (1024 * 1024):.1f} MiB"
-
+        progress_dialog.setLabelText(
+            format_update_download_progress_label(
+                is_delta=is_delta,
+                percent=bounded_percent,
+                download_size_bytes=total_bytes,
             )
+        )
 
-        else:
+        if resolved_phase == UPDATE_DOWNLOAD_PHASE_REBUILD and bounded_percent < 100:
 
+            # Velopack holds at ~70% while reconstructing the full package; show a
+            # busy bar so the UI does not look frozen mid-download.
             progress_dialog.setRange(0, 0)
 
-            progress_dialog.setLabelText(f"Downloading update... {downloaded_bytes / (1024 * 1024):.1f} MiB")
+            return
+
+        progress_dialog.setRange(0, 100)
+
+        progress_dialog.setValue(bounded_percent)
 
 
 
@@ -53862,13 +54362,22 @@ class MainWindow(QMainWindow):
 
         if dialog is not None and qt_object_is_valid(dialog):
 
-            dialog.show()
+            # Recreate if this is a stale dialog from before Clear Cache was added.
+            if not hasattr(dialog, "_clear_cache_button"):
 
-            dialog.raise_()
+                dialog.close()
 
-            dialog.activateWindow()
+                self._differential_workflow_dialog = None
 
-            return
+            else:
+
+                dialog.show()
+
+                dialog.raise_()
+
+                dialog.activateWindow()
+
+                return
 
         dialog = _DifferentialWorkflowDialog(
 
@@ -53879,6 +54388,8 @@ class MainWindow(QMainWindow):
             generate_callback=self._start_differential_workflow_generate,
 
             terminate_callback=self._terminate_differential_workflow,
+
+            clear_object_cache_callback=self._clear_differential_object_cache,
 
         )
 
@@ -54567,6 +55078,10 @@ class MainWindow(QMainWindow):
 
         trailing_widgets: Sequence[QWidget] = (),
 
+        extra_action_widgets: Sequence[QWidget] = (),
+
+        extra_rows: Sequence[QWidget] = (),
+
     ) -> QWidget:
 
         content = QWidget()
@@ -54609,6 +55124,10 @@ class MainWindow(QMainWindow):
 
             action_row.addWidget(invert_checkbox)
 
+        for widget in extra_action_widgets:
+
+            action_row.addWidget(widget)
+
         action_row.addStretch(1)
 
         for widget in trailing_widgets:
@@ -54616,6 +55135,10 @@ class MainWindow(QMainWindow):
             action_row.addWidget(widget)
 
         content_layout.addLayout(action_row)
+
+        for row_widget in extra_rows:
+
+            content_layout.addWidget(row_widget)
 
         content.setLayout(content_layout)
 
@@ -54986,6 +55509,10 @@ class MainWindow(QMainWindow):
 
         manual_config_override: ManualPhotometryConfig | None = None,
 
+        *,
+
+        preserve_views: bool = False,
+
     ) -> None:
 
         self._current_preview = None
@@ -54994,59 +55521,71 @@ class MainWindow(QMainWindow):
 
         self._reset_processing_progress_state(object_name)
 
-        self.statusBar().showMessage(f"Processing {object_name}...")
+        if preserve_views:
 
-        self._process_button.setText("Generate")
+            self.statusBar().showMessage(f"Updating apertures for {object_name}… existing results stay visible until the new measurements are ready.")
 
-        self._summary_label.setText(f"Processing {object_name}: plate solving, catalog lookup, and photometry.")
+            self._summary_label.setText(
+                f"Recomputing manual apertures for {object_name}. Existing Source Results, light curves, and image stay on screen."
+            )
 
-        self._series_selector.clear()
+            self._append_work_log(f"Recomputing manual apertures for {object_name} without clearing the current views.")
 
-        self._source_name_filter.clear()
+        else:
 
-        self._light_curve_filter_settings = LightCurveFilterSettings()
+            self.statusBar().showMessage(f"Processing {object_name}...")
 
-        self._results_view_filter_settings = ResultsViewFilterSettings()
+            self._process_button.setText("Generate")
 
-        self._light_curve_filter_enabled_checkbox.setChecked(False)
+            self._summary_label.setText(f"Processing {object_name}: plate solving, catalog lookup, and photometry.")
 
-        self._sync_results_filter_button_state()
+            self._series_selector.clear()
 
-        self._source_category_filter_combo.setCurrentIndex(0)
+            self._source_name_filter.clear()
 
-        self._export_preset_combo.setCurrentIndex(0)
+            self._light_curve_filter_settings = LightCurveFilterSettings()
 
-        self._snr_binning_original_measurements = {}
+            self._results_view_filter_settings = ResultsViewFilterSettings()
 
-        self._snr_binning_original_light_curves = {}
+            self._light_curve_filter_enabled_checkbox.setChecked(False)
 
-        self._snr_binning_original_period_states = {}
+            self._sync_results_filter_button_state()
 
-        self._snr_binning_summaries = {}
+            self._source_category_filter_combo.setCurrentIndex(0)
 
-        self._notes_output.clear()
+            self._export_preset_combo.setCurrentIndex(0)
 
-        self._work_log_output.clear()
+            self._snr_binning_original_measurements = {}
 
-        self._detail_output.clear()
+            self._snr_binning_original_light_curves = {}
 
-        self._processing_file_table.setRowCount(0)
+            self._snr_binning_original_period_states = {}
 
-        self._source_table.setRowCount(0)
+            self._snr_binning_summaries = {}
 
-        self._clear_measurement_table_view()
+            self._notes_output.clear()
 
-        self._measurement_table_refresh_pending = False
+            self._work_log_output.clear()
 
-        self._calculated_period_results = {}
+            self._detail_output.clear()
 
-        self._comparison_fit_cached_series_keys = set()
+            self._processing_file_table.setRowCount(0)
 
-        self._manual_period_override_series_keys = set()
+            self._source_table.setRowCount(0)
 
-        self._literature_period_results = {}
+            self._clear_measurement_table_view()
 
-        self._clear_light_curve_segment_selection(replot=False)
+            self._measurement_table_refresh_pending = False
+
+            self._calculated_period_results = {}
+
+            self._comparison_fit_cached_series_keys = set()
+
+            self._manual_period_override_series_keys = set()
+
+            self._literature_period_results = {}
+
+            self._clear_light_curve_segment_selection(replot=False)
 
         self._update_measure_button_state()
 
@@ -55076,6 +55615,8 @@ class MainWindow(QMainWindow):
 
             analyze_best_targets=analyze_best_targets,
 
+            skip_wcs_sanity_diagnosis=preserve_views,
+
             parent=self,
 
         )
@@ -55088,7 +55629,9 @@ class MainWindow(QMainWindow):
 
         self._process_worker.start()
 
-        self._append_work_log(f"Queued processing for {object_name}.")
+        if not preserve_views:
+
+            self._append_work_log(f"Queued processing for {object_name}.")
 
         self._update_source_period_button_state()
 
@@ -64898,13 +65441,45 @@ class MainWindow(QMainWindow):
 
             return
 
+        if self._current_asteroid_show_ra_dec():
+
+            self._asteroid_image_view.set_hover_text_formatter(
+                self._image_hover_coordinate_formatter(self._current_asteroid_source_image)
+            )
+
+        else:
+
+            self._asteroid_image_view.set_hover_text_formatter(None)
+
+        grid_overlays = (
+
+            self._build_equatorial_grid_overlays(
+
+                self._current_asteroid_source_image,
+
+                display,
+
+                ra_density=self._current_asteroid_equatorial_grid_ra_density(),
+
+                dec_density=self._current_asteroid_equatorial_grid_dec_density(),
+
+                inverted=self._asteroid_image_invert_checkbox.isChecked(),
+
+            )
+
+            if self._current_asteroid_equatorial_grid_enabled()
+
+            else []
+
+        )
+
         self._asteroid_image_view.set_content(
 
             display,
 
             overlays=self._current_asteroid_image_overlays(allow_live_measurements=allow_live_measurements),
 
-            grid_overlays=[],
+            grid_overlays=grid_overlays,
 
             editor_enabled=False,
 
@@ -64924,10 +65499,6 @@ class MainWindow(QMainWindow):
 
             ),
 
-        )
-
-        self._asteroid_image_view.set_hover_text_formatter(
-            self._image_hover_coordinate_formatter(self._current_asteroid_source_image)
         )
 
         if focus_selected:
@@ -67194,6 +67765,19 @@ class MainWindow(QMainWindow):
 
         return self._asteroid_known_orbit_dialogs[0] if self._asteroid_known_orbit_dialogs else None
 
+    def _sync_asteroid_playback_control_button_styles(self) -> None:
+
+        buttons = (
+            getattr(self, "_asteroid_blink_button", None),
+            getattr(self, "_asteroid_export_button", None),
+        )
+        for button in buttons:
+            if not isinstance(button, QToolButton):
+                continue
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            button.setAutoRaise(False)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
     def _sync_asteroid_image_display_controls(self) -> None:
 
         stretch_mode = "stf"
@@ -67237,6 +67821,150 @@ class MainWindow(QMainWindow):
         if has_target_marker_toolbar_button:
 
             self._asteroid_target_marker_button.blockSignals(False)
+
+        self._sync_asteroid_display_coordinate_controls()
+
+    def _sync_asteroid_display_coordinate_controls(self) -> None:
+
+        if not hasattr(self, "_asteroid_show_ra_dec_checkbox"):
+
+            return
+
+        show_ra_dec = self._current_asteroid_show_ra_dec()
+
+        show_grid = self._current_asteroid_equatorial_grid_enabled()
+
+        ra_density = self._current_asteroid_equatorial_grid_ra_density()
+
+        dec_density = self._current_asteroid_equatorial_grid_dec_density()
+
+        self._asteroid_show_ra_dec_checkbox.blockSignals(True)
+
+        self._asteroid_show_grid_checkbox.blockSignals(True)
+
+        self._asteroid_grid_ra_density_spin.blockSignals(True)
+
+        self._asteroid_grid_dec_density_spin.blockSignals(True)
+
+        self._asteroid_show_ra_dec_checkbox.setChecked(show_ra_dec)
+
+        self._asteroid_show_grid_checkbox.setChecked(show_grid)
+
+        self._asteroid_grid_ra_density_spin.setValue(ra_density)
+
+        self._asteroid_grid_dec_density_spin.setValue(dec_density)
+
+        self._asteroid_show_ra_dec_checkbox.blockSignals(False)
+
+        self._asteroid_show_grid_checkbox.blockSignals(False)
+
+        self._asteroid_grid_ra_density_spin.blockSignals(False)
+
+        self._asteroid_grid_dec_density_spin.blockSignals(False)
+
+        self._sync_asteroid_grid_density_controls_enabled()
+
+    def _sync_asteroid_grid_density_controls_enabled(self) -> None:
+
+        if not hasattr(self, "_asteroid_show_grid_checkbox"):
+
+            return
+
+        enabled = self._asteroid_show_grid_checkbox.isChecked()
+
+        self._asteroid_grid_ra_density_label.setEnabled(enabled)
+
+        self._asteroid_grid_ra_density_spin.setEnabled(enabled)
+
+        self._asteroid_grid_dec_density_label.setEnabled(enabled)
+
+        self._asteroid_grid_dec_density_spin.setEnabled(enabled)
+
+    def _current_asteroid_show_ra_dec(self) -> bool:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return True
+
+        return bool(getattr(settings, "asteroid_show_ra_dec", True))
+
+    def _current_asteroid_equatorial_grid_enabled(self) -> bool:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return False
+
+        return bool(getattr(settings, "asteroid_equatorial_grid_enabled", False))
+
+    def _current_asteroid_equatorial_grid_ra_density(self) -> int:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return 5
+
+        return min(12, max(2, int(getattr(settings, "asteroid_equatorial_grid_ra_density", 5))))
+
+    def _current_asteroid_equatorial_grid_dec_density(self) -> int:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return 5
+
+        return min(12, max(2, int(getattr(settings, "asteroid_equatorial_grid_dec_density", 5))))
+
+    def _handle_asteroid_show_ra_dec_changed(self, _state: int = 0) -> None:
+
+        settings = self._ensure_settings()
+
+        settings.asteroid_show_ra_dec = self._asteroid_show_ra_dec_checkbox.isChecked()
+
+        self._save_settings_snapshot()
+
+        self._refresh_asteroid_image_view(reset_view=False)
+
+    def _handle_asteroid_show_grid_changed(self, _state: int = 0) -> None:
+
+        settings = self._ensure_settings()
+
+        settings.asteroid_equatorial_grid_enabled = self._asteroid_show_grid_checkbox.isChecked()
+
+        self._save_settings_snapshot()
+
+        self._sync_asteroid_grid_density_controls_enabled()
+
+        self._refresh_asteroid_image_view(reset_view=False)
+
+    def _handle_asteroid_grid_ra_density_changed(self, value: int) -> None:
+
+        settings = self._ensure_settings()
+
+        settings.asteroid_equatorial_grid_ra_density = min(12, max(2, int(value)))
+
+        self._save_settings_snapshot()
+
+        if self._asteroid_show_grid_checkbox.isChecked():
+
+            self._refresh_asteroid_image_view(reset_view=False)
+
+    def _handle_asteroid_grid_dec_density_changed(self, value: int) -> None:
+
+        settings = self._ensure_settings()
+
+        settings.asteroid_equatorial_grid_dec_density = min(12, max(2, int(value)))
+
+        self._save_settings_snapshot()
+
+        if self._asteroid_show_grid_checkbox.isChecked():
+
+            self._refresh_asteroid_image_view(reset_view=False)
 
     def _handle_asteroid_image_display_controls_changed(self) -> None:
 
@@ -74078,59 +74806,115 @@ class MainWindow(QMainWindow):
 
         return None
 
-    def _clear_selected_dataset_cache(self) -> None:
+    def _clear_all_application_cache(self) -> None:
 
-        mode = self._visible_app_mode()
+        root_path = Path(self._root_path_input.text()).expanduser()
 
-        cleared = self._clear_selected_dataset_cache_for_mode(mode)
+        settings = self._active_settings()
 
-        if cleared is None:
+        if settings is None and root_path.exists():
 
-            QMessageBox.warning(self, "No dataset selected", "Open or select a dataset first before clearing its cache.")
+            settings = AppSettings.from_root(root_path)
+
+        if settings is None:
+
+            settings = AppSettings.from_root(Path.cwd())
+
+        cache_dirs: list[Path] = [settings.cache_dir.expanduser()]
+
+        project_cache = root_path / ".photometry-cache"
+
+        try:
+
+            if root_path.exists() and project_cache.resolve() not in {path.resolve() for path in cache_dirs}:
+
+                cache_dirs.append(project_cache)
+
+        except OSError:
+
+            if project_cache not in cache_dirs:
+
+                cache_dirs.append(project_cache)
+
+        cache_list = "\n".join(str(path) for path in cache_dirs)
+
+        reply = QMessageBox.warning(
+
+            self,
+
+            "Clear All Cache",
+
+            (
+
+                "Delete ALL cached photometry results, astrometry solutions, and catalog downloads?\n\n"
+
+                f"{cache_list}\n\n"
+
+                "Your settings will not be changed.\n\n"
+
+                "This cannot be undone. Continue?"
+
+            ),
+
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+
+            QMessageBox.StandardButton.No,
+
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
 
             return
 
-        dataset_label, removed = cleared
+        cleared_dirs = 0
 
-        item_label = "item" if removed == 1 else "items"
+        for cache_dir in cache_dirs:
 
-        if removed == 0:
+            try:
 
-            message = f"No cached items were found for {dataset_label}."
+                if cache_dir.exists():
 
-        else:
+                    shutil.rmtree(cache_dir)
 
-            message = f"Cleared {removed} cached {item_label} for {dataset_label}."
+                    cleared_dirs += 1
 
-        self.statusBar().showMessage(message, 5000)
+                cache_dir.mkdir(parents=True, exist_ok=True)
 
-        if mode == AppMode.DIFFERENTIAL_PHOTOMETRY:
+            except OSError as exc:
+
+                QMessageBox.warning(self, "Clear All Cache", f"Could not clear cache directory:\n{cache_dir}\n\n{exc}")
+
+                return
+
+        self._invalidate_cached_processing_state()
+
+        message = (
+
+            f"Cleared all application cache ({cleared_dirs} directory(ies)). Settings were preserved."
+
+            if cleared_dirs
+
+            else "Cache directories were empty or missing; ensured cache folders exist. Settings were preserved."
+
+        )
+
+        self.statusBar().showMessage(message, 7000)
+
+        if hasattr(self, "_detail_output"):
 
             self._detail_output.setPlainText(message)
 
-            return
+        QMessageBox.information(self, "Cache Cleared", message)
 
-        if mode == AppMode.ASTEROID_COMET_DETECTION:
+    def _invalidate_cached_processing_state(self) -> None:
 
-            self._append_asteroid_workflow_note(message)
+        self._current_processing_report = None
 
-            return
+        if hasattr(self, "_detail_output"):
 
-        if mode == AppMode.HR_DIAGRAM:
+            # Keep UI responsive after hard/object cache clears; Generate will rebuild from source files.
 
-            self._append_hr_workflow_note(message)
-
-            return
-
-        if mode == AppMode.TRANSIENT_FINDER:
-
-            self._append_transient_workflow_note(message)
-
-            return
-
-        if mode == AppMode.SKY_EXPLORER:
-
-            self._append_sky_explorer_workflow_note(message)
+            pass
 
     def _clear_selected_dataset_cache_for_mode(self, mode: AppMode) -> tuple[str, int] | None:
 
@@ -74158,41 +74942,171 @@ class MainWindow(QMainWindow):
 
     def _clear_selected_differential_dataset_cache(self) -> tuple[str, int] | None:
 
-        root_path = Path(self._root_path_input.text()).expanduser()
-
         summary = self._selected_object_summary()
 
-        if not root_path.exists() or summary is None:
+        if summary is None:
 
             return None
 
+        removed = self._clear_differential_object_cache(summary.object_name)
+
+        return summary.object_name, removed
+
+    def _clear_differential_object_cache(self, object_name: str) -> int:
+
+        root_path = Path(self._root_path_input.text()).expanduser()
+
+        if not object_name or not root_path.exists():
+
+            return 0
+
         settings = AppSettings.from_root(root_path)
+
+        summary = None
+
+        if self._current_report is not None:
+
+            summary = next(
+
+                (item for item in self._current_report.object_summaries if item.object_name == object_name),
+
+                None,
+
+            )
+
+        if summary is None:
+
+            try:
+
+                report = self._pipeline.scan_workspace(root_path)
+
+                summary = next(
+
+                    (item for item in report.object_summaries if item.object_name == object_name),
+
+                    None,
+
+                )
+
+            except Exception:
+
+                summary = None
 
         removed = 0
 
-        removed += self._remove_cache_path(settings.cache_dir / "processed" / f"{summary.object_name}.json")
+        removed += self._remove_cache_path(settings.cache_dir / "processed" / f"{object_name}.json")
 
-        removed += self._remove_cache_path(settings.cache_dir / "measurements" / summary.object_name)
+        removed += self._remove_cache_path(settings.cache_dir / "measurements" / object_name)
 
-        removed += self._remove_cache_path(settings.cache_dir / "runs" / f"{summary.object_name}.jsonl")
+        removed += self._remove_cache_path(settings.cache_dir / "runs" / f"{object_name}.jsonl")
 
-        removed += self._remove_source_astrometry_cache_entries(
+        source_paths = [file_result.path for file_result in summary.files] if summary is not None else []
 
-            settings.cache_dir / "astrometry",
+        if source_paths:
 
-            [file_result.path for file_result in summary.files],
+            removed += self._remove_source_astrometry_cache_entries(
 
-        )
+                settings.cache_dir / "astrometry",
+
+                source_paths,
+
+            )
+
+            removed += self._remove_source_astrometry_cache_entries(
+
+                settings.cache_dir / "astrometry" / "wcs-sanity",
+
+                source_paths,
+
+            )
 
         try:
 
-            removed += self._pipeline.clear_object_catalog_cache(root_path, summary.object_name)
+            removed += self._pipeline.clear_object_catalog_cache(root_path, object_name)
 
         except ValueError:
 
             pass
 
-        return summary.object_name, removed
+        # Saved apertures live in settings (not the cache dir). Drop them for this folder so
+        # Generate rebuilds catalog targets (e.g. DY Her) instead of keeping a manual "Target".
+        if self._reset_differential_object_aperture_settings(object_name):
+
+            removed += 1
+
+        if (
+
+            self._current_processing_report is not None
+
+            and self._current_processing_report.object_name == object_name
+
+        ):
+
+            self._current_processing_report = None
+
+        return removed
+
+    def _reset_differential_object_aperture_settings(self, object_name: str) -> bool:
+
+        if not object_name:
+
+            return False
+
+        settings = self._active_settings()
+
+        if settings is None:
+
+            root_path = Path(self._root_path_input.text()).expanduser()
+
+            if root_path.exists():
+
+                settings = AppSettings.from_root(root_path)
+
+                self._settings = settings
+
+        if settings is None:
+
+            return False
+
+        changed = False
+
+        manual_configs = dict(settings.manual_photometry_configs or {})
+
+        if object_name in manual_configs:
+
+            manual_configs.pop(object_name, None)
+
+            settings.manual_photometry_configs = manual_configs or None
+
+            changed = True
+
+        selected_sources = dict(settings.selected_catalog_source_ids or {})
+
+        if object_name in selected_sources:
+
+            selected_sources.pop(object_name, None)
+
+            settings.selected_catalog_source_ids = selected_sources or None
+
+            changed = True
+
+        if not changed:
+
+            return False
+
+        self._save_settings_snapshot()
+
+        if hasattr(self, "_sync_manual_controls"):
+
+            try:
+
+                self._sync_manual_controls()
+
+            except Exception:
+
+                pass
+
+        return True
 
     def _clear_selected_asteroid_dataset_cache(self) -> tuple[str, int] | None:
 
@@ -74344,9 +75258,13 @@ class MainWindow(QMainWindow):
 
             seen_keys.add(cache_key)
 
-            removed += self._remove_cache_path(cache_dir / f"{cache_key}.json")
+            if not cache_dir.exists():
 
-            removed += self._remove_cache_path(cache_dir / f"{cache_key}_solved.fits")
+                continue
+
+            for cache_path in cache_dir.glob(f"{cache_key}*"):
+
+                removed += self._remove_cache_path(cache_path)
 
         return removed
 
@@ -74681,6 +75599,14 @@ class MainWindow(QMainWindow):
             if not object_name:
 
                 self._measurement_filter_combo.setToolTip("Scan a workspace and choose an object before narrowing the filter.")
+
+            elif selected_filter == "Overview":
+
+                self._measurement_filter_combo.setToolTip(
+
+                    "Plot the selected target in every filter plus its comparison stars and check star (QC overview)."
+
+                )
 
             elif selected_filter and selected_filter != "All":
 
@@ -77031,9 +77957,11 @@ class MainWindow(QMainWindow):
 
         self._asteroid_track_object_button.setFixedWidth(width_for_labels("Track Object"))
 
-        self._asteroid_blink_button.setFixedWidth(width_for_labels("Blink"))
+        playback_button_width = width_for_labels("Blink", "Export") + 12
 
-        self._asteroid_export_button.setFixedWidth(metrics.horizontalAdvance("Export") + button_padding_px + 12)
+        self._asteroid_blink_button.setFixedWidth(playback_button_width)
+
+        self._asteroid_export_button.setFixedWidth(playback_button_width)
 
         self._asteroid_info_panel_toggle_button.setFixedWidth(width_for_labels("Show Info", "Hide Info"))
 
@@ -77708,7 +78636,12 @@ class MainWindow(QMainWindow):
 
             return
 
-        dialog = ScanResultsSummaryDialog(report.object_summaries, selected_object_name=self._selected_object_name(), parent=self)
+        dialog = ScanResultsSummaryDialog(
+            report.object_summaries,
+            selected_object_name=self._selected_object_name(),
+            parent=self,
+            clear_object_cache_callback=self._clear_differential_object_cache,
+        )
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
 
@@ -77988,6 +78921,14 @@ class MainWindow(QMainWindow):
 
         copy_action = menu.addAction("Copy Source Name")
 
+        rename_action = None
+
+        manual_source = self._manual_source_for_catalog_target(target)
+
+        if manual_source is not None and self._is_manually_added_aperture_source(manual_source):
+
+            rename_action = menu.addAction("Change Name…")
+
         chosen_action = menu.exec(self._source_table.viewport().mapToGlobal(position))
 
         if chosen_action is simbad_action:
@@ -78023,6 +78964,12 @@ class MainWindow(QMainWindow):
         if chosen_action is calculate_period_action:
 
             self._handle_calculate_period_button_clicked()
+
+            return
+
+        if rename_action is not None and chosen_action is rename_action and manual_source is not None:
+
+            self._prompt_rename_manual_source(manual_source)
 
             return
 
@@ -78316,21 +79263,11 @@ class MainWindow(QMainWindow):
 
         self._load_preset_button.setEnabled(False)
 
-        comparison_editing_enabled = bool(config is not None and not config.keep_comparison_stars)
-
-        if self._edit_apertures_checkbox.isChecked() and comparison_editing_enabled:
+        if self._edit_apertures_checkbox.isChecked():
 
             self._set_image_editor_hint(
 
-                "Editor on: drag to preview target, comparison, check-star, or aperture-handle changes; release to set them, then Apply to reprocess."
-
-            )
-
-        elif self._edit_apertures_checkbox.isChecked():
-
-            self._set_image_editor_hint(
-
-                "Editor on: drag to preview target or check-star changes; release to set them, then Apply to reprocess. The current comparison stars stay locked."
+                "Editor on: double-click adds a manual target (does not replace catalog targets), Shift-click comparison, Ctrl-click check star; drag to move/resize; right-click for Delete/Change Name; then Apply to reprocess."
 
             )
 
@@ -78430,11 +79367,29 @@ class MainWindow(QMainWindow):
 
         if self._edit_apertures_checkbox.isChecked():
 
+            # Aperture Editor is an independent manual entry: never seed from the selected
+            # automatic Source Results target/comps, and start from an empty aperture set.
             config = self._manual_config_for_object(self._selected_object_name(), create=True)
 
-            if config is not None and (config.keep_comparison_stars or config.target_source is None):
+            if config is not None:
 
-                self._seed_manual_sources_from_current_context(include_target=config.target_source is None)
+                config.sources = []
+
+                config.keep_comparison_stars = False
+
+                config.reference_frame_name = None
+
+                self._manual_active_source_id = None
+
+                if hasattr(self, "_keep_comparison_stars_checkbox"):
+
+                    self._keep_comparison_stars_checkbox.blockSignals(True)
+
+                    self._keep_comparison_stars_checkbox.setChecked(False)
+
+                    self._keep_comparison_stars_checkbox.blockSignals(False)
+
+                self._save_settings_snapshot()
 
         self._sync_manual_controls()
 
@@ -78454,7 +79409,7 @@ class MainWindow(QMainWindow):
 
         if config.keep_comparison_stars:
 
-            self._seed_manual_sources_from_current_context(include_target=config.target_source is None)
+            self._seed_manual_sources_from_current_context(include_target=not self._config_has_catalog_target(config))
 
         else:
 
@@ -78490,7 +79445,7 @@ class MainWindow(QMainWindow):
 
             source_id=measurement.source_id,
 
-            name="Target" if role == ManualSourceRole.TARGET else measurement.source_name,
+            name=measurement.source_name,
 
             role=role,
 
@@ -78510,6 +79465,8 @@ class MainWindow(QMainWindow):
 
             annulus_outer_radius=annulus_outer_radius,
 
+            catalog=str(measurement.catalog or "manual"),
+
         )
 
     def _seed_manual_sources_from_current_context(self, include_target: bool) -> bool:
@@ -78528,44 +79485,71 @@ class MainWindow(QMainWindow):
 
             return False
 
+        preserved_manual_targets = [
+            item
+            for item in config.sources
+            if item.role == ManualSourceRole.TARGET and self._is_manually_added_aperture_source(item)
+        ]
+        preserved_manual_checks = [
+            item
+            for item in config.sources
+            if item.role == ManualSourceRole.CHECK and self._is_manually_added_aperture_source(item)
+        ]
+        preserved_manual_comps = [
+            item
+            for item in config.sources
+            if item.role == ManualSourceRole.COMPARISON and self._is_manually_added_aperture_source(item)
+        ]
 
-
-        target_source = config.target_source
-
-        if include_target or target_source is None:
-
-            target_source = self._manual_source_from_measurement(measurement, ManualSourceRole.TARGET, config)
-
-
+        catalog_target = next(
+            (
+                item
+                for item in config.sources
+                if item.role == ManualSourceRole.TARGET and not self._is_manually_added_aperture_source(item)
+            ),
+            None,
+        )
+        # Always keep a catalog-backed target when seeding from the selected measurement.
+        # Previously, a manual "Target" alone made include_target=False and dropped DY Her / VSX rows.
+        if catalog_target is None or include_target:
+            catalog_target = self._manual_source_from_measurement(measurement, ManualSourceRole.TARGET, config)
+        else:
+            stale_name = str(catalog_target.name or "").strip().lower() in {"", "target"}
+            if stale_name and str(measurement.source_name or "").strip():
+                catalog_target.name = measurement.source_name
+            if str(catalog_target.catalog or "").strip().lower() in {"", "manual"} and str(measurement.catalog or "").strip():
+                catalog_target.catalog = str(measurement.catalog)
+            if str(measurement.source_id or "").strip() and not str(catalog_target.source_id or "").strip():
+                catalog_target.source_id = measurement.source_id
 
         updated_sources: list[ManualSourceConfig] = []
-
-        if target_source is not None:
-
-            target_source.name = "Target"
-
-            updated_sources.append(target_source)
+        if catalog_target is not None:
+            updated_sources.append(catalog_target)
+        updated_sources.extend(preserved_manual_targets)
 
         if config.keep_comparison_stars:
-
             updated_sources.extend(
-
                 self._manual_source_from_measurement(item, ManualSourceRole.COMPARISON, config)
-
                 for item in comparison_measurements
-
             )
+        else:
+            updated_sources.extend(preserved_manual_comps)
 
-        if config.check_source is not None:
-
-            updated_sources.append(config.check_source)
+        catalog_check = next(
+            (
+                item
+                for item in config.sources
+                if item.role == ManualSourceRole.CHECK and not self._is_manually_added_aperture_source(item)
+            ),
+            None,
+        )
+        if catalog_check is not None:
+            updated_sources.append(catalog_check)
+        updated_sources.extend(preserved_manual_checks)
 
         config.sources = updated_sources
-
         config.reference_frame_name = measurement.file_path.name
-
         self._save_settings_snapshot()
-
         return True
 
     def _manual_comparison_editing_enabled(self, config: ManualPhotometryConfig | None = None) -> bool:
@@ -78573,6 +79557,24 @@ class MainWindow(QMainWindow):
         resolved_config = config if config is not None else self._manual_config_for_object(self._selected_object_name())
 
         return bool(resolved_config is not None and not resolved_config.keep_comparison_stars)
+
+    def _unlock_manual_comparison_stars(self, config: ManualPhotometryConfig) -> None:
+
+        """Turn off Keep Comparison Stars after a manual comparison add/remove."""
+
+        if not config.keep_comparison_stars:
+
+            return
+
+        config.keep_comparison_stars = False
+
+        if hasattr(self, "_keep_comparison_stars_checkbox"):
+
+            self._keep_comparison_stars_checkbox.blockSignals(True)
+
+            self._keep_comparison_stars_checkbox.setChecked(False)
+
+            self._keep_comparison_stars_checkbox.blockSignals(False)
 
     def _restore_source_target_selection(self, targets: list[tuple[str, str]]) -> None:
 
@@ -79553,11 +80555,11 @@ class MainWindow(QMainWindow):
 
             self._restore_source_target_selection(manual_recompute_targets)
 
-            self._ensure_manual_light_curve_axis_visible(report)
-
         self._yield_differential_workflow_ui()
 
         self._populate_measurement_filter_options(report)
+
+        self._ensure_default_light_curve_view_modes()
 
         self._mark_measurement_table_pending()
 
@@ -79571,7 +80573,11 @@ class MainWindow(QMainWindow):
 
         if manual_recompute_targets:
 
+            self._restore_source_target_selection(manual_recompute_targets)
+
             self._sync_series_selection_for_source_target(*manual_recompute_targets[0])
+
+            self._sync_series_selector_to_selected_source()
 
             self._plot_selected_series()
 
@@ -79649,7 +80655,27 @@ class MainWindow(QMainWindow):
 
         base_report.measurements = [measurement for measurement in base_report.measurements if measurement.catalog != "manual"] + list(manual_report.measurements)
 
-        base_report.light_curves = build_light_curve_series(base_report.measurements)
+        rebuilt_light_curves = build_light_curve_series(base_report.measurements)
+
+        if rebuilt_light_curves:
+
+            base_report.light_curves = rebuilt_light_curves
+
+        elif manual_report.light_curves:
+
+            # Keep the Apply run's curves if a rebuild unexpectedly yields none.
+
+            manual_source_ids = {series.source_id for series in manual_report.light_curves}
+
+            base_report.light_curves = [
+
+                series for series in base_report.light_curves if series.source_id not in manual_source_ids
+
+            ] + list(manual_report.light_curves)
+
+        else:
+
+            base_report.light_curves = rebuilt_light_curves
 
         base_report.files_processed = max(base_report.files_processed, manual_report.files_processed)
 
@@ -79719,41 +80745,70 @@ class MainWindow(QMainWindow):
 
         return base_report
 
-    def _ensure_manual_light_curve_axis_visible(self, report: ProcessingReport) -> None:
+    def _manual_recompute_selection_targets(self, config: ManualPhotometryConfig) -> list[tuple[str, str]]:
 
-        manual_config = report.manual_config
+        selected = list(self._selected_source_targets())
 
-        if manual_config is None:
+        if selected:
 
-            return
+            return selected
 
-        current_axis = self._current_light_curve_y_axis_mode()
+        active_id = str(getattr(self, "_manual_active_source_id", None) or "").strip()
 
-        manual_source_ids = {source.source_id for source in manual_config.measured_sources}
+        if active_id:
 
-        for series in report.light_curves:
+            active_source = next((item for item in config.sources if item.source_id == active_id), None)
 
-            if series.source_id not in manual_source_ids:
+            if active_source is not None:
 
-                continue
+                return [(self._manual_source_display_name(active_source), self._manual_source_catalog_label(active_source))]
 
-            if self._series_has_valid_light_curve_values(series, current_axis):
+        if config.target_source is not None:
 
-                return
+            return [
 
-            if any(point.differential_magnitude is not None for point in series.points):
+                (
+                    self._manual_source_display_name(config.target_source),
+                    self._manual_source_catalog_label(config.target_source),
+                )
 
-                axis_index = self._light_curve_y_axis_selector.findData("differential_magnitude")
+            ]
 
-                if axis_index >= 0 and self._light_curve_y_axis_selector.currentIndex() != axis_index:
+        return []
 
-                    self._light_curve_y_axis_selector.blockSignals(True)
+    def _manual_source_catalog_label(self, source: ManualSourceConfig) -> str:
 
-                    self._light_curve_y_axis_selector.setCurrentIndex(axis_index)
+        if self._is_manually_added_aperture_source(source):
 
-                    self._light_curve_y_axis_selector.blockSignals(False)
+            return "manual"
 
-                return
+        return str(source.catalog or "manual")
+
+    def _ensure_default_light_curve_view_modes(self) -> None:
+
+        """Keep Overview + Standard Magnitude as the default viewing mode after Generate/Apply."""
+
+        axis_index = self._light_curve_y_axis_selector.findData("standard_magnitude")
+
+        if axis_index >= 0 and self._light_curve_y_axis_selector.currentIndex() != axis_index:
+
+            self._light_curve_y_axis_selector.blockSignals(True)
+
+            self._light_curve_y_axis_selector.setCurrentIndex(axis_index)
+
+            self._light_curve_y_axis_selector.blockSignals(False)
+
+        overview_index = self._measurement_filter_combo.findData("overview")
+
+        if overview_index >= 0 and (self._measurement_filter_combo.currentData() or "") in {"", "overview"}:
+
+            if self._measurement_filter_combo.currentIndex() != overview_index:
+
+                self._measurement_filter_combo.blockSignals(True)
+
+                self._measurement_filter_combo.setCurrentIndex(overview_index)
+
+                self._measurement_filter_combo.blockSignals(False)
 
     def _deduplicated_text_items(self, values: list[str]) -> list[str]:
 
@@ -80402,6 +81457,8 @@ class MainWindow(QMainWindow):
             return
 
         self._populate_series_selector(self._filtered_light_curves())
+
+        self._sync_series_selector_to_selected_source()
 
         self._populate_image_frame_selector()
 
@@ -81373,7 +82430,7 @@ class MainWindow(QMainWindow):
 
     def _current_light_curve_y_axis_mode(self) -> str:
 
-        return str(self._light_curve_y_axis_selector.currentData() or "calibrated_magnitude")
+        return str(self._light_curve_y_axis_selector.currentData() or "standard_magnitude")
 
     def _format_period_summary(
 
@@ -81628,7 +82685,12 @@ class MainWindow(QMainWindow):
         progress_dialog.show()
 
         self._light_curve_gif_progress_dialog = progress_dialog
-        self._append_work_log(f"Started animated light-curve export for {active_series.source_name} [{active_series.filter_name}] to {output_path}.")
+        export_label = (
+            f"{active_series.source_name} Overview"
+            if self._is_overview_filter_selected()
+            else f"{active_series.source_name} [{active_series.filter_name}]"
+        )
+        self._append_work_log(f"Started animated light-curve export for {export_label} to {output_path}.")
         self.statusBar().showMessage("Exporting animated light curve...")
 
         self._light_curve_gif_cancel_requested = False
@@ -81649,7 +82711,7 @@ class MainWindow(QMainWindow):
                 frame_payloads,
                 x_limits=x_limits,
                 y_limits=y_limits,
-                badge_text=self._current_fit_period_badge_text(),
+                badge_text=(None if self._is_overview_filter_selected() else self._current_fit_period_badge_text()),
                 progress_dialog=progress_dialog,
             )
 
@@ -81792,62 +82854,80 @@ class MainWindow(QMainWindow):
 
     ) -> list[LightCurvePlotPayload]:
 
-        payload = build_light_curve_plot_payload(
-            series,
-            "No light-curve points are available for animation.",
-            fit_config=self._current_fit_config(),
+        if self._is_overview_filter_selected():
+
+            payload = self._build_overview_plot_payload_for_export(
+
+                series,
+
+                empty_message="No light-curve points are available for animation.",
+
+            )
+
+        else:
+
+            payload = build_light_curve_plot_payload(
+                series,
+                "No light-curve points are available for animation.",
+                fit_config=self._current_fit_config(),
+                y_axis_mode=self._current_light_curve_y_axis_mode(),
+                x_axis_mode=self._current_light_curve_x_axis_mode(),
+                phase_period_hours=self._fit_period_spin.value() / _MINUTES_PER_HOUR,
+                phase_anchor_mode=self._current_phase_anchor_mode(),
+            )
+
+        return build_light_curve_animation_frame_payloads(
+            payload,
+            frame_duration_ms=frame_duration_ms,
+            minimum_duration_seconds=minimum_duration_seconds,
+            initial_hold_frames=_LIGHT_CURVE_GIF_INITIAL_HOLD_FRAMES,
+            final_hold_frames=_LIGHT_CURVE_GIF_FINAL_HOLD_FRAMES,
+            fit_stage_target_frames=_LIGHT_CURVE_GIF_FIT_STAGE_TARGET_FRAMES,
+        )
+
+    def _build_overview_plot_payload_for_export(
+
+        self,
+
+        series: LightCurveSeries,
+
+        *,
+
+        empty_message: str = "No light-curve points are available for Overview export.",
+
+    ) -> LightCurvePlotPayload:
+
+        layers, status_note = build_overview_light_curve_layers(
+
+            self._overview_measurements(),
+
+            series.source_id,
+
+        )
+
+        x_axis_mode = self._current_light_curve_x_axis_mode()
+
+        if x_axis_mode == "phase":
+
+            x_axis_mode = "jd"
+
+        return build_overview_light_curve_plot_payload(
+
+            layers,
+
+            empty_message,
+
+            title=f"{series.source_name} Overview",
+
             y_axis_mode=self._current_light_curve_y_axis_mode(),
-            x_axis_mode=self._current_light_curve_x_axis_mode(),
-            phase_period_hours=self._fit_period_spin.value() / _MINUTES_PER_HOUR,
-            phase_anchor_mode=self._current_phase_anchor_mode(),
+
+            x_axis_mode=x_axis_mode,
+
+            status_note=status_note,
+
+            style_overrides=self._light_curve_widget.series_style_overrides(),
+
         )
-
-        baseline_target_frames = 125
-        point_count = len(payload.points)
-        fit_point_count = 0 if payload.fit_x_values is None else int(len(payload.fit_x_values))
-        fit_stage_frames = 0 if fit_point_count <= 1 else _LIGHT_CURVE_GIF_FIT_STAGE_TARGET_FRAMES
-        point_stage_frames = max(
-            point_count,
-            max(0, baseline_target_frames - _LIGHT_CURVE_GIF_INITIAL_HOLD_FRAMES - _LIGHT_CURVE_GIF_FINAL_HOLD_FRAMES - fit_stage_frames),
-        )
-        minimum_duration_ms = max(0.0, float(minimum_duration_seconds)) * 1000.0
-        minimum_frame_duration_ms = max(20, int(frame_duration_ms))
-        required_total_frames = max(1, int(math.ceil(minimum_duration_ms / minimum_frame_duration_ms)))
-        total_frames = _LIGHT_CURVE_GIF_INITIAL_HOLD_FRAMES + point_stage_frames + fit_stage_frames + _LIGHT_CURVE_GIF_FINAL_HOLD_FRAMES
-        final_hold_frames = _LIGHT_CURVE_GIF_FINAL_HOLD_FRAMES + max(0, required_total_frames - total_frames)
-
-        frame_payloads: list[LightCurvePlotPayload] = []
-        empty_payload = replace(payload, points=(), fit_x_values=None, fit_y_values=None)
-        frame_payloads.extend([empty_payload] * _LIGHT_CURVE_GIF_INITIAL_HOLD_FRAMES)
-
-        if point_stage_frames > 0:
-            for frame_index in range(point_stage_frames):
-                visible_point_count = point_count if point_count <= 0 else min(point_count, max(1, int(math.ceil(((frame_index + 1) * point_count) / point_stage_frames))))
-                frame_payloads.append(
-                    replace(
-                        payload,
-                        points=tuple(payload.points[:visible_point_count]),
-                        fit_x_values=None,
-                        fit_y_values=None,
-                        empty_message=None,
-                    )
-                )
-
-        if fit_stage_frames > 0 and payload.fit_x_values is not None and payload.fit_y_values is not None:
-            for frame_index in range(fit_stage_frames):
-                visible_fit_count = min(fit_point_count, max(2, int(math.ceil(((frame_index + 1) * fit_point_count) / fit_stage_frames))))
-                frame_payloads.append(
-                    replace(
-                        payload,
-                        fit_x_values=np.asarray(payload.fit_x_values[:visible_fit_count], dtype=float),
-                        fit_y_values=np.asarray(payload.fit_y_values[:visible_fit_count], dtype=float),
-                        empty_message=None,
-                    )
-                )
-
-        final_payload = replace(payload, empty_message=None)
-        frame_payloads.extend([final_payload] * max(1, final_hold_frames))
-        return frame_payloads
 
     def _render_light_curve_animation_payloads_current_view(
 
@@ -81947,6 +83027,22 @@ class MainWindow(QMainWindow):
 
             y_limits = None if view_ranges is None else view_ranges[1]
 
+            if self._is_overview_filter_selected():
+
+                self._export_overview_light_curve_scientific(
+
+                    active_series,
+
+                    output_path,
+
+                    x_limits=x_limits,
+
+                    y_limits=y_limits,
+
+                )
+
+                return
+
             export_light_curve_plot(
 
                 active_series,
@@ -81985,9 +83081,75 @@ class MainWindow(QMainWindow):
 
         self._light_curve_widget.export_current_view(str(output_path))
 
-        self.statusBar().showMessage(f"Exported theme-based light curve for {active_series.source_name} [{active_series.filter_name}] to {output_path}.")
+        label = (
 
-        self._append_work_log(f"Exported theme-based light curve for {active_series.source_name} [{active_series.filter_name}] to {output_path}.")
+            f"{active_series.source_name} Overview"
+
+            if self._is_overview_filter_selected()
+
+            else f"{active_series.source_name} [{active_series.filter_name}]"
+
+        )
+
+        self.statusBar().showMessage(f"Exported theme-based light curve for {label} to {output_path}.")
+
+        self._append_work_log(f"Exported theme-based light curve for {label} to {output_path}.")
+
+    def _export_overview_light_curve_scientific(
+
+        self,
+
+        active_series: LightCurveSeries,
+
+        output_path: Path,
+
+        *,
+
+        x_limits: tuple[float, float] | None,
+
+        y_limits: tuple[float, float] | None,
+
+    ) -> None:
+
+        payload = self._build_overview_plot_payload_for_export(
+
+            active_series,
+
+            empty_message="Selected target has no valid Overview values for the selected light-curve axis.",
+
+        )
+
+        export_light_curve_plot_payload(
+
+            payload,
+
+            output_path,
+
+            export_style="scientific",
+
+            x_limits=x_limits,
+
+            y_limits=y_limits,
+
+            figure_size_inches=(
+
+                self._scientific_pdf_figure_size_inches()
+
+                if output_path.suffix.lower() == ".pdf"
+
+                else self._light_curve_export_figure_size_inches()
+
+            ),
+
+            dpi=(self._scientific_pdf_dpi() if output_path.suffix.lower() == ".pdf" else None),
+
+        )
+
+        message = f"Exported scientific Overview light curve for {active_series.source_name} to {output_path}."
+
+        self.statusBar().showMessage(message)
+
+        self._append_work_log(message)
 
     def _current_phase_anchor_mode(self) -> str:
 
@@ -82073,6 +83235,8 @@ class MainWindow(QMainWindow):
         self._sync_differential_training_controls()
 
         self._update_target_browser_buttons()
+
+        self._plot_selected_series()
 
         self._render_image_panel()
 
@@ -82956,17 +84120,42 @@ class MainWindow(QMainWindow):
 
         self._measurement_filter_combo.addItem("All", "")
 
+        self._measurement_filter_combo.addItem("Overview", "overview")
+
+        overview_index = self._measurement_filter_combo.findData("overview")
+
+        if overview_index >= 0:
+
+            self._measurement_filter_combo.setItemData(
+
+                overview_index,
+
+                "Plot the selected target in every filter plus its comparison stars and check star (QC overview).",
+
+                Qt.ItemDataRole.ToolTipRole,
+
+            )
+
         for filter_name in filters:
 
             self._measurement_filter_combo.addItem(filter_name, filter_name)
 
-        if current_filter:
+        # Overview is the default view. Preserve only an explicit band filter (e.g. V/B).
+        if current_filter and current_filter not in {"", "overview"}:
 
             index = self._measurement_filter_combo.findData(current_filter)
 
             if index >= 0:
 
                 self._measurement_filter_combo.setCurrentIndex(index)
+
+            elif overview_index >= 0:
+
+                self._measurement_filter_combo.setCurrentIndex(overview_index)
+
+        elif overview_index >= 0:
+
+            self._measurement_filter_combo.setCurrentIndex(overview_index)
 
         self._measurement_filter_combo.blockSignals(False)
 
@@ -83118,11 +84307,7 @@ class MainWindow(QMainWindow):
 
         self._populate_series_selector(self._filtered_light_curves())
 
-        source_target = self._selected_source_target()
-
-        if source_target is not None:
-
-            self._sync_series_selection_for_source_target(*source_target)
+        self._sync_series_selector_to_selected_source()
 
         self._update_source_period_button_state()
 
@@ -83131,6 +84316,8 @@ class MainWindow(QMainWindow):
         self._sync_differential_training_controls()
 
         self._update_target_browser_buttons()
+
+        self._plot_selected_series()
 
         self._render_image_panel()
 
@@ -83332,7 +84519,7 @@ class MainWindow(QMainWindow):
 
                 continue
 
-            if selected_filter and (measurement.filter_name or "-") != selected_filter:
+            if selected_filter and selected_filter != "overview" and (measurement.filter_name or "-") != selected_filter:
 
                 continue
 
@@ -84962,7 +86149,7 @@ class MainWindow(QMainWindow):
 
         selected_filter = self._measurement_filter_combo.currentData() or ""
 
-        if selected_filter:
+        if selected_filter and selected_filter != "overview":
 
             return selected_filter
 
@@ -84977,6 +86164,34 @@ class MainWindow(QMainWindow):
 
 
         return None
+
+    def _is_overview_filter_selected(self) -> bool:
+
+        if not hasattr(self, "_measurement_filter_combo"):
+
+            return False
+
+        return (self._measurement_filter_combo.currentData() or "") == "overview"
+
+    def _overview_measurements(self) -> list[object]:
+
+        """Measurements for Overview series assembly (all filters; ignore source-name search)."""
+
+        report = self._current_processing_report
+
+        if report is None:
+
+            return []
+
+        return [
+
+            measurement
+
+            for measurement in report.measurements
+
+            if self._measurement_passes_light_curve_filters(measurement)
+
+        ]
 
     def _measurement_saturation_text(self, measurement: PhotometryMeasurement) -> str:
 
@@ -88926,6 +90141,12 @@ class MainWindow(QMainWindow):
 
         self._update_fit_period_summary_label()
 
+        if self._is_overview_filter_selected():
+
+            self._plot_overview_series()
+
+            return
+
         if self._series_selector.count() == 0:
 
             message = "No light curves generated yet."
@@ -88978,6 +90199,7 @@ class MainWindow(QMainWindow):
 
 
 
+        y_axis_mode = self._current_light_curve_y_axis_mode()
         self._light_curve_widget.plot_series(
 
             series,
@@ -88986,7 +90208,7 @@ class MainWindow(QMainWindow):
 
             fit_config=self._current_fit_config(),
 
-            y_axis_mode=self._current_light_curve_y_axis_mode(),
+            y_axis_mode=y_axis_mode,
 
             x_axis_mode=self._current_light_curve_x_axis_mode(),
 
@@ -88999,6 +90221,142 @@ class MainWindow(QMainWindow):
             recent_period_error_bars_only=self._phase_recent_error_bars_only_checkbox.isChecked(),
 
         )
+        self._show_standard_magnitude_status_note(series.source_id, series.filter_name, y_axis_mode)
+
+    def _plot_overview_series(self) -> None:
+
+        y_axis_mode = self._current_light_curve_y_axis_mode()
+
+        selected_series = self._series_selector.currentData()
+
+        source_id = self._selected_source_id()
+
+        source_name = None
+
+        source_target = self._selected_source_target()
+
+        if source_target is not None:
+
+            source_name = source_target[0]
+
+        if source_id is None and isinstance(selected_series, LightCurveSeries):
+
+            source_id = selected_series.source_id
+
+            source_name = selected_series.source_name
+
+        if not source_id:
+
+            self._light_curve_widget.show_message(
+
+                "Overview Light Curve",
+
+                "Select a target first.",
+
+                y_axis_mode=y_axis_mode,
+
+            )
+
+            return
+
+        if source_name is None and isinstance(selected_series, LightCurveSeries):
+
+            source_name = selected_series.source_name
+
+        layers, status_note = build_overview_light_curve_layers(
+
+            self._overview_measurements(),
+
+            source_id,
+
+        )
+
+        if not layers:
+
+            self._light_curve_widget.show_message(
+
+                "Overview Light Curve",
+
+                status_note or "Select a target first.",
+
+                y_axis_mode=y_axis_mode,
+
+            )
+
+            if status_note:
+
+                self.statusBar().showMessage(status_note, 5000)
+
+            return
+
+        x_axis_mode = self._current_light_curve_x_axis_mode()
+
+        if x_axis_mode == "phase":
+
+            x_axis_mode = "jd"
+
+        title_name = source_name or source_id
+
+        self._light_curve_widget.plot_overview(
+
+            layers,
+
+            "Selected target has no valid Overview values for the selected light-curve axis.",
+
+            y_axis_mode=y_axis_mode,
+
+            x_axis_mode=x_axis_mode,
+
+            status_note=status_note,
+
+            title=f"{title_name} Overview",
+
+        )
+
+        if status_note:
+
+            self.statusBar().showMessage(status_note, 5000)
+        else:
+            filter_name = selected_series.filter_name if isinstance(selected_series, LightCurveSeries) else None
+            self._show_standard_magnitude_status_note(source_id, filter_name, y_axis_mode)
+
+    def _show_standard_magnitude_status_note(
+        self,
+        source_id: str,
+        filter_name: str | None,
+        y_axis_mode: str,
+    ) -> None:
+        if y_axis_mode != "standard_magnitude":
+            return
+        band = None
+        sources: list[str] = []
+        for measurement in self._current_processing_report.measurements if self._current_processing_report is not None else []:
+            if measurement.source_id != source_id:
+                continue
+            if (measurement.filter_name or "unknown") != (filter_name or "unknown"):
+                continue
+            if measurement.standard_catalog_band:
+                band = measurement.standard_catalog_band
+            if measurement.standard_catalog_source:
+                sources.append(str(measurement.standard_catalog_source))
+        if not band and not sources:
+            return
+        pretty: list[str] = []
+        for item in sources:
+            key = str(item).lower()
+            if key == "vsp" and "VSP" not in pretty:
+                pretty.append("VSP")
+            elif key == "apass" and "APASS" not in pretty:
+                pretty.append("APASS")
+            elif key in {"gaia-g", "gaia_g", "gaiag"} and "Gaia G" not in pretty:
+                pretty.append("Gaia G")
+        source_label = "/".join(pretty) if pretty else None
+        if band and source_label:
+            self.statusBar().showMessage(f"Standard {band} via {source_label}", 5000)
+        elif band:
+            self.statusBar().showMessage(f"Standard {band}", 5000)
+        elif source_label:
+            self.statusBar().showMessage(f"Standard Magnitude via {source_label}", 5000)
 
     def _visible_light_curve_series(self, light_curves: list[LightCurveSeries]) -> list[LightCurveSeries]:
 
@@ -89008,7 +90366,26 @@ class MainWindow(QMainWindow):
 
         y_axis_mode = self._current_light_curve_y_axis_mode()
 
-        return [series for series in light_curves if self._series_has_valid_light_curve_values(series, y_axis_mode)]
+        visible = [series for series in light_curves if self._series_has_valid_light_curve_values(series, y_axis_mode)]
+
+        # Keep the currently selected Source Results target available even if the axis has no valid points yet.
+        selected_source_id = self._selected_source_id()
+
+        if selected_source_id:
+
+            visible_ids = {series.source_id for series in visible}
+
+            if selected_source_id not in visible_ids:
+
+                for series in light_curves:
+
+                    if series.source_id == selected_source_id:
+
+                        visible.append(series)
+
+                        break
+
+        return visible
 
     def _series_has_valid_light_curve_values(self, series: LightCurveSeries, y_axis_mode: str) -> bool:
 
@@ -89017,6 +90394,14 @@ class MainWindow(QMainWindow):
             if y_axis_mode == "calibrated_magnitude":
 
                 if point.calibrated_magnitude is not None:
+
+                    return True
+
+                continue
+
+            if y_axis_mode == "standard_magnitude":
+
+                if point.standard_magnitude is not None:
 
                     return True
 
@@ -90116,17 +91501,41 @@ class MainWindow(QMainWindow):
 
             return {}
 
+        positions: dict[str, tuple[float, float]] = {}
+
+        frame_name = image_path.name
+
+        needs_wcs = False
+
+        for source in config.sources:
+
+            # On the reference frame, keep the exact click/drag pixels so repaired-WCS
+            # sky round-trips cannot nudge the aperture after place or drag.
+            if frame_name == str(source.reference_frame_name or ""):
+
+                positions[source.source_id] = (float(source.reference_x), float(source.reference_y))
+
+            else:
+
+                needs_wcs = True
+
+        if not needs_wcs:
+
+            return positions
+
         try:
 
-            wcs = WCS(read_header(image_path))
+            wcs = self._celestial_wcs_for_manual_image(image_path)
 
         except Exception:
 
-            return {}
-
-        positions: dict[str, tuple[float, float]] = {}
+            return positions
 
         for source in config.sources:
+
+            if source.source_id in positions:
+
+                continue
 
             try:
 
@@ -90156,19 +91565,31 @@ class MainWindow(QMainWindow):
 
         config = self._manual_config_for_object(self._selected_object_name())
 
+        edit_apertures = bool(self._edit_apertures_checkbox.isChecked())
+
+        # While Aperture Editor is on, never fall back to automatic catalog overlays — even if
+        # the user deleted every manual aperture (empty canvas for a new independent entry).
         manual_overlay_mode = bool(
 
             config is not None
 
-            and bool(config.sources)
-
             and (
 
-                self._edit_apertures_checkbox.isChecked()
+                edit_apertures
 
-                or (measurement is not None and measurement.catalog == "manual")
+                or (
 
-                or (measurement is None and config.mode == ObjectPhotometryMode.MANUAL)
+                    bool(config.sources)
+
+                    and (
+
+                        (measurement is not None and measurement.catalog == "manual")
+
+                        or (measurement is None and config.mode == ObjectPhotometryMode.MANUAL)
+
+                    )
+
+                )
 
             )
 
@@ -91254,6 +92675,12 @@ class MainWindow(QMainWindow):
 
             return "Target"
 
+        name = str(source.name or "").strip()
+
+        if name:
+
+            return name
+
         if source.role == ManualSourceRole.TARGET:
 
             return "Target"
@@ -91262,7 +92689,119 @@ class MainWindow(QMainWindow):
 
             return "Check Star"
 
-        return source.name
+        return source.source_id
+
+    def _is_manually_added_aperture_source(self, source: ManualSourceConfig | None) -> bool:
+
+        if source is None:
+
+            return False
+
+        return str(source.source_id or "").startswith("manual-")
+
+    def _config_has_catalog_target(self, config: ManualPhotometryConfig | None) -> bool:
+
+        if config is None:
+
+            return False
+
+        return any(
+
+            item.role == ManualSourceRole.TARGET and not self._is_manually_added_aperture_source(item)
+
+            for item in config.sources
+
+        )
+
+    def _is_manually_added_catalog_entry(self, entry: CatalogStar | None) -> bool:
+
+        if entry is None:
+
+            return False
+
+        source_id = str(entry.source_id or "")
+
+        return str(entry.catalog or "").lower() == "manual" and source_id.startswith("manual-")
+
+    def _next_manual_target_display_name(self, config: ManualPhotometryConfig) -> str:
+
+        existing_names = {str(item.name or "").strip().lower() for item in config.target_sources}
+
+        if "target" not in existing_names:
+
+            return "Target"
+
+        index = 2
+
+        while f"target {index}" in existing_names:
+
+            index += 1
+
+        return f"Target {index}"
+
+    def _prompt_rename_manual_source(self, source: ManualSourceConfig) -> bool:
+
+        if not self._is_manually_added_aperture_source(source):
+
+            self.statusBar().showMessage("Only manually added targets can be renamed.", 4000)
+
+            return False
+
+        current_name = self._manual_source_display_name(source)
+
+        new_name, accepted = QInputDialog.getText(
+
+            self,
+
+            "Change Name",
+
+            "Name:",
+
+            text=current_name,
+
+        )
+
+        if not accepted:
+
+            return False
+
+        cleaned = str(new_name or "").strip()
+
+        if not cleaned:
+
+            self.statusBar().showMessage("Name cannot be empty.", 4000)
+
+            return False
+
+        source.name = cleaned
+
+        self._save_settings_snapshot()
+
+        self._sync_manual_controls()
+
+        report = self._current_processing_report
+
+        if report is not None:
+
+            for entry in self._source_catalog_entries(report):
+
+                if entry.source_id == source.source_id and str(entry.catalog or "").lower() == "manual":
+
+                    entry.name = cleaned
+
+            self._populate_source_table(report)
+
+            self._populate_series_selector(self._filtered_light_curves())
+
+            self._sync_series_selector_to_selected_source()
+
+        self._render_image_panel()
+
+        self._plot_selected_series()
+
+        self.statusBar().showMessage(f"Renamed manual target to {cleaned}.", 4000)
+
+        return True
 
     def _manual_active_source(self, config: ManualPhotometryConfig) -> ManualSourceConfig | None:
 
@@ -91288,7 +92827,14 @@ class MainWindow(QMainWindow):
 
             return preview.image_path == image_path
 
-    def _manual_hit_test(self, image_path: Path, x_value: float, y_value: float) -> tuple[ManualSourceConfig | None, str | None]:
+    def _manual_hit_test(
+        self,
+        image_path: Path,
+        x_value: float,
+        y_value: float,
+        *,
+        include_locked_comparisons: bool = False,
+    ) -> tuple[ManualSourceConfig | None, str | None]:
 
         config = self._manual_overlay_config()
 
@@ -91306,7 +92852,11 @@ class MainWindow(QMainWindow):
 
         for source in config.sources:
 
-            if source.role == ManualSourceRole.COMPARISON and not self._manual_comparison_editing_enabled(config):
+            if (
+                source.role == ManualSourceRole.COMPARISON
+                and not include_locked_comparisons
+                and not self._manual_comparison_editing_enabled(config)
+            ):
 
                 continue
 
@@ -91320,7 +92870,11 @@ class MainWindow(QMainWindow):
 
             center_distance = ((x_value - center_x) ** 2 + (y_value - center_y) ** 2) ** 0.5
 
-            if center_distance <= 6.0 and center_distance < best_distance:
+            # Treat clicks inside the aperture disk as a center hit so Delete / Shift-toggle
+            # work when the user clicks the ring, not only the exact centroid.
+            aperture_hit_radius = max(6.0, float(source.aperture_radius) + 2.0)
+
+            if center_distance <= aperture_hit_radius and center_distance < best_distance:
 
                 best_source = source
 
@@ -91350,13 +92904,59 @@ class MainWindow(QMainWindow):
 
         return best_source, best_part
 
-    def _pixel_to_sky(self, image_path: Path, x_value: float, y_value: float) -> tuple[float, float]:
+    def _celestial_wcs_for_manual_image(self, image_path: Path) -> WCS:
 
-        wcs = WCS(read_header(image_path))
+        """Return the WCS used for manual aperture sky↔pixel conversion (CCVALS-repaired when needed)."""
+
+        header, width, height = read_header_and_shape(image_path)
+
+        wcs_header = header
+
+        try:
+
+            from photometry_app.core.wcs_sanity import evaluate_ccvals_keyword_sanity, try_repair_crval_from_ccvals
+
+            keyword_result = evaluate_ccvals_keyword_sanity(header)
+
+            if keyword_result is not None and not keyword_result.passed:
+
+                root = Path(self._root_path_input.text()).expanduser()
+
+                settings = self._settings or AppSettings.from_root(root)
+
+                repaired_field, _reasons = try_repair_crval_from_ccvals(
+
+                    image_path,
+
+                    header,
+
+                    width,
+
+                    height,
+
+                    cache_dir=settings.cache_dir / "astrometry" / "wcs-sanity",
+
+                )
+
+                if repaired_field is not None:
+
+                    wcs_header = read_header(repaired_field.wcs_path)
+
+        except Exception:
+
+            wcs_header = header
+
+        wcs = WCS(wcs_header)
 
         if not wcs.has_celestial:
 
             raise ValueError("The selected frame does not have a usable celestial WCS yet.")
+
+        return wcs
+
+    def _pixel_to_sky(self, image_path: Path, x_value: float, y_value: float) -> tuple[float, float]:
+
+        wcs = self._celestial_wcs_for_manual_image(image_path)
 
         ra_deg, dec_deg = wcs.pixel_to_world_values(x_value, y_value)
 
@@ -91782,7 +93382,7 @@ class MainWindow(QMainWindow):
 
         return True
 
-    def _upsert_manual_source(self, role: ManualSourceRole, image_path: Path, x_value: float, y_value: float) -> None:
+    def _add_manual_target(self, image_path: Path, x_value: float, y_value: float) -> None:
 
         object_name = self._selected_object_name()
 
@@ -91804,23 +93404,112 @@ class MainWindow(QMainWindow):
 
         aperture_radius, annulus_inner_radius, annulus_outer_radius = self._default_manual_radii(config)
 
-        existing_source = None
+        source_name = self._next_manual_target_display_name(config)
+
+        source_id = self._next_manual_source_id(config, "manual-target")
+
+        config.sources.append(
+
+            ManualSourceConfig(
+
+                source_id=source_id,
+
+                name=source_name,
+
+                role=ManualSourceRole.TARGET,
+
+                ra_deg=ra_deg,
+
+                dec_deg=dec_deg,
+
+                reference_frame_name=image_path.name,
+
+                reference_x=x_value,
+
+                reference_y=y_value,
+
+                aperture_radius=aperture_radius,
+
+                annulus_inner_radius=annulus_inner_radius,
+
+                annulus_outer_radius=annulus_outer_radius,
+
+                catalog="manual",
+
+            )
+
+        )
+
+        self._manual_active_source_id = source_id
+
+        self._save_settings_snapshot()
+
+        self._sync_manual_controls()
+
+        self._render_image_panel()
+
+        self.statusBar().showMessage(f"Added manual target {source_name}. Apply apertures to measure it.", 5000)
+
+    def _manual_source_for_catalog_target(self, target: tuple[str, str, str, float, float, str]) -> ManualSourceConfig | None:
+
+        catalog_name, source_id, _name, _ra, _dec, _object_type = target
+
+        config = self._manual_config_for_object(self._selected_object_name(), create=False)
+
+        if config is None:
+
+            return None
+
+        return next(
+            (
+                item
+                for item in config.sources
+                if item.source_id == source_id
+                and (
+                    str(item.catalog or "").lower() == str(catalog_name or "").lower()
+                    or (str(catalog_name or "").lower() == "manual" and self._is_manually_added_aperture_source(item))
+                )
+            ),
+            None,
+        )
+
+    def _upsert_manual_source(self, role: ManualSourceRole, image_path: Path, x_value: float, y_value: float) -> None:
+
+        """Upsert singular roles such as CHECK. Targets are added via `_add_manual_target`."""
 
         if role == ManualSourceRole.TARGET:
 
-            existing_source = config.target_source
+            self._add_manual_target(image_path, x_value, y_value)
 
-        elif role == ManualSourceRole.CHECK:
+            return
 
-            existing_source = config.check_source
+        object_name = self._selected_object_name()
 
+        config = self._manual_config_for_object(object_name, create=True)
 
+        if config is None:
+
+            return
+
+        try:
+
+            ra_deg, dec_deg = self._pixel_to_sky(image_path, x_value, y_value)
+
+        except ValueError as exc:
+
+            self.statusBar().showMessage(str(exc))
+
+            return
+
+        aperture_radius, annulus_inner_radius, annulus_outer_radius = self._default_manual_radii(config)
+
+        existing_source = config.check_source if role == ManualSourceRole.CHECK else None
 
         if existing_source is None:
 
             source_id = self._next_manual_source_id(config, f"manual-{role.value}")
 
-            source_name = "Target" if role == ManualSourceRole.TARGET else ("Check Star" if role == ManualSourceRole.CHECK else source_id)
+            source_name = "Check Star" if role == ManualSourceRole.CHECK else source_id
 
             config.sources.append(
 
@@ -91848,13 +93537,13 @@ class MainWindow(QMainWindow):
 
                     annulus_outer_radius=annulus_outer_radius,
 
+                    catalog="manual",
+
                 )
 
             )
 
         else:
-
-            existing_source.name = self._manual_source_display_name(existing_source)
 
             existing_source.ra_deg = ra_deg
 
@@ -91866,13 +93555,7 @@ class MainWindow(QMainWindow):
 
             existing_source.reference_y = y_value
 
-
-
         self._save_settings_snapshot()
-
-        if role == ManualSourceRole.TARGET and config.keep_comparison_stars:
-
-            self._seed_manual_sources_from_current_context(include_target=False)
 
         self._sync_manual_controls()
 
@@ -91888,9 +93571,16 @@ class MainWindow(QMainWindow):
 
             return
 
-        hit_source, hit_part = self._manual_hit_test(image_path, x_value, y_value)
+        hit_source, _hit_part = self._manual_hit_test(
+            image_path,
+            x_value,
+            y_value,
+            include_locked_comparisons=True,
+        )
 
-        if hit_source is not None and hit_part == "center" and hit_source.role == ManualSourceRole.COMPARISON:
+        if hit_source is not None and hit_source.role == ManualSourceRole.COMPARISON:
+
+            self._unlock_manual_comparison_stars(config)
 
             config.sources = [item for item in config.sources if item.source_id != hit_source.source_id]
 
@@ -91899,6 +93589,8 @@ class MainWindow(QMainWindow):
             self._sync_manual_controls()
 
             self._render_image_panel()
+
+            self.statusBar().showMessage(f"Removed comparison {self._manual_source_display_name(hit_source)}.", 4000)
 
             return
 
@@ -91913,6 +93605,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(str(exc))
 
             return
+
+        self._unlock_manual_comparison_stars(config)
 
         aperture_radius, annulus_inner_radius, annulus_outer_radius = self._default_manual_radii(config)
 
@@ -91955,6 +93649,8 @@ class MainWindow(QMainWindow):
         self._sync_manual_controls()
 
         self._render_image_panel()
+
+        self.statusBar().showMessage(f"Added comparison Comp {comp_index}.", 4000)
 
     def _update_manual_source_position(self, source: ManualSourceConfig, image_path: Path, x_value: float, y_value: float) -> None:
 
@@ -92040,7 +93736,7 @@ class MainWindow(QMainWindow):
 
         if config.keep_comparison_stars:
 
-            self._seed_manual_sources_from_current_context(include_target=config.target_source is None)
+            self._seed_manual_sources_from_current_context(include_target=not self._config_has_catalog_target(config))
 
         if config.target_source is None or not config.comparison_sources:
 
@@ -92094,7 +93790,7 @@ class MainWindow(QMainWindow):
 
         if config is not None and config.keep_comparison_stars and current_context_object == object_name:
 
-            self._seed_manual_sources_from_current_context(include_target=config.target_source is None)
+            self._seed_manual_sources_from_current_context(include_target=not self._config_has_catalog_target(config))
 
         if object_name is None or config is None or config.target_source is None or not config.comparison_sources:
 
@@ -92110,13 +93806,13 @@ class MainWindow(QMainWindow):
 
             self._pending_manual_recompute_base_report = current_report
 
-            self._pending_manual_recompute_selection = [(self._manual_source_display_name(config.target_source), "manual")]
+            self._pending_manual_recompute_selection = self._manual_recompute_selection_targets(config)
 
         else:
 
             self._pending_manual_recompute_base_report = None
 
-            self._pending_manual_recompute_selection = None
+            self._pending_manual_recompute_selection = self._manual_recompute_selection_targets(config)
 
         self._sync_manual_controls()
 
@@ -92127,6 +93823,8 @@ class MainWindow(QMainWindow):
             object_name,
 
             manual_config_override=replace(config, mode=ObjectPhotometryMode.MANUAL),
+
+            preserve_views=current_report is not None and current_report.object_name == object_name,
 
         )
 
@@ -92292,6 +93990,58 @@ class MainWindow(QMainWindow):
 
                 return
 
+    def _sync_series_selector_to_selected_source(self) -> None:
+
+        source_target = self._selected_source_target()
+
+        if source_target is None:
+
+            return
+
+        self._sync_series_selection_for_source_target(*source_target)
+
+    def _selected_source_id(self) -> str | None:
+
+        row_index = self._source_table.currentRow()
+
+        if row_index < 0:
+
+            selected = self._selected_source_targets()
+
+            if selected:
+
+                report = self._current_processing_report
+
+                if report is not None:
+
+                    entry = self._source_entry(report, selected[0][0], selected[0][1])
+
+                    if entry is not None:
+
+                        return entry.source_id
+
+            return None
+
+        source_key = self._source_row_key(row_index)
+
+        if source_key:
+
+            _catalog_name, _separator, source_id = source_key.partition(":")
+
+            if source_id:
+
+                return source_id
+
+        source_target = self._source_target_for_row(row_index)
+
+        if source_target is None or self._current_processing_report is None:
+
+            return None
+
+        entry = self._source_entry(self._current_processing_report, source_target[0], source_target[1])
+
+        return entry.source_id if entry is not None else None
+
     def _sync_series_selection_for_source_target(self, source_name: str, catalog_name: str) -> None:
 
         report = self._current_processing_report
@@ -92300,13 +94050,50 @@ class MainWindow(QMainWindow):
 
             return
 
+        wanted_source_id = self._selected_source_id()
+
         entry = self._source_entry(report, source_name, catalog_name)
 
         if entry is None:
 
-            return
+            entry = next(
 
+                (
+                    item
+                    for item in self._source_catalog_entries(report)
+                    if item.name == source_name
+                ),
 
+                None,
+
+            )
+
+        if wanted_source_id is None and entry is not None:
+
+            wanted_source_id = entry.source_id
+
+        # If Valid-only / axis filtering hid the series, put one back so Overview/sync can find it.
+        if wanted_source_id is not None and not any(
+
+            isinstance(self._series_selector.itemData(index), LightCurveSeries)
+            and self._series_selector.itemData(index).source_id == wanted_source_id
+            for index in range(self._series_selector.count())
+
+        ):
+
+            fallback_series = next(
+
+                (series for series in report.light_curves if series.source_id == wanted_source_id),
+
+                None,
+
+            )
+
+            if fallback_series is not None:
+
+                label = f"{fallback_series.source_name} [{fallback_series.filter_name}] ({len(fallback_series.points)} points)"
+
+                self._series_selector.addItem(label, fallback_series)
 
         for index in range(self._series_selector.count()):
 
@@ -92316,13 +94103,29 @@ class MainWindow(QMainWindow):
 
                 continue
 
-            if series.source_id == entry.source_id:
+            matches = False
 
-                if self._series_selector.currentIndex() != index:
+            if wanted_source_id is not None and series.source_id == wanted_source_id:
 
-                    self._series_selector.setCurrentIndex(index)
+                matches = True
 
-                return
+            elif series.source_name == source_name:
+
+                matches = True
+
+            if not matches:
+
+                continue
+
+            if self._series_selector.currentIndex() != index:
+
+                self._series_selector.blockSignals(True)
+
+                self._series_selector.setCurrentIndex(index)
+
+                self._series_selector.blockSignals(False)
+
+            return
 
     def _selected_measurement_row(self) -> PhotometryMeasurement | None:
 
@@ -92432,6 +94235,8 @@ class MainWindow(QMainWindow):
 
         self._populate_series_selector(self._filtered_light_curves())
 
+        self._sync_series_selector_to_selected_source()
+
         self._update_measure_button_state()
 
         self._populate_image_frame_selector()
@@ -92454,6 +94259,8 @@ class MainWindow(QMainWindow):
 
         self._populate_source_table(report)
 
+        self._sync_series_selector_to_selected_source()
+
         self._render_selected_details()
 
         self._plot_selected_series()
@@ -92471,6 +94278,8 @@ class MainWindow(QMainWindow):
         self._populate_source_table(report)
 
         self._populate_series_selector(self._filtered_light_curves())
+
+        self._sync_series_selector_to_selected_source()
 
         self._mark_measurement_table_pending()
 
@@ -92874,19 +94683,19 @@ class MainWindow(QMainWindow):
 
             if qt_button == Qt.MouseButton.RightButton:
 
-                self._start_manual_aperture_preview_for_role(ManualSourceRole.CHECK, image_path, x_value, y_value, qt_button)
+                self._show_manual_aperture_context_menu(image_path, x_value, y_value)
 
                 return
 
             if qt_button == Qt.MouseButton.LeftButton and modifier_flags & Qt.KeyboardModifier.ShiftModifier:
 
-                if not self._manual_comparison_editing_enabled():
-
-                    self.statusBar().showMessage("Uncheck Keep Comparison Stars to redefine comparison sources manually.")
-
-                    return
-
                 self._toggle_manual_comparison_source(image_path, x_value, y_value)
+
+                return
+
+            if qt_button == Qt.MouseButton.LeftButton and modifier_flags & Qt.KeyboardModifier.ControlModifier:
+
+                self._upsert_manual_source(ManualSourceRole.CHECK, image_path, x_value, y_value)
 
                 return
 
@@ -92898,9 +94707,122 @@ class MainWindow(QMainWindow):
 
                     self._start_manual_aperture_preview_for_source(source, part, image_path, x_value, y_value, qt_button)
 
-                    return
+                return
 
-                self._start_manual_aperture_preview_for_role(ManualSourceRole.TARGET, image_path, x_value, y_value, qt_button)
+    def _handle_image_double_clicked(self, x_value: float, y_value: float, button: object, modifiers: object) -> None:
+
+        if not self._edit_apertures_checkbox.isChecked():
+
+            return
+
+        image_path = self._current_image_path()
+
+        if image_path is None:
+
+            return
+
+        qt_button = self._coerce_mouse_button(button)
+
+        if qt_button != Qt.MouseButton.LeftButton:
+
+            return
+
+        modifier_flags = self._coerce_keyboard_modifiers(modifiers)
+
+        if modifier_flags & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
+
+            return
+
+        hit_source, _hit_part = self._manual_hit_test(
+            image_path,
+            x_value,
+            y_value,
+            include_locked_comparisons=True,
+        )
+
+        if hit_source is not None:
+
+            return
+
+        self._add_manual_target(image_path, x_value, y_value)
+
+    def _show_manual_aperture_context_menu(self, image_path: Path, x_value: float, y_value: float) -> None:
+
+        source, _part = self._manual_hit_test(image_path, x_value, y_value, include_locked_comparisons=True)
+
+        menu = QMenu(self)
+
+        rename_action = None
+
+        delete_action = None
+
+        if source is not None:
+
+            if self._is_manually_added_aperture_source(source) and source.role == ManualSourceRole.TARGET:
+
+                rename_action = menu.addAction("Change Name…")
+
+            delete_action = menu.addAction(f"Delete {self._manual_source_display_name(source)}")
+
+        search_action = menu.addAction("Search")
+
+        search_action.setEnabled(self._image_world_coordinates_for_current_image_point(x_value, y_value) is not None)
+
+        if menu.isEmpty():
+
+            return
+
+        cursor_position = QCursor.pos()
+
+        selected_action = menu.exec(cursor_position)
+
+        if rename_action is not None and selected_action is rename_action and source is not None:
+
+            self._prompt_rename_manual_source(source)
+
+            return
+
+        if delete_action is not None and selected_action is delete_action and source is not None:
+
+            self._delete_manual_source(source)
+
+            return
+
+        if selected_action is search_action:
+
+            self._open_simbad_coordinate_search_for_image_point(x_value, y_value)
+
+    def _delete_manual_source(self, source: ManualSourceConfig) -> None:
+
+        object_name = self._selected_object_name()
+
+        config = self._manual_config_for_object(object_name, create=False)
+
+        if config is None:
+
+            return
+
+        display_name = self._manual_source_display_name(source)
+
+        if source.role == ManualSourceRole.COMPARISON:
+
+            self._unlock_manual_comparison_stars(config)
+
+        config.sources = [item for item in config.sources if item.source_id != source.source_id]
+
+        if self._manual_active_source_id == source.source_id:
+
+            self._manual_active_source_id = None
+
+        self._clear_manual_aperture_preview()
+
+        self._save_settings_snapshot()
+
+        self._sync_manual_controls()
+
+        self._render_image_panel()
+
+        self.statusBar().showMessage(f"Deleted {display_name}.", 4000)
 
     def _handle_image_release(self, _button: object, _modifiers: object) -> None:
 

@@ -844,6 +844,70 @@ def export_light_curve_plot(
 
 
 
+def export_light_curve_plot_payload(
+
+    payload: object,
+
+    output_path: Path,
+
+    *,
+
+    theme: str = "normal",
+
+    custom_theme_colors: dict[str, str] | None = None,
+
+    export_style: str = "themed",
+
+    x_limits: tuple[float, float] | None = None,
+
+    y_limits: tuple[float, float] | None = None,
+
+    figure_size_inches: tuple[float, float] | None = None,
+
+    dpi: int | None = None,
+
+) -> None:
+
+    from photometry_app.core.plotting import plot_light_curve_payload
+
+    figure = Figure(figsize=(figure_size_inches or (8, 4.5)))
+
+    try:
+
+        axis = figure.add_subplot(111)
+
+        plot_light_curve_payload(
+
+            axis,
+
+            payload,
+
+            theme=theme,
+
+            custom_theme_colors=custom_theme_colors,
+
+            export_style=export_style,
+
+            x_limits=x_limits,
+
+            y_limits=y_limits,
+
+        )
+
+        figure.tight_layout()
+
+        resolved_dpi = dpi if dpi is not None else (200 if export_style == "scientific" else 150)
+
+        figure.savefig(output_path, dpi=resolved_dpi, facecolor=figure.get_facecolor())
+
+    finally:
+
+        figure.clear()
+
+
+
+
+
 def export_annotated_image_plot(
 
     measurement: PhotometryMeasurement,

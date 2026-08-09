@@ -1,10 +1,43 @@
 # Version history
 
-Current app version: **0.1.1-alpha.7**
+Current app version: **0.1.1-alpha.8**
 
-This log tracks finished fixes and features for the next published update. Prefer one finalized entry per change—not intermediate debugging steps. Keep each entry to one or two sentences.
+This log tracks finished fixes and features for the next published update. Group notes by mode (or App/Display). Prefer one short bullet per change—not intermediate debugging steps.
 
-## Pending for next release (after 0.1.1-alpha.7)
+## Pending for next release (after 0.1.1-alpha.8)
+
+## 0.1.1-alpha.8
+
+### Differential Photometry
+
+- Folder WCS method: pick from the first frame with a central Gaia mag-bin check, then apply to every frame (embedded WCS, CCVALS repair, or re-solve).
+- Standard Magnitude Y-axis (default): band-matched VSP → APASS → Gaia G; Calibrated Magnitude stays Gaia G.
+- Manual Apply: refreshes aperture RA/Dec with the repaired/solved WCS and sky-matches comps for scientific Standard Magnitude.
+- Overview filter: target + comps + check across filters; right-click Icon/Color; Animation reveals all series.
+- After Generate/Apply: Overview + Standard Magnitude defaults; light curve follows the selected Source Results row; Apply keeps results visible and skips a Gaia WCS re-probe.
+- Aperture Editor: starts empty (independent of automatic results); double-click target, Shift-click comp, Ctrl-click check; place/drag no longer jumps.
+- Clear Cache for This Folder also resets saved apertures; File → Clear All Cache… hard-clears cached data (keeps settings).
+
+### Sky Explorer
+
+- Survey Stretch updates live (STF / STF Bright; default STF).
+- Curves edit the stretched survey view; Feather soft-blends tile seams (default 55%).
+
+### Asteroid / Comet
+
+- Show RA/Dec (default on) and Show Grid with independent density controls.
+- Blink and Export sit beside Hide Info.
+- Zoom-out is limited to fit-to-image again.
+
+### Display
+
+- Curves: smooth tone curve from histogram control points (not sharp linear segments).
+- Curves edit the already-stretched preview; display only—overlays and measurements unchanged.
+
+### App
+
+- Updates: distinct download vs rebuild phases, rebuild warning, and a busy progress bar so the dialog does not look stuck.
+- Contributing: acknowledge Emre Can Alagöz, Julien de Winter, and Enrique Boeneker for support, review, and scientific guidance.
 
 ## 0.1.1-alpha.7
 
@@ -17,7 +50,7 @@ This log tracks finished fixes and features for the next published update. Prefe
 - Asteroid/Comet: image, blink, and trail export dialogs default to filenames that include the selected object name (for example `(511) Davida_blink.mp4` or `2015 CU58_trail.gif`).
 - Settings → Sky Explorer: split the long options list into General and Visuals tabs so color/appearance controls stay on Visuals.
 - Sky Explorer: add a Ruler annotation tool that measures distance between two points in pixels, or in arcsec/arcmin/degrees (auto-scaled) when WCS is available, with the value shown under the line.
-- Sky Explorer: Open starts from an upload or a survey field (Settings RA/Dec/FOV/pixels, default Trifid); survey-as-primary uses independent per-tile loading (center preview→center refine before neighbors, then neighbor preview→detail, viewport-prioritized, non-blocking workers, per-tile STF that does not change when neighbors load, loaded tiles kept, no-data shown as hatch not black), Comparison on a survey primary uses the same center-first tiled wipe across the full mosaic (user-image Comparison still uses the viewport overlay wipe), and Explore catalogs the full mosaic with annotations that are not clipped at tile edges.
+- Sky Explorer: Open starts from an upload or a survey field (Settings RA/Dec/FOV/pixels, default Trifid); survey-as-primary uses independent per-tile loading (center preview→center refine before neighbors, then neighbor preview→detail, viewport-prioritized, non-blocking workers, per-tile STF that does not change when neighbors load, loaded tiles kept, no-data shown as hatch not black), Comparison on a survey primary uses the same center-first tiled wipe across the full mosaic (upload-image Comparison still uses the viewport overlay wipe), and Explore catalogs the full mosaic with annotations that are not clipped at tile edges.
 - Sky Explorer: survey image downloads are kept only for the current session and are deleted when the app closes (and cleared again on the next startup if a previous exit left leftovers).
 - About and README credits: point more info to the GitHub project, credit Ogetay and Ege Palaz with updated links, and mark the build as Alpha build only.
 
