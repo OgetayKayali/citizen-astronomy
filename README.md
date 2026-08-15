@@ -2,7 +2,7 @@
 
 Every clear night, amateur telescopes around the world capture photons that professional observatories never will -- the right patch of sky, at the right moment, with enough patience to notice something change. Citizen Astronomy turns those images into science.
 
-**CAst** is a Windows desktop application that takes folders of FITS and XISF images and gives you the tools to measure variable stars, discover moving asteroids, build Hertzsprung-Russell diagrams, and explore the sky -- all from one guided interface, no command-line scripting required.
+**CAst** is a desktop application (Windows installer primary; unsigned macOS `.app` zip available for alpha testers) that takes folders of FITS and XISF images and gives you the tools to measure variable stars, discover moving asteroids, build Hertzsprung-Russell diagrams, and explore the sky -- all from one guided interface, no command-line scripting required.
 
 Project docs: [Updates](UPDATES.md) · [Contributing](CONTRIBUTING.md) · [License](LICENSE)
 
@@ -91,12 +91,16 @@ A more detailed guide can be found at [Distance Map Guide](guides/distance_map.m
 
 - `.fit` / `.fits` (FITS)
 - `.xisf` (PixInsight XISF)
+- Common rasters in exploration modes: TIFF, PNG, JPEG
+- Camera RAW in the same places JPEG is accepted (for example DNG, CR2/CR3, NEF, ARW, ORF, RW2, RAF, PEF), decoded via LibRaw
 
-Images can be plate-solved beforehand or solved on the fly through astrometry.net (API key required for unsolved images).
+Images can be plate-solved beforehand or solved on the fly through astrometry.net (API key required for unsolved images). Differential Photometry still expects FITS/XISF/TIFF science frames and skips JPG/PNG/RAW.
 
 ## Installation
 
-**For alpha reviewers:** Download the Setup executable from the [Releases](../../releases) page. After installation, use **File > Check for Updates**. CAst downloads a small delta for compatible hotfixes and automatically falls back to a verified full package when required.
+**For alpha reviewers (Windows):** Download the Setup executable from the [Releases](../../releases) page. After installation, use **File > Check for Updates**. CAst downloads a small delta for compatible hotfixes and automatically falls back to a verified full package when required.
+
+**For alpha reviewers (macOS, unsigned):** Download the macOS zip when published, unzip, then **right-click → Open** the first time (Gatekeeper). See [packaging/MACOS_UNSIGNED.md](packaging/MACOS_UNSIGNED.md). In-app updates are Windows-only for now.
 
 **For developers:**
 

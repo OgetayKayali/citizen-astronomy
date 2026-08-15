@@ -28,7 +28,7 @@ Your images already contain these signals. This tool helps you extract them.
 
 ### Step 1: Image Scanning and Metadata Extraction
 
-When you open a folder, CAst scans for `.fit`, `.fits`, `.xisf`, and TIFF frames. JPG and PNG files in the folder are ignored, and CAst shows how many of each type were excluded because they are not suitable for differential photometry. For each accepted frame it reads:
+When you open a folder, CAst scans for `.fit`, `.fits`, `.xisf`, and TIFF frames. JPG, PNG, and camera RAW files in the folder are ignored, and CAst shows how many of each type were excluded because they are not suitable for differential photometry. For each accepted frame it reads:
 
 - **Observation timestamp** from `DATE-OBS` (or PixInsight's `Observation:Time:Start` / `Observation:Time:End` UTC properties when available). Naive timestamps without timezone information are interpreted using the configured Image Timestamp Timezone setting.
 - **Exposure time** from `EXPTIME`, `EXPOSURE`, `EXPOSURE_TIME`, `DARKTIME`, or `EXPOSUREMS` (milliseconds, scaled by 0.001).
@@ -44,13 +44,13 @@ After scanning, a Loaded Results dialog lets you choose which object to analyze.
 
 Every frame needs a valid World Coordinate System so that CAst can identify which star is which across multiple images. CAst validates the WCS by checking for `CTYPE1`/`CTYPE2` keywords containing RA/DEC projections, along with `CRVAL`, `CRPIX`, and CD or PC matrix keywords.
 
-For a multi-frame folder, CAst picks one **folder WCS reading method** from the first frame using a central-field Gaia magnitude-bin check (bright bins first: G≈5–10, then 10–12, then 12–14…; default 90% approval in the central 75% of the frame). That method is then applied independently to every frame:
+For a multi-frame folder, CAst picks one **folder WCS reading method** from the first frame using a central-field detection→Gaia check (bright magnitude bins first: G≈5–10, then 10–12, then 12–14…). It scores a sample of moderately bright image detections against isolated Gaia stars (skipping the very brightest/saturated peaks by default), optionally subtracts a small coherent shift, and can hard-pass or soft-accept a stable moderate match. **Settings → Advanced** exposes sample size, skip-brightest, match tolerance, isolation, shift subtraction, and soft-accept limits. That method is then applied independently to every frame:
 
 - **Accept embedded CRVAL/WCS** when the header sky solution already matches Gaia.
 - **Repair CRVAL from CCVALS** when the pointing keywords disagree with the WCS (common on some NINA headers with non-standard float cards).
 - **Re-solve each frame** through **astrometry.net** when neither embedded nor repaired WCS is trustworthy.
 
-Advanced Settings expose the bin thresholds and approval fraction; the Work Log records per-bin pass/fail so you can see why a method was chosen. Generate/Apply reuse the chosen method and skip repeating the full Gaia probe when you are only re-measuring with preserved views.
+**Settings → Advanced** exposes the bin thresholds and approval fraction; the Work Log records per-bin pass/fail so you can see why a method was chosen. Generate/Apply reuse the chosen method and skip repeating the full Gaia probe when you are only re-measuring with preserved views.
 
 If a frame still lacks a usable WCS, CAst can solve it through the **astrometry.net** API. The solver uploads the image with hints (center coordinates, scale bounds, parity) and retrieves the solved WCS. For large images (6000+ pixels), a 4x downsample is used to speed up the solve. Frames sharing the same alignment (e.g., PixInsight StarAlignment outputs) can share a single solved WCS.
 
@@ -217,7 +217,7 @@ When a zero point is available, the AAVSO export uses `MTYPE=STD` (standard). Ot
 
 ![W UMa results](images/WUMa.jpg)
 
-After Generate finishes, Source Results lists the known variables (and discovery candidates) found in the field. Selecting a row shows that target on the image with its automatically selected comparison stars (sticky rows at the bottom of Source Results) and updates the light curve to that selection. Filter → **Overview** plots the selected target in every filter plus its comparison stars and check star (legend on, no period fit) for a Phoranso/AAVSO-style QC view; right-click any series to change Icon and Color. Export → Animation can reveal all Overview series together over time. Use **Aperture Editor** (above) when you want a fully manual, independent reduction instead of the automatic ensemble.
+After Generate finishes, Source Results lists the known variables (and discovery candidates) found in the field. Selecting a row shows that target on the image with its automatically selected comparison stars (sticky rows at the bottom of Source Results) and updates the light curve to that selection. Use **Scan Comps** to build a mag/color/distance candidate pool, favourite comparison stars, browse unordered combination light curves, and apply a chosen set (comps appear in sticky Source Results rows). Filter → **Overview** plots the selected target in every filter plus its comparison stars and check star (legend on, no period fit) for a Phoranso/AAVSO-style QC view; right-click any series to change Icon and Color. Export → Animation can reveal all Overview series together over time. Use **Aperture Editor** (above) when you want a fully manual, independent reduction instead of the automatic ensemble.
 
 ---
 

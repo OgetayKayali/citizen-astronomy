@@ -10,10 +10,14 @@ from astropy.io import fits
 from PIL import Image
 
 from photometry_app.core.image_io import (
+    RAW_CAMERA_IMAGE_SUFFIXES,
+    SUPPORTED_IMAGE_FILE_FILTER,
+    is_raw_camera_image_path,
     is_supported_image_path,
     photometry_xisf_scale_factor,
     read_header,
     read_header_and_shape,
+    read_image_data,
     read_photometry_image_data,
     write_fits_copy,
 )
@@ -124,6 +128,50 @@ class ImageIoTest(unittest.TestCase):
         self.assertTrue(is_supported_image_path(Path("frame.png")))
         self.assertTrue(is_supported_image_path(Path("frame.jpg")))
         self.assertTrue(is_supported_image_path(Path("frame.jpeg")))
+
+    def test_supported_image_paths_include_camera_raw_formats(self) -> None:
+        for suffix in (".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf", ".pef"):
+            with self.subTest(suffix=suffix):
+                path = Path(f"frame{suffix}")
+                self.assertTrue(is_supported_image_path(path))
+                self.assertTrue(is_raw_camera_image_path(path))
+        self.assertTrue(RAW_CAMERA_IMAGE_SUFFIXES)
+        self.assertIn("*.dng", SUPPORTED_IMAGE_FILE_FILTER)
+        self.assertIn("*.cr3", SUPPORTED_IMAGE_FILE_FILTER)
+        self.assertIn("*.nef", SUPPORTED_IMAGE_FILE_FILTER)
+
+    def test_read_raw_camera_image_uses_rawpy_demosaic(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "frame.cr2"
+            path.write_bytes(b"placeholder-raw")
+
+            class _FakeSizes:
+                width = 4
+                height = 3
+
+            class _FakeRaw:
+                sizes = _FakeSizes()
+                timestamp = 1_700_000_000
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def postprocess(self, **_kwargs):
+                    return np.arange(36, dtype=np.uint16).reshape(3, 4, 3)
+
+            with patch("photometry_app.core.image_io._open_raw_camera_image", return_value=_FakeRaw()):
+                header, width, height = read_header_and_shape(path)
+                data = read_image_data(path, dtype=np.float32)
+
+        self.assertEqual((width, height), (4, 3))
+        self.assertEqual(header["IMGMODE"], "RGB")
+        self.assertEqual(header["BAYER"], "RAW")
+        self.assertEqual(header["DATE-OBS"], "2023-11-14T22:13:20Z")
+        self.assertEqual(data.shape, (3, 4, 3))
+        np.testing.assert_allclose(data[0, 0], np.asarray([0.0, 1.0, 2.0], dtype=np.float32))
 
     def test_read_header_and_shape_reads_standard_raster_image_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

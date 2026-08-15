@@ -1323,7 +1323,9 @@ def fetch_catalog_targets_at_coordinate(
 
     simbad.ROW_LIMIT = max(1, int(row_limit))
 
-    simbad.add_votable_fields("ids", "otype", "sp_type", "V", "ra(d)", "dec(d)")
+    # Modern astroquery SIMBAD (TAP) already returns ICRS degrees as ra/dec.
+    # Do not request legacy ra(d)/dec(d) formatting fields — they raise ValueError.
+    simbad.add_votable_fields("ids", "otype", "sp_type", "V", "ra", "dec")
 
 
 

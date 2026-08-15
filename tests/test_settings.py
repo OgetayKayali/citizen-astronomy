@@ -530,6 +530,10 @@ class SettingsTest(unittest.TestCase):
 
             self.assertEqual(loaded.sky_explorer_stroke_opacity, 1.0)
 
+            self.assertEqual(loaded.sky_explorer_overlay_outline_color, "#111827")
+
+            self.assertEqual(loaded.sky_explorer_overlay_outline_width, 1.2)
+
             self.assertEqual(loaded.sky_explorer_object_group_color_overrides, {})
 
             self.assertEqual(loaded.sky_explorer_object_type_color_overrides, {})
@@ -537,6 +541,12 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(loaded.sky_explorer_object_type_text_color_overrides, {})
 
             self.assertEqual(loaded.sky_explorer_object_type_font_overrides, {})
+
+            self.assertEqual(loaded.sky_explorer_default_text_font_family, "")
+
+            self.assertEqual(loaded.sky_explorer_default_text_font_style, "regular")
+
+            self.assertEqual(loaded.sky_explorer_default_text_size, 9.0)
 
 
 
@@ -1775,6 +1785,22 @@ class SettingsTest(unittest.TestCase):
 
                 wcs_sanity_max_median_residual_arcsec=2.5,
 
+                wcs_sanity_match_tolerance_arcsec=7.5,
+
+                wcs_sanity_detection_sample_count=64,
+
+                wcs_sanity_skip_brightest_detections=8,
+
+                wcs_sanity_subtract_coherent_shift=False,
+
+                wcs_sanity_soft_accept_enabled=False,
+
+                wcs_sanity_soft_approval_percent=60.0,
+
+                wcs_sanity_soft_max_median_residual_arcsec=4.5,
+
+                wcs_sanity_soft_max_coherent_shift_arcsec=5.5,
+
                 wcs_sanity_gaia_min_magnitude=9.5,
 
                 wcs_sanity_gaia_max_magnitude=13.0,
@@ -1800,6 +1826,22 @@ class SettingsTest(unittest.TestCase):
             self.assertAlmostEqual(loaded.wcs_sanity_approval_percent, 88.0)
 
             self.assertAlmostEqual(loaded.wcs_sanity_max_median_residual_arcsec, 2.5)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_match_tolerance_arcsec, 7.5)
+
+            self.assertEqual(loaded.wcs_sanity_detection_sample_count, 64)
+
+            self.assertEqual(loaded.wcs_sanity_skip_brightest_detections, 8)
+
+            self.assertFalse(loaded.wcs_sanity_subtract_coherent_shift)
+
+            self.assertFalse(loaded.wcs_sanity_soft_accept_enabled)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_soft_approval_percent, 60.0)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_soft_max_median_residual_arcsec, 4.5)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_soft_max_coherent_shift_arcsec, 5.5)
 
             self.assertAlmostEqual(loaded.wcs_sanity_gaia_min_magnitude, 9.5)
 
@@ -2032,6 +2074,10 @@ class SettingsTest(unittest.TestCase):
 
             settings.sky_explorer_stroke_opacity = 0.85
 
+            settings.sky_explorer_overlay_outline_color = "#223344"
+
+            settings.sky_explorer_overlay_outline_width = 0.0
+
             settings.sky_explorer_object_group_color_overrides = {
 
                 "galaxy": "#aa3300",
@@ -2059,6 +2105,12 @@ class SettingsTest(unittest.TestCase):
                 "galaxy": "Segoe UI,12,-1,5,700,1,0,0,0,0",
 
             }
+
+            settings.sky_explorer_default_text_font_family = "Georgia"
+
+            settings.sky_explorer_default_text_font_style = "bold-italic"
+
+            settings.sky_explorer_default_text_size = 14.0
 
             settings.save(root)
 
@@ -2107,6 +2159,10 @@ class SettingsTest(unittest.TestCase):
 
         self.assertEqual(loaded.sky_explorer_stroke_opacity, 0.85)
 
+        self.assertEqual(loaded.sky_explorer_overlay_outline_color, "#223344")
+
+        self.assertEqual(loaded.sky_explorer_overlay_outline_width, 0.0)
+
         self.assertEqual((loaded.sky_explorer_object_group_color_overrides or {}).get("galaxy"), "#aa3300")
 
         self.assertEqual((loaded.sky_explorer_object_group_color_overrides or {}).get("cluster"), "#ddcc44")
@@ -2118,6 +2174,12 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual((loaded.sky_explorer_object_type_text_color_overrides or {}).get("galaxy"), "#556677")
 
         self.assertEqual((loaded.sky_explorer_object_type_font_overrides or {}).get("galaxy"), "Segoe UI,12,-1,5,700,1,0,0,0,0")
+
+        self.assertEqual(loaded.sky_explorer_default_text_font_family, "Georgia")
+
+        self.assertEqual(loaded.sky_explorer_default_text_font_style, "bold-italic")
+
+        self.assertEqual(loaded.sky_explorer_default_text_size, 14.0)
 
 
     def test_settings_migrates_legacy_sky_explorer_object_type_column_widths(self) -> None:

@@ -78,7 +78,7 @@ from photometry_app.core.synthetic_tracking import SyntheticTrackingFrameTarget,
 
 from photometry_app.core.transient import TransientCandidate, TransientFrameResult, TransientSearchResult, TransientSourceDetection
 
-from photometry_app.ui.dialogs import AdvancedSyntheticTrackingOptions, AstrostackGifExportDialog, AstrostackGifExportOptions, AsteroidDiscoveryDialog, AsteroidDiscoveryOptionsDialog, AsteroidDiscoveryRunOptions, AsteroidRecoveryDialog, CalibrationPipelineDialog, KnownObjectOrbit3DDialog, KnownObjectOrbit3DPlannerRequest, KnownObjectOrbit3DSearchEntry, KnownObjectTrajectoryDialog, LightCurveFilterDialog, LightCurveFilterSettings, MovingObjectTrajectoryDialog, PreviewSelectionDialog, ResultsViewFilterSettings, ScanResultsSummaryDialog, SettingsDialog, SyntheticTrackingPreviewDialog, ThemeCustomizeDialog, WorkflowCalibrationPipelineDialog
+from photometry_app.ui.dialogs import AdvancedSyntheticTrackingOptions, AstrostackGifExportDialog, AstrostackGifExportOptions, AsteroidDiscoveryDialog, AsteroidDiscoveryOptionsDialog, AsteroidDiscoveryRunOptions, AsteroidRecoveryDialog, CalibrationPipelineDialog, KnownObjectOrbit3DDialog, KnownObjectOrbit3DPlannerRequest, KnownObjectOrbit3DSearchEntry, KnownObjectTrajectoryDialog, LightCurveFilterDialog, LightCurveFilterSettings, MovingObjectTrajectoryDialog, PreviewSelectionDialog, ResultsViewFilterSettings, ScanResultsSummaryDialog, SettingsDialog, SyntheticTrackingPreviewDialog, ThemeCustomizeDialog, UpdateAvailableDialog, WorkflowCalibrationPipelineDialog
 
 from photometry_app.ui.image_view import AnnotatedImageView, ImageOverlay
 
@@ -2915,7 +2915,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(self.window._measurement_filter_row.indexOf(self.window._calculate_period_button), -1)
 
-        self.assertLess(self.window._measurement_filter_row.indexOf(self.window._find_better_fit_button), self.window._measurement_filter_row.indexOf(self.window._discover_button))
+        self.assertLess(self.window._measurement_filter_row.indexOf(self.window._scan_comps_button), self.window._measurement_filter_row.indexOf(self.window._discover_button))
 
         self.assertLess(self.window._measurement_filter_row.indexOf(self.window._increase_snr_button), self.window._measurement_filter_row.indexOf(self.window._discover_button))
 
@@ -2951,7 +2951,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIsNone(self.window._source_category_filter_combo.parentWidget())
 
-        self.assertIn("border: 1px solid", self.window._find_better_fit_button.styleSheet())
+        self.assertIn("border: 1px solid", self.window._scan_comps_button.styleSheet())
 
         self.assertIn("border: 1px solid", self.window._discover_button.styleSheet())
 
@@ -7826,9 +7826,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-            with patch.object(self.window, "_selected_source_targets", return_value=[("Target", "vsx")]), patch.object(self.window, "_begin_processing") as begin_processing:
+            with patch.object(self.window, "_selected_source_target", return_value=("Target", "vsx")), patch.object(self.window, "_selected_object_name", return_value="Demo"), patch.object(self.window, "_begin_processing") as begin_processing:
 
-                self.window._optimize_selected_source_comparison_fit()
+                self.window._open_scan_comps_dialog()
 
 
 
@@ -8102,7 +8102,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             patch.object(self.window, "_restore_source_target_selection") as restore_source_target_selection,
 
-            patch.object(self.window, "_optimize_selected_source_comparison_fit") as optimize_selected_source_comparison_fit,
+            patch.object(self.window, "_open_scan_comps_dialog") as open_scan_comps_dialog,
 
             patch.object(self.window._pipeline, "load_run_history", return_value=[]),
 
@@ -8114,7 +8114,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         restore_source_target_selection.assert_called_once_with([("Target", "vsx")])
 
-        optimize_selected_source_comparison_fit.assert_called_once_with()
+        open_scan_comps_dialog.assert_called_once_with()
 
         self.assertIsNone(self.window._pending_comparison_fit_targets_after_processing)
 
@@ -9005,15 +9005,15 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             patch(
 
-                "photometry_app.ui.main_window.QMessageBox.question",
+                "photometry_app.ui.main_window.UpdateAvailableDialog"
 
-                return_value=QMessageBox.StandardButton.Yes,
-
-            ) as question,
+            ) as dialog_class,
 
             patch.object(self.window, "_start_update_download") as start_download,
 
         ):
+
+            dialog_class.return_value.exec.return_value = QDialog.DialogCode.Accepted
 
             self.window._handle_update_check_completed(
 
@@ -9023,13 +9023,75 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         start_download.assert_called_once_with(available_update)
 
-        prompt_text = question.call_args.args[2]
+        dialog_kwargs = dialog_class.call_args.kwargs
 
-        self.assertIn("Delta update download", prompt_text)
+        self.assertEqual(dialog_kwargs["version"], "0.1.2-alpha.1")
 
-        self.assertIn("rebuilds the full update package locally", prompt_text)
+        self.assertEqual(dialog_kwargs["notes"], "Reviewer fixes")
 
-        self.assertIn("might take a few minutes", prompt_text)
+        self.assertEqual(dialog_kwargs["package_kind"], "delta")
+
+        self.assertEqual(dialog_kwargs["download_size"], 1024)
+
+
+
+    def test_update_available_dialog_is_wide_enough_for_long_notes(self) -> None:
+
+        notes = (
+
+            "### Sky Explorer\n\n"
+
+            "- Auto/Manual is a mode switch (fixed width, same as Export): Manual keeps catalog overlays, "
+
+            "lets you add marks, and right-click Delete removes unwanted automatic annotations from the image "
+
+            "or Source Results. After drawing a mark, property edits update that last mark until you switch "
+
+            "tools; selecting a mark again applies further edits to it. Text annotations include opacity.\n"
+
+            "- Catalog object-type mode: pick NGC, IC, LDN, VdB, LBN, Messier, Barnard, Sharpless, or HASH PN "
+
+            "and show only those objects, labeled with catalog names, in a light white–yellow–orange palette."
+
+        )
+
+        dialog = UpdateAvailableDialog(
+
+            version="0.1.1-alpha.9",
+
+            notes=notes,
+
+            download_size=2_500_000,
+
+            package_kind="delta",
+
+            parent=self.window,
+
+        )
+
+        try:
+
+            self.assertGreaterEqual(dialog.minimumWidth(), 720)
+
+            self.assertGreaterEqual(dialog.width(), 720)
+
+            self.assertIn("Delta update download", dialog._details_label.text())
+
+            self.assertIn("rebuilds the full update package locally", dialog._details_label.text())
+
+            self.assertIn("might take a few minutes", dialog._details_label.text())
+
+            shown_notes = dialog._notes_view.toPlainText()
+
+            self.assertIn("Sky Explorer", shown_notes)
+
+            self.assertIn("Text annotations include opacity", shown_notes)
+
+            self.assertIn("Catalog object-type mode", shown_notes)
+
+        finally:
+
+            dialog.close()
 
 
 
@@ -12908,7 +12970,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-        self.assertTrue(self.window._find_better_fit_button.isEnabled())
+        self.assertTrue(self.window._scan_comps_button.isEnabled())
 
 
 
@@ -13226,11 +13288,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_find_better_fit_queues_multiple_selected_targets_and_uses_advanced_settings(self) -> None:
+    def test_scan_comps_enabled_for_single_selected_target_with_reference_pool(self) -> None:
 
         measurement_time = datetime(2026, 3, 16, 1, 0, 0)
 
-        target_a_rows = [
+        target_rows = [
 
             PhotometryMeasurement(
 
@@ -13280,63 +13342,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         ]
 
-        target_b_rows = [
-
-            PhotometryMeasurement(
-
-                source_id="vsx-2",
-
-                source_name="Target B",
-
-                catalog="vsx",
-
-                object_name="Demo",
-
-                file_path=Path("frame_01.fits"),
-
-                observation_time=measurement_time + timedelta(minutes=index * 10),
-
-                filter_name="R",
-
-                ra_deg=10.5,
-
-                dec_deg=20.5,
-
-                x=55.0,
-
-                y=65.0,
-
-                flux=5200.0,
-
-                flux_error=15.0,
-
-                instrumental_magnitude=-9.1,
-
-                differential_magnitude=0.35,
-
-                is_variable=True,
-
-                is_reference=False,
-
-                comparison_source_ids=["gaia-ref-1", "gaia-ref-3"],
-
-                comparison_source_names=["Comp A", "Comp C"],
-
-                differential_magnitude_error=0.03,
-
-            )
-
-            for index in range(2)
-
-        ]
-
         reference_rows = [
 
             PhotometryMeasurement(
 
-                source_id="gaia-ref-1",
+                source_id=source_id,
 
-                source_name="Comp A",
+                source_name=source_name,
 
                 catalog="gaia",
 
@@ -13368,83 +13380,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
                 is_reference=True,
 
-            ),
+            )
 
-            PhotometryMeasurement(
-
-                source_id="gaia-ref-2",
-
-                source_name="Comp B",
-
-                catalog="gaia",
-
-                object_name="Demo",
-
-                file_path=Path("frame_01.fits"),
-
-                observation_time=measurement_time,
-
-                filter_name="R",
-
-                ra_deg=10.3,
-
-                dec_deg=20.3,
-
-                x=75.0,
-
-                y=85.0,
-
-                flux=6100.0,
-
-                flux_error=12.0,
-
-                instrumental_magnitude=-8.1,
-
-                differential_magnitude=None,
-
-                is_variable=False,
-
-                is_reference=True,
-
-            ),
-
-            PhotometryMeasurement(
-
-                source_id="gaia-ref-3",
-
-                source_name="Comp C",
-
-                catalog="gaia",
-
-                object_name="Demo",
-
-                file_path=Path("frame_01.fits"),
-
-                observation_time=measurement_time,
-
-                filter_name="R",
-
-                ra_deg=10.4,
-
-                dec_deg=20.4,
-
-                x=80.0,
-
-                y=90.0,
-
-                flux=6000.0,
-
-                flux_error=12.0,
-
-                instrumental_magnitude=-8.0,
-
-                differential_magnitude=None,
-
-                is_variable=False,
-
-                is_reference=True,
-
-            ),
+            for source_id, source_name in (("gaia-ref-1", "Comp A"), ("gaia-ref-2", "Comp B"))
 
         ]
 
@@ -13466,45 +13404,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
                 variable_stars=[
 
-                    CatalogStar(
-
-                        catalog="vsx",
-
-                        source_id="vsx-1",
-
-                        name="Target A",
-
-                        ra_deg=10.0,
-
-                        dec_deg=20.0,
-
-                        magnitude=12.3,
-
-                        is_variable=True,
-
-                        metadata={"literature_period_days": 0.5},
-
-                    ),
-
-                    CatalogStar(
-
-                        catalog="vsx",
-
-                        source_id="vsx-2",
-
-                        name="Target B",
-
-                        ra_deg=10.5,
-
-                        dec_deg=20.5,
-
-                        magnitude=12.6,
-
-                        is_variable=True,
-
-                        metadata={"literature_period_days": 0.75},
-
-                    ),
+                    CatalogStar(catalog="vsx", source_id="vsx-1", name="Target A", ra_deg=10.0, dec_deg=20.0, magnitude=12.3, is_variable=True),
 
                 ],
 
@@ -13512,21 +13412,17 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             reference_stars=[
 
-                CatalogStar(catalog="gaia", source_id="gaia-ref-1", name="Comp A", ra_deg=10.2, dec_deg=20.2, magnitude=12.0, is_variable=False),
+                CatalogStar(catalog="gaia", source_id="gaia-ref-1", name="Comp A", ra_deg=10.2, dec_deg=20.2, magnitude=12.0, is_variable=False, metadata={"bp_rp": 0.8}),
 
-                CatalogStar(catalog="gaia", source_id="gaia-ref-2", name="Comp B", ra_deg=10.3, dec_deg=20.3, magnitude=12.4, is_variable=False),
-
-                CatalogStar(catalog="gaia", source_id="gaia-ref-3", name="Comp C", ra_deg=10.4, dec_deg=20.4, magnitude=12.8, is_variable=False),
+                CatalogStar(catalog="gaia", source_id="gaia-ref-2", name="Comp B", ra_deg=10.3, dec_deg=20.3, magnitude=12.4, is_variable=False, metadata={"bp_rp": 0.9}),
 
             ],
 
-            measurements=[*target_a_rows, *target_b_rows, *reference_rows],
+            measurements=[*target_rows, *reference_rows],
 
             light_curves=[
 
                 LightCurveSeries(object_name="Demo", source_id="vsx-1", source_name="Target A", filter_name="R", points=[]),
-
-                LightCurveSeries(object_name="Demo", source_id="vsx-2", source_name="Target B", filter_name="R", points=[]),
 
             ],
 
@@ -13534,111 +13430,29 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.window._current_processing_report = report
 
-        self.window._literature_period_results[("vsx", "vsx-1")] = LiteraturePeriodResult(period_days=0.5, source="VSX")
-
-        self.window._literature_period_results[("vsx", "vsx-2")] = LiteraturePeriodResult(period_days=0.75, source="VSX")
-
         self.window._populate_source_table(report)
 
         self.window._populate_series_selector(report.light_curves)
 
-
-
-        settings = AppSettings.from_root(Path(self._config_dir.name))
-
-        settings.nearby_reference_count = 2
-
-        settings.comparison_fit_parallel_workers = 3
-
-        settings.comparison_fit_allow_multiple_targets = True
-
-        settings.comparison_fit_stop_match_index = 96.5
-
-        settings.comparison_fit_eclipsing_binary_match_tolerance = 1.5
-
-        settings.comparison_fit_fallback_candidate_pool_size = 4
-
-        settings.comparison_fit_fallback_magnitude_tolerance = 0.6
-
-        self.window._settings = settings
-
-
-
-        def row_for_source(name: str) -> int:
-
-            for row_index in range(self.window._source_table.rowCount()):
-
-                item = self.window._source_table.item(row_index, 0)
-
-                if item is not None and item.text() == name:
-
-                    return row_index
-
-            self.fail(f"Unable to find source row for {name}")
-
-
-
-        selection_model = self.window._source_table.selectionModel()
-
-        assert selection_model is not None
-
-        selection_model.select(
-
-            self.window._source_table.model().index(row_for_source("Target A"), 0),
-
-            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-
-        )
-
-        selection_model.select(
-
-            self.window._source_table.model().index(row_for_source("Target B"), 0),
-
-            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-
-        )
+        self.window._source_table.selectRow(0)
 
         self.window._handle_source_selection_changed()
 
+        self.assertTrue(self.window._scan_comps_button.isEnabled())
 
+        context = self.window._selected_source_scan_comps_context()
 
-        self.assertTrue(self.window._find_better_fit_button.isEnabled())
+        self.assertIsNotNone(context)
 
+        assert context is not None
 
+        self.assertEqual(context.target_series.source_name, "Target A")
 
-        with patch("photometry_app.ui.main_window.OptimizeComparisonFitWorker.start", new=lambda worker: None):
-
-            self.window._optimize_selected_source_comparison_fit()
-
-
-
-        self.assertIsNotNone(self.window._comparison_fit_worker)
-
-        assert self.window._comparison_fit_worker is not None
-
-        self.assertEqual(self.window._comparison_fit_total_targets, 2)
-
-        self.assertEqual(len(self.window._comparison_fit_queue), 1)
-
-        self.assertEqual(self.window._comparison_fit_worker._target_source_name, "Target A")
-
-        self.assertEqual(self.window._comparison_fit_worker._max_parallel_workers, 3)
-
-        self.assertEqual(self.window._comparison_fit_worker._stop_match_index_threshold, 96.5)
-
-        self.assertEqual(self.window._comparison_fit_worker._eclipsing_binary_match_tolerance, 1.5)
-
-        self.assertEqual(self.window._comparison_fit_worker._fallback_candidate_pool_size, 4)
-
-        self.assertEqual(self.window._comparison_fit_worker._fallback_magnitude_tolerance, 0.6)
-
-        self.assertEqual(self.window._comparison_fit_worker._target_magnitude, 12.3)
-
-        self.assertIn("Started comparison-fit search (1/2) for Target A [R]", self.window._work_log_output.toPlainText())
+        self.assertGreaterEqual(len(context.reference_measurements), 2)
 
 
 
-    def test_find_better_fit_disables_multi_target_selection_by_default(self) -> None:
+    def test_scan_comps_disabled_for_multi_target_selection(self) -> None:
 
         measurement_time = datetime(2026, 3, 16, 1, 0, 0)
 
@@ -13796,9 +13610,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
                 variable_stars=[
 
-                    CatalogStar(catalog="vsx", source_id="vsx-1", name="Target A", ra_deg=10.0, dec_deg=20.0, magnitude=12.3, is_variable=True, metadata={"literature_period_days": 0.5}),
+                    CatalogStar(catalog="vsx", source_id="vsx-1", name="Target A", ra_deg=10.0, dec_deg=20.0, magnitude=12.3, is_variable=True),
 
-                    CatalogStar(catalog="vsx", source_id="vsx-2", name="Target B", ra_deg=10.5, dec_deg=20.5, magnitude=12.6, is_variable=True, metadata={"literature_period_days": 0.75}),
+                    CatalogStar(catalog="vsx", source_id="vsx-2", name="Target B", ra_deg=10.5, dec_deg=20.5, magnitude=12.6, is_variable=True),
 
                 ],
 
@@ -13826,21 +13640,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.window._current_processing_report = report
 
-        self.window._literature_period_results[("vsx", "vsx-1")] = LiteraturePeriodResult(period_days=0.5, source="VSX")
-
-        self.window._literature_period_results[("vsx", "vsx-2")] = LiteraturePeriodResult(period_days=0.75, source="VSX")
-
         self.window._populate_source_table(report)
 
         self.window._populate_series_selector(report.light_curves)
-
-
-
-        settings = AppSettings.from_root(Path(self._config_dir.name))
-
-        settings.comparison_fit_allow_multiple_targets = False
-
-        self.window._settings = settings
 
 
 
@@ -13882,33 +13684,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-        self.assertFalse(self.window._find_better_fit_button.isEnabled())
-
-
-
-    def test_settings_dialog_builds_multiple_target_selection_flag(self) -> None:
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-
-            root_path = Path(temp_dir)
-
-            dialog = SettingsDialog(root_path, AppSettings.from_root(root_path), parent=self.window)
-
-
-
-            self.assertFalse(dialog._comparison_fit_allow_multiple_targets_input.isChecked())
-
-            dialog._comparison_fit_allow_multiple_targets_input.setChecked(True)
-
-
-
-            updated_settings = dialog.build_settings()
-
-
-
-            self.assertTrue(updated_settings.comparison_fit_allow_multiple_targets)
-
-            dialog.close()
+        self.assertFalse(self.window._scan_comps_button.isEnabled())
 
 
 
@@ -14846,7 +14622,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             infer_fit_period_result.assert_not_called()
 
-            self.assertIn("Recalled cached Find Better Fit period", self.window.statusBar().currentMessage())
+            self.assertIn("Recalled cached comparison-fit period", self.window.statusBar().currentMessage())
 
 
 
@@ -15968,7 +15744,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertAlmostEqual(self.window._fit_period_spin.value(), 18.0 * 60.0)
 
-        self.assertIn("Recalled cached Find Better Fit period", self.window.statusBar().currentMessage())
+        self.assertIn("Recalled cached comparison-fit period", self.window.statusBar().currentMessage())
 
 
 
@@ -24202,6 +23978,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             controls_layout.indexOf(self.window._sky_explorer_show_auto_annotations_button),
             controls_layout.indexOf(self.window._sky_explorer_export_image_button),
         )
+        self.assertEqual(
+            self.window._sky_explorer_show_auto_annotations_button.width(),
+            self.window._sky_explorer_export_image_button.width(),
+        )
 
         display_menu = self.window._sky_explorer_display_section_label.menu()
         self.assertIsNotNone(display_menu)
@@ -24224,6 +24004,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         stretch_row = cast(QHBoxLayout, image_controls_layout.itemAt(0).layout())
         action_row = cast(QHBoxLayout, image_controls_layout.itemAt(1).layout())
         self.assertGreaterEqual(stretch_row.indexOf(self.window._sky_explorer_image_stretch_combo), 0)
+        stretch_labels = [
+            self.window._sky_explorer_image_stretch_combo.itemText(index)
+            for index in range(self.window._sky_explorer_image_stretch_combo.count())
+        ]
+        self.assertEqual(stretch_labels[0], "None")
+        self.assertEqual(self.window._sky_explorer_image_stretch_combo.itemData(0), "linear")
+        self.assertIn("STF", stretch_labels)
         self.assertGreater(
             action_row.indexOf(self.window._sky_explorer_image_invert_checkbox),
             action_row.indexOf(self.window._sky_explorer_adjust_levels_button),
@@ -24353,6 +24140,47 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         action_texts = [action.text() for action in export_menu.actions()]
         self.assertEqual(action_texts, ["Image...", "Animation..."])
 
+    def test_export_sky_explorer_image_view_saves_full_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "field.fit"
+            source_path.write_text("placeholder", encoding="utf-8")
+            output_path = Path(temp_dir) / "sky_explorer.png"
+            self.window._current_sky_explorer_source_image = source_path
+            capture = unittest.mock.Mock()
+            capture.isNull.return_value = False
+            capture.save.return_value = True
+            with (
+                patch("photometry_app.ui.main_window.QFileDialog.getSaveFileName", return_value=(str(output_path), "PNG Files (*.png)")),
+                patch.object(self.window, "_refresh_sky_explorer_image_view") as refresh_image,
+                patch.object(self.window, "_append_sky_explorer_workflow_note") as append_note,
+                patch.object(self.window._sky_explorer_image_view, "capture_full_resolution_image", return_value=capture) as capture_full,
+                patch.object(self.window._sky_explorer_image_view, "capture_view_image") as capture_view,
+            ):
+                self.window._export_sky_explorer_image_view()
+            refresh_image.assert_called_once_with(reset_view=False, focus_selected=False)
+            capture_full.assert_called_once()
+            capture_view.assert_not_called()
+            capture.save.assert_called_once_with(str(output_path))
+            append_note.assert_called_once()
+
+    def test_export_sky_explorer_image_view_saves_jpeg_at_high_quality(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "field.fit"
+            source_path.write_text("placeholder", encoding="utf-8")
+            output_path = Path(temp_dir) / "sky_explorer.jpg"
+            self.window._current_sky_explorer_source_image = source_path
+            capture = unittest.mock.Mock()
+            capture.isNull.return_value = False
+            capture.save.return_value = True
+            with (
+                patch("photometry_app.ui.main_window.QFileDialog.getSaveFileName", return_value=(str(output_path), "JPEG Files (*.jpg *.jpeg)")),
+                patch.object(self.window, "_refresh_sky_explorer_image_view"),
+                patch.object(self.window, "_append_sky_explorer_workflow_note"),
+                patch.object(self.window._sky_explorer_image_view, "capture_full_resolution_image", return_value=capture),
+            ):
+                self.window._export_sky_explorer_image_view()
+            capture.save.assert_called_once_with(str(output_path), "JPG", 95)
+
     def test_sky_explorer_annotation_toolbox_includes_ruler_tool(self) -> None:
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
         self.assertIn("ruler", self.window._sky_explorer_annotation_tool_buttons)
@@ -24424,6 +24252,69 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         kwargs = set_content.call_args.kwargs
         self.assertTrue(kwargs.get("direct_edit_enabled"))
         self.assertTrue(kwargs.get("direct_edit_draw_enabled"))
+
+    def test_sky_explorer_manual_property_edits_follow_last_drawn_until_tool_switch(self) -> None:
+        image_path = Path(self._state_dir.name) / "sky_explorer_live_style.fits"
+        image_path.touch()
+        self.window._current_sky_explorer_source_image = image_path
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        with patch.object(self.window, "_refresh_sky_explorer_image_view"):
+            self.window._set_sky_explorer_annotation_tool("circle", refresh=False)
+            self.window._start_sky_explorer_drawn_manual_annotation("circle", 12.0, 18.0)
+            self.window._sky_explorer_annotation_fill_color = "#ff8800"
+            self.window._apply_sky_explorer_annotation_properties_to_live_object()
+
+        annotations = self.window._sky_explorer_manual_annotations_for_current_image()
+        self.assertEqual(len(annotations), 1)
+        self.assertEqual(annotations[0].fill_color, "#ff8800")
+
+        with patch.object(self.window, "_refresh_sky_explorer_image_view"):
+            self.window._set_sky_explorer_annotation_tool("ellipse", refresh=False)
+            self.window._sky_explorer_annotation_fill_color = "#00aaff"
+            self.window._apply_sky_explorer_annotation_properties_to_live_object()
+
+        annotations = self.window._sky_explorer_manual_annotations_for_current_image()
+        self.assertEqual(len(annotations), 1)
+        self.assertEqual(annotations[0].shape, "circle")
+        self.assertEqual(annotations[0].fill_color, "#ff8800")
+
+        with patch.object(self.window, "_refresh_sky_explorer_image_view"):
+            self.window._set_sky_explorer_annotation_tool("circle", refresh=False)
+            self.window._handle_sky_explorer_image_pressed(
+                12.0,
+                18.0,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            self.window._sky_explorer_annotation_fill_color = "#112233"
+            self.window._apply_sky_explorer_annotation_properties_to_live_object()
+
+        annotations = self.window._sky_explorer_manual_annotations_for_current_image()
+        self.assertEqual(annotations[0].fill_color, "#112233")
+
+    def test_sky_explorer_text_annotation_uses_opacity_property(self) -> None:
+        image_path = Path(self._state_dir.name) / "sky_explorer_text_opacity.fits"
+        image_path.touch()
+        self.window._current_sky_explorer_source_image = image_path
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        with patch.object(self.window, "_refresh_sky_explorer_image_view"), patch.object(
+            self.window,
+            "_open_sky_explorer_text_entry_dialog",
+            return_value="Label",
+        ):
+            self.window._set_sky_explorer_annotation_tool("text", refresh=False)
+            self.window._sky_explorer_annotation_opacity = 0.4
+            self.window._add_sky_explorer_text_annotation_from_tool(20.0, 24.0)
+            self.window._sky_explorer_annotation_opacity = 0.25
+            self.window._apply_sky_explorer_annotation_properties_to_live_object()
+
+        annotations = self.window._sky_explorer_manual_annotations_for_current_image()
+        self.assertEqual(len(annotations), 1)
+        self.assertEqual(annotations[0].shape, "text")
+        self.assertAlmostEqual(annotations[0].opacity, 0.25)
+        overlay = self.window._sky_explorer_manual_annotation_to_overlay(annotations[0])
+        self.assertAlmostEqual(overlay.text_opacity, 0.25)
+        self.assertIs(self.window._sky_explorer_annotation_opacity_button.parentWidget(), self.window._sky_explorer_annotation_properties_group)
 
     def test_sky_explorer_results_table_supports_multi_selection_for_collage(self) -> None:
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
@@ -25308,6 +25199,12 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
                 self.assertIn("*.jpg", selected_filter)
 
+                self.assertIn("*.dng", selected_filter)
+
+                self.assertIn("*.cr3", selected_filter)
+
+                self.assertIn("*.nef", selected_filter)
+
 
 
     def test_setting_sky_explorer_source_image_preloads_preview_before_refresh(self) -> None:
@@ -25353,6 +25250,36 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             apply_stretch.assert_called_once_with(source_path, self.window._sky_explorer_image_stretch_combo)
 
             refresh_image_view.assert_called_once_with(reset_view=True, focus_selected=False)
+
+
+
+    def test_sky_explorer_applies_none_stretch_for_already_stretched_upload(self) -> None:
+
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root_path = Path(temp_dir)
+            source_path = root_path / "Cocoon_final1.tif"
+            rgb_data = np.array(
+                [
+                    [[12, 24, 48], [96, 120, 144]],
+                    [[180, 192, 220], [240, 248, 255]],
+                ],
+                dtype=np.uint8,
+            )
+            source_path.write_bytes(b"placeholder")
+            self.window._root_path_input.setText(str(root_path))
+
+            with (
+                patch("photometry_app.core.plotting.read_image_data", return_value=rgb_data),
+                patch.object(self.window, "_preload_annotated_image_display_with_loading_dialog"),
+                patch.object(self.window, "_refresh_sky_explorer_image_view"),
+            ):
+                self.window._set_sky_explorer_source_image_path(source_path)
+
+            self.assertEqual(self.window._sky_explorer_image_stretch_combo.currentData(), "linear")
+            self.assertEqual(self.window._sky_explorer_image_stretch_combo.currentText(), "None")
+            self.assertEqual(self.window._current_sky_explorer_image_render_settings().stretch_mode, "linear")
 
 
 
@@ -27453,6 +27380,248 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertIn("Italic", text_item.text())
 
 
+    def test_sky_explorer_object_type_color_edit_updates_image_overlays_immediately(self) -> None:
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_color_refresh.fits"
+
+        image_path.touch()
+
+        display = build_annotated_image_display_from_array(np.ones((32, 32), dtype=np.float32), image_path=image_path)
+
+        result = SkyExplorerResult(
+
+            source_path=image_path,
+
+            solved_field=SolvedField(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.5,
+
+                width=32,
+
+                height=32,
+
+                wcs_path=image_path,
+
+            ),
+
+            used_astrometry_fallback=False,
+
+            footprint=SkyExplorerFieldFootprint(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.5,
+
+                width_deg=1.0,
+
+                height_deg=0.75,
+
+                corners=(
+
+                    SkyExplorerCorner("Top Left", 9.5, 20.5),
+
+                    SkyExplorerCorner("Top Right", 10.5, 20.5),
+
+                    SkyExplorerCorner("Bottom Right", 10.5, 19.5),
+
+                    SkyExplorerCorner("Bottom Left", 9.5, 19.5),
+
+                ),
+
+            ),
+
+            objects=(
+
+                SkyExplorerObject(
+
+                    layer_key="deep_sky",
+
+                    catalog="simbad",
+
+                    source_id="M 31",
+
+                    name="M 31",
+
+                    object_type="Galaxy",
+
+                    ra_deg=10.1,
+
+                    dec_deg=20.1,
+
+                    pixel_x=16.0,
+
+                    pixel_y=16.0,
+
+                    magnitude=3.4,
+
+                    angular_distance_arcmin=0.0,
+
+                    short_label="M 31",
+
+                    metadata={"main_id": "M 31"},
+
+                ),
+
+            ),
+
+            layer_summaries=(
+
+                SkyExplorerLayerSummary(
+
+                    layer_key="deep_sky",
+
+                    title="Deep Sky",
+
+                    returned_count=1,
+
+                    displayed_count=1,
+
+                ),
+
+            ),
+
+            warning_messages=(),
+
+            summary_text="Resolved a 0.500 deg field and prepared Deep Sky: 1 for image overlay and table review.",
+
+        )
+
+        with patch.object(self.window, "_cached_annotated_image_display", return_value=display):
+
+            self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+            self.window._handle_sky_explorer_completed(result)
+
+            view = self.window._sky_explorer_image_view
+
+            view._static_overlay_cache_key = ("stale-style",)
+
+            view._static_overlay_shape_cache_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+
+            view._static_overlay_label_cache_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+
+            galaxy_row = next(
+
+                row_index
+
+                for row_index in range(self.window._sky_explorer_object_type_table.rowCount())
+
+                if self.window._sky_explorer_object_type_table.item(row_index, 4).text() == "Galaxy"
+
+            )
+
+            with patch("photometry_app.ui.main_window.QColorDialog.getColor", return_value=QColor("#ff3300")):
+
+                self.window._handle_sky_explorer_object_type_table_clicked(galaxy_row, 0)
+
+        overlays = self.window._sky_explorer_image_view._overlays
+
+        self.assertTrue(overlays)
+
+        self.assertEqual(overlays[0].color, "#ff3300")
+
+        self.assertIsNone(self.window._sky_explorer_image_view._static_overlay_cache_key)
+
+
+    def test_sky_explorer_default_label_font_applies_to_all_types_without_override(self) -> None:
+
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        settings = self.window._ensure_settings()
+
+        settings.sky_explorer_default_text_font_family = "Arial"
+
+        settings.sky_explorer_default_text_font_style = "bold-italic"
+
+        settings.sky_explorer_default_text_size = 14.0
+
+        self.window._populate_sky_explorer_object_type_table()
+
+        galaxy_font = self.window._sky_explorer_object_type_font_for_key("galaxy")
+
+        nebula_font = self.window._sky_explorer_object_type_font_for_key("nebula")
+
+        self.assertIsNotNone(galaxy_font)
+
+        self.assertIsNotNone(nebula_font)
+
+        assert galaxy_font is not None
+
+        assert nebula_font is not None
+
+        self.assertEqual(galaxy_font.family(), QFont("Arial").family())
+
+        self.assertEqual(nebula_font.family(), QFont("Arial").family())
+
+        self.assertTrue(galaxy_font.bold())
+
+        self.assertTrue(galaxy_font.italic())
+
+        self.assertAlmostEqual(galaxy_font.pointSizeF(), 14.0)
+
+        self.assertTrue(nebula_font.bold())
+
+        self.assertTrue(nebula_font.italic())
+
+        self.assertAlmostEqual(nebula_font.pointSizeF(), 14.0)
+
+        override_font = QFont("Times New Roman")
+
+        override_font.setPointSize(11)
+
+        override_font.setBold(False)
+
+        override_font.setItalic(False)
+
+        self.window._sky_explorer_object_type_font_overrides["galaxy"] = override_font
+
+        galaxy_override = self.window._sky_explorer_object_type_font_for_key("galaxy")
+
+        nebula_default = self.window._sky_explorer_object_type_font_for_key("nebula")
+
+        assert galaxy_override is not None
+
+        assert nebula_default is not None
+
+        self.assertEqual(galaxy_override.family(), QFont("Times New Roman").family())
+
+        self.assertFalse(galaxy_override.bold())
+
+        self.assertAlmostEqual(float(galaxy_override.pointSize()), 11.0)
+
+        self.assertEqual(nebula_default.family(), QFont("Arial").family())
+
+        self.assertTrue(nebula_default.bold())
+
+        self.window._populate_sky_explorer_object_type_table()
+
+        emission_nebula_row = next(
+
+            row_index
+
+            for row_index in range(self.window._sky_explorer_object_type_table.rowCount())
+
+            if self.window._sky_explorer_object_type_table.item(row_index, 4).text() == "Emission Nebula"
+
+        )
+
+        emission_nebula_text = self.window._sky_explorer_object_type_table.item(emission_nebula_row, 2).text()
+
+        self.assertIn(QFont("Arial").family(), emission_nebula_text)
+
+        self.assertIn("14 pt", emission_nebula_text)
+
+        self.assertIn("Bold", emission_nebula_text)
+
+        self.assertIn("Italic", emission_nebula_text)
+
+
     def test_sky_explorer_stroke_color_edit_keeps_default_text_color(self) -> None:
 
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
@@ -27496,6 +27665,95 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(text_item.background().color().name(), original_text_color)
 
         self.assertNotIn("galaxy", self.window._sky_explorer_object_type_text_color_overrides)
+
+
+    def test_sky_explorer_advanced_nebula_color_picker_uses_displayed_colors(self) -> None:
+
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        self.window._set_sky_explorer_object_type_mode("advanced", preserve_selection=False)
+
+        nebula_row = next(
+
+            row_index
+
+            for row_index in range(self.window._sky_explorer_object_type_table.rowCount())
+
+            if self.window._sky_explorer_object_type_table.item(row_index, 4).text() == "Nebula"
+
+        )
+
+        fill_color = self.window._sky_explorer_object_type_table.item(nebula_row, 1).background().color().name().lower()
+
+        text_color = self.window._sky_explorer_object_type_table.item(nebula_row, 2).background().color().name().lower()
+
+        self.assertNotEqual(fill_color, "#111827")
+
+        self.assertNotEqual(text_color, "#111827")
+
+        self.assertNotEqual(text_color, "#f8fafc")
+
+        with patch.object(self.window, "_edit_sky_explorer_text_style", return_value=None) as edit_mock:
+
+            self.window._handle_sky_explorer_object_type_table_clicked(nebula_row, 2)
+
+        edit_mock.assert_called_once()
+
+        self.assertEqual(edit_mock.call_args.kwargs["current_color"].lower(), text_color)
+
+
+    def test_sky_explorer_advanced_fill_edit_keeps_stroke_and_text(self) -> None:
+
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        self.window._set_sky_explorer_object_type_mode("advanced", preserve_selection=False)
+
+        nebula_row = next(
+
+            row_index
+
+            for row_index in range(self.window._sky_explorer_object_type_table.rowCount())
+
+            if self.window._sky_explorer_object_type_table.item(row_index, 4).text() == "Nebula"
+
+        )
+
+        original_stroke = self.window._sky_explorer_object_type_table.item(nebula_row, 0).background().color().name().lower()
+
+        original_text = self.window._sky_explorer_object_type_table.item(nebula_row, 2).background().color().name().lower()
+
+        with patch("photometry_app.ui.main_window.QColorDialog.getColor", return_value=QColor("#00aa55")):
+
+            self.window._handle_sky_explorer_object_type_table_clicked(nebula_row, 1)
+
+        nebula_row = next(
+
+            row_index
+
+            for row_index in range(self.window._sky_explorer_object_type_table.rowCount())
+
+            if self.window._sky_explorer_object_type_table.item(row_index, 4).text() == "Nebula"
+
+        )
+
+        self.assertEqual(self.window._sky_explorer_object_type_table.item(nebula_row, 0).background().color().name().lower(), original_stroke)
+
+        self.assertEqual(self.window._sky_explorer_object_type_table.item(nebula_row, 1).background().color().name().lower(), "#00aa55")
+
+        self.assertEqual(self.window._sky_explorer_object_type_table.item(nebula_row, 2).background().color().name().lower(), original_text)
+
+        self.assertEqual(self.window._sky_explorer_object_type_color_overrides["nebula"], (original_stroke, "#00aa55"))
+
+        self.assertNotIn("nebula", self.window._sky_explorer_object_type_text_color_overrides)
+
+
+    def test_sky_explorer_type_color_override_does_not_change_generated_text(self) -> None:
+
+        generated_text = self.window._sky_explorer_object_type_text_color_for_key("emission_nebula")
+
+        self.window._sky_explorer_object_type_color_overrides["emission_nebula"] = ("#123456", "#abcdef")
+
+        self.assertEqual(self.window._sky_explorer_object_type_text_color_for_key("emission_nebula"), generated_text)
 
 
     def test_sky_explorer_object_type_table_can_sort_by_object_type(self) -> None:
@@ -28001,6 +28259,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(overlays[0].stroke_opacity, 0.75)
 
+        self.assertEqual(overlays[0].outline_color, "#111827")
+
+        self.assertGreater(overlays[0].outline_width, 0.0)
+
         self.assertEqual(overlays[0].text_color, "#556677")
 
         self.assertIsNotNone(overlays[0].text_font)
@@ -28020,6 +28282,18 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertLess(overlays[0].ellipse_minor_radius, overlays[0].aperture_radius)
 
         self.assertGreater(overlays[0].aperture_radius, 10.0)
+
+
+    def test_sky_explorer_overlay_outline_can_be_disabled(self) -> None:
+        settings = self.window._ensure_settings()
+        settings.sky_explorer_overlay_outline_width = 0.0
+        settings.sky_explorer_overlay_outline_color = "#ff00aa"
+        self.assertIsNone(self.window._sky_explorer_overlay_outline_color())
+        self.assertEqual(self.window._sky_explorer_overlay_outline_width_for_pen_width(4.0), 0.0)
+        settings.sky_explorer_overlay_outline_width = 2.4
+        settings.sky_explorer_scale_overlay_strokes = False
+        self.assertEqual(self.window._sky_explorer_overlay_outline_color(), "#ff00aa")
+        self.assertAlmostEqual(self.window._sky_explorer_overlay_outline_width_for_pen_width(4.0), 2.4)
 
 
     def test_sky_explorer_galaxy_group_overlay_uses_catalog_shape_metadata(self) -> None:
@@ -28274,6 +28548,53 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertLessEqual(min(hue_distance, 360 - hue_distance), 18)
 
 
+    def test_settings_save_keeps_current_mode_when_startup_launcher_is_enabled(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root_path = Path(temp_dir)
+
+            self.window._root_path_input.setText(str(root_path))
+
+            self.window._handle_mode_launcher_selection(AppMode.SKY_EXPLORER)
+
+            self.assertIs(self.window._central_shell.currentWidget(), self.window._main_app_container)
+
+            settings = self.window._ensure_settings()
+
+            settings.show_mode_launcher_on_startup = True
+
+            settings.app_mode = AppMode.SKY_EXPLORER
+
+            settings.save(root_path)
+
+            fake_dialog = MagicMock()
+
+            fake_dialog.exec.return_value = True
+
+            fake_dialog.selected_config_path_override.return_value = None
+
+            fake_dialog.build_settings.return_value = replace(settings, show_mode_launcher_on_startup=True)
+
+            with (
+
+                patch("photometry_app.ui.main_window.SettingsDialog", return_value=fake_dialog),
+
+                patch("photometry_app.ui.main_window.save_settings_config_override"),
+
+                patch.object(self.window, "_sync_hr_background_name_lookup"),
+
+            ):
+
+                self.window._open_settings()
+
+            self.assertIs(self.window._central_shell.currentWidget(), self.window._main_app_container)
+
+            self.assertEqual(self.window._visible_app_mode(), AppMode.SKY_EXPLORER)
+
+            self.assertEqual(self.window._current_app_mode(), AppMode.SKY_EXPLORER)
+
+
     def test_sky_explorer_results_group_rows_can_collapse_and_expand(self) -> None:
 
         image_path = Path(self._state_dir.name) / "sky_explorer_group_collapse.fits"
@@ -28428,6 +28749,89 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertNotIn("Emission Nebula", visible_titles)
 
+    def test_sky_explorer_catalog_mode_filters_to_catalog_names(self) -> None:
+        image_path = Path(self._state_dir.name) / "sky_explorer_catalog_mode.fits"
+        image_path.touch()
+        display = build_annotated_image_display_from_array(np.ones((16, 16), dtype=np.float32), image_path=image_path)
+        result = SkyExplorerResult(
+            source_path=image_path,
+            solved_field=SolvedField(10.0, 20.0, 0.5, 16, 16, image_path),
+            used_astrometry_fallback=False,
+            footprint=SkyExplorerFieldFootprint(
+                10.0,
+                20.0,
+                0.5,
+                1.0,
+                0.75,
+                (
+                    SkyExplorerCorner("Top Left", 9.5, 20.5),
+                    SkyExplorerCorner("Top Right", 10.5, 20.5),
+                    SkyExplorerCorner("Bottom Right", 10.5, 19.5),
+                    SkyExplorerCorner("Bottom Left", 9.5, 19.5),
+                ),
+            ),
+            objects=(
+                SkyExplorerObject(
+                    "deep_sky",
+                    "simbad",
+                    "North America Nebula",
+                    "North America Nebula",
+                    "HII",
+                    10.1,
+                    20.1,
+                    4.0,
+                    5.0,
+                    None,
+                    12.5,
+                    "North America",
+                    {"identifiers": "NAME North America Nebula|NGC 7000|LBN 392"},
+                ),
+                SkyExplorerObject(
+                    "deep_sky",
+                    "simbad",
+                    "HD 12345",
+                    "HD 12345",
+                    "Star",
+                    10.2,
+                    20.2,
+                    5.0,
+                    6.0,
+                    8.1,
+                    13.5,
+                    "HD 12345",
+                    {},
+                ),
+            ),
+            layer_summaries=(SkyExplorerLayerSummary("deep_sky", "Deep Sky", 2, 2),),
+            warning_messages=(),
+            summary_text="Resolved a 0.500 deg field and prepared Deep Sky: 2 for image overlay and table review.",
+        )
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        self.window._sky_explorer_object_type_mode_button.click()
+        self.window._sky_explorer_object_type_mode_button.click()
+        self.window._sky_explorer_object_type_mode_button.click()
+        self.assertEqual(self.window._current_sky_explorer_object_type_mode(), "catalog")
+        self.assertEqual(self.window._sky_explorer_object_type_mode_button.text(), "Catalog")
+        visible_titles = {
+            self.window._sky_explorer_object_type_table.item(row_index, 4).text()
+            for row_index in range(self.window._sky_explorer_object_type_table.rowCount())
+        }
+        self.assertIn("NGC", visible_titles)
+        self.assertIn("IC", visible_titles)
+        self.assertIn("LDN", visible_titles)
+        self.assertIn("VdB", visible_titles)
+        self.assertIn("LBN", visible_titles)
+        self.assertNotIn("Emission Nebula", visible_titles)
+        with patch.object(self.window, "_cached_annotated_image_display", return_value=display):
+            self.window._handle_sky_explorer_completed(result)
+        result_names = [
+            self.window._sky_explorer_results_table.item(row_index, 0).text()
+            for row_index in range(self.window._sky_explorer_results_table.rowCount())
+            if self.window._sky_explorer_results_table.item(row_index, 0) is not None
+            and self.window._sky_explorer_results_table.item(row_index, 0).data(_SKY_EXPLORER_OBJECT_ROLE) is not None
+        ]
+        self.assertEqual(result_names, ["NGC 7000"])
+        self.assertIn("NGC", self.window._sky_explorer_results_table.item(0, 0).text())
 
     def test_sky_explorer_dense_galaxy_catalog_is_only_enabled_for_scientific_all(self) -> None:
 
@@ -28612,6 +29016,302 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                             self.window._handle_sky_explorer_image_context_requested(125.0, 250.0, QPoint(30, 40), Qt.KeyboardModifier.NoModifier)
 
         start_detect.assert_called_once_with(125.0, 250.0)
+
+
+    def test_sky_explorer_auto_button_switches_to_manual_without_hiding_overlays(self) -> None:
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_auto_manual.fits"
+
+        image_path.touch()
+
+        display = build_annotated_image_display_from_array(np.ones((32, 32), dtype=np.float32), image_path=image_path)
+
+        nebula = SkyExplorerObject("deep_sky", "simbad", "M1", "M1", "Emission Nebula", 10.1, 20.1, 8.0, 8.0, None, 12.5, "M1")
+
+        result = SkyExplorerResult(
+
+            source_path=image_path,
+
+            solved_field=SolvedField(10.0, 20.0, 0.5, 32, 32, image_path),
+
+            used_astrometry_fallback=False,
+
+            footprint=SkyExplorerFieldFootprint(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.5,
+
+                width_deg=1.0,
+
+                height_deg=1.0,
+
+                corners=(
+
+                    SkyExplorerCorner("Top Left", 9.5, 20.5),
+
+                    SkyExplorerCorner("Top Right", 10.5, 20.5),
+
+                    SkyExplorerCorner("Bottom Right", 10.5, 19.5),
+
+                    SkyExplorerCorner("Bottom Left", 9.5, 19.5),
+
+                ),
+
+            ),
+
+            objects=(nebula,),
+
+            layer_summaries=(SkyExplorerLayerSummary("deep_sky", "Deep Sky", 1, 1),),
+
+            warning_messages=(),
+
+            summary_text="Resolved a field.",
+
+        )
+
+        with patch.object(self.window, "_cached_annotated_image_display", return_value=display):
+
+            self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+            self.window._handle_sky_explorer_completed(result)
+
+        auto_button = self.window._sky_explorer_show_auto_annotations_button
+
+        export_button = self.window._sky_explorer_export_image_button
+
+        self.assertEqual(auto_button.text(), "Auto")
+
+        self.assertEqual(auto_button.width(), export_button.width())
+
+        auto_overlays = self.window._sky_explorer_automatic_image_overlays()
+
+        self.assertTrue(auto_overlays)
+
+        auto_button.click()
+
+        self.assertEqual(auto_button.text(), "Manual")
+
+        self.assertTrue(self.window._sky_explorer_is_manual_annotation_mode())
+
+        self.assertEqual(auto_button.width(), export_button.width())
+
+        self.assertEqual(len(self.window._sky_explorer_automatic_image_overlays()), len(auto_overlays))
+
+        self.assertEqual(
+            [overlay.source_id for overlay in self.window._current_sky_explorer_image_overlays() if not str(overlay.source_id).startswith("annotation-")],
+            [overlay.source_id for overlay in auto_overlays],
+        )
+
+
+    def test_sky_explorer_manual_mode_can_delete_automatic_annotation_from_results(self) -> None:
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_delete_results.fits"
+
+        image_path.touch()
+
+        display = build_annotated_image_display_from_array(np.ones((32, 32), dtype=np.float32), image_path=image_path)
+
+        first_object = SkyExplorerObject("deep_sky", "simbad", "M1", "M1", "Emission Nebula", 10.1, 20.1, 8.0, 8.0, None, 12.5, "M1")
+
+        second_object = SkyExplorerObject("deep_sky", "simbad", "M2", "M2", "Emission Nebula", 10.2, 20.2, 24.0, 24.0, None, 12.5, "M2")
+
+        result = SkyExplorerResult(
+
+            source_path=image_path,
+
+            solved_field=SolvedField(10.0, 20.0, 0.5, 32, 32, image_path),
+
+            used_astrometry_fallback=False,
+
+            footprint=SkyExplorerFieldFootprint(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.5,
+
+                width_deg=1.0,
+
+                height_deg=1.0,
+
+                corners=(
+
+                    SkyExplorerCorner("Top Left", 9.5, 20.5),
+
+                    SkyExplorerCorner("Top Right", 10.5, 20.5),
+
+                    SkyExplorerCorner("Bottom Right", 10.5, 19.5),
+
+                    SkyExplorerCorner("Bottom Left", 9.5, 19.5),
+
+                ),
+
+            ),
+
+            objects=(first_object, second_object),
+
+            layer_summaries=(SkyExplorerLayerSummary("deep_sky", "Deep Sky", 2, 2),),
+
+            warning_messages=(),
+
+            summary_text="Resolved a field.",
+
+        )
+
+        with patch.object(self.window, "_cached_annotated_image_display", return_value=display):
+
+            self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+            self.window._handle_sky_explorer_completed(result)
+
+        self.window._sky_explorer_show_auto_annotations_button.click()
+
+        self.assertTrue(self.window._sky_explorer_is_manual_annotation_mode())
+
+        object_row = next(
+
+            row_index
+
+            for row_index in range(self.window._sky_explorer_results_table.rowCount())
+
+            if self.window._sky_explorer_results_table.item(row_index, 0).text() == "M1"
+
+        )
+
+        delete_action = QAction("Delete", self.window)
+
+        fake_menu = MagicMock()
+
+        fake_menu.addAction.return_value = delete_action
+
+        fake_menu.exec.return_value = delete_action
+
+        item_rect = self.window._sky_explorer_results_table.visualItemRect(self.window._sky_explorer_results_table.item(object_row, 0))
+
+        with patch("photometry_app.ui.main_window.QMenu", return_value=fake_menu):
+
+            self.window._handle_sky_explorer_results_table_context_menu(item_rect.center())
+
+        visible_names = {
+
+            self.window._sky_explorer_results_table.item(row_index, 0).text()
+
+            for row_index in range(self.window._sky_explorer_results_table.rowCount())
+
+        }
+
+        self.assertNotIn("M1", visible_names)
+
+        self.assertIn("M2", visible_names)
+
+        overlay_ids = {overlay.source_id for overlay in self.window._sky_explorer_automatic_image_overlays()}
+
+        self.assertNotIn(self.window._sky_explorer_overlay_source_id(first_object), overlay_ids)
+
+        self.assertIn(self.window._sky_explorer_overlay_source_id(second_object), overlay_ids)
+
+
+    def test_sky_explorer_manual_mode_image_context_can_delete_automatic_annotation(self) -> None:
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_delete_image.fits"
+
+        image_path.touch()
+
+        display = build_annotated_image_display_from_array(np.ones((32, 32), dtype=np.float32), image_path=image_path)
+
+        nebula = SkyExplorerObject("deep_sky", "simbad", "M1", "M1", "Emission Nebula", 10.1, 20.1, 8.0, 8.0, None, 12.5, "M1")
+
+        result = SkyExplorerResult(
+
+            source_path=image_path,
+
+            solved_field=SolvedField(10.0, 20.0, 0.5, 32, 32, image_path),
+
+            used_astrometry_fallback=False,
+
+            footprint=SkyExplorerFieldFootprint(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.5,
+
+                width_deg=1.0,
+
+                height_deg=1.0,
+
+                corners=(
+
+                    SkyExplorerCorner("Top Left", 9.5, 20.5),
+
+                    SkyExplorerCorner("Top Right", 10.5, 20.5),
+
+                    SkyExplorerCorner("Bottom Right", 10.5, 19.5),
+
+                    SkyExplorerCorner("Bottom Left", 9.5, 19.5),
+
+                ),
+
+            ),
+
+            objects=(nebula,),
+
+            layer_summaries=(SkyExplorerLayerSummary("deep_sky", "Deep Sky", 1, 1),),
+
+            warning_messages=(),
+
+            summary_text="Resolved a field.",
+
+        )
+
+        with patch.object(self.window, "_cached_annotated_image_display", return_value=display):
+
+            self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+            self.window._handle_sky_explorer_completed(result)
+
+        self.window._sky_explorer_show_auto_annotations_button.click()
+
+        search_action = QAction("Search", self.window)
+
+        detect_action = QAction("Detect", self.window)
+
+        delete_action = QAction("Delete", self.window)
+
+        fake_menu = MagicMock()
+
+        fake_menu.addAction.side_effect = [search_action, detect_action, delete_action]
+
+        fake_menu.exec.return_value = delete_action
+
+        with patch.object(self.window, "_sky_explorer_world_coordinates_for_image_point", return_value=(75.0, -8.0)):
+
+            with patch.object(self.window, "_sky_explorer_detected_objects_for_current_image", return_value=[]):
+
+                with patch.object(self.window, "_sky_explorer_detected_object_identities_for_current_image", return_value=set()):
+
+                    with patch.object(self.window, "_sky_explorer_automatic_object_at_image_point", return_value=nebula):
+
+                        with patch("photometry_app.ui.main_window.QMenu", return_value=fake_menu):
+
+                            self.window._handle_sky_explorer_image_context_requested(8.0, 8.0, QPoint(30, 40), Qt.KeyboardModifier.NoModifier)
+
+        fake_menu.addAction.assert_any_call("Delete")
+
+        visible_names = {
+
+            self.window._sky_explorer_results_table.item(row_index, 0).text()
+
+            for row_index in range(self.window._sky_explorer_results_table.rowCount())
+
+        }
+
+        self.assertNotIn("M1", visible_names)
 
 
     def test_annotated_image_context_search_opens_simbad_coordinate_query(self) -> None:
@@ -51555,6 +52255,12 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._sky_explorer_stroke_opacity_input.setValue(0.8)
 
+            dialog._sky_explorer_overlay_outline_color = "#223344"
+
+            dialog._update_sky_explorer_overlay_outline_color_button()
+
+            dialog._sky_explorer_overlay_outline_width_input.setValue(0.0)
+
             dialog._sky_explorer_object_group_color_overrides["galaxy"] = "#aa3300"
 
             dialog._update_sky_explorer_object_group_color_button("galaxy")
@@ -51675,6 +52381,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertEqual(updated_settings.sky_explorer_stroke_opacity, 0.8)
 
+            self.assertEqual(updated_settings.sky_explorer_overlay_outline_color, "#223344")
+
+            self.assertEqual(updated_settings.sky_explorer_overlay_outline_width, 0.0)
+
             self.assertEqual((updated_settings.sky_explorer_object_group_color_overrides or {}).get("galaxy"), "#aa3300")
 
             self.assertEqual(updated_settings.reference_star_min_magnitude, 9.5)
@@ -51727,33 +52437,45 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-            self.assertEqual(dialog._settings_tabs.count(), 6)
+            self.assertEqual(dialog._settings_tabs.count(), 7)
 
             self.assertEqual(dialog._settings_tabs.tabText(0), "General")
 
-            self.assertEqual(dialog._settings_tabs.tabText(1), "Differential Photometry")
+            self.assertEqual(dialog._settings_tabs.tabText(1), "Advanced")
 
-            self.assertEqual(dialog._settings_tabs.tabText(2), "HR Diagram")
+            self.assertEqual(dialog._settings_tabs.tabText(2), "Differential Photometry")
 
-            self.assertEqual(dialog._settings_tabs.tabText(3), "Asteroid/Comet")
+            self.assertEqual(dialog._settings_tabs.tabText(3), "HR Diagram")
 
-            self.assertEqual(dialog._settings_tabs.tabText(4), "Sky Explorer")
+            self.assertEqual(dialog._settings_tabs.tabText(4), "Asteroid/Comet")
 
-            self.assertEqual(dialog._settings_tabs.tabText(5), "Setup")
+            self.assertEqual(dialog._settings_tabs.tabText(5), "Sky Explorer")
+
+            self.assertEqual(dialog._settings_tabs.tabText(6), "Setup")
 
             self.assertIs(dialog._settings_tabs.widget(0), dialog._general_settings_tab)
 
-            self.assertIs(dialog._settings_tabs.widget(1), dialog._differential_photometry_tab)
+            self.assertIs(dialog._settings_tabs.widget(1), dialog._advanced_settings_tab)
 
-            self.assertIs(dialog._settings_tabs.widget(2), dialog._hr_settings_tab)
+            self.assertIs(dialog._settings_tabs.widget(2), dialog._differential_photometry_tab)
 
-            self.assertIs(dialog._settings_tabs.widget(3), dialog._asteroid_settings_tab)
+            self.assertIs(dialog._settings_tabs.widget(3), dialog._hr_settings_tab)
 
-            self.assertIs(dialog._settings_tabs.widget(4), dialog._sky_explorer_settings_tab)
+            self.assertIs(dialog._settings_tabs.widget(4), dialog._asteroid_settings_tab)
 
-            self.assertIs(dialog._settings_tabs.widget(5), dialog._setup_settings_tab)
+            self.assertIs(dialog._settings_tabs.widget(5), dialog._sky_explorer_settings_tab)
 
-            self.assertIs(dialog._advanced_settings_group.parent(), dialog._general_settings_tab)
+            self.assertIs(dialog._settings_tabs.widget(6), dialog._setup_settings_tab)
+
+            self.assertTrue(dialog._advanced_settings_tab.isAncestorOf(dialog._advanced_settings_group))
+
+            self.assertTrue(dialog._advanced_settings_tab.isAncestorOf(dialog._wcs_sanity_settings_group))
+
+            self.assertTrue(dialog._advanced_settings_tab.isAncestorOf(dialog._shared_parallel_workers_input))
+
+            self.assertFalse(dialog._general_settings_tab.isAncestorOf(dialog._shared_parallel_workers_input))
+
+            self.assertFalse(dialog._general_settings_tab.isAncestorOf(dialog._wcs_sanity_settings_group))
 
             self.assertIs(dialog._science_export_group.parent(), dialog._differential_photometry_tab)
 
@@ -51944,6 +52666,16 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_mag_limit_marker_color_button))
 
             self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_fill_opacity_input))
+
+            self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_overlay_outline_color_button))
+
+            self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_overlay_outline_width_input))
+
+            self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_default_text_font_family_input))
+
+            self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_default_text_font_style_input))
+
+            self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_default_text_size_input))
 
             self.assertTrue(dialog._asteroid_search_settings_tab.isAncestorOf(dialog._synthetic_tracking_crop_radius_input))
 
@@ -52139,9 +52871,23 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._set_combo_data(dialog._sky_explorer_text_color_relation_input, "bright")
 
+            dialog._sky_explorer_default_text_font_family_input.setCurrentFont(QFont("Segoe UI"))
+
+            selected_default_font_family = dialog._sky_explorer_default_text_font_family_input.currentFont().family()
+
+            dialog._set_combo_data(dialog._sky_explorer_default_text_font_style_input, "bold-italic")
+
+            dialog._sky_explorer_default_text_size_input.setValue(13.5)
+
             dialog._sky_explorer_fill_opacity_input.setValue(0.45)
 
             dialog._sky_explorer_stroke_opacity_input.setValue(0.7)
+
+            dialog._sky_explorer_overlay_outline_color = "#445566"
+
+            dialog._update_sky_explorer_overlay_outline_color_button()
+
+            dialog._sky_explorer_overlay_outline_width_input.setValue(2.4)
 
             dialog._sky_explorer_object_group_color_overrides["nebula"] = "#22ccaa"
 
@@ -52185,9 +52931,19 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertEqual(updated_settings.sky_explorer_text_color_relation, "bright")
 
+            self.assertEqual(updated_settings.sky_explorer_default_text_font_family, selected_default_font_family)
+
+            self.assertEqual(updated_settings.sky_explorer_default_text_font_style, "bold-italic")
+
+            self.assertEqual(updated_settings.sky_explorer_default_text_size, 13.5)
+
             self.assertEqual(updated_settings.sky_explorer_fill_opacity, 0.45)
 
             self.assertEqual(updated_settings.sky_explorer_stroke_opacity, 0.7)
+
+            self.assertEqual(updated_settings.sky_explorer_overlay_outline_color, "#445566")
+
+            self.assertEqual(updated_settings.sky_explorer_overlay_outline_width, 2.4)
 
             self.assertEqual((updated_settings.sky_explorer_object_group_color_overrides or {}).get("nebula"), "#22ccaa")
 
@@ -52275,13 +53031,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._sky_explorer_stroke_opacity_input.setValue(0.2)
 
+            dialog._sky_explorer_overlay_outline_color = "#abcdef"
+
+            dialog._sky_explorer_overlay_outline_width_input.setValue(0.0)
+
             dialog._sky_explorer_object_group_color_overrides["galaxy"] = "#aa3300"
-
-            dialog._comparison_fit_stop_match_index_input.setValue(88.0)
-
-            dialog._comparison_fit_allow_multiple_targets_input.setChecked(True)
-
-
 
             dialog._restore_defaults()
 
@@ -52320,6 +53074,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertEqual(updated_settings.sky_explorer_fill_opacity, 0.25)
 
             self.assertEqual(updated_settings.sky_explorer_stroke_opacity, 1.0)
+
+            self.assertEqual(updated_settings.sky_explorer_overlay_outline_color, "#111827")
+
+            self.assertEqual(updated_settings.sky_explorer_overlay_outline_width, 1.2)
 
             self.assertEqual(updated_settings.sky_explorer_object_group_color_overrides, {})
 

@@ -801,9 +801,15 @@ class AnnotatedImageView(QWidget):
 
         self._hover_image_point = None
 
+        overlays_changed = overlays != self._overlays
+
         self._overlays = overlays
 
         self._static_overlay_count = max(0, min(len(self._overlays), int(static_overlay_count)))
+
+        if overlays_changed:
+
+            self.invalidate_static_overlay_cache()
 
         self._grid_overlays = grid_overlays
 
@@ -1430,7 +1436,15 @@ class AnnotatedImageView(QWidget):
 
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
 
-            painter.drawImage(QPoint(0, 0), self._qimage)
+            appearance_scale = self._on_screen_overlay_appearance_scale()
+
+            if self._survey_tile_layers:
+
+                self._draw_survey_tile_layers(painter, self._survey_tile_layers)
+
+            else:
+
+                painter.drawImage(QPoint(0, 0), self._qimage)
 
             self._draw_safe_margin(painter)
 
@@ -1457,7 +1471,7 @@ class AnnotatedImageView(QWidget):
 
             for overlay in self._overlays:
 
-                self._draw_overlay(painter, overlay)
+                self._draw_overlay(painter, overlay, stroke_scale=appearance_scale)
 
             painter.restore()
 
@@ -1471,17 +1485,27 @@ class AnnotatedImageView(QWidget):
 
                 painter.save()
 
-                self._apply_overlay_label_style(painter, overlay)
+                label_scale = self._full_resolution_overlay_label_scale(overlay, appearance_scale)
+
+                self._apply_overlay_label_style(painter, overlay, scale_factor=label_scale)
 
                 self._draw_overlay_label_text(
                     painter,
                     self._overlay_label_image_point(overlay, painter),
                     self._overlay_label_text(overlay),
                     outline_color=overlay.text_outline_color,
-                    outline_width=overlay.text_outline_width,
+                    outline_width=float(overlay.text_outline_width) * label_scale,
                 )
 
                 painter.restore()
+
+            if self._grid_overlays:
+
+                grid_font = QFont(painter.font())
+
+                self._scale_overlay_font(grid_font, appearance_scale)
+
+                painter.setFont(grid_font)
 
             for grid_overlay in self._grid_overlays:
 
@@ -2332,6 +2356,20 @@ class AnnotatedImageView(QWidget):
                     overlay.source_id,
                     overlay.name,
                     overlay.dynamic_metric_kind,
+                    overlay.color,
+                    overlay.fill_color,
+                    round(float(overlay.fill_opacity), 4),
+                    round(float(overlay.stroke_opacity), 4),
+                    overlay.text_color,
+                    overlay.text_font.toString() if overlay.text_font is not None else "",
+                    None if overlay.text_size is None else round(float(overlay.text_size), 3),
+                    round(float(overlay.pen_width), 3),
+                    overlay.show_label,
+                    overlay.show_marker,
+                    overlay.marker_style,
+                    overlay.accent_color,
+                    overlay.outline_color,
+                    round(float(overlay.outline_width), 3),
                 )
                 for overlay in overlays
             ),
@@ -2703,6 +2741,10 @@ class AnnotatedImageView(QWidget):
                 best_score = score
 
         return best_overlay
+
+    def overlay_at_image_point(self, image_x: float, image_y: float) -> ImageOverlay | None:
+
+        return self._overlay_at_image_point(QPointF(float(image_x), float(image_y)))
 
 
     def _editable_overlay_at_image_point(self, image_point: QPointF) -> ImageOverlay | None:
@@ -3177,7 +3219,7 @@ class AnnotatedImageView(QWidget):
 
 
 
-    def _draw_overlay(self, painter: QPainter, overlay: ImageOverlay) -> None:
+    def _draw_overlay(self, painter: QPainter, overlay: ImageOverlay, *, stroke_scale: float = 1.0) -> None:
 
         if not overlay.show_marker:
 
@@ -3193,7 +3235,9 @@ class AnnotatedImageView(QWidget):
 
             color.setAlphaF(max(0.0, min(1.0, float(overlay.stroke_opacity))))
 
-        pen_width = max(0.0, float(overlay.pen_width))
+        appearance_scale = max(0.05, float(stroke_scale))
+
+        pen_width = max(0.0, float(overlay.pen_width)) * appearance_scale
 
         pen = QPen(color, pen_width)
 
@@ -3203,7 +3247,7 @@ class AnnotatedImageView(QWidget):
 
         outline_color = QColor(overlay.outline_color) if overlay.outline_color else QColor()
 
-        outline_width = max(0.0, float(overlay.outline_width))
+        outline_width = max(0.0, float(overlay.outline_width)) * appearance_scale
 
         outline_pen: QPen | None = None
 
@@ -3741,6 +3785,38 @@ class AnnotatedImageView(QWidget):
                 painter.drawEllipse(QPointF(overlay.x + radius, overlay.y), 0.8, 0.8)
 
 
+    def _on_screen_overlay_appearance_scale(self) -> float:
+
+        return 1.0 / max(float(self._effective_scale()), 1e-6)
+
+    @staticmethod
+    def _full_resolution_overlay_label_scale(overlay: ImageOverlay, appearance_scale: float) -> float:
+
+        if overlay.marker_style == "text":
+
+            return 1.0
+
+        return max(0.05, float(appearance_scale))
+
+    @staticmethod
+    def _scale_overlay_font(font: QFont, scale_factor: float) -> None:
+
+        pixel_size = int(font.pixelSize())
+
+        if pixel_size > 0:
+
+            font.setPixelSize(max(1, int(round(float(pixel_size) * scale_factor))))
+
+            return
+
+        base_size = float(font.pointSizeF())
+
+        if base_size <= 0.0:
+
+            base_size = float(font.pointSize()) if font.pointSize() > 0 else 12.0
+
+        font.setPointSizeF(max(1.0, base_size * scale_factor))
+
     def _apply_overlay_label_style(self, painter: QPainter, overlay: ImageOverlay, *, scale_factor: float = 1.0) -> None:
 
         text_color = QColor(overlay.text_color or "white")
@@ -3751,21 +3827,15 @@ class AnnotatedImageView(QWidget):
 
         painter.setPen(text_color)
 
-        effective_scale = max(0.05, float(scale_factor)) if overlay.marker_style == "text" else 1.0
+        effective_scale = max(0.05, float(scale_factor))
 
         if overlay.text_font is not None:
 
             font = QFont(overlay.text_font)
 
-            if overlay.marker_style == "text":
+            if abs(effective_scale - 1.0) > 1e-6:
 
-                base_size = font.pointSizeF()
-
-                if base_size <= 0.0:
-
-                    base_size = float(font.pointSize()) if font.pointSize() > 0 else 12.0
-
-                font.setPointSizeF(max(1.0, base_size * effective_scale))
+                self._scale_overlay_font(font, effective_scale)
 
             painter.setFont(font)
 

@@ -516,6 +516,12 @@ class AppSettings:
 
     sky_explorer_text_color_relation: str = "dark"
 
+    sky_explorer_default_text_font_family: str = ""
+
+    sky_explorer_default_text_font_style: str = "regular"
+
+    sky_explorer_default_text_size: float = 9.0
+
     sky_explorer_annotated_galaxy_max_magnitude_enabled: bool = False
 
     sky_explorer_annotated_galaxy_max_magnitude: float = 17.0
@@ -527,6 +533,10 @@ class AppSettings:
     sky_explorer_fill_opacity: float = 0.25
 
     sky_explorer_stroke_opacity: float = 1.0
+
+    sky_explorer_overlay_outline_color: str = "#111827"
+
+    sky_explorer_overlay_outline_width: float = 1.2
 
     sky_explorer_object_group_color_overrides: dict[str, str] | None = None
 
@@ -577,6 +587,22 @@ class AppSettings:
     wcs_sanity_approval_percent: float = 90.0
 
     wcs_sanity_max_median_residual_arcsec: float = 3.0
+
+    wcs_sanity_match_tolerance_arcsec: float = 8.0
+
+    wcs_sanity_detection_sample_count: int = 80
+
+    wcs_sanity_skip_brightest_detections: int = 10
+
+    wcs_sanity_subtract_coherent_shift: bool = True
+
+    wcs_sanity_soft_accept_enabled: bool = True
+
+    wcs_sanity_soft_approval_percent: float = 65.0
+
+    wcs_sanity_soft_max_median_residual_arcsec: float = 5.0
+
+    wcs_sanity_soft_max_coherent_shift_arcsec: float = 6.0
 
     wcs_sanity_gaia_min_magnitude: float = 5.0
 
@@ -1867,12 +1893,17 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         sky_explorer_scale_overlay_strokes=bool(payload.get("sky_explorer_scale_overlay_strokes", True)),
         sky_explorer_marker_color_relation=_coerce_sky_explorer_marker_color_relation(payload.get("sky_explorer_marker_color_relation")),
         sky_explorer_text_color_relation=_coerce_sky_explorer_text_color_relation(payload.get("sky_explorer_text_color_relation")),
+        sky_explorer_default_text_font_family=_coerce_sky_explorer_default_text_font_family(payload.get("sky_explorer_default_text_font_family", "")),
+        sky_explorer_default_text_font_style=_coerce_sky_explorer_default_text_font_style(payload.get("sky_explorer_default_text_font_style", "regular")),
+        sky_explorer_default_text_size=_coerce_sky_explorer_default_text_size(payload.get("sky_explorer_default_text_size", 9.0)),
         sky_explorer_annotated_galaxy_max_magnitude_enabled=bool(payload.get("sky_explorer_annotated_galaxy_max_magnitude_enabled", False)),
         sky_explorer_annotated_galaxy_max_magnitude=_coerce_sky_explorer_annotated_galaxy_max_magnitude(payload.get("sky_explorer_annotated_galaxy_max_magnitude", 17.0)),
         sky_explorer_annotated_galaxy_require_shape_metadata=bool(payload.get("sky_explorer_annotated_galaxy_require_shape_metadata", False)),
         sky_explorer_enabled_layers=_coerce_sky_explorer_enabled_layers(payload.get("sky_explorer_enabled_layers")),
         sky_explorer_fill_opacity=_coerce_sky_explorer_opacity(payload.get("sky_explorer_fill_opacity"), default=0.25),
         sky_explorer_stroke_opacity=_coerce_sky_explorer_opacity(payload.get("sky_explorer_stroke_opacity"), default=1.0),
+        sky_explorer_overlay_outline_color=_coerce_hex_color(payload.get("sky_explorer_overlay_outline_color"), default="#111827"),
+        sky_explorer_overlay_outline_width=_coerce_sky_explorer_overlay_outline_width(payload.get("sky_explorer_overlay_outline_width", 1.2)),
         sky_explorer_object_group_color_overrides=_coerce_sky_explorer_object_group_color_overrides(payload.get("sky_explorer_object_group_color_overrides")),
         sky_explorer_object_type_color_overrides=_coerce_sky_explorer_object_type_color_overrides(payload.get("sky_explorer_object_type_color_overrides")),
         sky_explorer_object_type_text_color_overrides=_coerce_sky_explorer_object_type_text_color_overrides(payload.get("sky_explorer_object_type_text_color_overrides")),
@@ -1908,6 +1939,34 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
         wcs_sanity_max_median_residual_arcsec=min(
             60.0, max(0.1, float(payload.get("wcs_sanity_max_median_residual_arcsec", 3.0)))
+        ),
+
+        wcs_sanity_match_tolerance_arcsec=min(
+            60.0, max(0.5, float(payload.get("wcs_sanity_match_tolerance_arcsec", 8.0)))
+        ),
+
+        wcs_sanity_detection_sample_count=min(
+            300, max(8, int(payload.get("wcs_sanity_detection_sample_count", 80)))
+        ),
+
+        wcs_sanity_skip_brightest_detections=min(
+            100, max(0, int(payload.get("wcs_sanity_skip_brightest_detections", 10)))
+        ),
+
+        wcs_sanity_subtract_coherent_shift=bool(payload.get("wcs_sanity_subtract_coherent_shift", True)),
+
+        wcs_sanity_soft_accept_enabled=bool(payload.get("wcs_sanity_soft_accept_enabled", True)),
+
+        wcs_sanity_soft_approval_percent=min(
+            100.0, max(1.0, float(payload.get("wcs_sanity_soft_approval_percent", 65.0)))
+        ),
+
+        wcs_sanity_soft_max_median_residual_arcsec=min(
+            60.0, max(0.1, float(payload.get("wcs_sanity_soft_max_median_residual_arcsec", 5.0)))
+        ),
+
+        wcs_sanity_soft_max_coherent_shift_arcsec=min(
+            60.0, max(0.1, float(payload.get("wcs_sanity_soft_max_coherent_shift_arcsec", 6.0)))
         ),
 
         wcs_sanity_gaia_min_magnitude=wcs_sanity_gaia_min_magnitude,
@@ -2472,12 +2531,17 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "sky_explorer_scale_overlay_strokes": bool(settings.sky_explorer_scale_overlay_strokes),
         "sky_explorer_marker_color_relation": _coerce_sky_explorer_marker_color_relation(settings.sky_explorer_marker_color_relation),
         "sky_explorer_text_color_relation": _coerce_sky_explorer_text_color_relation(settings.sky_explorer_text_color_relation),
+        "sky_explorer_default_text_font_family": _coerce_sky_explorer_default_text_font_family(settings.sky_explorer_default_text_font_family),
+        "sky_explorer_default_text_font_style": _coerce_sky_explorer_default_text_font_style(settings.sky_explorer_default_text_font_style),
+        "sky_explorer_default_text_size": _coerce_sky_explorer_default_text_size(settings.sky_explorer_default_text_size),
         "sky_explorer_annotated_galaxy_max_magnitude_enabled": bool(settings.sky_explorer_annotated_galaxy_max_magnitude_enabled),
         "sky_explorer_annotated_galaxy_max_magnitude": _coerce_sky_explorer_annotated_galaxy_max_magnitude(settings.sky_explorer_annotated_galaxy_max_magnitude),
         "sky_explorer_annotated_galaxy_require_shape_metadata": bool(settings.sky_explorer_annotated_galaxy_require_shape_metadata),
         "sky_explorer_enabled_layers": list(_coerce_sky_explorer_enabled_layers(settings.sky_explorer_enabled_layers)),
         "sky_explorer_fill_opacity": _coerce_sky_explorer_opacity(settings.sky_explorer_fill_opacity, default=0.25),
         "sky_explorer_stroke_opacity": _coerce_sky_explorer_opacity(settings.sky_explorer_stroke_opacity, default=1.0),
+        "sky_explorer_overlay_outline_color": _coerce_hex_color(settings.sky_explorer_overlay_outline_color, default="#111827"),
+        "sky_explorer_overlay_outline_width": _coerce_sky_explorer_overlay_outline_width(settings.sky_explorer_overlay_outline_width),
         "sky_explorer_object_group_color_overrides": _coerce_sky_explorer_object_group_color_overrides(settings.sky_explorer_object_group_color_overrides),
         "sky_explorer_object_type_color_overrides": _sky_explorer_object_type_color_overrides_to_payload(settings.sky_explorer_object_type_color_overrides),
         "sky_explorer_object_type_text_color_overrides": _coerce_sky_explorer_object_type_text_color_overrides(settings.sky_explorer_object_type_text_color_overrides),
@@ -2511,6 +2575,34 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
 
         "wcs_sanity_max_median_residual_arcsec": min(
             60.0, max(0.1, float(settings.wcs_sanity_max_median_residual_arcsec))
+        ),
+
+        "wcs_sanity_match_tolerance_arcsec": min(
+            60.0, max(0.5, float(settings.wcs_sanity_match_tolerance_arcsec))
+        ),
+
+        "wcs_sanity_detection_sample_count": min(
+            300, max(8, int(settings.wcs_sanity_detection_sample_count))
+        ),
+
+        "wcs_sanity_skip_brightest_detections": min(
+            100, max(0, int(settings.wcs_sanity_skip_brightest_detections))
+        ),
+
+        "wcs_sanity_subtract_coherent_shift": bool(settings.wcs_sanity_subtract_coherent_shift),
+
+        "wcs_sanity_soft_accept_enabled": bool(settings.wcs_sanity_soft_accept_enabled),
+
+        "wcs_sanity_soft_approval_percent": min(
+            100.0, max(1.0, float(settings.wcs_sanity_soft_approval_percent))
+        ),
+
+        "wcs_sanity_soft_max_median_residual_arcsec": min(
+            60.0, max(0.1, float(settings.wcs_sanity_soft_max_median_residual_arcsec))
+        ),
+
+        "wcs_sanity_soft_max_coherent_shift_arcsec": min(
+            60.0, max(0.1, float(settings.wcs_sanity_soft_max_coherent_shift_arcsec))
         ),
 
         "wcs_sanity_gaia_min_magnitude": min(30.0, max(-5.0, float(settings.wcs_sanity_gaia_min_magnitude))),
@@ -3322,6 +3414,14 @@ def _coerce_sky_explorer_mag_limit_text_stroke_width(value: object) -> float:
     return min(6.0, max(0.0, numeric))
 
 
+def _coerce_sky_explorer_overlay_outline_width(value: object) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 1.2
+    return min(8.0, max(0.0, numeric))
+
+
 def _coerce_sky_explorer_opacity(value: object, *, default: float) -> float:
     try:
         numeric = float(value)
@@ -3491,6 +3591,31 @@ def _coerce_sky_explorer_text_color_relation(value: object) -> str:
     normalized = str(value or "").strip().lower()
 
     return "bright" if normalized == "bright" else "dark"
+
+
+def _coerce_sky_explorer_default_text_font_family(value: object) -> str:
+
+    return str(value or "").strip()
+
+
+def _coerce_sky_explorer_default_text_font_style(value: object) -> str:
+
+    normalized = str(value or "regular").strip().lower().replace("_", "-").replace(" ", "-")
+
+    if normalized in {"bolditalic", "bold-italic"}:
+
+        return "bold-italic"
+
+    if normalized in {"regular", "bold", "italic"}:
+
+        return normalized
+
+    return "regular"
+
+
+def _coerce_sky_explorer_default_text_size(value: object) -> float:
+
+    return _coerce_sky_explorer_mag_limit_text_size(value)
 
 
 def _coerce_sky_explorer_object_type_font_overrides(value: object) -> dict[str, str]:

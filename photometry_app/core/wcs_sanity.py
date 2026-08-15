@@ -22,8 +22,8 @@ from photometry_app.core.wcs import celestial_wcs, extract_solved_field, validat
 
 
 _CCVALS_DISAGREE_ARCSEC = 15.0
-_MATCH_SEARCH_ARCSEC_FLOOR = 5.0
-_MATCH_SEARCH_RESIDUAL_SCALE = 4.0
+_MIN_DETECTION_SAMPLE = 8
+_MIN_BIN_GAIA_STARS = 5
 _DEFAULT_MAGNITUDE_BINS: tuple[tuple[float, float], ...] = (
     (5.0, 10.0),
     (10.0, 12.0),
@@ -38,10 +38,18 @@ class WcsSanityOptions:
     enabled: bool = True
     approval_percent: float = 90.0
     max_median_residual_arcsec: float = 3.0
+    match_tolerance_arcsec: float = 8.0
+    detection_sample_count: int = 80
+    skip_brightest_detections: int = 10
+    subtract_coherent_shift: bool = True
+    soft_accept_enabled: bool = True
+    soft_approval_percent: float = 65.0
+    soft_max_median_residual_arcsec: float = 5.0
+    soft_max_coherent_shift_arcsec: float = 6.0
     frame_margin_percent: float = 25.0
     gaia_max_magnitude: float = 18.0
     ccvals_repair_enabled: bool = True
-    # Retained for settings compatibility; unused by the mag-bin algorithm.
+    # Retained for settings compatibility with older installs.
     candidate_count: int = 10
     min_matches: int = 5
     gaia_min_magnitude: float = 5.0
@@ -295,12 +303,17 @@ def evaluate_wcs_sanity(
         _emit(progress_callback, reason)
         return WcsSanityCheckResult(passed=True, status="skipped", reasons=[reason])
 
-    detected_points = np.asarray(
-        [
-            (source.x, source.y)
+    usable_detections = sorted(
+        (
+            source
             for source in detected_sources
             if x_min <= source.x <= x_max and y_min <= source.y <= y_max
-        ],
+        ),
+        key=lambda source: float(source.peak),
+        reverse=True,
+    )
+    detected_points = np.asarray(
+        [(source.x, source.y) for source in usable_detections],
         dtype=float,
     )
     _emit(
@@ -347,17 +360,51 @@ def evaluate_wcs_sanity(
     mean_scale = float(np.mean(pixel_scales))
     if not np.isfinite(mean_scale) or mean_scale <= 0:
         mean_scale = 1.0
-    search_arcsec = max(
-        _MATCH_SEARCH_ARCSEC_FLOOR,
-        options.max_median_residual_arcsec * _MATCH_SEARCH_RESIDUAL_SCALE,
+    search_arcsec = max(0.5, float(options.match_tolerance_arcsec))
+    residual_limit_arcsec = max(
+        options.max_median_residual_arcsec * 2.0,
+        search_arcsec,
     )
-    tolerance_pixels = max(2.0, search_arcsec / mean_scale)
+    tolerance_pixels = max(1.5, search_arcsec / mean_scale)
+    isolation_pixels = (
+        0.0
+        if float(options.isolation_arcsec) <= 0.0
+        else max(1.0, float(options.isolation_arcsec) / mean_scale)
+    )
     approval_fraction = min(1.0, max(0.0, float(options.approval_percent) / 100.0))
+    soft_approval_fraction = min(1.0, max(0.0, float(options.soft_approval_percent) / 100.0))
+    skip_brightest = max(0, int(options.skip_brightest_detections))
+    sample_size = max(_MIN_DETECTION_SAMPLE, int(options.detection_sample_count))
+    if len(detected_points) <= _MIN_DETECTION_SAMPLE:
+        detection_sample = detected_points
+        skipped_brightest = 0
+    else:
+        start = min(skip_brightest, max(0, len(detected_points) - _MIN_DETECTION_SAMPLE))
+        detection_sample = detected_points[start : start + sample_size]
+        if len(detection_sample) < _MIN_DETECTION_SAMPLE:
+            detection_sample = detected_points[:sample_size]
+            skipped_brightest = 0
+        else:
+            skipped_brightest = start
     _emit(
         progress_callback,
         (
-            f"WCS sanity match tolerance {search_arcsec:.1f}\" ({tolerance_pixels:.2f} px); "
-            f"approval threshold {options.approval_percent:.0f}%."
+            f"WCS sanity detection→Gaia check: sample {len(detection_sample)} detection(s) "
+            f"(skipped {skipped_brightest} brightest); "
+            f"match tolerance {search_arcsec:.1f}\" ({tolerance_pixels:.2f} px); "
+            f"hard approval {options.approval_percent:.0f}%"
+            + (
+                f", soft accept >= {options.soft_approval_percent:.0f}% "
+                f"with residual <= {options.soft_max_median_residual_arcsec:.1f}\" "
+                f"and shift <= {options.soft_max_coherent_shift_arcsec:.1f}\""
+                if options.soft_accept_enabled
+                else ""
+            )
+            + (
+                "; coherent-shift subtraction on."
+                if options.subtract_coherent_shift
+                else "."
+            )
         ),
     )
 
@@ -369,9 +416,13 @@ def evaluate_wcs_sanity(
         y_min=y_min,
         y_max=y_max,
     )
+    isolated = _isolated_projected_gaia(projected, isolation_pixels)
     _emit(
         progress_callback,
-        f"WCS sanity projected {len(projected)} Gaia star(s) into the usable frame region.",
+        (
+            f"WCS sanity projected {len(projected)} Gaia star(s) into the usable frame "
+            f"({len(isolated)} isolated, neighbor > {options.isolation_arcsec:.1f}\")."
+        ),
     )
 
     reasons: list[str] = []
@@ -380,52 +431,103 @@ def evaluate_wcs_sanity(
 
     bins_checked = 0
     for mag_min, mag_max in magnitude_bins_for_options(options):
-        bin_stars = [
-            item
-            for item in projected
-            if item[0] >= mag_min and item[0] < mag_max
-        ]
-        if not bin_stars:
-            message = f"WCS sanity G={mag_min:.0f}-{mag_max:.0f}: no Gaia stars in usable frame; trying next bin."
+        # Match detections against Gaia stars brighter than the bin ceiling so a
+        # bright-star sample is not forced to find partners only inside a faint bin.
+        match_catalog = [item for item in isolated if item[0] < mag_max]
+        bin_reference = [item for item in match_catalog if item[0] >= mag_min]
+        if len(bin_reference) < _MIN_BIN_GAIA_STARS:
+            message = (
+                f"WCS sanity G={mag_min:.0f}-{mag_max:.0f}: "
+                f"only {len(bin_reference)} isolated Gaia star(s) in bin; trying next bin."
+            )
+            reasons.append(message)
+            _emit(progress_callback, message)
+            continue
+        if len(match_catalog) < _MIN_BIN_GAIA_STARS:
+            message = (
+                f"WCS sanity G={mag_min:.0f}-{mag_max:.0f}: "
+                f"insufficient isolated Gaia stars brighter than G={mag_max:.0f}; trying next bin."
+            )
             reasons.append(message)
             _emit(progress_callback, message)
             continue
 
         bins_checked += 1
-        catalog_points = np.asarray([(item[1], item[2]) for item in bin_stars], dtype=float)
-        catalog_indices, detected_indices, distances_px = _unique_nearest_matches(
+        catalog_points = np.asarray([(item[1], item[2]) for item in match_catalog], dtype=float)
+        match_points = detection_sample
+        probe_tolerance = tolerance_pixels * (1.5 if options.subtract_coherent_shift else 1.0)
+        detection_indices, catalog_indices, distances_px = _unique_nearest_matches(
+            match_points,
             catalog_points,
-            detected_points,
-            tolerance_pixels,
+            probe_tolerance,
         )
-        matched = int(len(catalog_indices))
-        total = int(len(bin_stars))
-        approval = (matched / total) if total else 0.0
-        median_residual = float(np.median(distances_px) * mean_scale) if matched else None
         coherent_shift = None
-        if matched:
-            offset_vectors = detected_points[detected_indices] - catalog_points[catalog_indices]
+        median_offset_px = None
+        if len(detection_indices) >= max(3, int(options.min_matches)):
+            offset_vectors = match_points[detection_indices] - catalog_points[catalog_indices]
             median_offset_px = np.median(offset_vectors, axis=0)
             coherent_shift = float(np.hypot(median_offset_px[0], median_offset_px[1]) * mean_scale)
+            if options.subtract_coherent_shift and coherent_shift is not None and coherent_shift > 0.05:
+                shifted_detections = match_points - median_offset_px
+                detection_indices, catalog_indices, distances_px = _unique_nearest_matches(
+                    shifted_detections,
+                    catalog_points,
+                    tolerance_pixels,
+                )
+                if len(detection_indices) >= max(3, int(options.min_matches)):
+                    refined_offsets = shifted_detections[detection_indices] - catalog_points[catalog_indices]
+                    refined_median = np.median(refined_offsets, axis=0)
+                    # Report the pre-subtraction coherent shift; residual is after subtraction.
+                    coherent_shift = float(np.hypot(median_offset_px[0], median_offset_px[1]) * mean_scale)
+                    _ = refined_median
 
+        matched = int(len(detection_indices))
+        total = int(len(detection_sample))
+        approval = (matched / total) if total else 0.0
+        median_residual = float(np.median(distances_px) * mean_scale) if matched else None
+
+        residual_ok = median_residual is not None and median_residual <= residual_limit_arcsec
+        hard_approved = (
+            approval >= approval_fraction
+            and matched >= max(3, int(options.min_matches))
+            and residual_ok
+        )
+        soft_approved = bool(
+            options.soft_accept_enabled
+            and matched >= max(3, int(options.min_matches))
+            and approval >= soft_approval_fraction
+            and median_residual is not None
+            and median_residual <= float(options.soft_max_median_residual_arcsec)
+            and coherent_shift is not None
+            and coherent_shift <= float(options.soft_max_coherent_shift_arcsec)
+        )
+        approved = hard_approved or soft_approved
         residual_text = (
             f", median residual {median_residual:.2f}\", coherent shift {coherent_shift:.2f}\""
             if median_residual is not None and coherent_shift is not None
             else ""
         )
-        approved = approval >= approval_fraction
+        if hard_approved:
+            verdict = " - approved."
+        elif soft_approved:
+            verdict = " - soft-accepted (stable residual/shift)."
+        else:
+            verdict = " - below approval threshold."
         message = (
-            f"WCS sanity G={mag_min:.0f}-{mag_max:.0f}: matched {matched}/{total} "
-            f"({approval * 100.0:.1f}%){residual_text}"
-            f"{' - approved.' if approved else ' - below approval threshold.'}"
+            f"WCS sanity G<{mag_max:.0f} (bin G={mag_min:.0f}-{mag_max:.0f}): "
+            f"matched {matched}/{total} detections ({approval * 100.0:.1f}%){residual_text}"
+            f"{verdict}"
         )
         reasons.append(message)
         _emit(progress_callback, message)
 
         if approved:
             summary = (
-                f"WCS sanity check passed using G={mag_min:.0f}-{mag_max:.0f} "
-                f"({matched}/{total} = {approval * 100.0:.1f}% >= {options.approval_percent:.0f}%)."
+                f"WCS sanity check passed using detection→Gaia sample for G={mag_min:.0f}-{mag_max:.0f} "
+                f"({matched}/{total} = {approval * 100.0:.1f}%"
+                f"{'' if hard_approved else ' via soft accept'}, "
+                f"median residual {median_residual:.2f}\""
+                f"{'' if coherent_shift is None else f', coherent shift {coherent_shift:.2f}\"'})."
             )
             reasons.append(summary)
             _emit(progress_callback, summary)
@@ -441,11 +543,20 @@ def evaluate_wcs_sanity(
             )
 
     if bins_checked == 0:
-        reason = "WCS sanity check failed; no Gaia stars were available in any magnitude bin inside the usable frame."
+        reason = (
+            "WCS sanity check failed; no magnitude bin had enough isolated Gaia stars "
+            "to score the detection sample."
+        )
     else:
         reason = (
             "WCS sanity check failed; no magnitude bin reached "
-            f"{options.approval_percent:.0f}% approval."
+            f"{options.approval_percent:.0f}% detection→Gaia approval"
+            + (
+                f" or soft-accept (>= {options.soft_approval_percent:.0f}% with stable residual/shift)"
+                if options.soft_accept_enabled
+                else ""
+            )
+            + f" with median residual <= {residual_limit_arcsec:.1f}\"."
         )
     reasons.append(reason)
     _emit(progress_callback, reason)
@@ -618,6 +729,26 @@ def options_from_settings(settings: object) -> WcsSanityOptions:
         max_median_residual_arcsec=max(
             0.1, float(getattr(settings, "wcs_sanity_max_median_residual_arcsec", 3.0))
         ),
+        match_tolerance_arcsec=max(
+            0.5, float(getattr(settings, "wcs_sanity_match_tolerance_arcsec", 8.0))
+        ),
+        detection_sample_count=max(
+            _MIN_DETECTION_SAMPLE, int(getattr(settings, "wcs_sanity_detection_sample_count", 80))
+        ),
+        skip_brightest_detections=max(
+            0, int(getattr(settings, "wcs_sanity_skip_brightest_detections", 10))
+        ),
+        subtract_coherent_shift=bool(getattr(settings, "wcs_sanity_subtract_coherent_shift", True)),
+        soft_accept_enabled=bool(getattr(settings, "wcs_sanity_soft_accept_enabled", True)),
+        soft_approval_percent=min(
+            100.0, max(1.0, float(getattr(settings, "wcs_sanity_soft_approval_percent", 65.0)))
+        ),
+        soft_max_median_residual_arcsec=max(
+            0.1, float(getattr(settings, "wcs_sanity_soft_max_median_residual_arcsec", 5.0))
+        ),
+        soft_max_coherent_shift_arcsec=max(
+            0.1, float(getattr(settings, "wcs_sanity_soft_max_coherent_shift_arcsec", 6.0))
+        ),
         frame_margin_percent=min(
             90.0, max(0.0, float(getattr(settings, "wcs_sanity_edge_margin_percent", 25.0)))
         ),
@@ -668,6 +799,28 @@ def _project_gaia_in_usable_frame(
         projected.append((float(star.magnitude), float(x_value), float(y_value), star))
     projected.sort(key=lambda item: (item[0], item[3].source_id))
     return projected
+
+
+def _isolated_projected_gaia(
+    projected: Sequence[tuple[float, float, float, CatalogStar]],
+    isolation_pixels: float,
+) -> list[tuple[float, float, float, CatalogStar]]:
+    """Keep Gaia stars with no projected neighbor inside the isolation radius."""
+    if not projected:
+        return []
+    if isolation_pixels <= 0:
+        return list(projected)
+    points = np.asarray([(item[1], item[2]) for item in projected], dtype=float)
+    isolated: list[tuple[float, float, float, CatalogStar]] = []
+    radius_sq = float(isolation_pixels) * float(isolation_pixels)
+    for index, item in enumerate(projected):
+        deltas = points - points[index]
+        # Ignore the star itself; any other neighbor within the radius disqualifies it.
+        deltas[index, :] = np.inf
+        if np.any(np.sum(np.square(deltas), axis=1) <= radius_sq):
+            continue
+        isolated.append(item)
+    return isolated
 
 
 def _normalize_sexagesimal(value: str) -> str | None:

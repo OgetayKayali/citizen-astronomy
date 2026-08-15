@@ -158,6 +158,7 @@ SKY_EXPLORER_OBJECT_TYPE_GROUP_ORDER: tuple[str, ...] = (
     "high_energy",
     "solar_system",
     "exoplanet",
+    "catalog",
     "other",
 )
 
@@ -172,37 +173,96 @@ _SKY_EXPLORER_OBJECT_TYPE_GROUP_TITLES: dict[str, str] = {
     "high_energy": "High-Energy / Exotic",
     "solar_system": "Solar System",
     "exoplanet": "Exoplanets",
+    "catalog": "Catalogs",
     "other": "Other / Unclassified",
 }
 
+# HSV families chosen for contrast on typical Ha-red / broadband sky images.
+# Nebulae stay warm (amber/gold) so they do not disappear against H-alpha.
 _SKY_EXPLORER_OBJECT_TYPE_GROUP_PALETTES: dict[str, tuple[float, float, float]] = {
-    "nebula": (0.02, 0.72, 0.92),
-    "galaxy": (0.49, 0.68, 0.82),
-    "active_galaxy": (0.56, 0.78, 0.95),
-    "cluster": (0.12, 0.78, 0.92),
-    "star": (0.58, 0.42, 0.96),
-    "variable_star": (0.90, 0.68, 0.95),
-    "stellar_remnant": (0.72, 0.62, 0.90),
-    "high_energy": (0.82, 0.72, 0.95),
-    "solar_system": (0.28, 0.72, 0.86),
-    "exoplanet": (0.67, 0.66, 0.92),
-    "other": (0.58, 0.16, 0.74),
+    "nebula": (0.10, 0.80, 0.94),
+    "galaxy": (0.48, 0.62, 0.78),
+    "active_galaxy": (0.73, 0.70, 0.92),
+    "cluster": (0.57, 0.58, 0.94),
+    "star": (0.58, 0.22, 0.97),
+    "variable_star": (0.92, 0.70, 0.95),
+    "stellar_remnant": (0.78, 0.48, 0.88),
+    "high_energy": (0.86, 0.76, 0.96),
+    "solar_system": (0.33, 0.68, 0.82),
+    "exoplanet": (0.42, 0.60, 0.86),
+    "catalog": (0.10, 0.22, 0.98),
+    "other": (0.60, 0.10, 0.70),
+}
+
+# Explicit hue/sat/value offsets for named Simple/Advanced classes.
+_SKY_EXPLORER_OBJECT_TYPE_COLOR_SHIFTS: dict[str, tuple[float, float, float]] = {
+    "emission_nebula": (0.00, 0.04, 0.00),
+    "reflection_nebula": (0.045, -0.14, 0.04),
+    "dark_nebula": (-0.02, 0.06, -0.30),
+    "planetary_nebula": (0.05, -0.08, 0.02),
+    "hii_region": (-0.02, 0.06, 0.00),
+    "supernova_remnant": (-0.035, 0.04, -0.08),
+    "molecular_cloud": (0.02, 0.00, -0.18),
+    "star_forming_region": (0.01, 0.02, 0.00),
+    "nebula": (0.00, -0.02, -0.04),
+    "galaxy": (0.00, 0.00, 0.00),
+    "galaxy_pair": (-0.02, 0.04, 0.02),
+    "galaxy_group": (0.02, 0.00, -0.04),
+    "galaxy_cluster": (0.03, 0.06, -0.08),
+    "open_cluster": (-0.02, -0.08, 0.06),
+    "globular_cluster": (0.05, 0.10, -0.10),
+    "asterism": (0.00, -0.16, 0.04),
+    "association": (0.03, -0.04, 0.00),
+    "cluster_with_nebulosity": (-0.04, 0.04, 0.00),
+    "messier": (-0.01, -0.10, 0.01),
+    "ngc": (0.03, 0.06, 0.00),
+    "ic": (0.04, 0.16, -0.01),
+    "lbn": (0.02, 0.22, -0.01),
+    "vdb": (0.01, 0.28, -0.02),
+    "ldn": (-0.02, 0.20, -0.02),
+    "hash_pn": (-0.03, 0.32, -0.03),
+    "sharpless": (-0.04, 0.36, -0.03),
+    "barnard": (-0.05, 0.30, -0.04),
 }
 
 
-def _sky_explorer_object_type_colors(key: str, group_key: str = "other") -> tuple[str, str]:
-    digest = hashlib.sha1(key.encode("utf-8")).digest()
-    base_hue, base_saturation, base_value = _SKY_EXPLORER_OBJECT_TYPE_GROUP_PALETTES.get(
+def sky_explorer_object_type_group_palette(group_key: str) -> tuple[float, float, float]:
+    return _SKY_EXPLORER_OBJECT_TYPE_GROUP_PALETTES.get(
         group_key,
         _SKY_EXPLORER_OBJECT_TYPE_GROUP_PALETTES["other"],
     )
-    hue = (base_hue + (((digest[0] / 255.0) - 0.5) * 0.075)) % 1.0
-    saturation = max(0.22, min(0.92, base_saturation + (((digest[1] / 255.0) - 0.5) * 0.12)))
-    value = max(0.42, min(0.98, base_value + (((digest[2] / 255.0) - 0.5) * 0.10)))
+
+
+def _sky_explorer_vary_object_type_hsv(
+    key: str,
+    base_hue: float,
+    base_saturation: float,
+    base_value: float,
+) -> tuple[float, float, float]:
+    shift = _SKY_EXPLORER_OBJECT_TYPE_COLOR_SHIFTS.get(key)
+    if shift is not None:
+        hue = (base_hue + shift[0]) % 1.0
+        saturation = max(0.18, min(0.94, base_saturation + shift[1]))
+        value = max(0.34, min(0.98, base_value + shift[2]))
+        return hue, saturation, value
+    digest = hashlib.sha1(key.encode("utf-8")).digest()
+    hue = (base_hue + (((digest[0] / 255.0) - 0.5) * 0.05)) % 1.0
+    saturation = max(0.22, min(0.92, base_saturation + (((digest[1] / 255.0) - 0.5) * 0.10)))
+    value = max(0.42, min(0.98, base_value + (((digest[2] / 255.0) - 0.5) * 0.08)))
+    return hue, saturation, value
+
+
+def _sky_explorer_hsv_to_marker_colors(hue: float, saturation: float, value: float) -> tuple[str, str]:
     red, green, blue = colorsys.hsv_to_rgb(hue, saturation, value)
     fill_color = _sky_explorer_rgb_to_hex(red, green, blue)
     stroke_color = _sky_explorer_rgb_to_hex(red * 0.58, green * 0.58, blue * 0.58)
     return stroke_color, fill_color
+
+
+def _sky_explorer_object_type_colors(key: str, group_key: str = "other") -> tuple[str, str]:
+    base_hue, base_saturation, base_value = sky_explorer_object_type_group_palette(group_key)
+    hue, saturation, value = _sky_explorer_vary_object_type_hsv(key, base_hue, base_saturation, base_value)
+    return _sky_explorer_hsv_to_marker_colors(hue, saturation, value)
 
 
 def _sky_explorer_hex_to_rgb(value: str) -> tuple[float, float, float] | None:
@@ -222,24 +282,15 @@ def sky_explorer_object_type_colors_for_group_hue(key: str, group_key: str, base
     parsed_color = _sky_explorer_hex_to_rgb(base_color)
     if parsed_color is None:
         return _sky_explorer_object_type_colors(key, group_key)
-    default_hue, default_saturation, default_value = _SKY_EXPLORER_OBJECT_TYPE_GROUP_PALETTES.get(
-        group_key,
-        _SKY_EXPLORER_OBJECT_TYPE_GROUP_PALETTES["other"],
-    )
+    default_hue, default_saturation, default_value = sky_explorer_object_type_group_palette(group_key)
     base_hue, base_saturation, base_value = colorsys.rgb_to_hsv(*parsed_color)
     if base_saturation < 0.12:
         base_hue = default_hue
         base_saturation = default_saturation
     base_saturation = max(0.30, min(0.92, base_saturation))
     base_value = max(0.50, min(0.98, base_value if base_value >= 0.35 else default_value))
-    digest = hashlib.sha1(key.encode("utf-8")).digest()
-    hue = (base_hue + (((digest[0] / 255.0) - 0.5) * 0.075)) % 1.0
-    saturation = max(0.22, min(0.92, base_saturation + (((digest[1] / 255.0) - 0.5) * 0.12)))
-    value = max(0.42, min(0.98, base_value + (((digest[2] / 255.0) - 0.5) * 0.10)))
-    red, green, blue = colorsys.hsv_to_rgb(hue, saturation, value)
-    fill_color = _sky_explorer_rgb_to_hex(red, green, blue)
-    stroke_color = _sky_explorer_rgb_to_hex(red * 0.58, green * 0.58, blue * 0.58)
-    return stroke_color, fill_color
+    hue, saturation, value = _sky_explorer_vary_object_type_hsv(key, base_hue, base_saturation, base_value)
+    return _sky_explorer_hsv_to_marker_colors(hue, saturation, value)
 
 
 def sky_explorer_object_type_group_definitions() -> tuple[tuple[str, str, str], ...]:
@@ -610,6 +661,53 @@ _SKY_EXPLORER_SCIENTIFIC_OBJECT_TYPE_DEFINITIONS: tuple[SkyExplorerObjectTypeDef
 )
 
 
+def _catalog_object_type_definition(key: str, title: str, description: str) -> SkyExplorerObjectTypeDefinition:
+    return SkyExplorerObjectTypeDefinition(
+        key=key,
+        title=title,
+        description=description,
+        query_layers=("deep_sky",),
+        default_checked=True,
+        group_key="catalog",
+        group_title=_sky_explorer_group_title("catalog"),
+    )
+
+
+_SKY_EXPLORER_CATALOG_OBJECT_TYPE_DEFINITIONS: tuple[SkyExplorerObjectTypeDefinition, ...] = (
+    _catalog_object_type_definition("ngc", "NGC", "New General Catalogue objects, labeled with NGC numbers only."),
+    _catalog_object_type_definition("ic", "IC", "Index Catalogue objects, labeled with IC numbers only."),
+    _catalog_object_type_definition("ldn", "LDN", "Lynds Dark Nebulae, labeled with LDN numbers only."),
+    _catalog_object_type_definition("vdb", "VdB", "van den Bergh reflection nebulae, labeled with VdB numbers only."),
+    _catalog_object_type_definition("lbn", "LBN", "Lynds Bright Nebulae, labeled with LBN numbers only."),
+    _catalog_object_type_definition("messier", "Messier", "Messier catalogue objects, labeled with M numbers only."),
+    _catalog_object_type_definition("barnard", "Barnard", "Barnard dark nebulae, labeled with B numbers only."),
+    _catalog_object_type_definition("sharpless", "Sharpless", "Sharpless HII regions, labeled with Sh2 numbers only."),
+    _catalog_object_type_definition("hash_pn", "HASH PN", "HASH planetary nebulae, labeled with usual names."),
+)
+
+SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEYS: tuple[str, ...] = tuple(
+    definition.key for definition in _SKY_EXPLORER_CATALOG_OBJECT_TYPE_DEFINITIONS
+)
+_SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEY_SET = frozenset(SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEYS)
+
+_SKY_EXPLORER_CATALOG_SUPPLEMENT_CATALOGS: dict[str, str] = {
+    "ngc": "ngc2000",
+    "ic": "ngc2000",
+    "messier": "ngc2000",
+    "vdb": "vdb",
+    "barnard": "barnard",
+    "sharpless": "sharpless",
+    "hash_pn": "hash_pn",
+}
+
+_SKY_EXPLORER_SOURCE_CATALOG_TO_TYPE_KEY: dict[str, str] = {
+    "vdb": "vdb",
+    "barnard": "barnard",
+    "sharpless": "sharpless",
+    "hash_pn": "hash_pn",
+}
+
+
 SKY_EXPLORER_OBJECT_TYPE_DEFINITIONS: tuple[SkyExplorerObjectTypeDefinition, ...] = (
     _SKY_EXPLORER_ADVANCED_OBJECT_TYPE_DEFINITIONS
     + tuple(
@@ -617,6 +715,7 @@ SKY_EXPLORER_OBJECT_TYPE_DEFINITIONS: tuple[SkyExplorerObjectTypeDefinition, ...
         for code, description, query_layers in _SKY_EXPLORER_SIMBAD_ADVANCED_ROWS
     )
     + _SKY_EXPLORER_SCIENTIFIC_OBJECT_TYPE_DEFINITIONS
+    + _SKY_EXPLORER_CATALOG_OBJECT_TYPE_DEFINITIONS
 )
 
 SKY_EXPLORER_SIMPLE_OBJECT_TYPE_KEYS: tuple[str, ...] = tuple(
@@ -635,6 +734,7 @@ _SKY_EXPLORER_OBJECT_TYPE_DEFINITIONS_BY_MODE = {
         for code, description, query_layers in _SKY_EXPLORER_SIMBAD_ADVANCED_ROWS
     )
     + _SKY_EXPLORER_SCIENTIFIC_OBJECT_TYPE_DEFINITIONS,
+    "catalog": _SKY_EXPLORER_CATALOG_OBJECT_TYPE_DEFINITIONS,
 }
 
 _SKY_EXPLORER_CANONICAL_CODE_BY_NORMALIZED = {
@@ -972,6 +1072,10 @@ def sky_explorer_simbad_otype_codes_for_object_types(
     selected_keys = sky_explorer_normalized_object_type_keys(selected_object_type_keys)
     if not selected_keys:
         return tuple(code for code, _description, query_layers in _SKY_EXPLORER_SIMBAD_ADVANCED_ROWS if layer_key in query_layers)
+    if selected_keys.issubset(_SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEY_SET):
+        if layer_key != "deep_sky":
+            return ()
+        return tuple(code for code, _description, query_layers in _SKY_EXPLORER_SIMBAD_ADVANCED_ROWS if layer_key in query_layers)
 
     include_all_for_layer = (
         (layer_key == "deep_sky" and "other_deep_sky" in selected_keys)
@@ -994,6 +1098,10 @@ def sky_explorer_supplement_catalogs_for_object_types(selected_object_type_keys:
     for catalog_name, type_keys in _SKY_EXPLORER_DEEP_SKY_SUPPLEMENT_TYPE_KEYS.items():
         if selected_keys.intersection(type_keys):
             enabled.add(catalog_name)
+    for catalog_key in selected_keys:
+        supplement_name = _SKY_EXPLORER_CATALOG_SUPPLEMENT_CATALOGS.get(catalog_key)
+        if supplement_name:
+            enabled.add(supplement_name)
     return frozenset(enabled)
 
 
@@ -1160,7 +1268,190 @@ def sky_explorer_object_type_keys_for_object(sky_object: SkyExplorerObject) -> t
         for simple_key in _SKY_EXPLORER_SIMPLE_CATEGORY_KEYS_BY_CODE.get(canonical_code, ()): 
             _append_sky_explorer_object_type_key(keys, simple_key)
 
+    for catalog_key in sky_explorer_catalog_keys_for_object(sky_object):
+        _append_sky_explorer_object_type_key(keys, catalog_key)
+
     return tuple(keys)
+
+
+def sky_explorer_catalog_keys_for_object(sky_object: SkyExplorerObject) -> tuple[str, ...]:
+    keys: list[str] = []
+    source_catalog_key = _SKY_EXPLORER_SOURCE_CATALOG_TO_TYPE_KEY.get(_sky_explorer_selection_key(sky_object.catalog))
+    if source_catalog_key:
+        _append_sky_explorer_object_type_key(keys, source_catalog_key)
+    paper_local_keys = _paper_local_catalog_designation_keys(sky_object)
+    for text in _sky_explorer_object_identifier_texts(sky_object):
+        for designation_key in _catalog_designation_keys_from_text(text):
+            if designation_key in paper_local_keys:
+                continue
+            if not _is_primary_catalog_designation_text(text, designation_key):
+                continue
+            catalog_key = _catalog_object_type_key_from_designation_key(designation_key)
+            _append_sky_explorer_object_type_key(keys, catalog_key)
+    return tuple(keys)
+
+
+def sky_explorer_catalog_display_name(
+    sky_object: SkyExplorerObject,
+    *,
+    preferred_keys: Sequence[str] | None = None,
+) -> str:
+    preferred_set = sky_explorer_normalized_object_type_keys(preferred_keys)
+    if not preferred_set:
+        preferred_set = _SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEY_SET
+
+    display_by_catalog: dict[str, str] = {}
+    paper_local_keys = _paper_local_catalog_designation_keys(sky_object)
+    for text in _sky_explorer_object_identifier_texts(sky_object):
+        for designation_key in _catalog_designation_keys_from_text(text):
+            if designation_key in paper_local_keys:
+                continue
+            if not _is_primary_catalog_designation_text(text, designation_key):
+                continue
+            catalog_key = _catalog_object_type_key_from_designation_key(designation_key)
+            if catalog_key and catalog_key not in display_by_catalog:
+                display_by_catalog[catalog_key] = _display_name_from_designation_key(designation_key)
+
+    source_catalog_key = _SKY_EXPLORER_SOURCE_CATALOG_TO_TYPE_KEY.get(_sky_explorer_selection_key(sky_object.catalog))
+    if source_catalog_key and source_catalog_key not in display_by_catalog:
+        fallback_name = _normalize_identifier(sky_object.source_id) or _normalize_identifier(sky_object.name)
+        if fallback_name:
+            display_by_catalog[source_catalog_key] = fallback_name
+
+    for catalog_key in SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEYS:
+        if catalog_key not in preferred_set:
+            continue
+        display_name = _catalog_display_name_for_key(sky_object, catalog_key, display_by_catalog)
+        if display_name:
+            return display_name
+    for catalog_key in SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEYS:
+        display_name = _catalog_display_name_for_key(sky_object, catalog_key, display_by_catalog)
+        if display_name:
+            return display_name
+    return _normalize_identifier(sky_object.name) or _normalize_identifier(sky_object.source_id) or "Object"
+
+
+def _catalog_display_name_for_key(
+    sky_object: SkyExplorerObject,
+    catalog_key: str,
+    display_by_catalog: dict[str, str],
+) -> str:
+    if catalog_key == "hash_pn" and _sky_explorer_selection_key(sky_object.catalog) == "hash_pn":
+        hash_label = _hash_pn_preferred_label(sky_object)
+        if hash_label:
+            return hash_label
+    return display_by_catalog.get(catalog_key) or ""
+
+
+def _is_hash_id_label(text: object) -> bool:
+    designation_key = _catalog_designation_key(text)
+    return bool(designation_key and re.fullmatch(r"HASH\d+", designation_key))
+
+
+def _hash_pn_preferred_label(sky_object: SkyExplorerObject) -> str:
+    metadata = sky_object.metadata if isinstance(sky_object.metadata, dict) else {}
+    for candidate in (
+        metadata.get("usual_name"),
+        sky_object.name,
+        metadata.get("hash_png"),
+        metadata.get("simbad_id"),
+    ):
+        normalized = _normalize_identifier(candidate)
+        if not normalized or _is_hash_id_label(normalized):
+            continue
+        designation_key = _catalog_designation_key(normalized)
+        if designation_key and not designation_key.startswith("HASH"):
+            return _display_name_from_designation_key(designation_key)
+        return normalized
+    return ""
+
+
+def _sky_explorer_object_identifier_texts(sky_object: SkyExplorerObject) -> tuple[str, ...]:
+    texts: list[str] = []
+    for value in (sky_object.name, sky_object.source_id):
+        normalized = _normalize_identifier(value)
+        if normalized:
+            texts.append(normalized)
+    metadata = sky_object.metadata if isinstance(sky_object.metadata, dict) else {}
+    for key in ("main_id", "identifiers", "usual_name", "simbad_id"):
+        raw_value = metadata.get(key)
+        if raw_value is None:
+            continue
+        for part in re.split(r"[|;,\n]+", str(raw_value)):
+            normalized = _normalize_identifier(part)
+            if normalized:
+                texts.append(normalized)
+    return tuple(dict.fromkeys(texts))
+
+
+def _paper_local_catalog_designation_keys(sky_object: SkyExplorerObject) -> frozenset[str]:
+    keys: set[str] = set()
+    for text in _sky_explorer_object_identifier_texts(sky_object):
+        normalized = _normalize_identifier(text).upper()
+        if "[" not in normalized and not normalized.startswith("CL*"):
+            continue
+        for pattern, prefix, suffix_group in _CATALOG_DESIGNATION_PATTERNS:
+            if prefix not in {"IC", "NGC", "M"}:
+                continue
+            for match in re.finditer(pattern, normalized):
+                if _catalog_designation_match_is_paper_local_id(normalized, match):
+                    keys.add(_catalog_designation_match_key(match, prefix, suffix_group))
+    return frozenset(keys)
+
+
+def _is_primary_catalog_designation_text(text: object, designation_key: str) -> bool:
+    normalized = _normalize_identifier(text)
+    if not normalized:
+        return False
+    stripped = re.sub(r"^(?:NAME\s+)+", "", normalized, flags=re.IGNORECASE).strip()
+    if not stripped:
+        return False
+    if stripped.startswith("[") or stripped.upper().startswith("CL*"):
+        return False
+    compact_text = re.sub(r"[\s\-]", "", stripped.upper())
+    compact_key = re.sub(r"[\s\-]", "", designation_key.upper())
+    compact_display = re.sub(r"[\s\-]", "", _display_name_from_designation_key(designation_key).upper())
+    if compact_text in {compact_key, compact_display}:
+        return True
+    number = compact_key.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    if not number or not compact_text.endswith(number):
+        return False
+    prefix = compact_key[: len(compact_key) - len(number)]
+    aliases = {
+        "B": ("B", "BARNARD"),
+        "SH2": ("SH2", "SHARPLESS", "SH"),
+        "VDB": ("VDB", "VANDENBERGH"),
+        "M": ("M", "MESSIER"),
+        "IC": ("IC", "I"),
+        "NGC": ("NGC", "N"),
+        "LDN": ("LDN",),
+        "LBN": ("LBN",),
+        "HASH": ("HASH",),
+    }
+    return compact_text in {f"{alias}{number}" for alias in aliases.get(prefix, (prefix,))}
+
+
+def _catalog_object_type_key_from_designation_key(designation_key: str | None) -> str | None:
+    normalized = _normalize_identifier(designation_key).upper().replace(" ", "")
+    if not normalized:
+        return None
+    for prefix, catalog_key in (
+        ("NGC", "ngc"),
+        ("HASH", "hash_pn"),
+        ("SH2", "sharpless"),
+        ("LDN", "ldn"),
+        ("LBN", "lbn"),
+        ("VDB", "vdb"),
+        ("IC", "ic"),
+        ("M", "messier"),
+        ("B", "barnard"),
+    ):
+        if not normalized.startswith(prefix):
+            continue
+        rest = normalized[len(prefix):]
+        if rest and rest[0].isdigit():
+            return catalog_key
+    return None
 
 
 def _append_sky_explorer_object_type_key(target: list[str], key: str | None) -> None:
@@ -1902,10 +2193,12 @@ def _query_simbad_region_rows(
     simbad = Simbad()
     simbad.TIMEOUT = _SIMBAD_TIMEOUT_SECONDS
     simbad.ROW_LIMIT = _MAX_SIMBAD_DEEP_SKY_OBJECTS if layer_key == "deep_sky" else _MAX_SIMBAD_GENERAL_OBJECTS
+    # Modern astroquery SIMBAD (TAP) already returns ICRS degrees as ra/dec.
+    # Do not request legacy ra(d)/dec(d) formatting fields — they raise ValueError.
     if layer_key == "deep_sky":
-        simbad.add_votable_fields("ids", "otype", "dim", "ra(d)", "dec(d)")
+        simbad.add_votable_fields("ids", "otype", "dim", "ra", "dec")
     else:
-        simbad.add_votable_fields("ids", "otype", "V", "B", "ra(d)", "dec(d)")
+        simbad.add_votable_fields("ids", "otype", "V", "B", "ra", "dec")
     rows: list[Row] = []
     seen_signatures: set[tuple[str, str, int, int]] = set()
     criteria = _simbad_layer_criteria(layer_key, selected_object_type_keys=selected_object_type_keys)
@@ -2491,6 +2784,7 @@ def _sky_explorer_object_from_hash_pn_row(
         "hash_pn_status": status_code or "",
         "hash_pn_status_label": status_label,
         "hash_png": png_name,
+        "usual_name": usual_name,
         "hash_source_catalog": source_catalog,
         "hash_spectrum_available": spectrum_available,
         "identifiers": identifiers,
@@ -2838,7 +3132,11 @@ def _preferred_simbad_name(main_id: str, identifiers: str, *, object_type: str =
     for prefix in preferred_prefixes:
         for candidate in candidates:
             designation_key = _catalog_designation_key(candidate)
-            if designation_key is not None and designation_key.startswith(prefix):
+            if (
+                designation_key is not None
+                and designation_key.startswith(prefix)
+                and _is_primary_catalog_designation_text(candidate, designation_key)
+            ):
                 return _display_name_from_designation_key(designation_key)
     for candidate in candidates:
         normalized = _normalize_identifier(candidate)
@@ -2943,13 +3241,13 @@ def _simbad_layer_for_row(row: Row) -> str:
 
 def _looks_like_named_member_star(main_id: str) -> bool:
     normalized = _normalize_identifier(main_id).upper()
-    if normalized.startswith("NGC "):
-        trailing = normalized[4:].strip()
-        if trailing and all(character.isdigit() or character.isspace() for character in trailing):
-            parts = trailing.split()
-            return len(parts) > 1
-    if normalized.startswith("CL* NGC "):
-        trailing = normalized[8:].strip()
+    for prefix in ("NGC ", "IC "):
+        if normalized.startswith(prefix):
+            trailing = normalized[len(prefix):].strip()
+            if trailing and all(character.isdigit() or character.isspace() for character in trailing):
+                return len(trailing.split()) > 1
+    if normalized.startswith(("CL* NGC ", "CL* IC ")):
+        trailing = normalized.split(" ", 2)[-1].strip()
         parts = trailing.split()
         return len(parts) > 1 and parts[0].isdigit()
     return False
@@ -3227,25 +3525,52 @@ def _catalog_designation_key(name: object) -> str | None:
     return _catalog_designation_key_from_text(normalized)
 
 
+_CATALOG_DESIGNATION_PATTERNS: tuple[tuple[str, str, bool], ...] = (
+    (r"\bM\s*0*(\d+)\b(?!\s*[-+]\s*\d)", "M", False),
+        (r"\bNGC\s*0*(\d+)\s*([A-Z])?(?!\s*\d)\b", "NGC", True),
+        (r"\bIC\s*0*(\d+)\s*([A-Z])?(?!\s*\d)\b", "IC", True),
+    (r"\bLDN\s*0*(\d+)\b", "LDN", False),
+    (r"\bLBN\s*0*(\d+)\b", "LBN", False),
+    (r"\bBARNARD\s*0*(\d+)\b", "B", False),
+    (r"\bB\s+0*(\d+)\b", "B", False),
+    (r"\bB\s*[- ]\s*0*(\d+)\b", "B", False),
+    (r"\b(?:SH\s*0*2|SH2|SHARPLESS)\s*[- ]?0*(\d+)\b", "SH2", False),
+    (r"\b(?:VDB|VAN\s+DEN\s+BERGH)\s*0*(\d+)\b", "VDB", False),
+    (r"\bHASH\s*0*(\d+)\b", "HASH", False),
+)
+
+
+def _catalog_designation_match_key(match: re.Match[str], prefix: str, suffix_group: bool) -> str:
+    number = match.group(1).lstrip("0") or "0"
+    suffix = match.group(2) if suffix_group and match.lastindex and match.lastindex >= 2 and match.group(2) else ""
+    return f"{prefix}{number}{suffix}"
+
+
 def _catalog_designation_key_from_text(text: object) -> str | None:
+    keys = _catalog_designation_keys_from_text(text)
+    return keys[0] if keys else None
+
+
+def _catalog_designation_match_is_paper_local_id(normalized_text: str, match: re.Match[str]) -> bool:
+    prefix = normalized_text[: match.start()].rstrip()
+    if prefix.endswith("]") or prefix.endswith("CL*"):
+        return True
+    return bool(re.search(r"\[[^\]]+\]$", prefix))
+
+
+def _catalog_designation_keys_from_text(text: object) -> tuple[str, ...]:
     normalized = _normalize_identifier(text).upper()
-    for pattern, prefix, suffix_group in (
-        (r"\bM\s*0*(\d+)\b(?!\s*[-+]\s*\d)", "M", False),
-        (r"\bNGC\s*0*(\d+)\s*([A-Z])?\b", "NGC", True),
-        (r"\bIC\s*0*(\d+)\s*([A-Z])?\b", "IC", True),
-        (r"\bBARNARD\s*0*(\d+)\b", "B", False),
-        (r"\bB\s+0*(\d+)\b", "B", False),
-        (r"\bB\s*[- ]\s*0*(\d+)\b", "B", False),
-        (r"\b(?:SH\s*0*2|SH2|SHARPLESS)\s*[- ]?0*(\d+)\b", "SH2", False),
-        (r"\b(?:VDB|VAN\s+DEN\s+BERGH)\s*0*(\d+)\b", "VDB", False),
-    ):
-        match = re.search(pattern, normalized)
-        if match is None:
-            continue
-        number = match.group(1).lstrip("0") or "0"
-        suffix = match.group(2) if suffix_group and match.lastindex and match.lastindex >= 2 and match.group(2) else ""
-        return f"{prefix}{number}{suffix}"
-    return None
+    if not normalized:
+        return ()
+    found: list[str] = []
+    for pattern, prefix, suffix_group in _CATALOG_DESIGNATION_PATTERNS:
+        for match in re.finditer(pattern, normalized):
+            if _catalog_designation_match_is_paper_local_id(normalized, match):
+                continue
+            designation_key = _catalog_designation_match_key(match, prefix, suffix_group)
+            if designation_key not in found:
+                found.append(designation_key)
+    return tuple(found)
 
 
 def _display_name_from_designation_key(designation_key: str) -> str:
@@ -3255,13 +3580,15 @@ def _display_name_from_designation_key(designation_key: str) -> str:
         if match is not None:
             number, suffix = match.groups()
             return f"{prefix} {number.lstrip('0') or '0'}{suffix}"
-    for prefix in ("M", "B", "SH2", "VDB"):
+    for prefix in ("HASH", "SH2", "LDN", "LBN", "VDB", "M", "B"):
         if normalized.startswith(prefix) and normalized[len(prefix):].isdigit():
             number = normalized[len(prefix):].lstrip("0") or "0"
             if prefix == "SH2":
                 return f"Sh2-{number}"
             if prefix == "VDB":
                 return f"VdB {number}"
+            if prefix == "HASH":
+                return f"HASH {number}"
             return f"{prefix} {number}"
     return designation_key
 

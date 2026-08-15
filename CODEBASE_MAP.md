@@ -39,7 +39,7 @@ Last aligned with the repository layout for **CAst 0.1.1-alpha.1**.
 | Product name | Citizen Astronomy (CAst) |
 | Package name | `citizen-photometry` (`pyproject.toml`) |
 | Python package | `photometry_app` |
-| Platform | Windows desktop (PySide6 / Qt) |
+| Platform | Windows desktop primary (PySide6 / Qt); unsigned macOS `.app` alpha zip supported |
 | License | CC BY-NC-ND 4.0 |
 | GitHub | `OgetayKayali/citizen-astronomy` |
 | Status | Alpha review |
@@ -640,6 +640,7 @@ Screenshots embedded by the mode guides (differential photometry UI examples).
 | `.fit`, `.fits` | `astropy.io.fits` |
 | `.xisf` | `xisf.XISF` (scaled for photometry when float 0–1) |
 | `.tif`, `.tiff`, `.png`, `.jpg`, `.jpeg` | Pillow |
+| Camera RAW (`.dng`, `.cr2`/`.cr3`, `.nef`, `.arw`, …) | `rawpy` / LibRaw (linear 16-bit demosaic) |
 
 **Public helpers:** `is_supported_image_path`, `read_header`, `read_header_and_shape`, `read_image_data`, `read_photometry_image_data`, `photometry_xisf_scale_factor`, `write_fits_copy` (normalize to FITS for plate solve).
 

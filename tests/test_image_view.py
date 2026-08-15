@@ -22,7 +22,7 @@ import numpy as np
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt
 
-from PySide6.QtGui import QColor, QImage, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 
 from PySide6.QtWidgets import QApplication
 
@@ -387,6 +387,112 @@ class ImageViewInfoPanelTest(unittest.TestCase):
         self.assertEqual(captured.width(), view.width())
 
         self.assertEqual(captured.height(), view.height())
+
+
+    def test_capture_full_resolution_image_uses_qimage_size(self) -> None:
+
+        view = AnnotatedImageView()
+
+        view.resize(320, 180)
+
+        source = QImage(640, 480, QImage.Format.Format_ARGB32)
+
+        source.fill(QColor("red"))
+
+        view._qimage = source
+
+        captured = view.capture_full_resolution_image()
+
+        self.assertIsNotNone(captured)
+
+        assert captured is not None
+
+        self.assertEqual(captured.width(), 640)
+
+        self.assertEqual(captured.height(), 480)
+
+
+    def test_on_screen_overlay_appearance_scale_is_inverse_of_view_scale(self) -> None:
+
+        view = AnnotatedImageView()
+
+        view.resize(400, 300)
+
+        source = QImage(800, 600, QImage.Format.Format_ARGB32)
+
+        source.fill(QColor("black"))
+
+        view._qimage = source
+
+        view_scale = view._effective_scale()
+
+        self.assertGreater(view_scale, 0.0)
+
+        self.assertAlmostEqual(view._on_screen_overlay_appearance_scale() * view_scale, 1.0, places=5)
+
+
+    def test_full_resolution_overlay_label_scale_keeps_text_annotations_image_relative(self) -> None:
+
+        catalog = ImageOverlay(
+            source_id="ic-5146",
+            name="IC 5146",
+            x=10.0,
+            y=10.0,
+            aperture_radius=8.0,
+            annulus_inner_radius=8.0,
+            annulus_outer_radius=8.0,
+            color="#f4e6b0",
+            text_size=12.0,
+        )
+
+        text_mark = ImageOverlay(
+            source_id="note",
+            name="Note",
+            x=10.0,
+            y=10.0,
+            aperture_radius=8.0,
+            annulus_inner_radius=8.0,
+            annulus_outer_radius=8.0,
+            color="#ffffff",
+            marker_style="text",
+            text_size=24.0,
+        )
+
+        self.assertAlmostEqual(AnnotatedImageView._full_resolution_overlay_label_scale(catalog, 4.0), 4.0)
+
+        self.assertAlmostEqual(AnnotatedImageView._full_resolution_overlay_label_scale(text_mark, 4.0), 1.0)
+
+
+    def test_apply_overlay_label_style_scales_catalog_font_to_on_screen_size(self) -> None:
+
+        view = AnnotatedImageView()
+
+        overlay = ImageOverlay(
+            source_id="ic-5146",
+            name="IC 5146",
+            x=10.0,
+            y=10.0,
+            aperture_radius=8.0,
+            annulus_inner_radius=8.0,
+            annulus_outer_radius=8.0,
+            color="#f4e6b0",
+            text_font=QFont("Arial", 12),
+            show_label=True,
+        )
+
+        image = QImage(40, 20, QImage.Format.Format_ARGB32)
+
+        painter = QPainter(image)
+
+        try:
+
+            view._apply_overlay_label_style(painter, overlay, scale_factor=4.0)
+
+            self.assertAlmostEqual(painter.font().pointSizeF(), 48.0)
+
+        finally:
+
+            painter.end()
 
 
     def test_overlay_label_image_point_clamps_inside_image_bounds(self) -> None:
@@ -2657,6 +2763,94 @@ class ImageViewInfoPanelTest(unittest.TestCase):
             self.assertGreaterEqual(clip.right(), 64.0)
             plate = view._image_bounds_rect()
             self.assertGreater(clip.width(), plate.width())
+
+    def test_set_content_invalidates_static_overlay_cache_when_colors_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "overlay_color.fit"
+            image_path.write_text("frame", encoding="utf-8")
+            display = build_annotated_image_display_from_array(
+                np.ones((32, 32), dtype=np.float32),
+                image_path=image_path,
+            )
+            view = AnnotatedImageView()
+            view.resize(200, 160)
+            first_overlay = ImageOverlay(
+                source_id="galaxy-1",
+                name="Galaxy",
+                x=10.0,
+                y=12.0,
+                aperture_radius=6.0,
+                annulus_inner_radius=6.0,
+                annulus_outer_radius=6.0,
+                color="#112233",
+                fill_color="#aabbcc",
+                text_color="#556677",
+            )
+            view.set_content(
+                display,
+                overlays=[first_overlay],
+                grid_overlays=[],
+                editor_enabled=False,
+                static_overlay_count=1,
+            )
+            view._static_overlay_cache_key = ("stale-style",)
+            view._static_overlay_shape_cache_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+            view._static_overlay_label_cache_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+            updated_overlay = ImageOverlay(
+                source_id="galaxy-1",
+                name="Galaxy",
+                x=10.0,
+                y=12.0,
+                aperture_radius=6.0,
+                annulus_inner_radius=6.0,
+                annulus_outer_radius=6.0,
+                color="#ff0000",
+                fill_color="#00ff00",
+                text_color="#0000ff",
+            )
+            view.set_content(
+                display,
+                overlays=[updated_overlay],
+                grid_overlays=[],
+                editor_enabled=False,
+                static_overlay_count=1,
+            )
+            self.assertIsNone(view._static_overlay_cache_key)
+            self.assertIsNone(view._static_overlay_shape_cache_image)
+            self.assertIsNone(view._static_overlay_label_cache_image)
+            self.assertEqual(view._overlays[0].color, "#ff0000")
+            self.assertEqual(view._overlays[0].fill_color, "#00ff00")
+            self.assertEqual(view._overlays[0].text_color, "#0000ff")
+
+    def test_static_overlay_cache_key_includes_stroke_fill_and_text_style(self) -> None:
+        first = ImageOverlay(
+            source_id="galaxy-1",
+            name="Galaxy",
+            x=10.0,
+            y=12.0,
+            aperture_radius=6.0,
+            annulus_inner_radius=6.0,
+            annulus_outer_radius=6.0,
+            color="#112233",
+            fill_color="#aabbcc",
+            text_color="#556677",
+        )
+        second = ImageOverlay(
+            source_id="galaxy-1",
+            name="Galaxy",
+            x=10.0,
+            y=12.0,
+            aperture_radius=6.0,
+            annulus_inner_radius=6.0,
+            annulus_outer_radius=6.0,
+            color="#ff0000",
+            fill_color="#aabbcc",
+            text_color="#556677",
+        )
+        view = AnnotatedImageView()
+        first_key = view._static_overlay_layer_cache_key([first], 1.0, QPointF(0.0, 0.0))
+        second_key = view._static_overlay_layer_cache_key([second], 1.0, QPointF(0.0, 0.0))
+        self.assertNotEqual(first_key, second_key)
 
 
 if __name__ == "__main__":

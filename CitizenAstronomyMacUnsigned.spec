@@ -1,13 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
+"""Unsigned macOS .app bundle for Citizen Astronomy (CAst).
+
+Build only on macOS. This path intentionally skips Velopack packaging/signing so
+alpha testers can download a zip and force-open the app (right-click → Open).
+"""
 
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
 
-
 ROOT = Path(SPECPATH).resolve()
-APP_NAME = "CitizenAstronomyAlphaReview"
+sys.path.insert(0, str(ROOT))
+from photometry_app.app_metadata import APP_VERSION  # noqa: E402
+
+APP_NAME = "CitizenAstronomy"
+BUNDLE_NAME = "Citizen Astronomy.app"
 HOOKS_DIR = ROOT / "packaging" / "hooks"
+ICON_ICNS = ROOT / "packaging" / "macos" / "CitizenAstronomy.icns"
+ICON_ICO = ROOT / "assets" / "citizen_astronomy.ico"
+BUNDLE_SHORT_VERSION = APP_VERSION.split("-", 1)[0]
 
 
 def data_file(relative_path: str, destination: str = "."):
@@ -28,15 +40,22 @@ def data_tree(relative_path: str, destination: str):
     return rows
 
 
+if sys.platform != "darwin":
+    raise SystemExit("CitizenAstronomyMacUnsigned.spec must be built on macOS.")
+
+
 datas = [
     data_file("README.md"),
     data_file("LICENSE"),
     data_file("assets/citizen_astronomy.ico", "assets"),
+    data_file("packaging/MACOS_UNSIGNED_NOTICE.txt", "."),
     data_file("textures/milkyway_2020_4k_preview.png", "textures"),
     data_file("textures/constellation_figures_4k.tif", "textures"),
     data_file("textures/moon_lroc_color_16bit_srgb_8k.tif", "textures"),
     data_file("textures/moon_ldem_16.tif", "textures"),
 ]
+if ICON_ICNS.is_file():
+    datas.append(data_file(str(ICON_ICNS.relative_to(ROOT)), "assets"))
 datas += data_tree("guides", "guides")
 datas += data_tree("photometry_app/data", "photometry_app/data")
 datas += data_tree("assets/moon_tiles", "assets/moon_tiles")
@@ -73,7 +92,7 @@ hiddenimports = [
     "pyqtgraph.opengl",
     "OpenGL",
     "OpenGL.GL",
-    "OpenGL.platform.win32",
+    "OpenGL.platform.darwin",
     "OpenGL_accelerate",
     "astroquery.vizier",
     "astroquery.simbad",
@@ -103,7 +122,8 @@ hiddenimports = [
     "matplotlib.backends.backend_qtagg",
 ]
 
-for package_name in ("lz4", "zstandard", "pyqtgraph", "imageio_ffmpeg", "velopack", "rawpy"):
+# Unsigned macOS builds intentionally omit Velopack (Windows installer/updater).
+for package_name in ("lz4", "zstandard", "pyqtgraph", "imageio_ffmpeg", "rawpy"):
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package_name)
     datas += pkg_datas
     binaries += pkg_binaries
@@ -125,12 +145,15 @@ a = Analysis(
         "matplotlib.tests",
         "astroquery.dace",
         "cupy",
+        "velopack",
     ],
     noarchive=False,
     optimize=1,
 )
 
 pyz = PYZ(a.pure)
+
+icon_path = str(ICON_ICNS) if ICON_ICNS.is_file() else (str(ICON_ICO) if ICON_ICO.is_file() else None)
 
 exe = EXE(
     pyz,
@@ -148,7 +171,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(ROOT / "assets" / "citizen_astronomy.ico"),
+    icon=icon_path,
 )
 
 coll = COLLECT(
@@ -159,4 +182,21 @@ coll = COLLECT(
     upx=False,
     upx_exclude=[],
     name=APP_NAME,
+)
+
+app = BUNDLE(
+    coll,
+    name=BUNDLE_NAME,
+    icon=icon_path,
+    bundle_identifier="com.citizenastronomy.cast",
+    info_plist={
+        "CFBundleName": "Citizen Astronomy",
+        "CFBundleDisplayName": "Citizen Astronomy",
+        "CFBundleShortVersionString": BUNDLE_SHORT_VERSION,
+        "CFBundleVersion": APP_VERSION,
+        "CFBundleIdentifier": "com.citizenastronomy.cast",
+        "NSHighResolutionCapable": True,
+        "NSRequiresAquaSystemAppearance": False,
+        "LSPrincipalClass": "NSApplication",
+    },
 )

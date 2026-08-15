@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -7,13 +8,17 @@ from pathlib import Path
 APP_DISPLAY_NAME = "Citizen Astronomy (CAst)"
 APP_WINDOW_TITLE_NAME = "Citizen Astronomy"
 APP_USER_MODEL_ID = "CitizenAstronomy.CAst"
-APP_VERSION = "0.1.1-alpha.8"
+APP_VERSION = "0.1.1-alpha.9"
 APP_UPDATE_CHANNEL = "alpha"
 # Set this to the public "owner/repository" before publishing the first update.
 APP_UPDATE_GITHUB_REPOSITORY = "OgetayKayali/citizen-astronomy"
 APP_UPDATE_MANIFEST_ASSET_NAME = "CitizenAstronomy-update.json"
+# Unsigned macOS builds are zip-distributed .app bundles, not Velopack installs.
+APP_MANAGED_UPDATES_SUPPORTED = os.name == "nt"
 
 _APP_ICON_CANDIDATE_NAMES = (
+    "citizen_astronomy.icns",
+    "app_icon.icns",
     "citizen_astronomy.ico",
     "app_icon.ico",
     "citizen_astronomy.png",
@@ -21,6 +26,12 @@ _APP_ICON_CANDIDATE_NAMES = (
     "citizen_astronomy.svg",
     "app_icon.svg",
 )
+
+
+def managed_updates_supported() -> bool:
+    """Return True when Velopack-managed install/update flows are available."""
+
+    return bool(APP_MANAGED_UPDATES_SUPPORTED)
 
 
 def application_root_path() -> Path:

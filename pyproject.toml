@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "citizen-photometry"
-version = "0.1.1a8"
+version = "0.1.1a9"
 description = "Desktop tool for citizen-science photometry from FITS image series."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,7 @@ dependencies = [
     "PyOpenGL-accelerate>=3.1.7",
     "pyqtgraph>=0.13",
     "PySide6>=6.8",
+    "rawpy>=0.24",
     "reproject>=0.14",
     "requests>=2.32",
     "scikit-learn>=1.8",

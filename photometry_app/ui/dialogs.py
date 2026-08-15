@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSlider,
     QSplitter,
     QSpinBox,
@@ -11305,6 +11306,22 @@ class AsteroidRecoveryDialog(QDialog):
         return rows
 
 
+class _SettingsTabScrollArea(QScrollArea):
+    def __init__(self, content: QWidget, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setWidget(content)
+
+    def sizeHint(self) -> QSize:
+        content = self.widget()
+        width = 640
+        if content is not None:
+            width = max(width, int(content.sizeHint().width()) + 20)
+        return QSize(width, 420)
+
+
 class SettingsDialog(QDialog):
     def __init__(self, root_path: Path, settings: AppSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -11404,17 +11421,6 @@ class SettingsDialog(QDialog):
         self._snr_binning_apply_to_selected_measurements_only_input.setChecked(settings.snr_binning_apply_to_selected_measurements_only)
         self._snr_binning_allow_periodless_fallback_input = QCheckBox("Allow fallback binning when no usable period is available")
         self._snr_binning_allow_periodless_fallback_input.setChecked(settings.snr_binning_allow_periodless_fallback)
-        self._comparison_fit_stop_match_index_input = QDoubleSpinBox()
-        self._comparison_fit_stop_match_index_input.setDecimals(1)
-        self._comparison_fit_stop_match_index_input.setRange(0.0, 100.0)
-        self._comparison_fit_stop_match_index_input.setSingleStep(1.0)
-        self._comparison_fit_stop_match_index_input.setSpecialValueText("Disabled")
-        self._comparison_fit_stop_match_index_input.setSuffix(" match")
-        self._comparison_fit_stop_match_index_input.setValue(settings.comparison_fit_stop_match_index)
-        self._comparison_fit_parallel_workers_input = QSpinBox()
-        self._comparison_fit_parallel_workers_input.setRange(0, 32)
-        self._comparison_fit_parallel_workers_input.setSpecialValueText("Auto")
-        self._comparison_fit_parallel_workers_input.setValue(max(0, settings.comparison_fit_parallel_workers))
         self._sky_explorer_simbad_search_radius_arcsec_input = QDoubleSpinBox()
         self._sky_explorer_simbad_search_radius_arcsec_input.setDecimals(1)
         self._sky_explorer_simbad_search_radius_arcsec_input.setRange(1.0, 300.0)
@@ -11550,6 +11556,25 @@ class SettingsDialog(QDialog):
             self._sky_explorer_text_color_relation_input,
             getattr(settings, "sky_explorer_text_color_relation", "dark"),
         )
+        self._sky_explorer_default_text_font_family_input = QFontComboBox()
+        default_text_font_family = str(getattr(settings, "sky_explorer_default_text_font_family", "") or "").strip()
+        if default_text_font_family:
+            self._sky_explorer_default_text_font_family_input.setCurrentFont(QFont(default_text_font_family))
+        self._sky_explorer_default_text_font_style_input = QComboBox()
+        self._sky_explorer_default_text_font_style_input.addItem("Regular", "regular")
+        self._sky_explorer_default_text_font_style_input.addItem("Bold", "bold")
+        self._sky_explorer_default_text_font_style_input.addItem("Italic", "italic")
+        self._sky_explorer_default_text_font_style_input.addItem("Bold Italic", "bold-italic")
+        self._set_combo_data(
+            self._sky_explorer_default_text_font_style_input,
+            getattr(settings, "sky_explorer_default_text_font_style", "regular"),
+        )
+        self._sky_explorer_default_text_size_input = QDoubleSpinBox()
+        self._sky_explorer_default_text_size_input.setDecimals(1)
+        self._sky_explorer_default_text_size_input.setRange(7.0, 24.0)
+        self._sky_explorer_default_text_size_input.setSingleStep(0.5)
+        self._sky_explorer_default_text_size_input.setSuffix(" pt")
+        self._sky_explorer_default_text_size_input.setValue(float(getattr(settings, "sky_explorer_default_text_size", 9.0)))
         self._sky_explorer_fill_opacity_input = QDoubleSpinBox()
         self._sky_explorer_fill_opacity_input.setDecimals(2)
         self._sky_explorer_fill_opacity_input.setRange(0.0, 1.0)
@@ -11560,6 +11585,21 @@ class SettingsDialog(QDialog):
         self._sky_explorer_stroke_opacity_input.setRange(0.0, 1.0)
         self._sky_explorer_stroke_opacity_input.setSingleStep(0.05)
         self._sky_explorer_stroke_opacity_input.setValue(max(0.0, min(1.0, float(settings.sky_explorer_stroke_opacity))))
+        self._sky_explorer_overlay_outline_color = _coerce_hex_color(
+            getattr(settings, "sky_explorer_overlay_outline_color", "#111827"),
+            default="#111827",
+        )
+        self._sky_explorer_overlay_outline_color_button = QPushButton("Outline...")
+        self._sky_explorer_overlay_outline_color_button.clicked.connect(self._choose_sky_explorer_overlay_outline_color)
+        self._sky_explorer_overlay_outline_width_input = QDoubleSpinBox()
+        self._sky_explorer_overlay_outline_width_input.setDecimals(2)
+        self._sky_explorer_overlay_outline_width_input.setRange(0.0, 8.0)
+        self._sky_explorer_overlay_outline_width_input.setSingleStep(0.1)
+        self._sky_explorer_overlay_outline_width_input.setSuffix(" px")
+        self._sky_explorer_overlay_outline_width_input.setValue(
+            max(0.0, min(8.0, float(getattr(settings, "sky_explorer_overlay_outline_width", 1.2))))
+        )
+        self._update_sky_explorer_overlay_outline_color_button()
         self._sky_explorer_object_group_default_colors = {
             group_key: default_color
             for group_key, _group_title, default_color in sky_explorer_object_type_group_definitions()
@@ -11707,26 +11747,6 @@ class SettingsDialog(QDialog):
         self._asteroid_discovery_synthetic_sweep_min_stacked_snr_input.setValue(max(0.5, float(settings.asteroid_discovery_synthetic_sweep_min_stacked_snr)))
         self._asteroid_discovery_synthetic_sweep_save_stacks_input = QCheckBox("Save every sweep stack to the current data folder")
         self._asteroid_discovery_synthetic_sweep_save_stacks_input.setChecked(bool(settings.asteroid_discovery_synthetic_sweep_save_stacks))
-        self._comparison_fit_allow_multiple_targets_input = QCheckBox("Allow multiple selected Source Results targets")
-        self._comparison_fit_allow_multiple_targets_input.setChecked(settings.comparison_fit_allow_multiple_targets)
-        self._comparison_fit_eclipsing_binary_match_tolerance_input = QDoubleSpinBox()
-        self._comparison_fit_eclipsing_binary_match_tolerance_input.setDecimals(1)
-        self._comparison_fit_eclipsing_binary_match_tolerance_input.setRange(0.0, 50.0)
-        self._comparison_fit_eclipsing_binary_match_tolerance_input.setSingleStep(0.5)
-        self._comparison_fit_eclipsing_binary_match_tolerance_input.setSpecialValueText("Disabled")
-        self._comparison_fit_eclipsing_binary_match_tolerance_input.setSuffix(" match")
-        self._comparison_fit_eclipsing_binary_match_tolerance_input.setValue(settings.comparison_fit_eclipsing_binary_match_tolerance)
-        self._comparison_fit_fallback_candidate_pool_size_input = QSpinBox()
-        self._comparison_fit_fallback_candidate_pool_size_input.setRange(0, 50)
-        self._comparison_fit_fallback_candidate_pool_size_input.setSpecialValueText("Disabled")
-        self._comparison_fit_fallback_candidate_pool_size_input.setValue(max(0, settings.comparison_fit_fallback_candidate_pool_size))
-        self._comparison_fit_fallback_magnitude_tolerance_input = QDoubleSpinBox()
-        self._comparison_fit_fallback_magnitude_tolerance_input.setDecimals(2)
-        self._comparison_fit_fallback_magnitude_tolerance_input.setRange(0.0, 10.0)
-        self._comparison_fit_fallback_magnitude_tolerance_input.setSingleStep(0.1)
-        self._comparison_fit_fallback_magnitude_tolerance_input.setSpecialValueText("Disabled")
-        self._comparison_fit_fallback_magnitude_tolerance_input.setSuffix(" mag")
-        self._comparison_fit_fallback_magnitude_tolerance_input.setValue(settings.comparison_fit_fallback_magnitude_tolerance)
         self._scientific_light_curve_pdf_dpi_input = QSpinBox()
         self._scientific_light_curve_pdf_dpi_input.setRange(72, 1200)
         self._scientific_light_curve_pdf_dpi_input.setSingleStep(25)
@@ -12021,6 +12041,70 @@ class SettingsDialog(QDialog):
             " arcsec",
         )
         self._wcs_sanity_max_median_residual_arcsec_input.setSingleStep(0.5)
+        self._wcs_sanity_match_tolerance_arcsec_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_match_tolerance_arcsec_input,
+            float(getattr(settings, "wcs_sanity_match_tolerance_arcsec", 8.0)),
+            0.5,
+            60.0,
+            " arcsec",
+        )
+        self._wcs_sanity_match_tolerance_arcsec_input.setSingleStep(0.5)
+        self._wcs_sanity_detection_sample_count_input = QSpinBox()
+        self._wcs_sanity_detection_sample_count_input.setRange(8, 300)
+        self._wcs_sanity_detection_sample_count_input.setValue(
+            int(getattr(settings, "wcs_sanity_detection_sample_count", 80))
+        )
+        self._wcs_sanity_skip_brightest_detections_input = QSpinBox()
+        self._wcs_sanity_skip_brightest_detections_input.setRange(0, 100)
+        self._wcs_sanity_skip_brightest_detections_input.setValue(
+            int(getattr(settings, "wcs_sanity_skip_brightest_detections", 10))
+        )
+        self._wcs_sanity_isolation_arcsec_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_isolation_arcsec_input,
+            float(getattr(settings, "wcs_sanity_isolation_arcsec", 8.0)),
+            0.0,
+            120.0,
+            " arcsec",
+        )
+        self._wcs_sanity_isolation_arcsec_input.setSingleStep(0.5)
+        self._wcs_sanity_subtract_coherent_shift_input = QCheckBox("Subtract coherent shift before scoring")
+        self._wcs_sanity_subtract_coherent_shift_input.setChecked(
+            bool(getattr(settings, "wcs_sanity_subtract_coherent_shift", True))
+        )
+        self._wcs_sanity_soft_accept_enabled_input = QCheckBox("Soft-accept stable moderate matches")
+        self._wcs_sanity_soft_accept_enabled_input.setChecked(
+            bool(getattr(settings, "wcs_sanity_soft_accept_enabled", True))
+        )
+        self._wcs_sanity_soft_accept_enabled_input.stateChanged.connect(self._update_wcs_sanity_inputs)
+        self._wcs_sanity_soft_approval_percent_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_soft_approval_percent_input,
+            float(getattr(settings, "wcs_sanity_soft_approval_percent", 65.0)),
+            1.0,
+            100.0,
+            " %",
+        )
+        self._wcs_sanity_soft_approval_percent_input.setSingleStep(1.0)
+        self._wcs_sanity_soft_max_median_residual_arcsec_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_soft_max_median_residual_arcsec_input,
+            float(getattr(settings, "wcs_sanity_soft_max_median_residual_arcsec", 5.0)),
+            0.1,
+            60.0,
+            " arcsec",
+        )
+        self._wcs_sanity_soft_max_median_residual_arcsec_input.setSingleStep(0.5)
+        self._wcs_sanity_soft_max_coherent_shift_arcsec_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_soft_max_coherent_shift_arcsec_input,
+            float(getattr(settings, "wcs_sanity_soft_max_coherent_shift_arcsec", 6.0)),
+            0.1,
+            60.0,
+            " arcsec",
+        )
+        self._wcs_sanity_soft_max_coherent_shift_arcsec_input.setSingleStep(0.5)
         self._wcs_sanity_gaia_min_magnitude_input = QDoubleSpinBox()
         self._configure_float_spin_box(
             self._wcs_sanity_gaia_min_magnitude_input,
@@ -12833,7 +12917,25 @@ class SettingsDialog(QDialog):
             sky_explorer_visual_form_layout,
             "Text Color Relation",
             self._sky_explorer_text_color_relation_input,
-            "Controls whether Sky Explorer labels without an explicit text override use the darker or brighter related type color.",
+            "Controls whether generated Sky Explorer labels without an explicit text override use the darker or brighter generated type color. Per-type stroke, fill, and text edits stay independent.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Default Label Font",
+            self._sky_explorer_default_text_font_family_input,
+            "Default font family for Sky Explorer object-type labels. Applies to every category that does not have its own font override in the type table.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Default Label Style",
+            self._sky_explorer_default_text_font_style_input,
+            "Default label style (Regular, Bold, Italic, or Bold Italic) for Sky Explorer object-type labels without a per-type font override.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Default Label Size",
+            self._sky_explorer_default_text_size_input,
+            "Default label size in points for Sky Explorer object-type labels without a per-type font override. Overlay text may still scale slightly with marker size.",
         )
         self._add_tooltip_form_row(
             sky_explorer_visual_form_layout,
@@ -12846,6 +12948,18 @@ class SettingsDialog(QDialog):
             "Stroke Opacity",
             self._sky_explorer_stroke_opacity_input,
             "Opacity used for Sky Explorer marker outlines. Lower values make dense annotation fields quieter; higher values make object borders more prominent.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Stroke Outline",
+            self._sky_explorer_overlay_outline_color_button,
+            "Dark halo drawn around Sky Explorer marker strokes so colored outlines stay visible on bright or dark sky. Change the color or set Stroke Outline Width to 0 to turn it off.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
+            "Stroke Outline Width",
+            self._sky_explorer_overlay_outline_width_input,
+            "Width of the halo around Sky Explorer marker strokes. Set to 0 to remove the outline entirely.",
         )
         sky_explorer_group_colors_group = QGroupBox("Object Group Colors")
         sky_explorer_group_colors_layout = QFormLayout()
@@ -12878,9 +12992,9 @@ class SettingsDialog(QDialog):
         sky_explorer_tab.setLayout(sky_explorer_layout)
         self._sky_explorer_settings_tab = sky_explorer_tab
         advanced_description = QLabel(
-            "Advanced controls for WCS sanity checking, shared workers, Find Better Fit, and Increase SNR. "
+            "Advanced controls for WCS sanity checking, shared workers, and Increase SNR. "
             "WCS sanity chooses how embedded plate solutions are read for Differential Photometry. "
-            "Find Better Fit and Increase SNR both run from Source Results, and Increase SNR uses conservative period-aware binning to derive cleaner light curves while preserving original measurements internally."
+            "Increase SNR runs from Source Results and uses conservative period-aware binning to derive cleaner light curves while preserving original measurements internally."
         )
         advanced_description.setWordWrap(True)
         wcs_sanity_group = QGroupBox("WCS Sanity Check")
@@ -12889,7 +13003,7 @@ class SettingsDialog(QDialog):
             wcs_sanity_layout,
             "Enable",
             self._wcs_sanity_check_enabled_input,
-            "When enabled, the first frame is checked with Gaia magnitude bins to choose a WCS reading method. Bin results are written to the Work Log. That method is then applied independently to every frame (accept embedded CRVAL/WCS, repair CRVAL from CCVALS, or re-solve each frame).",
+            "When enabled, the first frame is checked with a detection→Gaia sample to choose a WCS reading method. Results are written to the Work Log. That method is then applied independently to every frame (accept embedded CRVAL/WCS, repair CRVAL from CCVALS, or re-solve each frame).",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
@@ -12899,15 +13013,69 @@ class SettingsDialog(QDialog):
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
-            "Approval",
-            self._wcs_sanity_approval_percent_input,
-            "A magnitude bin passes when at least this percentage of its usable-frame Gaia stars match image detections. Bins are tried in order starting at Min Gaia Magnitude (first bin spans up to 5 mag, then 2-mag steps).",
+            "Detection Sample",
+            self._wcs_sanity_detection_sample_count_input,
+            "How many image detections to score against Gaia after skipping the brightest peaks. Larger samples are stricter but slower.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
-            "Match Residual Limit",
+            "Skip Brightest",
+            self._wcs_sanity_skip_brightest_detections_input,
+            "Skip this many brightest detections before sampling. Helps avoid saturated stars with poor centroids.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Hard Approval",
+            self._wcs_sanity_approval_percent_input,
+            "Hard pass when at least this percentage of the detection sample matches Gaia within the match tolerance.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Match Tolerance",
+            self._wcs_sanity_match_tolerance_arcsec_input,
+            "Maximum separation for counting a detection→Gaia match.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Residual Limit",
             self._wcs_sanity_max_median_residual_arcsec_input,
-            "Match search radius scale for counting an approved Gaia-to-image match inside a magnitude bin.",
+            "Hard-pass residual quality scale. Median residual must stay within about twice this value.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Isolation",
+            self._wcs_sanity_isolation_arcsec_input,
+            "Ignore Gaia stars that have another Gaia neighbor closer than this separation when building the match catalog.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Subtract Coherent Shift",
+            self._wcs_sanity_subtract_coherent_shift_input,
+            "Estimate a global detection↔Gaia offset and remove it before final scoring. Helps accept slightly translated but otherwise good WCS solutions.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Soft Accept",
+            self._wcs_sanity_soft_accept_enabled_input,
+            "If hard approval fails, still accept embedded WCS when the match rate is moderate and residual/coherent shift stay small and stable.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Soft Approval",
+            self._wcs_sanity_soft_approval_percent_input,
+            "Minimum detection→Gaia match rate required for soft accept.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Soft Residual Limit",
+            self._wcs_sanity_soft_max_median_residual_arcsec_input,
+            "Maximum median residual allowed for soft accept.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Soft Shift Limit",
+            self._wcs_sanity_soft_max_coherent_shift_arcsec_input,
+            "Maximum coherent shift allowed for soft accept.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
@@ -13022,36 +13190,6 @@ class SettingsDialog(QDialog):
                 "Allows Increase SNR to fall back to non-period-aware binning when no usable period is available. Enabled is more permissive; disabled skips sources without a usable period.",
             ),
             (
-                "Stop When Match Index Reaches",
-                self._comparison_fit_stop_match_index_input,
-                "Stops Find Better Fit early once a strong enough match index is reached. Lower values stop sooner and search fewer combinations; higher values search longer for a better match. Disabled searches until the normal end.",
-            ),
-            (
-                "Find Better Fit Workers",
-                self._comparison_fit_parallel_workers_input,
-                "Controls how many workers Find Better Fit can use while evaluating comparison sets. Higher values can speed broader searches but use more CPU; lower values reduce load. Auto lets the app choose.",
-            ),
-            (
-                "Multiple Target Selection",
-                self._comparison_fit_allow_multiple_targets_input,
-                "Allows Find Better Fit to queue more than one selected Source Results target at a time. Enabled supports multi-target runs; disabled keeps the workflow single-target only.",
-            ),
-            (
-                "Eclipsing-Binary Retry Near 50",
-                self._comparison_fit_eclipsing_binary_match_tolerance_input,
-                "Retries near-50 match-index results with the eclipsing-binary period convention. Higher values retry a wider band around 50; lower values retry only very close cases. Disabled turns off this retry.",
-            ),
-            (
-                "Fallback Candidate Pool Size",
-                self._comparison_fit_fallback_candidate_pool_size_input,
-                "How many magnitude-similar fallback comparison stars Find Better Fit may try when the main search falls short. Higher values widen the rescue search; lower values keep it tighter. Disabled skips the fallback pool.",
-            ),
-            (
-                "Fallback Magnitude Tolerance",
-                self._comparison_fit_fallback_magnitude_tolerance_input,
-                "Maximum magnitude difference allowed when building the fallback comparison-star pool. Higher values permit a looser fallback search; lower values keep fallback stars closer in brightness. Disabled turns off this limit-based fallback.",
-            ),
-            (
                 "Scientific PDF DPI",
                 self._scientific_light_curve_pdf_dpi_input,
                 "Resolution used for scientific PDF-backed light-curve export rendering. Higher DPI produces sharper output and larger files; lower DPI exports faster and keeps files smaller.",
@@ -13064,19 +13202,21 @@ class SettingsDialog(QDialog):
         ]
         for label_text, field, tooltip in advanced_tooltips:
             self._add_tooltip_form_row(advanced_form_layout, label_text, field, tooltip)
-        advanced_group = QGroupBox("Advanced")
-        advanced_group_layout = QVBoxLayout()
-        advanced_group_layout.addWidget(advanced_description)
-        advanced_group_layout.addWidget(wcs_sanity_group)
-        advanced_group_layout.addLayout(advanced_form_layout)
-        advanced_group.setLayout(advanced_group_layout)
-        self._advanced_settings_group = advanced_group
+        advanced_tab = QWidget()
+        advanced_layout = QVBoxLayout()
+        advanced_layout.addWidget(advanced_description)
+        advanced_layout.addWidget(wcs_sanity_group)
+        advanced_layout.addLayout(advanced_form_layout)
+        advanced_layout.addStretch(1)
+        advanced_tab.setLayout(advanced_layout)
+        self._advanced_settings_group = advanced_tab
         self._wcs_sanity_settings_group = wcs_sanity_group
-        general_layout.addWidget(advanced_group)
+        self._advanced_settings_tab = _SettingsTabScrollArea(advanced_tab)
         general_layout.addStretch(1)
         general_tab.setLayout(general_layout)
         self._settings_tabs = QTabWidget()
         self._settings_tabs.addTab(self._general_settings_tab, "General")
+        self._settings_tabs.addTab(self._advanced_settings_tab, "Advanced")
         self._settings_tabs.addTab(self._differential_photometry_tab, "Differential Photometry")
         self._settings_tabs.addTab(self._hr_settings_tab, "HR Diagram")
         self._settings_tabs.addTab(self._asteroid_settings_tab, "Asteroid/Comet")
@@ -13109,6 +13249,21 @@ class SettingsDialog(QDialog):
         self._update_settings_location_inputs()
         self._update_hr_plot_size_inputs()
         self._update_setup_derived_fields()
+        self._fit_settings_dialog_to_screen()
+
+    def _fit_settings_dialog_to_screen(self) -> None:
+        screen = self.screen()
+        if screen is None:
+            app = QApplication.instance()
+            screen = app.primaryScreen() if app is not None else None
+        if screen is None:
+            self.resize(820, 660)
+            return
+        available = screen.availableGeometry()
+        max_width = max(640, available.width() - 48)
+        max_height = max(480, available.height() - 72)
+        self.setMaximumSize(max_width, max_height)
+        self.resize(min(820, max_width), min(660, max_height))
 
     def _add_tooltip_form_row(self, layout: QFormLayout, label_text: str, field: QWidget, tooltip: str) -> None:
         label = QLabel(label_text)
@@ -13136,6 +13291,14 @@ class SettingsDialog(QDialog):
             wcs_sanity_check_enabled=self._wcs_sanity_check_enabled_input.isChecked(),
             wcs_sanity_approval_percent=self._wcs_sanity_approval_percent_input.value(),
             wcs_sanity_max_median_residual_arcsec=self._wcs_sanity_max_median_residual_arcsec_input.value(),
+            wcs_sanity_match_tolerance_arcsec=self._wcs_sanity_match_tolerance_arcsec_input.value(),
+            wcs_sanity_detection_sample_count=self._wcs_sanity_detection_sample_count_input.value(),
+            wcs_sanity_skip_brightest_detections=self._wcs_sanity_skip_brightest_detections_input.value(),
+            wcs_sanity_subtract_coherent_shift=self._wcs_sanity_subtract_coherent_shift_input.isChecked(),
+            wcs_sanity_soft_accept_enabled=self._wcs_sanity_soft_accept_enabled_input.isChecked(),
+            wcs_sanity_soft_approval_percent=self._wcs_sanity_soft_approval_percent_input.value(),
+            wcs_sanity_soft_max_median_residual_arcsec=self._wcs_sanity_soft_max_median_residual_arcsec_input.value(),
+            wcs_sanity_soft_max_coherent_shift_arcsec=self._wcs_sanity_soft_max_coherent_shift_arcsec_input.value(),
             wcs_sanity_gaia_min_magnitude=min(
                 self._wcs_sanity_gaia_min_magnitude_input.value(),
                 self._wcs_sanity_gaia_max_magnitude_input.value(),
@@ -13145,6 +13308,7 @@ class SettingsDialog(QDialog):
                 self._wcs_sanity_gaia_max_magnitude_input.value(),
             ),
             wcs_sanity_edge_margin_percent=self._wcs_sanity_edge_margin_percent_input.value(),
+            wcs_sanity_isolation_arcsec=self._wcs_sanity_isolation_arcsec_input.value(),
             wcs_sanity_ccvals_repair_enabled=self._wcs_sanity_ccvals_repair_enabled_input.isChecked(),
             shared_parallel_workers=self._shared_parallel_workers_input.value(),
             sky_atlas_custom_overlay_cache_max_long_edge=self._sky_atlas_custom_overlay_cache_max_long_edge_input.value(),
@@ -13173,8 +13337,13 @@ class SettingsDialog(QDialog):
             sky_explorer_scale_overlay_strokes=self._sky_explorer_scale_overlay_strokes_input.isChecked(),
             sky_explorer_marker_color_relation=str(self._sky_explorer_marker_color_relation_input.currentData() or "stroke_dark_fill_bright"),
             sky_explorer_text_color_relation=str(self._sky_explorer_text_color_relation_input.currentData() or "dark"),
+            sky_explorer_default_text_font_family=str(self._sky_explorer_default_text_font_family_input.currentFont().family() or "").strip(),
+            sky_explorer_default_text_font_style=str(self._sky_explorer_default_text_font_style_input.currentData() or "regular"),
+            sky_explorer_default_text_size=self._sky_explorer_default_text_size_input.value(),
             sky_explorer_fill_opacity=self._sky_explorer_fill_opacity_input.value(),
             sky_explorer_stroke_opacity=self._sky_explorer_stroke_opacity_input.value(),
+            sky_explorer_overlay_outline_color=self._sky_explorer_overlay_outline_color,
+            sky_explorer_overlay_outline_width=self._sky_explorer_overlay_outline_width_input.value(),
             sky_explorer_object_group_color_overrides=dict(self._sky_explorer_object_group_color_overrides),
             sky_explorer_enabled_layers=tuple(
                 layer_key
@@ -13284,8 +13453,8 @@ class SettingsDialog(QDialog):
             snr_binning_dataset_mode=str(self._snr_binning_dataset_mode_input.currentData() or "derived"),
             snr_binning_apply_to_selected_measurements_only=self._snr_binning_apply_to_selected_measurements_only_input.isChecked(),
             snr_binning_allow_periodless_fallback=self._snr_binning_allow_periodless_fallback_input.isChecked(),
-            comparison_fit_stop_match_index=self._comparison_fit_stop_match_index_input.value(),
-            comparison_fit_parallel_workers=self._comparison_fit_parallel_workers_input.value(),
+            comparison_fit_stop_match_index=float(self._settings.comparison_fit_stop_match_index),
+            comparison_fit_parallel_workers=int(self._settings.comparison_fit_parallel_workers),
             asteroid_search_parallel_workers=self._asteroid_search_parallel_workers_input.value(),
             asteroid_discovery_min_residual_snr=self._asteroid_discovery_min_residual_snr_input.value(),
             asteroid_discovery_max_residual_snr=self._asteroid_discovery_max_residual_snr_input.value(),
@@ -13313,10 +13482,10 @@ class SettingsDialog(QDialog):
             asteroid_discovery_synthetic_sweep_direction_focus_half_width_deg=self._asteroid_discovery_synthetic_sweep_direction_focus_half_width_deg_input.value(),
             asteroid_discovery_synthetic_sweep_min_stacked_snr=self._asteroid_discovery_synthetic_sweep_min_stacked_snr_input.value(),
             asteroid_discovery_synthetic_sweep_save_stacks=self._asteroid_discovery_synthetic_sweep_save_stacks_input.isChecked(),
-            comparison_fit_allow_multiple_targets=self._comparison_fit_allow_multiple_targets_input.isChecked(),
-            comparison_fit_eclipsing_binary_match_tolerance=self._comparison_fit_eclipsing_binary_match_tolerance_input.value(),
-            comparison_fit_fallback_candidate_pool_size=self._comparison_fit_fallback_candidate_pool_size_input.value(),
-            comparison_fit_fallback_magnitude_tolerance=self._comparison_fit_fallback_magnitude_tolerance_input.value(),
+            comparison_fit_allow_multiple_targets=bool(self._settings.comparison_fit_allow_multiple_targets),
+            comparison_fit_eclipsing_binary_match_tolerance=float(self._settings.comparison_fit_eclipsing_binary_match_tolerance),
+            comparison_fit_fallback_candidate_pool_size=int(self._settings.comparison_fit_fallback_candidate_pool_size),
+            comparison_fit_fallback_magnitude_tolerance=float(self._settings.comparison_fit_fallback_magnitude_tolerance),
             scientific_light_curve_pdf_dpi=self._scientific_light_curve_pdf_dpi_input.value(),
             scientific_light_curve_pdf_paper_size=str(self._scientific_light_curve_pdf_paper_size_input.currentData() or "Letter"),
             hr_max_sources=self._hr_max_sources_input.value(),
@@ -13496,6 +13665,19 @@ class SettingsDialog(QDialog):
         self._wcs_sanity_edge_margin_percent_input.setValue(float(defaults.wcs_sanity_edge_margin_percent))
         self._wcs_sanity_approval_percent_input.setValue(float(getattr(defaults, "wcs_sanity_approval_percent", 90.0)))
         self._wcs_sanity_max_median_residual_arcsec_input.setValue(float(defaults.wcs_sanity_max_median_residual_arcsec))
+        self._wcs_sanity_match_tolerance_arcsec_input.setValue(float(getattr(defaults, "wcs_sanity_match_tolerance_arcsec", 8.0)))
+        self._wcs_sanity_detection_sample_count_input.setValue(int(getattr(defaults, "wcs_sanity_detection_sample_count", 80)))
+        self._wcs_sanity_skip_brightest_detections_input.setValue(int(getattr(defaults, "wcs_sanity_skip_brightest_detections", 10)))
+        self._wcs_sanity_isolation_arcsec_input.setValue(float(getattr(defaults, "wcs_sanity_isolation_arcsec", 8.0)))
+        self._wcs_sanity_subtract_coherent_shift_input.setChecked(bool(getattr(defaults, "wcs_sanity_subtract_coherent_shift", True)))
+        self._wcs_sanity_soft_accept_enabled_input.setChecked(bool(getattr(defaults, "wcs_sanity_soft_accept_enabled", True)))
+        self._wcs_sanity_soft_approval_percent_input.setValue(float(getattr(defaults, "wcs_sanity_soft_approval_percent", 65.0)))
+        self._wcs_sanity_soft_max_median_residual_arcsec_input.setValue(
+            float(getattr(defaults, "wcs_sanity_soft_max_median_residual_arcsec", 5.0))
+        )
+        self._wcs_sanity_soft_max_coherent_shift_arcsec_input.setValue(
+            float(getattr(defaults, "wcs_sanity_soft_max_coherent_shift_arcsec", 6.0))
+        )
         self._wcs_sanity_gaia_min_magnitude_input.setValue(float(defaults.wcs_sanity_gaia_min_magnitude))
         self._wcs_sanity_gaia_max_magnitude_input.setValue(float(defaults.wcs_sanity_gaia_max_magnitude))
         self._wcs_sanity_ccvals_repair_enabled_input.setChecked(bool(defaults.wcs_sanity_ccvals_repair_enabled))
@@ -13520,8 +13702,6 @@ class SettingsDialog(QDialog):
         self._set_combo_data(self._snr_binning_dataset_mode_input, defaults.snr_binning_dataset_mode)
         self._snr_binning_apply_to_selected_measurements_only_input.setChecked(defaults.snr_binning_apply_to_selected_measurements_only)
         self._snr_binning_allow_periodless_fallback_input.setChecked(defaults.snr_binning_allow_periodless_fallback)
-        self._comparison_fit_stop_match_index_input.setValue(defaults.comparison_fit_stop_match_index)
-        self._comparison_fit_parallel_workers_input.setValue(max(0, defaults.comparison_fit_parallel_workers))
         self._sky_explorer_simbad_search_radius_arcsec_input.setValue(defaults.sky_explorer_simbad_search_radius_arcsec)
         self._sky_explorer_survey_field_ra_deg_input.setValue(float(defaults.sky_explorer_survey_field_ra_deg))
         self._sky_explorer_survey_field_dec_deg_input.setValue(float(defaults.sky_explorer_survey_field_dec_deg))
@@ -13565,8 +13745,18 @@ class SettingsDialog(QDialog):
         self._sky_explorer_scale_overlay_strokes_input.setChecked(bool(defaults.sky_explorer_scale_overlay_strokes))
         self._set_combo_data(self._sky_explorer_marker_color_relation_input, defaults.sky_explorer_marker_color_relation)
         self._set_combo_data(self._sky_explorer_text_color_relation_input, defaults.sky_explorer_text_color_relation)
+        default_text_font_family = str(getattr(defaults, "sky_explorer_default_text_font_family", "") or "").strip()
+        if default_text_font_family:
+            self._sky_explorer_default_text_font_family_input.setCurrentFont(QFont(default_text_font_family))
+        else:
+            self._sky_explorer_default_text_font_family_input.setCurrentFont(QFont(self.font()))
+        self._set_combo_data(self._sky_explorer_default_text_font_style_input, defaults.sky_explorer_default_text_font_style)
+        self._sky_explorer_default_text_size_input.setValue(float(defaults.sky_explorer_default_text_size))
         self._sky_explorer_fill_opacity_input.setValue(defaults.sky_explorer_fill_opacity)
         self._sky_explorer_stroke_opacity_input.setValue(defaults.sky_explorer_stroke_opacity)
+        self._sky_explorer_overlay_outline_color = str(defaults.sky_explorer_overlay_outline_color or "#111827").strip().lower() or "#111827"
+        self._sky_explorer_overlay_outline_width_input.setValue(float(defaults.sky_explorer_overlay_outline_width))
+        self._update_sky_explorer_overlay_outline_color_button()
         self._sky_explorer_object_group_color_overrides = dict(defaults.sky_explorer_object_group_color_overrides or {})
         for group_key in self._sky_explorer_object_group_color_buttons:
             self._update_sky_explorer_object_group_color_button(group_key)
@@ -13600,10 +13790,6 @@ class SettingsDialog(QDialog):
         self._asteroid_discovery_synthetic_sweep_direction_focus_half_width_deg_input.setValue(max(1.0, float(defaults.asteroid_discovery_synthetic_sweep_direction_focus_half_width_deg)))
         self._asteroid_discovery_synthetic_sweep_min_stacked_snr_input.setValue(max(0.5, float(defaults.asteroid_discovery_synthetic_sweep_min_stacked_snr)))
         self._asteroid_discovery_synthetic_sweep_save_stacks_input.setChecked(bool(defaults.asteroid_discovery_synthetic_sweep_save_stacks))
-        self._comparison_fit_allow_multiple_targets_input.setChecked(defaults.comparison_fit_allow_multiple_targets)
-        self._comparison_fit_eclipsing_binary_match_tolerance_input.setValue(defaults.comparison_fit_eclipsing_binary_match_tolerance)
-        self._comparison_fit_fallback_candidate_pool_size_input.setValue(max(0, defaults.comparison_fit_fallback_candidate_pool_size))
-        self._comparison_fit_fallback_magnitude_tolerance_input.setValue(defaults.comparison_fit_fallback_magnitude_tolerance)
         self._scientific_light_curve_pdf_dpi_input.setValue(max(72, int(defaults.scientific_light_curve_pdf_dpi)))
         default_paper_index = self._scientific_light_curve_pdf_paper_size_input.findData(defaults.scientific_light_curve_pdf_paper_size)
         self._scientific_light_curve_pdf_paper_size_input.setCurrentIndex(default_paper_index if default_paper_index >= 0 else 0)
@@ -13803,15 +13989,28 @@ class SettingsDialog(QDialog):
 
     def _update_wcs_sanity_inputs(self) -> None:
         enabled = self._wcs_sanity_check_enabled_input.isChecked()
+        soft_enabled = enabled and self._wcs_sanity_soft_accept_enabled_input.isChecked()
         for widget in (
             self._wcs_sanity_edge_margin_percent_input,
             self._wcs_sanity_approval_percent_input,
             self._wcs_sanity_max_median_residual_arcsec_input,
+            self._wcs_sanity_match_tolerance_arcsec_input,
+            self._wcs_sanity_detection_sample_count_input,
+            self._wcs_sanity_skip_brightest_detections_input,
+            self._wcs_sanity_isolation_arcsec_input,
+            self._wcs_sanity_subtract_coherent_shift_input,
+            self._wcs_sanity_soft_accept_enabled_input,
             self._wcs_sanity_gaia_min_magnitude_input,
             self._wcs_sanity_gaia_max_magnitude_input,
             self._wcs_sanity_ccvals_repair_enabled_input,
         ):
             widget.setEnabled(enabled)
+        for widget in (
+            self._wcs_sanity_soft_approval_percent_input,
+            self._wcs_sanity_soft_max_median_residual_arcsec_input,
+            self._wcs_sanity_soft_max_coherent_shift_arcsec_input,
+        ):
+            widget.setEnabled(soft_enabled)
 
     def _update_hr_plot_size_inputs(self) -> None:
         size_mode = str(self._hr_plot_marker_size_mode_input.currentData() or "scaled")
@@ -13889,6 +14088,20 @@ class SettingsDialog(QDialog):
         self._sky_explorer_mag_limit_text_stroke_color_button.setText(self._sky_explorer_mag_limit_text_stroke_color.upper())
         self._sky_explorer_mag_limit_text_stroke_color_button.setStyleSheet(
             f"background-color: {self._sky_explorer_mag_limit_text_stroke_color}; color: {text_color}; padding: 4px 8px;"
+        )
+
+    def _choose_sky_explorer_overlay_outline_color(self) -> None:
+        selected = QColorDialog.getColor(QColor(self._sky_explorer_overlay_outline_color), self, "Sky Explorer Stroke Outline Color")
+        if not selected.isValid():
+            return
+        self._sky_explorer_overlay_outline_color = selected.name(QColor.NameFormat.HexRgb).lower()
+        self._update_sky_explorer_overlay_outline_color_button()
+
+    def _update_sky_explorer_overlay_outline_color_button(self) -> None:
+        text_color = "#ffffff" if QColor(self._sky_explorer_overlay_outline_color).lightness() < 128 else "#1f1f1f"
+        self._sky_explorer_overlay_outline_color_button.setText(self._sky_explorer_overlay_outline_color.upper())
+        self._sky_explorer_overlay_outline_color_button.setStyleSheet(
+            f"background-color: {self._sky_explorer_overlay_outline_color}; color: {text_color}; padding: 4px 8px;"
         )
 
     def _update_sky_explorer_object_group_color_button(self, group_key: str) -> None:
@@ -14706,3 +14919,98 @@ class _AsteroidOverlayPreview(QWidget):
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
             title,
         )
+
+
+class UpdateAvailableDialog(QDialog):
+    """Wide update prompt with a scrollable What's new list."""
+
+    def __init__(
+        self,
+        *,
+        version: str,
+        notes: str = "",
+        download_size: int = 0,
+        package_kind: str = "full",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Update Available")
+        self.setObjectName("updateAvailableDialog")
+        self.setMinimumWidth(720)
+        self.resize(760, 560)
+
+        summary_label = QLabel(f"Citizen Astronomy {str(version).strip() or 'a newer version'} is available.")
+        summary_label.setWordWrap(True)
+        summary_font = summary_label.font()
+        summary_font.setBold(True)
+        summary_font.setPointSizeF(max(11.0, float(summary_font.pointSizeF() or 10.0) + 1.0))
+        summary_label.setFont(summary_font)
+
+        details_text = self._package_details_text(
+            download_size=int(download_size or 0),
+            package_kind=str(package_kind or "full"),
+        )
+        self._details_label = QLabel(details_text)
+        self._details_label.setWordWrap(True)
+        self._details_label.setVisible(bool(details_text))
+
+        notes_heading = QLabel("What's new")
+        notes_heading_font = notes_heading.font()
+        notes_heading_font.setBold(True)
+        notes_heading.setFont(notes_heading_font)
+
+        self._notes_view = QTextEdit(self)
+        self._notes_view.setObjectName("updateAvailableNotesView")
+        self._notes_view.setReadOnly(True)
+        self._notes_view.setAcceptRichText(True)
+        self._notes_view.setMinimumHeight(220)
+        self._set_notes_text(str(notes or "").strip())
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No,
+            parent=self,
+        )
+        download_button = buttons.button(QDialogButtonBox.StandardButton.Yes)
+        later_button = buttons.button(QDialogButtonBox.StandardButton.No)
+        download_button.setText("Download")
+        later_button.setText("Later")
+        download_button.setDefault(True)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 14)
+        layout.setSpacing(10)
+        layout.addWidget(summary_label)
+        layout.addWidget(self._details_label)
+        layout.addWidget(notes_heading)
+        layout.addWidget(self._notes_view, 1)
+        prompt_label = QLabel("Download this update now?")
+        prompt_label.setWordWrap(True)
+        layout.addWidget(prompt_label)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _package_details_text(*, download_size: int, package_kind: str) -> str:
+        normalized_kind = str(package_kind or "full").strip().lower()
+        package_label = "Delta update" if normalized_kind == "delta" else "Full update"
+        lines: list[str] = []
+        if download_size > 0:
+            lines.append(f"{package_label} download: {download_size / (1024 * 1024):.1f} MiB")
+        if normalized_kind == "delta":
+            lines.append(
+                "After the download, Citizen Astronomy rebuilds the full update package locally. "
+                "This might take a few minutes."
+            )
+        return "\n".join(lines)
+
+    def _set_notes_text(self, notes: str) -> None:
+        if not notes:
+            self._notes_view.setPlainText("No release notes were included with this update.")
+            return
+        set_markdown = getattr(self._notes_view, "setMarkdown", None)
+        if callable(set_markdown):
+            set_markdown(notes)
+            if str(self._notes_view.toPlainText() or "").strip():
+                return
+        self._notes_view.setPlainText(notes)

@@ -253,6 +253,8 @@ class ScannerTest(unittest.TestCase):
             (object_dir / "preview.jpg").write_bytes(b"fake-jpg")
             (object_dir / "preview.jpeg").write_bytes(b"fake-jpeg")
             (object_dir / "plate.png").write_bytes(b"fake-png")
+            (object_dir / "camera.cr3").write_bytes(b"fake-cr3")
+            (object_dir / "camera.nef").write_bytes(b"fake-nef")
             (object_dir / "notes.txt").write_text("ignore", encoding="utf-8")
 
             report = scan_fits_tree(root)
@@ -260,7 +262,7 @@ class ScannerTest(unittest.TestCase):
             self.assertEqual(len(report.object_summaries), 1)
             self.assertEqual(len(report.object_summaries[0].files), 1)
             self.assertEqual(report.object_summaries[0].files[0].path.name, "frame_001.fits")
-            self.assertEqual(report.excluded_unsuitable_image_counts, (("JPG", 2), ("PNG", 1)))
+            self.assertEqual(report.excluded_unsuitable_image_counts, (("JPG", 2), ("PNG", 1), ("RAW", 2)))
 
     def test_format_excluded_unsuitable_images_message(self) -> None:
         from photometry_app.core.scanner import format_excluded_unsuitable_images_message

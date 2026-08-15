@@ -38,6 +38,8 @@ survey/
 
 # Packaging build outputs
 packaging/dist/
+packaging/macos/*.icns
+packaging/macos/*.png
 
 # Benchmark result outputs (very large JSON files)
 benchmark_results/

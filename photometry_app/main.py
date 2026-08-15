@@ -15,7 +15,14 @@ from pathlib import Path
 
 
 
-from photometry_app.app_metadata import APP_DISPLAY_NAME, APP_USER_MODEL_ID, APP_VERSION, APP_WINDOW_TITLE_NAME, application_icon_path
+from photometry_app.app_metadata import (
+    APP_DISPLAY_NAME,
+    APP_USER_MODEL_ID,
+    APP_VERSION,
+    APP_WINDOW_TITLE_NAME,
+    application_icon_path,
+    managed_updates_supported,
+)
 
 
 
@@ -67,6 +74,9 @@ def _run_velopack_startup() -> None:
 
     """Handle Velopack install/update hooks before normal app startup."""
 
+    if not managed_updates_supported():
+        return
+
     from velopack import App
 
     # A package is downloaded only after explicit user consent. If the user
@@ -96,6 +106,16 @@ def _configure_qt_application_attributes() -> None:
     # Sky View uses QOpenGLWidget and the observer-location map uses
     # QWebEngineView; Qt requires shared GL contexts before QApplication exists.
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+
+
+def _install_astropy_pkgdata_fallback() -> None:
+    """Keep startup alive when optional Astropy/PyVO package data is missing."""
+
+    try:
+        from photometry_app.core.astropy_runtime import install_astropy_pkgdata_fallback
+    except Exception:
+        return
+    install_astropy_pkgdata_fallback()
 
 
 def _configure_qt_application_style(app) -> None:
@@ -211,13 +231,15 @@ def main() -> int:
 
         _configure_qt_application_attributes()
 
+        # Must run before importing discovery/catalogs/astroquery/pyvo: those
+        # packages can request optional Astropy data files during import.
+        _install_astropy_pkgdata_fallback()
+
         from PySide6.QtGui import QIcon
 
         from PySide6.QtWidgets import QApplication, QMessageBox
 
         from photometry_app.core.discovery import cleanup_stale_discovery_temp_cache
-
-
 
         from photometry_app.ui.main_window import MainWindow
 

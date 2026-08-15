@@ -67,6 +67,23 @@ class AnnotatedImageDisplayTest(unittest.TestCase):
 
         self.assertEqual(display.recommended_stretch_mode, "linear")
 
+    def test_build_annotated_image_display_recommends_linear_for_stretched_uint8_tiff(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "Cocoon_final1.tif"
+            image_path.write_text("placeholder", encoding="utf-8")
+            rgb_data = np.array(
+                [
+                    [[12, 24, 48], [96, 120, 144]],
+                    [[180, 192, 220], [240, 248, 255]],
+                ],
+                dtype=np.uint8,
+            )
+
+            with patch("photometry_app.core.plotting.read_image_data", return_value=rgb_data):
+                display = build_annotated_image_display(image_path)
+
+        self.assertEqual(display.recommended_stretch_mode, "linear")
+
     def test_build_annotated_image_display_recommends_stf_for_float_science_frame(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             image_path = Path(temp_dir) / "demo.fit"

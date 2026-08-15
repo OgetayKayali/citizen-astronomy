@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import colorsys
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -14,12 +15,14 @@ from astropy.table import Table
 from photometry_app.core.models import SolvedField
 from photometry_app.core.settings import AppSettings
 from photometry_app.core.solar_system import SolarSystemDetection, SolarSystemSearchResult
+
 from photometry_app.core.sky_explorer import (
     SkyExplorerCorner,
     SkyExplorerFieldFootprint,
     SkyExplorerLayerSummary,
     SkyExplorerObject,
     _catalog_designation_key,
+    _preferred_simbad_name,
     _expand_solved_field_for_survey_mosaic,
     _is_sky_explorer_survey_tile_wcs_canvas,
     _pixel_position_for_coordinates,
@@ -49,6 +52,13 @@ from photometry_app.core.sky_explorer import (
     sky_explorer_query_layers_for_object_types,
     sky_explorer_simbad_otype_codes_for_object_types,
     sky_explorer_supplement_catalogs_for_object_types,
+    sky_explorer_object_type_group_palette,
+    SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEYS,
+    sky_explorer_catalog_display_name,
+    sky_explorer_catalog_keys_for_object,
+    sky_explorer_object_type_definitions_for_mode,
+    _sky_explorer_hex_to_rgb,
+    _sky_explorer_object_type_colors,
 )
 
 
@@ -259,6 +269,245 @@ class SkyExplorerTest(unittest.TestCase):
         self.assertIn("hyperleda", galaxy_supplements)
         self.assertIn("ngc2000", galaxy_supplements)
         self.assertNotIn("hash_pn", galaxy_supplements)
+
+    def test_catalog_mode_definitions_list_common_catalogs(self) -> None:
+        titles = [definition.title for definition in sky_explorer_object_type_definitions_for_mode("catalog")]
+        for title in ("NGC", "IC", "LDN", "VdB", "LBN", "Messier", "Barnard", "Sharpless", "HASH PN"):
+            self.assertIn(title, titles)
+        self.assertTrue(all(definition.group_key == "catalog" for definition in sky_explorer_object_type_definitions_for_mode("catalog")))
+
+    def test_catalog_mode_simbad_queries_all_deep_sky_types(self) -> None:
+        catalog_codes = sky_explorer_simbad_otype_codes_for_object_types(("ngc", "ic"), layer_key="deep_sky")
+        all_deep_sky_codes = sky_explorer_simbad_otype_codes_for_object_types(None, layer_key="deep_sky")
+        self.assertEqual(catalog_codes, all_deep_sky_codes)
+        self.assertEqual(sky_explorer_simbad_otype_codes_for_object_types(("ngc",), layer_key="gaia_stars"), ())
+
+    def test_catalog_mode_supplements_follow_selected_catalogs(self) -> None:
+        ngc_supplements = sky_explorer_supplement_catalogs_for_object_types(("ngc",))
+        self.assertIn("ngc2000", ngc_supplements)
+        self.assertNotIn("hyperleda", ngc_supplements)
+        self.assertNotIn("vdb", ngc_supplements)
+
+        ldn_supplements = sky_explorer_supplement_catalogs_for_object_types(("ldn", "lbn"))
+        self.assertEqual(ldn_supplements, frozenset())
+
+        mixed_supplements = sky_explorer_supplement_catalogs_for_object_types(("vdb", "hash_pn"))
+        self.assertEqual(mixed_supplements, frozenset({"vdb", "hash_pn"}))
+
+    def test_catalog_keys_and_display_names_use_catalog_designations_only(self) -> None:
+        sky_object = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="simbad",
+            source_id="North America Nebula",
+            name="North America Nebula",
+            object_type="HII",
+            ra_deg=0.0,
+            dec_deg=0.0,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="North America",
+            metadata={
+                "main_id": "NAME North America Nebula",
+                "identifiers": "NAME North America Nebula|NGC 7000|LBN 392",
+            },
+        )
+
+        keys = set(sky_explorer_object_type_keys_for_object(sky_object))
+        self.assertIn("ngc", keys)
+        self.assertIn("lbn", keys)
+        self.assertIn("hii_region", keys)
+        self.assertEqual(sky_explorer_catalog_keys_for_object(sky_object), ("ngc", "lbn"))
+        self.assertEqual(sky_explorer_catalog_display_name(sky_object, preferred_keys=("ngc", "lbn")), "NGC 7000")
+        self.assertEqual(sky_explorer_catalog_display_name(sky_object, preferred_keys=("lbn", "ngc")), "NGC 7000")
+        self.assertEqual(sky_explorer_catalog_display_name(sky_object, preferred_keys=("lbn",)), "LBN 392")
+
+    def test_catalog_designations_include_ldn_vdb_and_hash(self) -> None:
+        self.assertEqual(_catalog_designation_key("LDN 123"), "LDN123")
+        self.assertEqual(_catalog_designation_key("LBN 392"), "LBN392")
+        self.assertEqual(_catalog_designation_key("VdB 139"), "VDB139")
+        self.assertEqual(_catalog_designation_key("HASH 6543"), "HASH6543")
+
+        barnard = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="barnard",
+            source_id="B 33",
+            name="B 33",
+            object_type="Dark Nebula",
+            ra_deg=0.0,
+            dec_deg=0.0,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="B 33",
+            metadata={"catalog_type": "DNe"},
+        )
+        self.assertIn("barnard", sky_explorer_catalog_keys_for_object(barnard))
+        self.assertEqual(sky_explorer_catalog_display_name(barnard, preferred_keys=("barnard",)), "B 33")
+
+    def test_hash_catalog_labels_use_usual_name_not_hash_number(self) -> None:
+        named = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="hash_pn",
+            source_id="HASH 501",
+            name="NGC 6853",
+            object_type="Planetary Nebula",
+            ra_deg=0.0,
+            dec_deg=0.0,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="NGC 6853",
+            metadata={"usual_name": "NGC 6853", "identifiers": "NGC 6853|HASH 501"},
+        )
+        png_only = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="hash_pn",
+            source_id="HASH 22331",
+            name="HASH 22331",
+            object_type="Planetary Nebula",
+            ra_deg=0.0,
+            dec_deg=0.0,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="HASH 22331",
+            metadata={"hash_png": "PN G175.0-46.0", "identifiers": "HASH 22331"},
+        )
+        number_only = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="hash_pn",
+            source_id="HASH 9",
+            name="HASH 9",
+            object_type="Planetary Nebula",
+            ra_deg=0.0,
+            dec_deg=0.0,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="HASH 9",
+            metadata={"identifiers": "HASH 9"},
+        )
+
+        self.assertEqual(sky_explorer_catalog_display_name(named, preferred_keys=("hash_pn",)), "NGC 6853")
+        self.assertEqual(sky_explorer_catalog_display_name(png_only, preferred_keys=("hash_pn",)), "PN G175.0-46.0")
+        self.assertEqual(sky_explorer_catalog_display_name(number_only, preferred_keys=("hash_pn",)), "HASH 9")
+        self.assertEqual(sky_explorer_catalog_display_name(named, preferred_keys=("ngc", "hash_pn")), "NGC 6853")
+
+    def test_ngc2000_catalog_field_does_not_invent_ngc_2000_designation(self) -> None:
+        sky_object = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="ngc2000",
+            source_id="IC 434",
+            name="IC 434",
+            object_type="Emission Nebula",
+            ra_deg=0.0,
+            dec_deg=0.0,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="IC 434",
+            metadata={"catalog_type": "EmO"},
+        )
+        self.assertEqual(sky_explorer_catalog_keys_for_object(sky_object), ("ic",))
+        self.assertEqual(sky_explorer_catalog_display_name(sky_object, preferred_keys=("ic", "ngc")), "IC 434")
+
+    def test_ic_cluster_members_are_not_index_catalogue_objects(self) -> None:
+        member = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="simbad",
+            source_id="IC 5146 1",
+            name="IC 5146 1",
+            object_type="Or*",
+            ra_deg=328.128,
+            dec_deg=47.235,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="IC 5146 1",
+            metadata={
+                "main_id": "IC 5146 1",
+                "identifiers": "IC 5146 1|Cl* IC 5146 W V1|[GMM2009] IC5146 11",
+            },
+        )
+        yso = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="simbad",
+            source_id="[GMM2009] IC5146 1",
+            name="[GMM2009] IC5146 1",
+            object_type="Y*O",
+            ra_deg=328.060,
+            dec_deg=47.248,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="IC5146 1",
+            metadata={
+                "main_id": "[GMM2009] IC5146 1",
+                "identifiers": "[GMM2009] IC5146 1|2MASS J21521434+4714546",
+            },
+        )
+        cocoon = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="simbad",
+            source_id="IC 5146",
+            name="IC 5146",
+            object_type="OpC",
+            ra_deg=328.372,
+            dec_deg=47.246,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=7.2,
+            angular_distance_arcmin=0.0,
+            short_label="IC 5146",
+            metadata={
+                "main_id": "IC 5146",
+                "identifiers": "IC 5146|LBN 424|NAME Cocoon Nebula|Sh 2-125",
+            },
+        )
+
+        self.assertEqual(sky_explorer_catalog_keys_for_object(member), ())
+        self.assertEqual(sky_explorer_catalog_keys_for_object(yso), ())
+        self.assertIn("ic", sky_explorer_catalog_keys_for_object(cocoon))
+        self.assertIn("lbn", sky_explorer_catalog_keys_for_object(cocoon))
+        self.assertEqual(sky_explorer_catalog_display_name(cocoon, preferred_keys=("ic",)), "IC 5146")
+        self.assertNotEqual(_catalog_designation_key("IC 5146 1"), "IC1")
+        self.assertIsNone(_catalog_designation_key("IC 5146 1"))
+        self.assertEqual(_catalog_designation_key("IC 5146"), "IC5146")
+
+    def test_rab2011_ic_cores_are_not_index_catalogue_objects(self) -> None:
+        self.assertIsNone(_catalog_designation_key("[RAB2011] IC1"))
+        self.assertIsNone(_catalog_designation_key("[RAB2011] IC10"))
+        self.assertEqual(_catalog_designation_key("IC 5146"), "IC5146")
+        self.assertEqual(_preferred_simbad_name("[RAB2011] IC1", "[RAB2011] IC1", object_type="smm"), "[RAB2011] IC1")
+
+        core = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="simbad",
+            source_id="[RAB2011] IC1",
+            name="IC 1",
+            object_type="smm",
+            ra_deg=326.497,
+            dec_deg=47.303,
+            pixel_x=0.0,
+            pixel_y=0.0,
+            magnitude=None,
+            angular_distance_arcmin=0.0,
+            short_label="IC 1",
+            metadata={
+                "main_id": "[RAB2011] IC1",
+                "identifiers": "[RAB2011] IC1|[RAB2011] IC 1",
+            },
+        )
+        self.assertEqual(sky_explorer_catalog_keys_for_object(core), ())
 
     def test_merge_sky_explorer_results_keeps_existing_and_adds_new(self) -> None:
         solved_field = SolvedField(
@@ -715,6 +964,8 @@ class SkyExplorerTest(unittest.TestCase):
         self.assertEqual(sky_object.catalog, "hash_pn")
         self.assertEqual(sky_object.source_id, "HASH 501")
         self.assertEqual(sky_object.name, "NGC 6853")
+        self.assertEqual(sky_object.metadata["usual_name"], "NGC 6853")
+        self.assertEqual(sky_explorer_catalog_display_name(sky_object, preferred_keys=("hash_pn",)), "NGC 6853")
         self.assertEqual(sky_object.object_type, "Planetary Nebula")
         self.assertEqual(sky_explorer_object_type_key_for_object(sky_object), "planetary_nebula")
         self.assertAlmostEqual(float(sky_object.metadata["catalog_major_axis_arcmin"]), 475.0 / 60.0)
@@ -777,6 +1028,7 @@ class SkyExplorerTest(unittest.TestCase):
         self.assertIsNotNone(sky_object)
         assert sky_object is not None
         self.assertEqual(sky_object.name, "Fr 2-2")
+        self.assertEqual(sky_explorer_catalog_display_name(sky_object, preferred_keys=("hash_pn",)), "Fr 2-2")
         self.assertEqual(sky_object.object_type, "HII Region")
         self.assertEqual(sky_explorer_object_type_key_for_object(sky_object), "hii_region")
         self.assertEqual(sky_object.metadata["hash_pn_status"], "HII")
@@ -811,6 +1063,7 @@ class SkyExplorerTest(unittest.TestCase):
         self.assertIsNotNone(sky_object)
         assert sky_object is not None
         self.assertEqual(sky_object.name, "PN G175.0-46.0")
+        self.assertEqual(sky_explorer_catalog_display_name(sky_object, preferred_keys=("hash_pn",)), "PN G175.0-46.0")
         self.assertEqual(sky_object.object_type, "Planetary Nebula")
         self.assertEqual(sky_object.metadata["hash_pn_status_label"], "New candidate")
 
@@ -1478,7 +1731,8 @@ class SkyExplorerTest(unittest.TestCase):
         self.assertGreater(len(deep_sky_query_radii), 1)
         self.assertTrue(all(radius_deg <= 0.34 for radius_deg in deep_sky_query_radii))
         self.assertTrue(any(row_limit <= 300 and "V" in fields and "B" in fields for row_limit, fields in requested_fields))
-        self.assertTrue(any(row_limit > 300 and "dim" in fields and "ra(d)" in fields and "dec(d)" in fields for row_limit, fields in requested_fields))
+        self.assertTrue(any(row_limit > 300 and "dim" in fields and "ra" in fields and "dec" in fields for row_limit, fields in requested_fields))
+        self.assertFalse(any("ra(d)" in fields or "dec(d)" in fields for _row_limit, fields in requested_fields))
         self.assertFalse(any(row_limit > 300 and ("V" in fields or "B" in fields) for row_limit, fields in requested_fields))
         object_names = {item.name for item in objects}
         self.assertIn("HD 123", object_names)
@@ -2673,4 +2927,57 @@ class SkyExplorerSurveyMosaicExploreTest(unittest.TestCase):
         )
         rejected = _pixel_position_for_coordinates(270.08, -23.0, solved_field=plate, wcs=wcs)
         self.assertIsNone(rejected)
+
+
+class SkyExplorerObjectTypeColorTest(unittest.TestCase):
+    def test_nebula_group_palette_is_amber_not_ha_red(self) -> None:
+        hue, saturation, _value = sky_explorer_object_type_group_palette("nebula")
+        self.assertGreaterEqual(hue, 0.07)
+        self.assertLessEqual(hue, 0.14)
+        self.assertGreaterEqual(saturation, 0.6)
+
+    def test_named_and_scientific_nebulae_stay_in_amber_family(self) -> None:
+        nebula_keys = (
+            "emission_nebula",
+            "reflection_nebula",
+            "dark_nebula",
+            "nebula",
+            "planetary_nebula",
+            "hii_region",
+            "gne",
+            "emo",
+            "hii",
+            "pn",
+        )
+        for key in nebula_keys:
+            _stroke, fill = _sky_explorer_object_type_colors(key, "nebula")
+            parsed = _sky_explorer_hex_to_rgb(fill)
+            self.assertIsNotNone(parsed)
+            assert parsed is not None
+            hue, _saturation, _value = colorsys.rgb_to_hsv(*parsed)
+            self.assertGreaterEqual(hue, 0.05, key)
+            self.assertLessEqual(hue, 0.18, key)
+
+    def test_cluster_and_nebula_palettes_are_separated(self) -> None:
+        nebula_hue = sky_explorer_object_type_group_palette("nebula")[0]
+        cluster_hue = sky_explorer_object_type_group_palette("cluster")[0]
+        self.assertGreater(min(abs(cluster_hue - nebula_hue), 1.0 - abs(cluster_hue - nebula_hue)), 0.3)
+
+    def test_catalog_palette_is_light_white_yellow_orange(self) -> None:
+        hue, saturation, value = sky_explorer_object_type_group_palette("catalog")
+        self.assertGreaterEqual(hue, 0.06)
+        self.assertLessEqual(hue, 0.14)
+        self.assertLessEqual(saturation, 0.40)
+        self.assertGreaterEqual(value, 0.94)
+
+        for key in SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEYS:
+            _stroke, fill = _sky_explorer_object_type_colors(key, "catalog")
+            parsed = _sky_explorer_hex_to_rgb(fill)
+            self.assertIsNotNone(parsed)
+            assert parsed is not None
+            fill_hue, fill_saturation, fill_value = colorsys.rgb_to_hsv(*parsed)
+            self.assertGreaterEqual(fill_hue, 0.04, key)
+            self.assertLessEqual(fill_hue, 0.16, key)
+            self.assertLessEqual(fill_saturation, 0.70, key)
+            self.assertGreaterEqual(fill_value, 0.90, key)
 

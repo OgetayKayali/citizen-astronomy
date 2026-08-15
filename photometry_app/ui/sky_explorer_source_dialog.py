@@ -51,7 +51,7 @@ class SkyExplorerSourceDialog(QDialog):
         layout.addWidget(intro_label)
 
         self._upload_radio = QRadioButton("Upload image", self)
-        self._upload_radio.setToolTip("Choose a local FITS, XISF, TIFF, PNG, or JPEG image.")
+        self._upload_radio.setToolTip("Choose a local FITS, XISF, TIFF, PNG, JPEG, or camera RAW image.")
         self._survey_radio = QRadioButton("Sky survey", self)
         self._survey_radio.setToolTip("Load a WCS-aligned public survey cutout.")
         self._mode_group = QButtonGroup(self)

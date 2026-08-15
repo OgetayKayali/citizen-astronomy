@@ -1,0 +1,15 @@
+Citizen Astronomy (CAst) — Unsigned macOS alpha build
+
+This build is not signed or notarized by Apple.
+
+First launch on macOS:
+1. Unzip the archive.
+2. Drag "Citizen Astronomy.app" to Applications (optional).
+3. Right-click the app → Open → Open.
+   Double-click alone may be blocked by Gatekeeper.
+
+This package does not include Windows Velopack auto-update.
+Download a newer macOS zip when one is published.
+
+Science features still need network access for catalogs and optional
+astrometry.net plate solving.

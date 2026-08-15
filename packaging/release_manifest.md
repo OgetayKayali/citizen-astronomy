@@ -7,6 +7,7 @@ Private alpha-review packaging audit. Reviewers must not need Python, pip, Qt, a
 - **PyInstaller one-folder bundle:** `CitizenAstronomyAlphaReview/` produced by `CitizenAstronomyAlphaReview.spec`
 - **Velopack input:** the tested one-folder bundle; Velopack produces signed Setup, full recovery package, alpha feed, and binary delta
 - **Legacy input:** Inno Setup wraps the first Velopack Setup only for migration from pre-Velopack builds
+- **Unsigned macOS alpha:** `Citizen Astronomy.app` + zip from `CitizenAstronomyMacUnsigned.spec` / `packaging/build_macos_unsigned.sh` (no Apple signing/notarization; no Velopack)
 
 ## Runtime Python dependencies
 
@@ -17,6 +18,7 @@ Private alpha-review packaging audit. Reviewers must not need Python, pip, Qt, a
 | `zstandard` | imported by `xisf.py` | XISF decompression | `collect_all('zstandard')`, hook hiddenimports |
 | `astropy` | direct | FITS/WCS/time | PyInstaller transitive analysis |
 | `Pillow` | direct | TIFF/PNG/JPEG via `image_io` | transitive |
+| `rawpy` | `try/except ImportError` in `photometry_app/core/image_io.py` | DSLR/mirrorless RAW via LibRaw | `hiddenimports`, `packaging/hooks/hook-rawpy.py`, `collect_all('rawpy')`, `copy_metadata('rawpy')` |
 | `PySide6` | direct | UI, Qt image plugins | PySide6 hook + `plugins/imageformats` |
 | `astroquery.vizier` | direct | catalog queries | `hiddenimports` |
 | `astroquery.simbad` | direct | object metadata | `hiddenimports` + `query_criteria_fields.json` data |
@@ -50,6 +52,7 @@ Private alpha-review packaging audit. Reviewers must not need Python, pip, Qt, a
 | FITS | `image_io.py` + `astropy.io.fits` | `.fits`, `.fit` | `packaging/fixtures/smoke_tiny.fits` |
 | XISF | `image_io.py` + `xisf.XISF` | `.xisf` | `packaging/fixtures/smoke_tiny.xisf` |
 | TIFF/PNG/JPEG | `image_io.py` + `PIL.Image` | `.tif`, `.tiff`, `.png`, `.jpg`, `.jpeg` | Qt + PIL paths |
+| Camera RAW | `image_io.py` + `rawpy` | `.dng`, `.cr2`, `.cr3`, `.nef`, `.arw`, `.orf`, `.rw2`, `.raf`, `.pef`, … | LibRaw demosaic where JPEG is accepted |
 | Qt tile decode | `qt_image_formats.py`, `qt_image_format_smoke.py` | TIFF-LZW, PNG, WebP tiles | embedded TIFF-LZW sample + fixture files |
 | GIF/MP4 export | `animation_export.py` | export only | not part of alpha startup smoke |
 

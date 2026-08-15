@@ -9,11 +9,11 @@ Every deep image is denser than it looks. Behind the obvious bright star or the 
 ### What you can do with this mode
 
 - **Identify what is in your field.** Deep-sky objects, stars, variables, exoplanet hosts, Gaia sources, and known solar-system bodies are matched to your WCS footprint and drawn on the image.
-- **Choose how deep the census goes.** Cycle object-type modes from **Simple** (six common deep-sky classes) through **Advanced** to **Scientific** (SIMBAD-style type codes).
+- **Choose how deep the census goes.** Cycle object-type modes from **Simple** (six common deep-sky classes) through **Advanced** and **Scientific** (SIMBAD-style type codes) to **Catalog** (NGC, IC, LDN, VdB, LBN, and similar, labeled with catalog names only).
 - **Compare with survey imaging.** Overlay DSS2 Blue, SHS Hα, PanSTARRS, or IPHAS Hα cutouts with an interactive divider so you can compare your frame to public survey data.
 - **Annotate by hand.** Draw circles, ellipses, rulers, and text labels; edit stroke, fill, weight, opacity, and fonts; keep automatic catalog overlays on or off.
 - **Probe magnitude reach.** Use **Tools → Estimate magnitude limit...** to mark a Gaia magnitude ladder or estimate the actual detection limit from SNR probing.
-- **Export the view.** Save still images of the annotated field, GIF/MP4 comparison animations when a survey layer is loaded, or **Tools → Create collage** for catalog objects that have usable angular-size metadata.
+- **Export the view.** Save still images of the annotated field at the original image resolution, with overlay text and strokes sized to match the on-screen view (not a window screenshot), GIF/MP4 comparison animations when a survey layer is loaded, or **Tools → Create collage** for catalog objects that have usable angular-size metadata.
 
 ### Why this matters
 
@@ -29,7 +29,7 @@ Enter **Sky Explorer** from the mode launcher or the mode menu.
 
 Click **Open** (or use `File > Open File`) to choose how to start:
 
-- **Upload image** opens the usual file picker for a FITS, XISF, TIFF, PNG, or JPEG source image.
+- **Upload image** opens the usual file picker for a FITS, XISF, TIFF, PNG, JPEG, or camera RAW source image.
 - **Sky survey** downloads a survey field as the primary image using the initial RA, Dec, FOV, and pixel size from **Settings → Sky Explorer** (default center: Trifid Nebula / M20). The center tile loads as a low-res preview, then its detail refine starts before surrounding tiles; neighbors follow with the same preview→detail pattern. Each tile keeps its own stretch, so brightness does not jump when neighbors arrive. Loaded tiles stay available when you pan away and return; empty survey coverage shows a hatched “No survey coverage” tile instead of a black square. Panning stays responsive because network and stretch work run off the UI thread. **Explore** catalogs the full visible mosaic (not only the center cell), and markers are not clipped at tile edges. **Comparison** stays available so you can wipe against another survey (or swap in an uploaded image); the wipe bar spans the full view, and a comparison survey loads with the same center-first tiled path as the primary field.
 
 Supported upload formats:
@@ -39,6 +39,7 @@ Supported upload formats:
 - `.tif` / `.tiff`
 - `.png`
 - `.jpg` / `.jpeg`
+- camera RAW (for example `.dng`, `.cr2` / `.cr3`, `.nef`, `.arw`, `.orf`, `.rw2`, `.raf`, `.pef`)
 
 The image preview loads into the panel. The primary button switches from **Open** to **Explore**. After a successful Explore, selecting additional object types changes that button to **Update** so only the newly enabled layers are queried.
 
@@ -55,12 +56,13 @@ Cycle the mode button through:
 | **Simple** | Six common deep-sky classes: Emission Nebula, Reflection Nebula, Dark Nebula, Galaxy, Open Cluster, Globular Cluster |
 | **Advanced** | Broader human-readable classes (planetary nebulae, SNRs, AGN, stars, variables, asteroids, and more) |
 | **Scientific** | Exact SIMBAD-style object-type codes plus extras such as Gaia Star, VSX Variable, Exoplanet Host, Asteroid/Comet |
+| **Catalog** | Named catalogues only: NGC, IC, LDN, VdB, LBN, Messier, Barnard, Sharpless, and HASH PN. Results and overlays use catalog designations (for example `NGC 7000`), not common names. HASH PN is the exception: it uses the usual name from HASH, not the HASH number |
 
-Help text under Simple mode: *Simple mode keeps the six common deep-sky classes visible. Switch to Advanced for broader classes or Scientific for exact SIMBAD-style codes.*
+Help text under Simple mode: *Simple mode keeps the six common deep-sky classes visible.* Catalog mode: *Catalog mode shows only objects from the selected catalogs, labeled with catalog names.*
 
 Use **Select All** / **Unselect All** to toggle rows quickly. Open the **Filter** menu and optionally enable **Hide Objects Without Magnitude** to drop catalog hits that lack a usable magnitude.
 
-Click a stroke/fill/text cell to customize how that type is drawn. Per-type colors and fonts are remembered with your layout.
+Click a stroke/fill/text cell to customize how that type is drawn. Those three colors are independent of each other; use **Settings → Sky Explorer → Visuals** to retint a whole group or flip the generated stroke/fill/text relation. Per-type colors and fonts are remembered with your layout. Default nebula colors are amber/gold so labels stay visible against H-alpha red.
 
 ### Step 3: Explore
 
@@ -162,7 +164,8 @@ Placeholders appear until you have explored or selected something.
 
 The **Display** menu controls how your source image (including survey-field tiles) is stretched for viewing:
 
-- **STF** (default; darker midtones so bright nebulosity keeps structure)
+- **None** (no display stretch; used automatically for already-stretched uploads such as JPEG/8-bit TIFF/PNG finals)
+- **STF** (default for linear science frames; darker midtones so bright nebulosity keeps structure)
 - **STF Bright** (stronger lift for faint fields)
 - **Asinh**
 - **Sqrt**
@@ -190,9 +193,14 @@ Marker colors, stroke, text, and sizes remain configurable in Settings. **Tools 
 
 While Mag Limit markers are active, Explore includes Gaia even if the Gaia Star type row is unchecked, so the ladder has data to draw.
 
-### Auto overlays
+### Auto / Manual
 
-**Auto** toggles automatic catalog annotations on the image. Turn it off when you want a clean frame for manual drawing or export.
+**Auto** / **Manual** is a mode switch (fixed-width, same width as **Export**). Click **Auto** to enter **Manual**. Catalog overlays already on the image stay visible.
+
+- **Auto** — catalog annotations from Explore
+- **Manual** — keep those overlays, draw new marks, and delete unwanted automatic annotations
+
+In Manual mode, right-click a selected catalog object on the image or in Source Results and choose **Delete**.
 
 ### Manual annotations
 
@@ -204,7 +212,7 @@ Toolbar tools (icon buttons):
 - **Ruler** — drag between two points; shows pixel distance, or angular distance (arcsec / arcmin / degrees) when WCS is available, with units chosen automatically by magnitude
 - **Text**
 
-The **Properties** strip edits **Stroke**, **Fill**, **Text**, **Weight**, and **Opacity** (opacity can be adjusted by dragging). Text styles include Regular, Bold, Italic, and Bold Italic.
+The **Properties** strip edits **Stroke**, **Fill**, **Text**, **Weight**, and **Opacity** (opacity can be adjusted by dragging, and is available for text as well as shapes). After you draw a mark, those edits update that last mark until you switch tools. Clicking a mark again (for example switching back to Circle and selecting the circle) makes further edits apply to that selected mark. Text styles include Regular, Bold, Italic, and Bold Italic.
 
 Right-click the image for:
 
@@ -212,7 +220,8 @@ Right-click the image for:
 |------|------|
 | **Search** | Open a SIMBAD coordinate search in the browser at the click position (uses **Search Radius**) |
 | **Detect** | Run a SIMBAD cone search at the click and merge detections into results/overlays |
-| **Edit Annotation** / **Delete Annotation** | Modify or remove a manual mark |
+| **Edit Annotation** / **Delete Annotation** | Modify or remove a hand-drawn mark |
+| **Delete** | In Manual mode, remove the selected automatic catalog annotation (image or Source Results) |
 | **Clear Manual Annotations** | Remove hand-drawn marks |
 | **Clear Detections** | Remove Detect hits |
 
@@ -290,10 +299,12 @@ Intro text in the dialog: *Sky Explorer settings control the initial Open → Sk
 | Mag Limit marker / text colors and sizes | Appearance of Mag Limit annotations |
 | **Extended Nebula Scale** | Enlarge nebula overlays for visibility |
 | **Scale Stroke Width** | Thicken outlines on large objects |
-| **Marker Color Relation** | Fill bright / stroke dark (or the inverse) |
-| **Text Color Relation** | Dark or bright default labels |
+| **Marker Color Relation** | Generated fill bright / stroke dark (or the inverse). Does not rewrite a type you already customized. |
+| **Text Color Relation** | Dark or bright generated labels. Per-type text edits stay independent of stroke/fill. |
+| **Default Label Font** / **Style** / **Size** | Default family, Regular/Bold/Italic/Bold Italic, and point size for every object-type category. Per-type Text edits in the type table still override this default. |
 | **Fill Opacity** / **Stroke Opacity** | Automatic marker transparency |
-| **Object Group Colors** | Base hues per result group |
+| **Stroke Outline** / **Stroke Outline Width** | Dark halo around marker strokes so colored outlines stay visible. Set width to 0 to turn it off |
+| **Object Group Colors** | Base hues per result group. Nebulae / ISM defaults to amber/gold so markers contrast with H-alpha. |
 
 Also persisted automatically: splitter sizes, column widths, and per-type style overrides from the type table.
 
@@ -326,7 +337,7 @@ Results and plate-solves are cached under Sky Explorer catalog / WCS directories
 2. Start in **Simple** mode with the six deep-sky types selected; click **Explore**.
 3. Collapse groups you do not need; click interesting rows and use **Center Object**.
 4. Switch to **Advanced** or **Scientific** and re-Explore if you need stars, variables, AGN, or SSO.
-5. Use **Tools → Estimate magnitude limit...** to judge depth; toggle **Auto** off if overlays clutter a presentation frame.
+5. Use **Tools → Estimate magnitude limit...** to judge depth; switch to **Manual** and delete individual catalog marks if overlays clutter a presentation frame.
 6. Click **Comparison** to load **DSS2 Blue**, an H-alpha survey, or a second uploaded image, then scrub the divider for a before/after comparison.
 7. Add a few manual labels for teaching slides; **Export → Image...** or **Animation...**. Use **Tools → Create collage** when you want a multi-object size-aware figure of galaxies/nebulae from the same frame.
 

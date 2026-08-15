@@ -7966,3 +7966,121 @@ class UpdateDownloadWorker(QThread):
 
         self.update_download_completed.emit(downloaded_update)
 
+
+
+@dataclass(slots=True)
+class ScanCompSetEvaluation:
+    comparison_source_ids: tuple[str, ...]
+    comparison_source_names: tuple[str, ...]
+    target_measurements: list[PhotometryMeasurement]
+    series: LightCurveSeries | None
+    valid_point_count: int
+    excluded_point_count: int
+
+
+@dataclass(slots=True)
+class ScanCompsBatchResult:
+    report_token: int
+    target_source_id: str
+    target_source_name: str
+    filter_name: str
+    total_combination_count: int
+    evaluated_combination_count: int
+    results: list[ScanCompSetEvaluation]
+    cancelled: bool = False
+
+
+class ScanCompsWorker(QThread):
+    set_ready = Signal(object)
+    batch_completed = Signal(object)
+    batch_failed = Signal(str)
+    progress_updated = Signal(str)
+
+    def __init__(
+        self,
+        report_token: int,
+        target_source_id: str,
+        target_source_name: str,
+        filter_name: str,
+        target_measurements: list[PhotometryMeasurement],
+        reference_measurements: list[PhotometryMeasurement],
+        comparison_groups: list[tuple[str, ...]],
+        y_axis_mode: str = "differential_magnitude",
+        parent: object | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._report_token = report_token
+        self._target_source_id = target_source_id
+        self._target_source_name = target_source_name
+        self._filter_name = filter_name
+        self._target_measurements = list(target_measurements)
+        self._reference_measurements = list(reference_measurements)
+        self._comparison_groups = list(comparison_groups)
+        self._y_axis_mode = y_axis_mode
+        self._cancel_requested = Event()
+
+    def request_cancel(self) -> None:
+        self._cancel_requested.set()
+
+    def cancellation_requested(self) -> bool:
+        return self._cancel_requested.is_set()
+
+    def run(self) -> None:
+        try:
+            name_lookup = _comparison_source_names_by_id(self._reference_measurements)
+            results: list[ScanCompSetEvaluation] = []
+            total = len(self._comparison_groups)
+            for index, comparison_group in enumerate(self._comparison_groups, start=1):
+                if self._cancel_requested.is_set():
+                    self.batch_completed.emit(
+                        ScanCompsBatchResult(
+                            report_token=self._report_token,
+                            target_source_id=self._target_source_id,
+                            target_source_name=self._target_source_name,
+                            filter_name=self._filter_name,
+                            total_combination_count=total,
+                            evaluated_combination_count=len(results),
+                            results=results,
+                            cancelled=True,
+                        )
+                    )
+                    return
+                comparison_names = tuple(name_lookup.get(source_id, source_id) for source_id in comparison_group)
+                label = ", ".join(comparison_names)
+                self.progress_updated.emit(
+                    f"Scan Comps: evaluating set {index}/{total} ({label}) for {self._target_source_name} [{self._filter_name}]."
+                )
+                updated_targets, series, _period, diagnostics = _evaluate_comparison_source_group_core(
+                    self._target_measurements,
+                    self._reference_measurements,
+                    comparison_group,
+                    fit_config=None,
+                    y_axis_mode=self._y_axis_mode,
+                    period_method="lomb_scargle",
+                    period_convention="standard",
+                    calculate_period=False,
+                )
+                evaluation = ScanCompSetEvaluation(
+                    comparison_source_ids=tuple(comparison_group),
+                    comparison_source_names=comparison_names,
+                    target_measurements=updated_targets,
+                    series=series,
+                    valid_point_count=int(diagnostics.usable_target_row_count),
+                    excluded_point_count=int(diagnostics.excluded_target_row_count),
+                )
+                results.append(evaluation)
+                self.set_ready.emit(evaluation)
+            self.batch_completed.emit(
+                ScanCompsBatchResult(
+                    report_token=self._report_token,
+                    target_source_id=self._target_source_id,
+                    target_source_name=self._target_source_name,
+                    filter_name=self._filter_name,
+                    total_combination_count=total,
+                    evaluated_combination_count=len(results),
+                    results=results,
+                    cancelled=False,
+                )
+            )
+        except Exception as exc:
+            self.batch_failed.emit(str(exc))

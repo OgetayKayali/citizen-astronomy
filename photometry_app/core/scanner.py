@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 import re
 
-from photometry_app.core.image_io import is_supported_image_path, read_header_and_shape
+from photometry_app.core.image_io import (
+    RAW_CAMERA_IMAGE_SUFFIXES,
+    is_supported_image_path,
+    read_header_and_shape,
+)
 from photometry_app.core.models import FileScanResult, ObjectScanSummary, ObservationMetadata, ScanReport, WcsStatus
 from photometry_app.core.wcs import validate_wcs
 
@@ -19,11 +23,12 @@ DATE_FORMATS = (
 _MIN_UTC_DATETIME = datetime.min.replace(tzinfo=UTC)
 
 SUPPORTED_FITS_SUFFIXES = {".fit", ".fits", ".xisf"}
-DIFFERENTIAL_PHOTOMETRY_EXCLUDED_SUFFIXES = {".png", ".jpg", ".jpeg"}
+DIFFERENTIAL_PHOTOMETRY_EXCLUDED_SUFFIXES = {".png", ".jpg", ".jpeg"} | set(RAW_CAMERA_IMAGE_SUFFIXES)
 _EXCLUDED_IMAGE_TYPE_LABELS = {
     ".png": "PNG",
     ".jpg": "JPG",
     ".jpeg": "JPG",
+    **{suffix: "RAW" for suffix in RAW_CAMERA_IMAGE_SUFFIXES},
 }
 
 FILENAME_METADATA_PATTERN = re.compile(
@@ -51,7 +56,7 @@ def differential_photometry_excluded_type_label(path: Path) -> str | None:
 
 
 def format_excluded_unsuitable_images_message(counts: tuple[tuple[str, int], ...] | dict[str, int]) -> str | None:
-    """Build the user-facing exclusion notice for JPG/PNG files skipped by DP."""
+    """Build the user-facing exclusion notice for JPG/PNG/RAW files skipped by DP."""
 
     if isinstance(counts, dict):
         items = tuple(sorted((str(label), int(count)) for label, count in counts.items() if int(count) > 0))

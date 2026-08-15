@@ -156,7 +156,136 @@ class WcsSanityTest(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertEqual(result.approved_bin, (5.0, 10.0))
         self.assertTrue(any("G=5-10" in line and "approved" in line for line in progress))
+        self.assertTrue(any("detection→Gaia" in line for line in progress))
         self.assertTrue(any("central 75%" in line for line in progress))
+
+    def test_evaluate_wcs_sanity_passes_when_gaia_outnumbers_detections(self) -> None:
+        """Correct WCS must pass even if a dense Gaia bin dwarfs the detection sample."""
+        width = height = 400
+        wcs = _tan_wcs(width, height, scale_arcsec=1.2)
+        header = wcs.to_header(relax=True)
+        detected = []
+        gaia = []
+        for index in range(20):
+            x_value = 90 + (index % 5) * 40
+            y_value = 100 + (index // 5) * 40
+            world = wcs.pixel_to_world(x_value, y_value)
+            detected.append(_DetectedSource(x=float(x_value), y=float(y_value), peak=3000 - index))
+            gaia.append(
+                _catalog_star(
+                    f"det-{index}",
+                    float(world.ra.deg),
+                    float(world.dec.deg),
+                    11.0 + index * 0.02,
+                )
+            )
+        # Extra Gaia stars with no corresponding detection must not tank approval.
+        for index in range(200):
+            x_value = 95 + (index % 10) * 18
+            y_value = 105 + (index // 10) * 12
+            world = wcs.pixel_to_world(x_value, y_value)
+            gaia.append(
+                _catalog_star(
+                    f"extra-{index}",
+                    float(world.ra.deg),
+                    float(world.dec.deg),
+                    12.0 + (index % 20) * 0.05,
+                )
+            )
+        solved_field = SolvedField(
+            center_ra_deg=180.0,
+            center_dec_deg=10.0,
+            radius_deg=0.2,
+            width=width,
+            height=height,
+            wcs_path=Path("dummy.fits"),
+        )
+        with (
+            patch("photometry_app.core.wcs_sanity._detect_image_sources", return_value=detected),
+            patch("photometry_app.core.wcs_sanity.CatalogService") as catalog_cls,
+        ):
+            catalog_cls.return_value.query_gaia_stars_limited.return_value = gaia
+            result = evaluate_wcs_sanity(
+                Path("dummy.fits"),
+                header,
+                solved_field,
+                options=WcsSanityOptions(
+                    approval_percent=90.0,
+                    frame_margin_percent=25.0,
+                    isolation_arcsec=0.0,
+                    skip_brightest_detections=0,
+                    detection_sample_count=20,
+                    soft_accept_enabled=False,
+                ),
+                cache_dir=Path("."),
+            )
+        self.assertTrue(result.passed)
+        self.assertGreaterEqual(result.match_count, 18)
+        self.assertEqual(result.candidate_count, 20)
+
+    def test_evaluate_wcs_sanity_soft_accepts_stable_moderate_match(self) -> None:
+        width = height = 400
+        true_wcs = _tan_wcs(width, height, crval=(180.0, 10.0), scale_arcsec=1.2)
+        # ~3.6" coherent shift: usable WCS, but hard 90% can miss with a mixed sample.
+        shifted_wcs = _tan_wcs(width, height, crval=(180.001, 10.0), scale_arcsec=1.2)
+        header = shifted_wcs.to_header(relax=True)
+        detected = []
+        gaia = []
+        for index in range(40):
+            x_value = 90 + (index % 8) * 28
+            y_value = 100 + (index // 8) * 35
+            world = true_wcs.pixel_to_world(x_value, y_value)
+            # First 12 detections are intentionally offset (saturated-like bad centroids).
+            if index < 12:
+                detected.append(
+                    _DetectedSource(x=float(x_value + 8.0), y=float(y_value - 6.0), peak=5000 - index)
+                )
+            else:
+                detected.append(_DetectedSource(x=float(x_value), y=float(y_value), peak=5000 - index))
+            gaia.append(
+                _catalog_star(
+                    f"g-{index}",
+                    float(world.ra.deg),
+                    float(world.dec.deg),
+                    10.5 + index * 0.02,
+                )
+            )
+        solved_field = SolvedField(
+            center_ra_deg=180.001,
+            center_dec_deg=10.0,
+            radius_deg=0.2,
+            width=width,
+            height=height,
+            wcs_path=Path("dummy.fits"),
+        )
+        progress: list[str] = []
+        with (
+            patch("photometry_app.core.wcs_sanity._detect_image_sources", return_value=detected),
+            patch("photometry_app.core.wcs_sanity.CatalogService") as catalog_cls,
+        ):
+            catalog_cls.return_value.query_gaia_stars_limited.return_value = gaia
+            result = evaluate_wcs_sanity(
+                Path("dummy.fits"),
+                header,
+                solved_field,
+                options=WcsSanityOptions(
+                    approval_percent=99.0,
+                    match_tolerance_arcsec=8.0,
+                    skip_brightest_detections=0,
+                    detection_sample_count=40,
+                    subtract_coherent_shift=True,
+                    soft_accept_enabled=True,
+                    soft_approval_percent=65.0,
+                    soft_max_median_residual_arcsec=5.0,
+                    soft_max_coherent_shift_arcsec=6.0,
+                    isolation_arcsec=0.0,
+                    frame_margin_percent=25.0,
+                ),
+                cache_dir=Path("."),
+                progress_callback=progress.append,
+            )
+        self.assertTrue(result.passed)
+        self.assertTrue(any("soft-accepted" in line or "via soft accept" in line for line in progress))
 
     def test_evaluate_wcs_sanity_falls_through_bins_then_passes(self) -> None:
         width = height = 400

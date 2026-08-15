@@ -289,7 +289,7 @@ def generate_source_results_actions() -> Path:
             window._pull_period_button,
             window._calculate_period_button,
             window._clear_source_selection_button,
-            window._find_better_fit_button,
+            window._scan_comps_button,
             window._increase_snr_button,
             window._results_tabs,
         ],

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from datetime import datetime, timezone
 
 import numpy as np
 from astropy.io import fits
@@ -13,11 +14,47 @@ try:
 except ImportError:
     XISF = None
 
+try:
+    import rawpy
+except ImportError:
+    rawpy = None
+
 
 _FITS_IMAGE_SUFFIXES = {".fit", ".fits"}
 _XISF_IMAGE_SUFFIXES = {".xisf"}
 _STANDARD_IMAGE_SUFFIXES = {".tif", ".tiff", ".png", ".jpg", ".jpeg"}
-SUPPORTED_IMAGE_SUFFIXES = _FITS_IMAGE_SUFFIXES | _XISF_IMAGE_SUFFIXES | _STANDARD_IMAGE_SUFFIXES
+# Common DSLR / mirrorless RAW containers decoded via LibRaw (rawpy).
+RAW_CAMERA_IMAGE_SUFFIXES = {
+    ".3fr",
+    ".arw",
+    ".cr2",
+    ".cr3",
+    ".crw",
+    ".dcr",
+    ".dng",
+    ".kdc",
+    ".mrw",
+    ".nef",
+    ".nrw",
+    ".orf",
+    ".pef",
+    ".raf",
+    ".raw",
+    ".rw2",
+    ".rwl",
+    ".sr2",
+    ".srf",
+    ".srw",
+    ".x3f",
+}
+SUPPORTED_IMAGE_SUFFIXES = (
+    _FITS_IMAGE_SUFFIXES | _XISF_IMAGE_SUFFIXES | _STANDARD_IMAGE_SUFFIXES | RAW_CAMERA_IMAGE_SUFFIXES
+)
+SUPPORTED_IMAGE_FILE_FILTER = (
+    "Supported Image Files ("
+    + " ".join(f"*{suffix}" for suffix in sorted(SUPPORTED_IMAGE_SUFFIXES))
+    + ")"
+)
 _STRUCTURAL_FITS_KEYWORDS = {
     "SIMPLE",
     "BITPIX",
@@ -40,12 +77,19 @@ def is_supported_image_path(path: Path) -> bool:
     return path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
 
 
+def is_raw_camera_image_path(path: Path) -> bool:
+    return path.suffix.lower() in RAW_CAMERA_IMAGE_SUFFIXES
+
+
 def read_header(path: Path) -> Header:
     if path.suffix.lower() in _FITS_IMAGE_SUFFIXES:
         with fits.open(path) as hdul:
             return hdul[0].header.copy()
     if path.suffix.lower() in _STANDARD_IMAGE_SUFFIXES:
         header, _width, _height = _read_standard_image_header_and_shape(path)
+        return header
+    if path.suffix.lower() in RAW_CAMERA_IMAGE_SUFFIXES:
+        header, _width, _height = _read_raw_camera_image_header_and_shape(path)
         return header
     return _read_xisf_header(path)
 
@@ -60,6 +104,9 @@ def read_header_and_shape(path: Path) -> tuple[Header, int | None, int | None]:
 
     if path.suffix.lower() in _STANDARD_IMAGE_SUFFIXES:
         return _read_standard_image_header_and_shape(path)
+
+    if path.suffix.lower() in RAW_CAMERA_IMAGE_SUFFIXES:
+        return _read_raw_camera_image_header_and_shape(path)
 
     header = _read_xisf_header(path)
     metadata = _read_xisf_metadata(path)
@@ -83,6 +130,10 @@ def read_image_data(path: Path, dtype: type[np.floating] | type[float] | None = 
         image = np.asarray(_read_standard_image(path))
         return image if dtype is None else np.asarray(image, dtype=dtype)
 
+    if path.suffix.lower() in RAW_CAMERA_IMAGE_SUFFIXES:
+        image = np.asarray(_read_raw_camera_image(path))
+        return image if dtype is None else np.asarray(image, dtype=dtype)
+
     image = np.asarray(_read_xisf_image(path))
     if image.ndim == 3 and image.shape[-1] == 1:
         image = image[:, :, 0]
@@ -90,7 +141,7 @@ def read_image_data(path: Path, dtype: type[np.floating] | type[float] | None = 
 
 
 def read_photometry_image_data(path: Path, dtype: type[np.floating] | type[float] = float) -> np.ndarray:
-    if path.suffix.lower() in _FITS_IMAGE_SUFFIXES | _STANDARD_IMAGE_SUFFIXES:
+    if path.suffix.lower() in _FITS_IMAGE_SUFFIXES | _STANDARD_IMAGE_SUFFIXES | RAW_CAMERA_IMAGE_SUFFIXES:
         return read_image_data(path, dtype=dtype)
 
     metadata = _read_xisf_metadata(path)
@@ -146,6 +197,60 @@ def _read_standard_image_header_and_shape(path: Path) -> tuple[Header, int | Non
 def _read_standard_image(path: Path) -> np.ndarray:
     with Image.open(path) as image:
         return np.asarray(image.copy())
+
+
+def _read_raw_camera_image_header_and_shape(path: Path) -> tuple[Header, int | None, int | None]:
+    with _open_raw_camera_image(path) as raw:
+        width = int(getattr(raw.sizes, "width", 0) or 0)
+        height = int(getattr(raw.sizes, "height", 0) or 0)
+        timestamp = getattr(raw, "timestamp", None)
+    header = Header()
+    if width > 0:
+        header["NAXIS1"] = width
+    if height > 0:
+        header["NAXIS2"] = height
+    if width > 0 and height > 0:
+        header["NAXIS"] = 2
+    header["IMGMODE"] = "RGB"
+    header["BAYER"] = "RAW"
+    date_obs = _raw_camera_date_obs(timestamp)
+    if date_obs is not None:
+        header["DATE-OBS"] = date_obs
+    return header, (width if width > 0 else None), (height if height > 0 else None)
+
+
+def _read_raw_camera_image(path: Path) -> np.ndarray:
+    with _open_raw_camera_image(path) as raw:
+        # Linear 16-bit demosaic keeps more dynamic range than camera JPEGs.
+        return np.asarray(
+            raw.postprocess(
+                use_camera_wb=True,
+                no_auto_bright=True,
+                gamma=(1, 1),
+                output_bps=16,
+            )
+        )
+
+
+def _open_raw_camera_image(path: Path):
+    if rawpy is None:
+        raise RuntimeError("Camera RAW support requires the 'rawpy' package to be installed.")
+    return rawpy.imread(str(path))
+
+
+def _raw_camera_date_obs(timestamp: object) -> str | None:
+    if timestamp is None:
+        return None
+    try:
+        if isinstance(timestamp, datetime):
+            resolved = timestamp
+        else:
+            resolved = datetime.fromtimestamp(float(timestamp), tz=timezone.utc)
+    except (OverflowError, OSError, TypeError, ValueError):
+        return None
+    if resolved.tzinfo is None:
+        resolved = resolved.replace(tzinfo=timezone.utc)
+    return resolved.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _read_xisf_header(path: Path) -> Header:

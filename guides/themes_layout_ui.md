@@ -136,7 +136,7 @@ Use **Settings > Open Settings** for options that affect many modes. Common entr
 | Variable filters | Limit mode/value; designation families (Named, Gaia, ASAS-SN, ATLAS, ZTF, Other) |
 | Alignment assumption | Treat a stack as already aligned so one solve can serve many frames |
 | Observatory | Telescope, camera, focal length, pixel size, site, Bortle class (written into science exports) |
-| Parallelism | Worker counts for photometry, period search, discovery, and related jobs |
+| Parallelism | Shared worker count under **Settings → Advanced** (photometry, period search, discovery, and related jobs) |
 | Mode memory | **Keep mode memory when switching** (off by default): when off, leaving a mode clears its loaded images/results/caches to free RAM; when on, returning to a mode restores previous work |
 
 Mode-specific knobs (Discover thresholds, HR source caps, Sky Atlas display, and so on) live in the same Settings dialog or in mode panels — see the mode guides for those.
@@ -209,7 +209,7 @@ Before full automatic processing, the preview dialog shows how many variables we
 |--------|------|
 | Pull Period | Literature period lookup |
 | Calculate Period | Local period inference |
-| Find Better Fit | Comparison-star optimization against literature period behavior |
+| Scan Comps | Manual comparison-star pool + combination browser for the selected target |
 | Increase SNR | Period-aware binning of selected source rows |
 | Reset SNR | Appears after Increase SNR in the **current session**; restores cached original measurements |
 
@@ -243,7 +243,7 @@ If documentation screenshots need refreshing, prioritize views that replaced the
 
 1. **Workspace strip** — Generate, active-object label, catalog shortcuts
 2. **Loaded Results** — object counts, solve-state columns, note preview
-3. **Source Results action row** — Pull Period, Calculate Period, Find Better Fit, Increase SNR / Reset SNR
+3. **Source Results action row** — Pull Period, Calculate Period, Scan Comps, Increase SNR / Reset SNR
 4. **Preview dialog** — candidate summary, filters, selection table
 5. **Annotated image** — apertures, annuli, comparison overlays
 6. **Light-curve panel** — themed plot, error bars, optional fit

@@ -40,6 +40,7 @@ Supported inputs include:
 - `.tif` / `.tiff`
 - `.png`
 - `.jpg` / `.jpeg`
+- camera RAW (for example `.dng`, `.cr2` / `.cr3`, `.nef`, `.arw`, `.orf`, `.rw2`, `.raf`, `.pef`)
 
 The mode uses one image at a time and expects a usable celestial WCS. If the frame is not already solved, CAst can use the shared astrometry.net resolver when configured.
 

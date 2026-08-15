@@ -2,6 +2,8 @@
 
 This guide explains how to build **Citizen Astronomy (CAst)** as a Windows executable and wrap it in an installable setup program.
 
+For an **unsigned macOS `.app` zip** (alpha testers, right-click → Open), see [packaging/MACOS_UNSIGNED.md](packaging/MACOS_UNSIGNED.md). On Windows, pack one Drive-ready kit with `packaging/pack_macos_build_kit.ps1`, then on a Mac unzip and run `packaging/build_macos_unsigned.sh`.
+
 The canonical release path uses:
 
 - **PyInstaller** → one-folder application bundle (`CitizenAstronomyAlphaReview.exe` + `_internal\`)

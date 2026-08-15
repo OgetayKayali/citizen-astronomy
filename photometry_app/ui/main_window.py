@@ -68,7 +68,14 @@ from PySide6.QtWidgets import *
 
 from shiboken6 import isValid
 
-from photometry_app.app_metadata import APP_DISPLAY_NAME, APP_VERSION, APP_WINDOW_TITLE_NAME, application_icon_path, application_install_path
+from photometry_app.app_metadata import (
+    APP_DISPLAY_NAME,
+    APP_VERSION,
+    APP_WINDOW_TITLE_NAME,
+    application_icon_path,
+    application_install_path,
+    managed_updates_supported,
+)
 from photometry_app.core.benchmarking import BENCHMARK_ENABLED, get_benchmark_recorder
 from photometry_app.core.alignment import *
 from photometry_app.core.animation_export import (
@@ -259,6 +266,8 @@ from photometry_app.ui.sky_view_star_renderer import (
 )
 from photometry_app.ui.transient_label_dialog import TRANSIENT_QUICK_LABEL_OPTIONS, TransientQuickLabelDialog
 from photometry_app.ui.workers import *
+from photometry_app.ui.scan_comps_dialog import ScanCompsDialog, ScanCompsDialogResult
+from photometry_app.core.scan_comps import ScanCompReferenceInput, catalog_star_bp_rp
 
 
 class _AsteroidBlinkExportCanceled(RuntimeError):
@@ -580,7 +589,7 @@ _TRANSIENT_SCORE_COLUMN = 9
 
 _CALCULATE_PERIOD_BUTTON_LABEL = "Calculate Period"
 _PULL_PERIOD_BUTTON_LABEL = "Pull Period"
-_FIND_BETTER_FIT_BUTTON_LABEL = "Find Better Fit"
+_SCAN_COMPS_BUTTON_LABEL = "Scan Comps"
 _DISCOVER_BUTTON_LABEL = "Discover"
 _INCREASE_SNR_BUTTON_LABEL = "Increase SNR"
 _RESET_SNR_BUTTON_LABEL = "Reset SNR"
@@ -687,7 +696,7 @@ _DIFFERENTIAL_DETECTABILITY_LABEL_OPTIONS: tuple[tuple[str, str], ...] = (
 
 _DIFFERENTIAL_INTERFACE_TIPS = (
     "Open a solved image set to scan for variable-star candidates.",
-    "Use Find Better Fit to compare the current series against literature-like period matches.",
+    "Use Scan Comps to browse comparison-star sets and apply a chosen light curve.",
     "Save detectability labels to improve the local Differential review model.",
 )
 
@@ -734,11 +743,12 @@ _SKY_EXPLORER_OBJECT_TYPE_GROUP_ORDER = (
     "active_galaxy",
     "high_energy",
     "exoplanet",
+    "catalog",
     "other",
 )
 _SKY_EXPLORER_OBJECT_TYPE_DEFINITION_BY_KEY = {
     definition.key: definition
-    for definition in sky_explorer_object_type_definitions_for_mode("simple")
+    for definition in SKY_EXPLORER_OBJECT_TYPE_DEFINITIONS
 }
 
 
@@ -27332,15 +27342,15 @@ class MainWindow(QMainWindow):
 
         self._calculate_period_button.hide()
 
-        self._find_better_fit_button = QPushButton(_FIND_BETTER_FIT_BUTTON_LABEL)
+        self._scan_comps_button = QPushButton(_SCAN_COMPS_BUTTON_LABEL)
 
-        self._find_better_fit_button.setToolTip(
+        self._scan_comps_button.setToolTip(
 
-            "Try alternate comparison-star combinations for the selected source and keep the combination whose period best matches the literature value"
+            "Browse comparison-star combinations for the selected target and apply a chosen set."
 
         )
 
-        self._find_better_fit_button.clicked.connect(self._optimize_selected_source_comparison_fit)
+        self._scan_comps_button.clicked.connect(self._open_scan_comps_dialog)
 
         self._discover_button = QPushButton(_DISCOVER_BUTTON_LABEL)
 
@@ -27447,7 +27457,7 @@ class MainWindow(QMainWindow):
 
         self._measurement_filter_row.setSpacing(6)
 
-        self._measurement_filter_row.addWidget(self._find_better_fit_button)
+        self._measurement_filter_row.addWidget(self._scan_comps_button)
 
         self._measurement_filter_row.addWidget(self._increase_snr_button)
 
@@ -27942,6 +27952,10 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_show_auto_annotations = True
 
+        self._sky_explorer_annotation_mode = "auto"
+
+        self._sky_explorer_hidden_object_identities: set[tuple[str, str, str]] = set()
+
         self._sky_explorer_annotation_tool = "mouse"
 
         self._sky_explorer_annotation_stroke_color = "#38bdf8"
@@ -27963,6 +27977,12 @@ class MainWindow(QMainWindow):
         self._sky_explorer_manual_annotation_counter = 0
 
         self._selected_sky_explorer_manual_annotation_id: str | None = None
+
+        self._sky_explorer_live_style_annotation_id: str | None = None
+
+        self._sky_explorer_live_style_tool: str | None = None
+
+        self._sky_explorer_annotation_properties_loading = False
 
         self._sky_explorer_manual_annotation_drag: _SkyExplorerManualAnnotationDrag | None = None
 
@@ -28742,7 +28762,7 @@ class MainWindow(QMainWindow):
 
         self._sync_mode_launcher_visibility()
 
-        if getattr(sys, "frozen", False):
+        if getattr(sys, "frozen", False) and managed_updates_supported():
 
             QTimer.singleShot(1500, self._check_for_updates_on_startup)
 
@@ -38275,7 +38295,7 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_object_type_help_label = QLabel(
 
-            "Simple mode keeps the six common deep-sky classes visible. Switch to Advanced for broader classes or Scientific for exact SIMBAD-style codes."
+            "Simple mode keeps the six common deep-sky classes visible. Switch to Advanced for broader classes, Scientific for exact SIMBAD-style codes, or Catalog for named catalogues."
 
         )
 
@@ -38343,6 +38363,10 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_results_table.cellClicked.connect(self._handle_sky_explorer_results_table_clicked)
 
+        self._sky_explorer_results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+        self._sky_explorer_results_table.customContextMenuRequested.connect(self._handle_sky_explorer_results_table_context_menu)
+
 
 
         self._sky_explorer_steps_output = QPlainTextEdit()
@@ -38360,6 +38384,8 @@ class MainWindow(QMainWindow):
 
 
         self._sky_explorer_image_stretch_combo = QComboBox()
+
+        self._sky_explorer_image_stretch_combo.addItem("None", "linear")
 
         self._sky_explorer_image_stretch_combo.addItem("STF", "stf")
 
@@ -38492,7 +38518,9 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_show_auto_annotations_button.setChecked(True)
 
-        self._sky_explorer_show_auto_annotations_button.setToolTip("Show or hide automatic Sky Explorer catalog annotations.")
+        self._sky_explorer_show_auto_annotations_button.setToolTip(
+            "Switch between Auto and Manual annotation modes. Manual keeps catalog overlays and lets you add or delete them."
+        )
 
         self._sky_explorer_show_auto_annotations_button.toggled.connect(self._handle_sky_explorer_show_auto_annotations_toggled)
 
@@ -38632,8 +38660,7 @@ class MainWindow(QMainWindow):
         shape_properties_layout.addWidget(self._sky_explorer_annotation_fill_color_button)
         shape_properties_layout.addWidget(self._sky_explorer_annotation_line_width_label)
         shape_properties_layout.addWidget(self._sky_explorer_annotation_line_width_spin)
-        shape_properties_layout.addWidget(self._sky_explorer_annotation_opacity_label)
-        shape_properties_layout.addWidget(self._sky_explorer_annotation_opacity_button)
+        shape_properties_layout.addStretch(1)
         self._sky_explorer_annotation_shape_properties.setLayout(shape_properties_layout)
 
         self._sky_explorer_annotation_text_properties = QWidget()
@@ -38661,6 +38688,8 @@ class MainWindow(QMainWindow):
         properties_group_layout.setSpacing(10)
         properties_group_layout.addWidget(self._sky_explorer_annotation_properties_title)
         properties_group_layout.addWidget(self._sky_explorer_annotation_properties_stack, 1)
+        properties_group_layout.addWidget(self._sky_explorer_annotation_opacity_label)
+        properties_group_layout.addWidget(self._sky_explorer_annotation_opacity_button)
         self._sky_explorer_annotation_properties_group.setLayout(properties_group_layout)
         self._sync_sky_explorer_annotation_property_controls()
 
@@ -38686,6 +38715,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_collage_options = SkyExplorerCollageOptions(margin_fraction=DEFAULT_COLLAGE_MARGIN_FRACTION)
 
         self._set_sky_explorer_header_button_widths()
+
+        self._sync_sky_explorer_annotation_mode_button()
 
         self._sky_explorer_image_view = AnnotatedImageView(self)
 
@@ -39007,7 +39038,7 @@ class MainWindow(QMainWindow):
             self,
             "Select source image for Distance Map",
             start_path,
-            "Supported Image Files (*.xisf *.fits *.fit *.tif *.tiff *.png *.jpg *.jpeg)",
+            SUPPORTED_IMAGE_FILE_FILTER,
         )
         if selected:
             self._set_distance_map_source_image_path(Path(selected).expanduser())
@@ -39143,7 +39174,7 @@ class MainWindow(QMainWindow):
 
             self._sky_explorer_image_input.text() or self._root_path_input.text(),
 
-            "Supported Image Files (*.xisf *.fits *.fit *.tif *.tiff *.png *.jpg *.jpeg)",
+            SUPPORTED_IMAGE_FILE_FILTER,
 
         )
 
@@ -40376,6 +40407,8 @@ class MainWindow(QMainWindow):
 
         self._current_sky_explorer_result = None
 
+        self._sky_explorer_hidden_object_identities = set()
+
         self._sky_explorer_queried_object_type_keys = set()
 
         self._sky_explorer_pending_update_object_type_keys = ()
@@ -40469,7 +40502,10 @@ class MainWindow(QMainWindow):
 
         if not selected_object_types:
 
-            QMessageBox.information(self, "No object types selected", "Choose at least one Sky Explorer object type before clicking Explore.")
+            if self._current_sky_explorer_object_type_mode() == "catalog":
+                QMessageBox.information(self, "No catalogs selected", "Choose at least one catalog before clicking Explore.")
+            else:
+                QMessageBox.information(self, "No object types selected", "Choose at least one Sky Explorer object type before clicking Explore.")
 
             return
 
@@ -40927,6 +40963,8 @@ class MainWindow(QMainWindow):
 
             "scientific": "Scientific",
 
+            "catalog": "Catalog",
+
         }.get(mode, "Simple")
 
         help_text = {
@@ -40937,11 +40975,13 @@ class MainWindow(QMainWindow):
 
             "scientific": "Scientific mode shows exact SIMBAD-style condensed object-type codes.",
 
+            "catalog": "Catalog mode shows only objects from the selected catalogs, labeled with catalog names.",
+
         }.get(mode, "Simple mode keeps the six common deep-sky classes visible.")
 
         self._sky_explorer_object_type_mode_button.setText(mode_title)
 
-        self._sky_explorer_object_type_mode_button.setToolTip("Click to cycle between Simple, Advanced, and Scientific object-type lists.")
+        self._sky_explorer_object_type_mode_button.setToolTip("Click to cycle between Simple, Advanced, Scientific, and Catalog object-type lists.")
 
         self._sky_explorer_object_type_mode_button.setStyleSheet(
 
@@ -41259,7 +41299,7 @@ class MainWindow(QMainWindow):
 
         normalized_mode = str(mode or "simple").strip().lower()
 
-        if normalized_mode not in {"simple", "advanced", "scientific"}:
+        if normalized_mode not in {"simple", "advanced", "scientific", "catalog"}:
 
             normalized_mode = "simple"
 
@@ -41279,7 +41319,9 @@ class MainWindow(QMainWindow):
 
             "advanced": "scientific",
 
-            "scientific": "simple",
+            "scientific": "catalog",
+
+            "catalog": "simple",
 
         }.get(current_mode, "simple")
 
@@ -41303,7 +41345,7 @@ class MainWindow(QMainWindow):
 
             self.fontMetrics().horizontalAdvance(label)
 
-            for label in ("Simple", "Advanced", "Scientific")
+            for label in ("Simple", "Advanced", "Scientific", "Catalog")
 
         ) + button_padding_px
 
@@ -41319,7 +41361,13 @@ class MainWindow(QMainWindow):
 
         comparison_width = self.fontMetrics().horizontalAdvance("Comparison") + button_padding_px
 
-        auto_width = self.fontMetrics().horizontalAdvance("Auto") + button_padding_px
+        auto_width = max(
+
+            self.fontMetrics().horizontalAdvance(label)
+
+            for label in ("Auto", "Manual")
+
+        ) + button_padding_px
 
         tool_button_size = 34
 
@@ -41350,6 +41398,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_comparison_button.setFixedWidth(comparison_width)
 
         self._sky_explorer_show_auto_annotations_button.setFixedWidth(auto_width)
+
+        self._sky_explorer_export_image_button.setFixedWidth(auto_width)
 
         self._sky_explorer_primary_button.setFixedHeight(header_control_height)
 
@@ -41417,6 +41467,20 @@ class MainWindow(QMainWindow):
 
             return override
 
+        return self._sky_explorer_generated_object_type_colors_for_key(key, definition=definition)
+
+    def _sky_explorer_generated_object_type_colors_for_key(
+
+        self,
+
+        key: str,
+
+        *,
+
+        definition: SkyExplorerObjectTypeDefinition | None = None,
+
+    ) -> tuple[str, str]:
+
         resolved_definition = definition if definition is not None else _SKY_EXPLORER_OBJECT_TYPE_DEFINITION_BY_KEY.get(key)
 
         if resolved_definition is not None:
@@ -41455,6 +41519,8 @@ class MainWindow(QMainWindow):
 
         fill_color: str | None = None,
 
+        definition: SkyExplorerObjectTypeDefinition | None = None,
+
     ) -> str:
 
         override = self._sky_explorer_object_type_text_color_overrides.get(key)
@@ -41463,21 +41529,17 @@ class MainWindow(QMainWindow):
 
             return override
 
-        resolved_definition = _SKY_EXPLORER_OBJECT_TYPE_DEFINITION_BY_KEY.get(key)
+        resolved_definition = definition if definition is not None else _SKY_EXPLORER_OBJECT_TYPE_DEFINITION_BY_KEY.get(key)
 
-        resolved_stroke = stroke_color if isinstance(stroke_color, str) and stroke_color else ""
-
-        resolved_fill = fill_color if isinstance(fill_color, str) and fill_color else ""
-
-        if not resolved_stroke:
-
-            resolved_stroke, resolved_fill = self._sky_explorer_object_type_colors_for_key(key, definition=resolved_definition)
-
-        elif not resolved_fill:
-
-            _stroke, resolved_fill = self._sky_explorer_object_type_colors_for_key(key, definition=resolved_definition)
-
-        candidates = [color for color in (resolved_stroke, resolved_fill) if isinstance(color, str) and color]
+        generated_stroke, generated_fill = self._sky_explorer_generated_object_type_colors_for_key(
+            key,
+            definition=resolved_definition,
+        )
+        candidates = [
+            color
+            for color in (generated_stroke, generated_fill)
+            if isinstance(color, str) and color
+        ]
 
         if candidates:
 
@@ -41485,9 +41547,9 @@ class MainWindow(QMainWindow):
 
             return max(candidates, key=self._relative_color_luminance) if prefer_bright else min(candidates, key=self._relative_color_luminance)
 
-        if resolved_stroke:
+        if generated_stroke:
 
-            return resolved_stroke
+            return generated_stroke
 
         if resolved_definition is not None:
 
@@ -41505,15 +41567,43 @@ class MainWindow(QMainWindow):
 
         return 0.2126 * color.redF() + 0.7152 * color.greenF() + 0.0722 * color.blueF()
 
+    def _sky_explorer_default_object_type_font(self) -> QFont:
+
+        settings = self._ensure_settings()
+
+        family = str(getattr(settings, "sky_explorer_default_text_font_family", "") or "").strip()
+
+        style = self._normalize_sky_explorer_annotation_text_style(
+
+            getattr(settings, "sky_explorer_default_text_font_style", "regular")
+
+        )
+
+        size = float(getattr(settings, "sky_explorer_default_text_size", 9.0) or 9.0)
+
+        font = QFont(family) if family else QFont(self.font())
+
+        font.setBold(style in {"bold", "bold-italic"})
+
+        font.setItalic(style in {"italic", "bold-italic"})
+
+        font.setUnderline(False)
+
+        font.setStrikeOut(False)
+
+        font.setPointSizeF(max(7.0, min(24.0, size)))
+
+        return font
+
     def _sky_explorer_object_type_font_for_key(self, key: str) -> QFont | None:
 
         override = self._sky_explorer_object_type_font_overrides.get(key)
 
-        if override is None:
+        if override is not None:
 
-            return None
+            return QFont(override)
 
-        return QFont(override)
+        return self._sky_explorer_default_object_type_font()
 
     def _sky_explorer_font_summary(self, font: QFont | None) -> str:
 
@@ -41831,7 +41921,7 @@ class MainWindow(QMainWindow):
 
         item.setData(_SKY_EXPLORER_QUERY_OBJECT_TYPE_ROLE, key)
 
-        item.setText(self._sky_explorer_font_summary(text_font))
+        item.setText(f"{text_color.upper()}  {self._sky_explorer_font_summary(text_font)}")
 
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -41840,6 +41930,20 @@ class MainWindow(QMainWindow):
         item.setForeground(QBrush(QColor(self._contrast_text_color(text_color))))
 
         item.setFont(QFont(self.font()))
+
+    def _sky_explorer_table_item_color(self, item: QTableWidgetItem | None) -> str:
+
+        if item is None:
+
+            return ""
+
+        color = item.background().color()
+
+        if not color.isValid():
+
+            return ""
+
+        return color.name(QColor.NameFormat.HexRgb).lower()
 
     def _handle_sky_explorer_object_type_table_clicked(self, row_index: int, column_index: int) -> None:
 
@@ -41869,9 +41973,21 @@ class MainWindow(QMainWindow):
 
         definition = _SKY_EXPLORER_OBJECT_TYPE_DEFINITION_BY_KEY.get(item_key)
 
-        stroke_color, fill_color = self._sky_explorer_object_type_colors_for_key(item_key, definition=definition)
+        resolved_stroke, resolved_fill = self._sky_explorer_object_type_colors_for_key(item_key, definition=definition)
 
-        text_color = self._sky_explorer_object_type_text_color_for_key(item_key, stroke_color=stroke_color, fill_color=fill_color)
+        resolved_text = self._sky_explorer_object_type_text_color_for_key(item_key, definition=definition)
+
+        stroke_color = self._sky_explorer_table_item_color(
+            self._sky_explorer_object_type_table.item(row_index, _SKY_EXPLORER_STROKE_COLOR_COLUMN)
+        ) or resolved_stroke
+
+        fill_color = self._sky_explorer_table_item_color(
+            self._sky_explorer_object_type_table.item(row_index, _SKY_EXPLORER_FILL_COLOR_COLUMN)
+        ) or resolved_fill
+
+        text_color = self._sky_explorer_table_item_color(
+            self._sky_explorer_object_type_table.item(row_index, _SKY_EXPLORER_TEXT_COLUMN)
+        ) or resolved_text
 
         text_font = self._sky_explorer_object_type_font_for_key(item_key)
 
@@ -41911,13 +42027,11 @@ class MainWindow(QMainWindow):
 
                 stroke_color = selected_color_name
 
-                self._sky_explorer_object_type_color_overrides[item_key] = (stroke_color, fill_color)
-
             elif column_index == _SKY_EXPLORER_FILL_COLOR_COLUMN:
 
                 fill_color = selected_color_name
 
-                self._sky_explorer_object_type_color_overrides[item_key] = (stroke_color, fill_color)
+            self._sky_explorer_object_type_color_overrides[item_key] = (stroke_color, fill_color)
 
         self._sky_explorer_object_type_table.blockSignals(True)
 
@@ -42569,7 +42683,11 @@ class MainWindow(QMainWindow):
 
             visible_identities.add(identity)
 
-        return tuple(visible_objects)
+        return tuple(
+            sky_object
+            for sky_object in visible_objects
+            if not self._sky_explorer_object_is_hidden(sky_object)
+        )
 
     def _sky_explorer_result_objects_after_view_filters(self, result: SkyExplorerResult) -> tuple[SkyExplorerObject, ...]:
 
@@ -42747,6 +42865,20 @@ class MainWindow(QMainWindow):
 
             return "other", "Other / Unclassified", len(_SKY_EXPLORER_OBJECT_TYPE_GROUP_ORDER)
 
+        if self._current_sky_explorer_object_type_mode() == "catalog":
+
+            catalog_order = [item.key for item in sky_explorer_object_type_definitions_for_mode("catalog")]
+
+            try:
+
+                group_order = catalog_order.index(definition.key)
+
+            except ValueError:
+
+                group_order = len(catalog_order)
+
+            return definition.key, definition.title, group_order
+
         return definition.group_key, definition.group_title, self._sky_explorer_object_type_group_sort_value(definition)
 
     def _sky_explorer_results_table_item(
@@ -42833,7 +42965,7 @@ class MainWindow(QMainWindow):
 
             return (1, 0.0) if angular_size_arcmin is None else (0, float(angular_size_arcmin))
 
-        return (0, str(sky_object.name or sky_object.source_id or "").casefold())
+        return (0, str(self._sky_explorer_display_name_for_object(sky_object) or sky_object.source_id or "").casefold())
 
     def _sky_explorer_angular_size_arcmin(self, sky_object: SkyExplorerObject) -> float | None:
 
@@ -42847,7 +42979,45 @@ class MainWindow(QMainWindow):
 
         return float(major_axis)
 
+    def _sky_explorer_display_name_for_object(self, sky_object: SkyExplorerObject) -> str:
+
+        if self._current_sky_explorer_object_type_mode() == "catalog":
+
+            catalog_name = sky_explorer_catalog_display_name(
+
+                sky_object,
+
+                preferred_keys=self._selected_sky_explorer_object_type_keys(),
+
+            )
+
+            if catalog_name:
+
+                return catalog_name
+
+        return str(sky_object.name or sky_object.source_id or "").strip()
+
+    def _sky_explorer_overlay_name_for_object(self, sky_object: SkyExplorerObject) -> str:
+
+        if self._sky_explorer_is_mag_limit_measurement_object(sky_object):
+
+            return self._sky_explorer_mag_limit_label_name(sky_object)
+
+        if self._current_sky_explorer_object_type_mode() == "catalog":
+
+            return self._sky_explorer_display_name_for_object(sky_object)
+
+        return str(sky_object.short_label or sky_object.name or sky_object.source_id)
+
     def _sky_explorer_display_type_text_for_object(self, sky_object: SkyExplorerObject) -> str:
+
+        if self._current_sky_explorer_object_type_mode() == "catalog":
+
+            object_type = str(sky_object.object_type or "").strip()
+
+            if object_type:
+
+                return object_type
 
         visible_object_types = set(self._selected_sky_explorer_object_type_keys())
 
@@ -42946,6 +43116,52 @@ class MainWindow(QMainWindow):
         self._sky_explorer_results_table.setSpan(row_index, 0, 1, self._sky_explorer_results_table.columnCount())
 
         self._sky_explorer_results_table.setVerticalHeaderItem(row_index, QTableWidgetItem(""))
+
+    def _handle_sky_explorer_results_table_context_menu(self, position: QPoint) -> None:
+
+        if not self._sky_explorer_is_manual_annotation_mode():
+
+            return
+
+        item = self._sky_explorer_results_table.itemAt(position)
+
+        if item is None:
+
+            return
+
+        row_item = self._sky_explorer_results_table.item(item.row(), 0)
+
+        if row_item is None:
+
+            return
+
+        sky_object = row_item.data(_SKY_EXPLORER_OBJECT_ROLE)
+
+        if not isinstance(sky_object, SkyExplorerObject):
+
+            return
+
+        selected_objects = self._selected_sky_explorer_objects()
+
+        if any(self._sky_explorer_objects_match(sky_object, selected) for selected in selected_objects):
+
+            targets = selected_objects
+
+        else:
+
+            targets = (sky_object,)
+
+        menu = QMenu(self)
+
+        delete_label = "Delete" if len(targets) == 1 else f"Delete ({len(targets)})"
+
+        delete_action = menu.addAction(delete_label)
+
+        selected_action = menu.exec(self._sky_explorer_results_table.viewport().mapToGlobal(position))
+
+        if selected_action is delete_action:
+
+            self._hide_sky_explorer_automatic_objects(targets)
 
     def _handle_sky_explorer_results_table_clicked(self, row_index: int, _column_index: int) -> None:
 
@@ -43073,7 +43289,7 @@ class MainWindow(QMainWindow):
 
                 values: list[tuple[str, float | str | None]] = [
 
-                    (sky_object.name, sky_object.name.lower()),
+                    (self._sky_explorer_display_name_for_object(sky_object), self._sky_explorer_display_name_for_object(sky_object).lower()),
 
                     (display_type_text, display_type_text.casefold()),
 
@@ -43452,7 +43668,7 @@ class MainWindow(QMainWindow):
 
         lines = [
 
-            f"Name: {sky_object.name}",
+            f"Name: {self._sky_explorer_display_name_for_object(sky_object)}",
 
             f"Layer: {_SKY_EXPLORER_LAYER_TITLES.get(sky_object.layer_key, sky_object.layer_key.title())}",
 
@@ -43515,9 +43731,6 @@ class MainWindow(QMainWindow):
             stretch_mode = str(settings.image_display_stretch_mode or "stf")
 
             inverted = bool(settings.image_display_inverted)
-
-        if str(stretch_mode).strip().lower() == "linear":
-            stretch_mode = "stf"
 
         self._sky_explorer_image_stretch_combo.blockSignals(True)
 
@@ -44151,9 +44364,25 @@ class MainWindow(QMainWindow):
 
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
 
-        image = self._sky_explorer_image_view.capture_view_image()
+        image = self._sky_explorer_image_view.capture_full_resolution_image()
 
-        if not image.save(str(output_path)):
+        if image is None or image.isNull():
+
+            QMessageBox.warning(self, "Save failed", "Could not render the annotated Sky Explorer image at full resolution.")
+
+            return
+
+        suffix = output_path.suffix.lower()
+
+        if suffix in {".jpg", ".jpeg"}:
+
+            saved = image.save(str(output_path), "JPG", 95)
+
+        else:
+
+            saved = image.save(str(output_path))
+
+        if not saved:
 
             QMessageBox.warning(self, "Save failed", f"Could not save the Sky Explorer image to {output_path}.")
 
@@ -44480,8 +44709,6 @@ class MainWindow(QMainWindow):
 
         stretch_mode = self._sky_explorer_image_stretch_combo.currentData()
         resolved_stretch = str(stretch_mode) if isinstance(stretch_mode, str) and stretch_mode else "stf"
-        if resolved_stretch == "linear":
-            resolved_stretch = "stf"
 
         black_point, midtone_point, white_point = self._sky_explorer_image_levels
 
@@ -46072,6 +46299,12 @@ class MainWindow(QMainWindow):
 
             normalized_tool = "mouse"
 
+        previous_tool = str(getattr(self, "_sky_explorer_annotation_tool", "mouse") or "mouse").strip().lower()
+
+        if normalized_tool != previous_tool:
+
+            self._clear_sky_explorer_live_style_annotation()
+
         self._sky_explorer_annotation_tool = normalized_tool
 
         self._sky_explorer_manual_annotation_drag = None
@@ -46228,6 +46461,8 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_annotation_stroke_color_button()
 
+        self._apply_sky_explorer_annotation_properties_to_live_object()
+
     def _choose_sky_explorer_annotation_fill_color(self) -> None:
 
         selected_color = QColorDialog.getColor(QColor(self._sky_explorer_annotation_fill_color), self, "Choose Fill Color")
@@ -46239,6 +46474,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_annotation_fill_color = selected_color.name().lower()
 
         self._sync_sky_explorer_annotation_fill_color_button()
+
+        self._apply_sky_explorer_annotation_properties_to_live_object()
 
     def _choose_sky_explorer_annotation_text_color(self) -> None:
 
@@ -46252,11 +46489,15 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_annotation_text_color_button()
 
+        self._apply_sky_explorer_annotation_properties_to_live_object()
+
     def _handle_sky_explorer_annotation_opacity_changed(self, value: int) -> None:
 
         self._sky_explorer_annotation_opacity = max(0.05, min(1.0, float(value) / 100.0))
 
         self._sync_sky_explorer_annotation_opacity_controls()
+
+        self._apply_sky_explorer_annotation_properties_to_live_object()
 
     def _handle_sky_explorer_annotation_opacity_label_dragged(self, delta_x: int) -> None:
 
@@ -46272,9 +46513,13 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_annotation_line_width = max(0.5, min(12.0, float(value)))
 
+        self._apply_sky_explorer_annotation_properties_to_live_object()
+
     def _handle_sky_explorer_annotation_text_font_changed(self, font: QFont) -> None:
 
         self._sky_explorer_annotation_text_font_family = font.family().strip()
+
+        self._apply_sky_explorer_annotation_properties_to_live_object()
 
     def _handle_sky_explorer_annotation_text_style_changed(self, _index: int) -> None:
 
@@ -46282,9 +46527,141 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_annotation_text_font_style = str(style_value or "regular")
 
+        self._apply_sky_explorer_annotation_properties_to_live_object()
+
     def _handle_sky_explorer_annotation_text_size_changed(self, value: int) -> None:
 
         self._sky_explorer_annotation_text_size = max(6.0, float(value))
+
+        self._apply_sky_explorer_annotation_properties_to_live_object()
+
+    def _remember_sky_explorer_live_style_annotation(self, annotation: _SkyExplorerManualAnnotation) -> None:
+
+        self._sky_explorer_live_style_annotation_id = annotation.annotation_id
+
+        self._sky_explorer_live_style_tool = str(getattr(self, "_sky_explorer_annotation_tool", annotation.shape) or annotation.shape)
+
+    def _clear_sky_explorer_live_style_annotation(self) -> None:
+
+        self._sky_explorer_live_style_annotation_id = None
+
+        self._sky_explorer_live_style_tool = None
+
+    def _sky_explorer_live_style_annotation(self) -> _SkyExplorerManualAnnotation | None:
+
+        annotation_id = getattr(self, "_sky_explorer_live_style_annotation_id", None)
+
+        live_tool = str(getattr(self, "_sky_explorer_live_style_tool", "") or "").strip().lower()
+
+        current_tool = str(getattr(self, "_sky_explorer_annotation_tool", "mouse") or "mouse").strip().lower()
+
+        if not annotation_id or live_tool != current_tool:
+
+            return None
+
+        return self._sky_explorer_manual_annotation_by_id(annotation_id)
+
+    def _load_sky_explorer_annotation_properties_from_object(self, annotation: _SkyExplorerManualAnnotation) -> None:
+
+        self._sky_explorer_annotation_properties_loading = True
+
+        try:
+
+            self._sky_explorer_annotation_stroke_color = annotation.stroke_color
+
+            self._sky_explorer_annotation_fill_color = annotation.fill_color
+
+            self._sky_explorer_annotation_text_color = annotation.text_color
+
+            self._sky_explorer_annotation_line_width = max(0.5, min(12.0, float(annotation.line_width)))
+
+            self._sky_explorer_annotation_opacity = max(0.05, min(1.0, float(annotation.opacity)))
+
+            self._sky_explorer_annotation_text_size = max(6.0, float(annotation.text_size))
+
+            self._sky_explorer_annotation_text_font_family = str(annotation.text_font_family or "").strip()
+
+            self._sky_explorer_annotation_text_font_style = self._normalize_sky_explorer_annotation_text_style(annotation.text_font_style)
+
+            self._sync_sky_explorer_annotation_stroke_color_button()
+
+            self._sync_sky_explorer_annotation_fill_color_button()
+
+            self._sync_sky_explorer_annotation_text_color_button()
+
+            self._sync_sky_explorer_annotation_opacity_controls()
+
+            self._sync_sky_explorer_annotation_text_font_controls()
+
+            line_width_spin = getattr(self, "_sky_explorer_annotation_line_width_spin", None)
+
+            if line_width_spin is not None:
+
+                line_width_spin.blockSignals(True)
+
+                line_width_spin.setValue(float(self._sky_explorer_annotation_line_width))
+
+                line_width_spin.blockSignals(False)
+
+        finally:
+
+            self._sky_explorer_annotation_properties_loading = False
+
+    def _apply_sky_explorer_annotation_properties_to_live_object(self) -> None:
+
+        if getattr(self, "_sky_explorer_annotation_properties_loading", False):
+
+            return
+
+        annotation = self._sky_explorer_live_style_annotation()
+
+        if annotation is None:
+
+            return
+
+        if annotation.shape == "text":
+
+            updated_annotation = replace(
+
+                annotation,
+
+                text_color=self._sky_explorer_annotation_text_color,
+
+                text_size=max(6.0, float(self._sky_explorer_annotation_text_size)),
+
+                text_font_family=str(self._sky_explorer_annotation_text_font_family or "").strip(),
+
+                text_font_style=self._normalize_sky_explorer_annotation_text_style(self._sky_explorer_annotation_text_font_style),
+
+                opacity=max(0.05, min(1.0, float(self._sky_explorer_annotation_opacity))),
+
+            )
+
+        else:
+
+            updated_annotation = replace(
+
+                annotation,
+
+                stroke_color=self._sky_explorer_annotation_stroke_color,
+
+                fill_color=self._sky_explorer_annotation_fill_color,
+
+                text_color=self._sky_explorer_annotation_text_color,
+
+                line_width=max(0.5, min(12.0, float(self._sky_explorer_annotation_line_width))),
+
+                opacity=max(0.05, min(1.0, float(self._sky_explorer_annotation_opacity))),
+
+            )
+
+        if updated_annotation == annotation:
+
+            return
+
+        self._replace_sky_explorer_manual_annotation(updated_annotation)
+
+        self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
 
     def _sync_sky_explorer_annotation_property_controls(self) -> None:
 
@@ -46421,19 +46798,55 @@ class MainWindow(QMainWindow):
         )
         color_button.setText("")
 
+    def _sky_explorer_is_manual_annotation_mode(self) -> bool:
+
+        return str(getattr(self, "_sky_explorer_annotation_mode", "auto") or "auto").strip().lower() == "manual"
+
+    def _sync_sky_explorer_annotation_mode_button(self) -> None:
+
+        button = getattr(self, "_sky_explorer_show_auto_annotations_button", None)
+
+        if button is None:
+
+            return
+
+        is_manual = self._sky_explorer_is_manual_annotation_mode()
+
+        previous_block_state = button.blockSignals(True)
+
+        try:
+
+            button.setText("Manual" if is_manual else "Auto")
+
+            button.setChecked(not is_manual)
+
+        finally:
+
+            button.blockSignals(previous_block_state)
+
+        button.setToolTip(
+            "Manual mode keeps catalog overlays and lets you add annotations or delete unwanted ones."
+            if is_manual
+            else "Auto mode shows catalog overlays. Click to switch to Manual without hiding them."
+        )
+
     def _handle_sky_explorer_show_auto_annotations_toggled(self, is_checked: bool) -> None:
 
         self._sky_explorer_show_auto_annotations = bool(is_checked)
+
+        self._sky_explorer_annotation_mode = "auto" if is_checked else "manual"
+
+        self._sync_sky_explorer_annotation_mode_button()
 
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
 
         if is_checked:
 
-            self.statusBar().showMessage("Automatic Sky Explorer annotations are visible.", 3000)
+            self.statusBar().showMessage("Auto mode: catalog annotations stay visible.", 3000)
 
         else:
 
-            self.statusBar().showMessage("Automatic Sky Explorer annotations are hidden; manual annotations remain visible.", 4000)
+            self.statusBar().showMessage("Manual mode: catalog annotations stay visible. Add new marks or right-click a selection to delete it.", 5000)
 
     def _sky_explorer_mag_limit_is_active(self) -> bool:
 
@@ -47314,6 +47727,10 @@ class MainWindow(QMainWindow):
 
             self._selected_sky_explorer_manual_annotation_id = None
 
+        if getattr(self, "_sky_explorer_live_style_annotation_id", None) == annotation_id:
+
+            self._clear_sky_explorer_live_style_annotation()
+
     def _sky_explorer_manual_annotation_handle_at(self, annotation: _SkyExplorerManualAnnotation, image_x: float, image_y: float) -> str | None:
 
         if annotation.shape == "text":
@@ -47639,6 +48056,8 @@ class MainWindow(QMainWindow):
 
         self._selected_sky_explorer_manual_annotation_id = annotation.annotation_id
 
+        self._remember_sky_explorer_live_style_annotation(annotation)
+
         if shape == "ellipse":
 
             draw_operation = "draw_ellipse"
@@ -47725,7 +48144,7 @@ class MainWindow(QMainWindow):
 
             text_color=text_color,
 
-            opacity=1.0,
+            opacity=max(0.05, min(1.0, float(self._sky_explorer_annotation_opacity))),
 
             text_size=text_size,
 
@@ -47742,6 +48161,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_manual_annotations_for_current_image().append(annotation)
 
         self._selected_sky_explorer_manual_annotation_id = annotation.annotation_id
+
+        self._remember_sky_explorer_live_style_annotation(annotation)
 
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
 
@@ -47770,6 +48191,10 @@ class MainWindow(QMainWindow):
         if target_annotation is not None and operation is not None:
 
             self._selected_sky_explorer_manual_annotation_id = target_annotation.annotation_id
+
+            self._remember_sky_explorer_live_style_annotation(target_annotation)
+
+            self._load_sky_explorer_annotation_properties_from_object(target_annotation)
 
             self._sky_explorer_manual_annotation_drag = _SkyExplorerManualAnnotationDrag(
 
@@ -48118,9 +48543,9 @@ class MainWindow(QMainWindow):
 
             show_center_dot=shape not in {"text", "ruler"},
 
-            outline_color="#111827" if shape != "text" else None,
+            outline_color=self._sky_explorer_overlay_outline_color() if shape != "text" else None,
 
-            outline_width=1.0 if shape != "text" else 0.0,
+            outline_width=self._sky_explorer_overlay_outline_width_for_pen_width(max(0.0, float(annotation.line_width))) if shape != "text" else 0.0,
 
             ellipse_minor_radius=max(1.0, float(annotation.minor_radius)) if shape == "ellipse" else None,
 
@@ -48194,6 +48619,8 @@ class MainWindow(QMainWindow):
 
         self._selected_sky_explorer_manual_annotation_id = annotation.annotation_id
 
+        self._remember_sky_explorer_live_style_annotation(annotation)
+
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
 
         self.statusBar().showMessage("Added manual Sky Explorer annotation.", 3000)
@@ -48242,6 +48669,10 @@ class MainWindow(QMainWindow):
 
             self._selected_sky_explorer_manual_annotation_id = None
 
+        if getattr(self, "_sky_explorer_live_style_annotation_id", None) == annotation.annotation_id:
+
+            self._clear_sky_explorer_live_style_annotation()
+
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
 
         self.statusBar().showMessage("Deleted manual Sky Explorer annotation.", 3000)
@@ -48257,6 +48688,8 @@ class MainWindow(QMainWindow):
         annotations.clear()
 
         self._selected_sky_explorer_manual_annotation_id = None
+
+        self._clear_sky_explorer_live_style_annotation()
 
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
 
@@ -48485,7 +48918,7 @@ class MainWindow(QMainWindow):
 
             line_width_spin.setEnabled(not is_text)
 
-            opacity_spin.setEnabled(not is_text)
+            opacity_spin.setEnabled(True)
 
             stroke_button.setEnabled(not is_text)
 
@@ -48644,7 +49077,7 @@ class MainWindow(QMainWindow):
 
             text_size=resolved_text_size,
 
-            opacity=1.0 if shape == "text" else max(0.05, min(1.0, float(opacity_spin.value()) / 100.0)),
+            opacity=max(0.05, min(1.0, float(opacity_spin.value()) / 100.0)),
 
             text_font_family=resolved_text_font_family,
 
@@ -48826,6 +49259,32 @@ class MainWindow(QMainWindow):
 
             clear_detections_action = menu.addAction("Clear Detections")
 
+        delete_automatic_action = None
+
+        automatic_targets: tuple[SkyExplorerObject, ...] = ()
+
+        if self._sky_explorer_is_manual_annotation_mode():
+
+            automatic_object = self._sky_explorer_automatic_object_at_image_point(image_x, image_y)
+
+            if automatic_object is not None:
+
+                selected_objects = self._selected_sky_explorer_objects()
+
+                if any(self._sky_explorer_objects_match(automatic_object, selected) for selected in selected_objects):
+
+                    automatic_targets = selected_objects
+
+                else:
+
+                    automatic_targets = (automatic_object,)
+
+                menu.addSeparator()
+
+                delete_label = "Delete" if len(automatic_targets) == 1 else f"Delete ({len(automatic_targets)})"
+
+                delete_automatic_action = menu.addAction(delete_label)
+
         selected_action = menu.exec(global_position)
 
         if selected_action is search_action:
@@ -48851,6 +49310,10 @@ class MainWindow(QMainWindow):
         elif selected_action is clear_detections_action:
 
             self._clear_sky_explorer_detected_targets()
+
+        elif selected_action is delete_automatic_action and automatic_targets:
+
+            self._hide_sky_explorer_automatic_objects(automatic_targets)
 
     def _handle_image_context_requested(self, image_x: float, image_y: float, global_position: QPoint, _modifiers: object) -> None:
 
@@ -49548,10 +50011,6 @@ class MainWindow(QMainWindow):
 
     def _current_sky_explorer_image_overlay_parts(self) -> tuple[list[ImageOverlay], list[ImageOverlay]]:
 
-        if not self._sky_explorer_show_auto_annotations:
-
-            return [], self._sky_explorer_manual_annotation_overlays()
-
         overlays = self._sky_explorer_automatic_image_overlays()
 
         return overlays, self._sky_explorer_manual_annotation_overlays()
@@ -49662,11 +50121,19 @@ class MainWindow(QMainWindow):
 
             font_signature,
 
+            str(getattr(settings, "sky_explorer_default_text_font_family", "") or "").strip(),
+
+            str(getattr(settings, "sky_explorer_default_text_font_style", "regular") or "regular").strip().lower(),
+
+            round(float(getattr(settings, "sky_explorer_default_text_size", 9.0) or 9.0), 3),
+
             self._current_custom_theme_colors().get("accent", "#3d8bfd"),
 
             tuple(sorted(self._sky_explorer_detected_object_identities_for_current_image())),
 
             len(self._sky_explorer_detected_table_objects()),
+
+            tuple(sorted(getattr(self, "_sky_explorer_hidden_object_identities", set()))),
 
         )
 
@@ -49725,6 +50192,12 @@ class MainWindow(QMainWindow):
                 annotate_objects.append(sky_object)
 
                 seen_identities.add(identity)
+
+        annotate_objects = [
+            sky_object
+            for sky_object in annotate_objects
+            if not self._sky_explorer_object_is_hidden(sky_object)
+        ]
 
         if not annotate_objects:
 
@@ -49789,7 +50262,7 @@ class MainWindow(QMainWindow):
 
                     source_id=self._sky_explorer_overlay_source_id(sky_object),
 
-                    name=sky_object.short_label,
+                    name=self._sky_explorer_overlay_name_for_object(sky_object),
 
                     x=float(sky_object.pixel_x),
 
@@ -49829,7 +50302,7 @@ class MainWindow(QMainWindow):
 
                     accent_color=selected_accent_color if is_selected else None,
 
-                    outline_color="#111827",
+                    outline_color=self._sky_explorer_overlay_outline_color(),
 
                     outline_width=self._sky_explorer_overlay_outline_width_for_pen_width(overlay_pen_width),
 
@@ -50066,6 +50539,12 @@ class MainWindow(QMainWindow):
         else:
 
             selected_stars = self._sky_explorer_mag_limit_representative_objects(objects)
+
+        selected_stars = tuple(
+            sky_object
+            for sky_object in selected_stars
+            if not self._sky_explorer_object_is_hidden(sky_object)
+        )
 
         if not selected_stars:
 
@@ -50382,13 +50861,35 @@ class MainWindow(QMainWindow):
 
         return min(8.0, max(base_width, scaled_width))
 
+    def _sky_explorer_overlay_outline_color(self) -> str | None:
+
+        settings = self._ensure_settings()
+
+        if float(getattr(settings, "sky_explorer_overlay_outline_width", 1.2)) <= 0.0:
+
+            return None
+
+        color = str(getattr(settings, "sky_explorer_overlay_outline_color", "#111827") or "").strip() or "#111827"
+
+        return color
+
     def _sky_explorer_overlay_outline_width_for_pen_width(self, pen_width: float) -> float:
 
-        if not bool(getattr(self._ensure_settings(), "sky_explorer_scale_overlay_strokes", True)):
+        settings = self._ensure_settings()
 
-            return 1.2
+        base_width = max(0.0, float(getattr(settings, "sky_explorer_overlay_outline_width", 1.2)))
 
-        return max(1.2, min(3.5, float(pen_width) * 0.45))
+        if base_width <= 0.0:
+
+            return 0.0
+
+        if not bool(getattr(settings, "sky_explorer_scale_overlay_strokes", True)):
+
+            return base_width
+
+        scaled_width = max(1.2, min(3.5, float(pen_width) * 0.45))
+
+        return base_width * (scaled_width / 1.2)
 
     def _sky_explorer_overlay_labeled_object_keys(self, objects: Sequence[SkyExplorerObject]) -> set[tuple[str, str, str]]:
 
@@ -50449,6 +50950,131 @@ class MainWindow(QMainWindow):
             str(sky_object.source_id),
 
         )
+
+    def _sky_explorer_object_is_hidden(self, sky_object: SkyExplorerObject) -> bool:
+
+        return self._sky_explorer_object_identity(sky_object) in getattr(self, "_sky_explorer_hidden_object_identities", set())
+
+    def _hide_sky_explorer_automatic_objects(self, sky_objects: Sequence[SkyExplorerObject]) -> None:
+
+        hidden = getattr(self, "_sky_explorer_hidden_object_identities", None)
+
+        if hidden is None:
+
+            self._sky_explorer_hidden_object_identities = set()
+
+            hidden = self._sky_explorer_hidden_object_identities
+
+        added = 0
+
+        for sky_object in sky_objects:
+
+            identity = self._sky_explorer_object_identity(sky_object)
+
+            if identity in hidden:
+
+                continue
+
+            hidden.add(identity)
+
+            added += 1
+
+        if added <= 0:
+
+            return
+
+        self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
+
+        label = "annotation" if added == 1 else "annotations"
+
+        self.statusBar().showMessage(f"Removed {added} automatic {label}.", 3000)
+
+    def _sky_explorer_object_for_overlay(self, overlay: object) -> SkyExplorerObject | None:
+
+        if not isinstance(overlay, ImageOverlay):
+
+            return None
+
+        source_id = str(overlay.source_id or "")
+
+        if source_id.startswith("mag-limit:"):
+
+            source_id = source_id.removeprefix("mag-limit:")
+
+            for sky_object in self._sky_explorer_mag_limit_table_objects():
+
+                if source_id == self._sky_explorer_overlay_source_id(sky_object):
+
+                    return sky_object
+
+            return None
+
+        if self._sky_explorer_manual_annotation_id_from_source_id(overlay.source_id) is not None:
+
+            return None
+
+        result = self._current_sky_explorer_result
+
+        search_objects: list[SkyExplorerObject] = []
+
+        if result is not None:
+
+            search_objects.extend(result.objects)
+
+        search_objects.extend(self._sky_explorer_detected_table_objects())
+
+        search_objects.extend(self._sky_explorer_mag_limit_table_objects())
+
+        for sky_object in search_objects:
+
+            if overlay.source_id == self._sky_explorer_overlay_source_id(sky_object):
+
+                return sky_object
+
+        return None
+
+    def _sky_explorer_automatic_object_at_image_point(self, image_x: float, image_y: float) -> SkyExplorerObject | None:
+
+        image_view = getattr(self, "_sky_explorer_image_view", None)
+
+        overlay = None
+
+        if image_view is not None and hasattr(image_view, "overlay_at_image_point"):
+
+            overlay = image_view.overlay_at_image_point(image_x, image_y)
+
+        sky_object = self._sky_explorer_object_for_overlay(overlay)
+
+        if sky_object is not None:
+
+            return sky_object
+
+        selected_object = self._selected_sky_explorer_object()
+
+        if selected_object is None or image_view is None:
+
+            return None
+
+        selected_overlay = next(
+
+            (
+                candidate
+                for candidate in getattr(image_view, "_overlays", ())
+                if isinstance(candidate, ImageOverlay)
+                and candidate.source_id == self._sky_explorer_overlay_source_id(selected_object)
+            ),
+
+            None,
+
+        )
+
+        if selected_overlay is None:
+
+            return None
+
+        score = image_view._overlay_hit_test_score(selected_overlay, QPointF(float(image_x), float(image_y)))
+
+        return selected_object if score is not None else None
 
     def _sky_explorer_overlay_radius_for_object(self, sky_object: SkyExplorerObject) -> float:
 
@@ -51557,6 +52183,16 @@ class MainWindow(QMainWindow):
 
     def _start_update_check(self, *, automatic: bool) -> None:
 
+        if not managed_updates_supported():
+            if not automatic:
+                QMessageBox.information(
+                    self,
+                    "Updates unavailable",
+                    "Managed in-app updates are only available in the Windows installer build.\n\n"
+                    "For this build, download a newer package when one is published.",
+                )
+            return
+
         if self._update_check_worker is not None or self._update_download_worker is not None:
 
             if not automatic:
@@ -51631,34 +52267,21 @@ class MainWindow(QMainWindow):
 
         package_kind = str(getattr(available_update, "package_kind", "full")).strip().lower()
 
-        package_label = "Delta update" if package_kind == "delta" else "Full update"
+        dialog = UpdateAvailableDialog(
 
-        size_text = f"\n{package_label} download: {download_size / (1024 * 1024):.1f} MiB" if download_size > 0 else ""
+            version=version,
 
-        rebuild_warning = (
-            "\nAfter the download, Citizen Astronomy rebuilds the full update package locally. "
-            "This might take a few minutes."
-            if package_kind == "delta"
-            else ""
-        )
+            notes=notes,
 
-        notes_text = f"\n\n{notes}" if notes else ""
+            download_size=download_size,
 
-        choice = QMessageBox.question(
+            package_kind=package_kind,
 
-            self,
-
-            "Update Available",
-
-            f"Citizen Astronomy {version} is available.{size_text}{rebuild_warning}{notes_text}\n\nDownload this update now?",
-
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-
-            QMessageBox.StandardButton.Yes,
+            parent=self,
 
         )
 
-        if choice == QMessageBox.StandardButton.Yes:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
 
             self._start_update_download(available_update)
 
@@ -55659,19 +56282,23 @@ class MainWindow(QMainWindow):
 
             updated_settings.save(root_path)
 
+            visible_mode = self._visible_app_mode()
+
+            updated_settings.app_mode = visible_mode
+
             self._settings = updated_settings
 
             self._load_sky_explorer_style_settings_from_settings()
 
             self._populate_sky_explorer_object_type_table(preserve_selection=True)
 
-            if self._visible_app_mode() == AppMode.SKY_EXPLORER:
+            if visible_mode == AppMode.SKY_EXPLORER:
 
                 self._refresh_sky_explorer_filtered_view(preserve_selection=True, select_first_row=False)
 
             self._sync_app_mode_controls()
 
-            self._apply_app_mode(self._current_app_mode())
+            self._apply_app_mode(visible_mode)
 
             self._sync_alignment_control()
 
@@ -55708,8 +56335,6 @@ class MainWindow(QMainWindow):
             self._sync_hr_background_name_lookup(force_restart=True)
 
             self._sync_interface_tips()
-
-            self._sync_mode_launcher_visibility()
 
             if self._current_asteroid_source_image is not None:
 
@@ -56799,6 +57424,8 @@ class MainWindow(QMainWindow):
         self._clear_sky_explorer_survey_comparison(reset_selection=True)
 
         self._current_sky_explorer_result = None
+
+        self._sky_explorer_hidden_object_identities = set()
 
         self._sky_explorer_queried_object_type_keys = set()
 
@@ -58080,7 +58707,7 @@ class MainWindow(QMainWindow):
 
             self._hr_source_image_input.text() or self._root_path_input.text(),
 
-            "Supported Image Files (*.xisf *.fits *.fit *.tif *.tiff *.png *.jpg *.jpeg)",
+            SUPPORTED_IMAGE_FILE_FILTER,
 
         )
 
@@ -58426,7 +59053,7 @@ class MainWindow(QMainWindow):
 
             self._asteroid_source_image_input.text() or self._root_path_input.text(),
 
-            "Supported Image Files (*.xisf *.fits *.fit *.tif *.tiff *.png *.jpg *.jpeg)",
+            SUPPORTED_IMAGE_FILE_FILTER,
 
         )
 
@@ -58469,7 +59096,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "No supported images",
-                "The selected folder does not contain any supported images (FITS, XISF, TIFF, PNG, or JPEG).",
+                "The selected folder does not contain any supported images (FITS, XISF, TIFF, PNG, JPEG, or camera RAW).",
             )
 
             return
@@ -68044,7 +68671,7 @@ class MainWindow(QMainWindow):
 
             self._hr_source_image_input.text() or self._root_path_input.text(),
 
-            "Supported Image Files (*.xisf *.fits *.fit *.tif *.tiff *.png *.jpg *.jpeg)",
+            SUPPORTED_IMAGE_FILE_FILTER,
 
         )
 
@@ -76764,7 +77391,7 @@ class MainWindow(QMainWindow):
 
         accent_outline_buttons = [
 
-            self._find_better_fit_button,
+            self._scan_comps_button,
 
             self._discover_button,
 
@@ -80601,9 +81228,9 @@ class MainWindow(QMainWindow):
 
             self._restore_source_target_selection(pending_targets)
 
-            self._append_work_log("Resuming Find Better Fit after manual-aperture reprocessing.")
+            self._append_work_log("Resuming Scan Comps after manual-aperture reprocessing.")
 
-            self._optimize_selected_source_comparison_fit()
+            self._open_scan_comps_dialog()
 
         if self._differential_workflow_active:
 
@@ -82086,7 +82713,7 @@ class MainWindow(QMainWindow):
 
             else:
 
-                cached_message = f"Recalled cached Find Better Fit period for {series.source_name} [{series.filter_name}] = {fit_result.period_hours * _MINUTES_PER_HOUR:.2f} min ({fit_result.period_hours:.2f} hr, {fit_result.period_hours / 24.0:.4f} d){harmonic_summary}"
+                cached_message = f"Recalled cached comparison-fit period for {series.source_name} [{series.filter_name}] = {fit_result.period_hours * _MINUTES_PER_HOUR:.2f} min ({fit_result.period_hours:.2f} hr, {fit_result.period_hours / 24.0:.4f} d){harmonic_summary}"
 
             self.statusBar().showMessage(cached_message)
 
@@ -87669,123 +88296,199 @@ class MainWindow(QMainWindow):
 
         QMessageBox.critical(self, "Increase SNR", message)
 
-    def _optimize_selected_source_comparison_fit(self) -> None:
 
-        if self._comparison_fit_worker is not None:
+    def _reference_source_colors(self, report: ProcessingReport) -> dict[str, float]:
+        colors: dict[str, float] = {}
+        for entry in report.reference_stars:
+            bp_rp = catalog_star_bp_rp(entry)
+            if bp_rp is not None:
+                colors[entry.source_id] = bp_rp
+        if report.field_catalog is not None:
+            for entry in report.field_catalog.gaia_stars:
+                bp_rp = catalog_star_bp_rp(entry)
+                if bp_rp is not None:
+                    colors.setdefault(entry.source_id, bp_rp)
+        return colors
 
-            if self._comparison_fit_worker.cancellation_requested():
+    def _scan_comps_context_for_target(
+        self,
+        report: ProcessingReport,
+        source_target: tuple[str, str],
+        reference_source_magnitudes: dict[str, float],
+    ) -> _ComparisonFitContext | None:
+        entry = self._source_entry(report, source_target[0], source_target[1])
+        if entry is None:
+            return None
+        target_series = self._selected_source_series(entry)
+        if target_series is None:
+            return None
+        target_filter = target_series.filter_name or "unknown"
+        target_measurements = [
+            measurement
+            for measurement in report.measurements
+            if not measurement.is_reference and measurement.source_id == target_series.source_id and (measurement.filter_name or "unknown") == target_filter
+        ]
+        if len(target_measurements) < 2:
+            return None
+        reference_measurements = [
+            measurement
+            for measurement in report.measurements
+            if measurement.is_reference and (measurement.filter_name or "unknown") == target_filter
+        ]
+        if not reference_measurements:
+            return None
+        target_magnitude: float | None = None
+        if entry.magnitude is not None:
+            try:
+                numeric_magnitude = float(entry.magnitude)
+            except (TypeError, ValueError):
+                numeric_magnitude = None
+            if numeric_magnitude is not None and np.isfinite(numeric_magnitude):
+                target_magnitude = numeric_magnitude
+        # Reuse _ComparisonFitContext; actual_period_days is unused for Scan Comps.
+        return _ComparisonFitContext(
+            target_entry=entry,
+            target_series=target_series,
+            target_measurements=target_measurements,
+            reference_measurements=reference_measurements,
+            actual_period_days=0.0,
+            target_magnitude=target_magnitude,
+            reference_source_magnitudes=reference_source_magnitudes,
+        )
 
-                self.statusBar().showMessage("Comparison-fit cancellation is already in progress.")
-
-                return
-
-            self._comparison_fit_worker.request_cancel()
-
-            self._comparison_fit_queue = []
-
-            self._comparison_fit_total_targets = 0
-
-            self._append_work_log("Cancellation requested for comparison-fit search.")
-
-            self.statusBar().showMessage("Cancellation requested for comparison-fit search.")
-
-            self._update_source_period_button_state()
-
-            return
-
-        if self._period_job_active():
-
-            self.statusBar().showMessage("Another period or comparison-fit job is already running.")
-
-            return
-
-
-
+    def _selected_source_scan_comps_context(self) -> _ComparisonFitContext | None:
+        report = self._current_processing_report
+        if report is None:
+            return None
         selected_targets = self._selected_source_targets()
+        if not selected_targets:
+            selected_target = self._selected_source_target()
+            if selected_target is None:
+                return None
+            selected_targets = [selected_target]
+        if len(selected_targets) != 1:
+            return None
+        reference_source_magnitudes = self._reference_source_magnitudes(report)
+        return self._scan_comps_context_for_target(
+            report,
+            selected_targets[0],
+            reference_source_magnitudes,
+        )
 
+    def _open_scan_comps_dialog(self) -> None:
+        if self._period_job_active():
+            self.statusBar().showMessage("Another period or comparison job is already running.")
+            return
         if self._manual_comparison_fit_requires_reprocess():
-
-            targets_to_restore = list(selected_targets)
-
-            if not targets_to_restore:
-
-                selected_target = self._selected_source_target()
-
-                if selected_target is not None:
-
-                    targets_to_restore = [selected_target]
-
-            if not targets_to_restore:
-
-                self.statusBar().showMessage("Select a processed source before running Find Better Fit.")
-
+            selected_target = self._selected_source_target()
+            if selected_target is None:
+                self.statusBar().showMessage("Select a processed source before running Scan Comps.")
                 return
-
             object_name = self._selected_object_name()
-
             if object_name is None:
-
-                self.statusBar().showMessage("Select a processed object before running Find Better Fit.")
-
+                self.statusBar().showMessage("Select a processed object before running Scan Comps.")
                 return
-
-            self._pending_comparison_fit_targets_after_processing = targets_to_restore
-
+            self._pending_comparison_fit_targets_after_processing = [selected_target]
             self._append_work_log(
-
-                f"Saved manual apertures changed for {object_name}; reprocessing with the updated manual setup before continuing Find Better Fit."
-
+                f"Saved manual apertures changed for {object_name}; reprocessing with the updated manual setup before continuing Scan Comps."
             )
-
-            self.statusBar().showMessage("Reprocessing updated manual apertures before Find Better Fit.")
-
+            self.statusBar().showMessage("Reprocessing updated manual apertures before Scan Comps.")
             self._begin_processing(Path(self._root_path_input.text()).expanduser(), object_name)
-
             return
-
-        contexts = self._selected_source_comparison_fit_contexts()
-
-        if len(selected_targets) > 1 and not self._comparison_fit_allows_multiple_targets():
-
+        context = self._selected_source_scan_comps_context()
+        if context is None:
             self.statusBar().showMessage(
-
-                "Enable 'Multiple Target Selection' in Settings > General > Advanced to run Find Better Fit on more than one selected source at a time."
-
+                "Select one processed target source with measured comparison-star references before running Scan Comps."
             )
-
             return
-
-        if not contexts:
-
-            self.statusBar().showMessage(
-
-                "Select one or more processed target sources with literature periods and measured comparison-star pools before searching for a better fit."
-
-            )
-
+        report = self._current_processing_report
+        if report is None:
             return
-
-
-
-        if selected_targets and len(contexts) < len(selected_targets):
-
-            skipped_count = len(selected_targets) - len(contexts)
-
-            self._append_work_log(
-
-                f"Skipped {skipped_count} selected source(s) for Find Better Fit because they are missing a literature period, enough target measurements, or a usable comparison-star pool."
-
+        reference_colors = self._reference_source_colors(report)
+        target_bp_rp = catalog_star_bp_rp(context.target_entry)
+        if target_bp_rp is None:
+            target_bp_rp = reference_colors.get(context.target_series.source_id)
+        representative: dict[str, PhotometryMeasurement] = {}
+        for measurement in context.reference_measurements:
+            if measurement.flux is None or measurement.flux <= 0:
+                continue
+            if measurement.is_saturated or measurement.is_near_saturated:
+                continue
+            representative.setdefault(measurement.source_id, measurement)
+        reference_inputs = [
+            ScanCompReferenceInput(
+                source_id=row.source_id,
+                source_name=row.source_name,
+                ra_deg=row.ra_deg,
+                dec_deg=row.dec_deg,
+                magnitude=context.reference_source_magnitudes.get(row.source_id, row.catalog_magnitude),
+                bp_rp=reference_colors.get(row.source_id),
             )
+            for row in representative.values()
+        ]
+        dialog = ScanCompsDialog(
+            report_token=id(report),
+            target_source_id=context.target_series.source_id,
+            target_source_name=context.target_series.source_name,
+            filter_name=context.target_series.filter_name or "unknown",
+            target_ra_deg=context.target_measurements[0].ra_deg,
+            target_dec_deg=context.target_measurements[0].dec_deg,
+            target_magnitude=context.target_magnitude,
+            target_bp_rp=target_bp_rp,
+            target_measurements=context.target_measurements,
+            reference_measurements=context.reference_measurements,
+            reference_inputs=reference_inputs,
+            y_axis_mode=self._current_light_curve_y_axis_mode(),
+            parent=self,
+        )
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return
+        result = dialog.selected_result()
+        if result is None:
+            return
+        self._apply_scan_comps_result(result, context)
 
+    def _apply_scan_comps_result(self, result: ScanCompsDialogResult, context: _ComparisonFitContext) -> None:
+        report = self._current_processing_report
+        if report is None:
+            return
+        target_source_id = context.target_series.source_id
+        filter_name = context.target_series.filter_name or "unknown"
+        updated_measurements = {
+            self._measurement_key(measurement): measurement
+            for measurement in result.target_measurements
+        }
+        report.measurements = [
+            updated_measurements.get(self._measurement_key(measurement), measurement)
+            if measurement.source_id == target_source_id and (measurement.filter_name or "unknown") == filter_name
+            else measurement
+            for measurement in report.measurements
+        ]
+        series_replaced = False
+        updated_series: list[LightCurveSeries] = []
+        for series in report.light_curves:
+            if series.source_id == target_source_id and (series.filter_name or "unknown") == filter_name:
+                updated_series.append(result.series)
+                series_replaced = True
+            else:
+                updated_series.append(series)
+        if not series_replaced:
+            updated_series.append(result.series)
+        report.light_curves = updated_series
+        self._refresh_comparison_fit_views()
+        comparison_names = ", ".join(result.comparison_source_names)
+        self._append_work_log(
+            f"Applied Scan Comps set for {context.target_series.source_name} [{filter_name}]: {comparison_names}."
+        )
+        self.statusBar().showMessage(
+            f"Applied Scan Comps set for {context.target_series.source_name} [{filter_name}]."
+        )
+        self._update_source_period_button_state()
 
+    def _optimize_selected_source_comparison_fit(self) -> None:
+        """Deprecated Find Better Fit entry point; opens Scan Comps."""
+        self._open_scan_comps_dialog()
 
-        self._comparison_fit_queue = list(contexts)
-
-        self._comparison_fit_total_targets = len(contexts)
-
-        self._flush_work_log()
-
-        self._start_next_comparison_fit_worker()
 
     def _start_next_comparison_fit_worker(self) -> None:
 
@@ -87955,9 +88658,9 @@ class MainWindow(QMainWindow):
 
             self._pull_period_button.setEnabled(False)
 
-            self._find_better_fit_button.setText(_FIND_BETTER_FIT_BUTTON_LABEL)
+            self._scan_comps_button.setText(_SCAN_COMPS_BUTTON_LABEL)
 
-            self._find_better_fit_button.setEnabled(False)
+            self._scan_comps_button.setEnabled(False)
 
             self._discover_button.setText(_DISCOVER_BUTTON_LABEL)
 
@@ -87981,9 +88684,9 @@ class MainWindow(QMainWindow):
 
             self._calculate_period_button.setEnabled(False)
 
-            self._find_better_fit_button.setText(_FIND_BETTER_FIT_BUTTON_LABEL)
+            self._scan_comps_button.setText(_SCAN_COMPS_BUTTON_LABEL)
 
-            self._find_better_fit_button.setEnabled(False)
+            self._scan_comps_button.setEnabled(False)
 
             self._discover_button.setText(_DISCOVER_BUTTON_LABEL)
 
@@ -88007,9 +88710,9 @@ class MainWindow(QMainWindow):
 
             self._pull_period_button.setEnabled(False)
 
-            self._find_better_fit_button.setText("Cancelling..." if cancel_requested else "Cancel Better Fit")
+            self._scan_comps_button.setText("Cancelling..." if cancel_requested else "Scan Comps")
 
-            self._find_better_fit_button.setEnabled(not cancel_requested)
+            self._scan_comps_button.setEnabled(not cancel_requested)
 
             self._discover_button.setText(_DISCOVER_BUTTON_LABEL)
 
@@ -88033,9 +88736,9 @@ class MainWindow(QMainWindow):
 
             self._pull_period_button.setEnabled(False)
 
-            self._find_better_fit_button.setText(_FIND_BETTER_FIT_BUTTON_LABEL)
+            self._scan_comps_button.setText(_SCAN_COMPS_BUTTON_LABEL)
 
-            self._find_better_fit_button.setEnabled(False)
+            self._scan_comps_button.setEnabled(False)
 
             self._discover_button.setText("Cancelling..." if cancel_requested else "Cancel Discover")
 
@@ -88059,9 +88762,9 @@ class MainWindow(QMainWindow):
 
             self._pull_period_button.setEnabled(False)
 
-            self._find_better_fit_button.setText(_FIND_BETTER_FIT_BUTTON_LABEL)
+            self._scan_comps_button.setText(_SCAN_COMPS_BUTTON_LABEL)
 
-            self._find_better_fit_button.setEnabled(False)
+            self._scan_comps_button.setEnabled(False)
 
             self._discover_button.setText(_DISCOVER_BUTTON_LABEL)
 
@@ -88077,7 +88780,7 @@ class MainWindow(QMainWindow):
 
         self._pull_period_button.setText(_PULL_PERIOD_BUTTON_LABEL)
 
-        self._find_better_fit_button.setText(_FIND_BETTER_FIT_BUTTON_LABEL)
+        self._scan_comps_button.setText(_SCAN_COMPS_BUTTON_LABEL)
 
         self._discover_button.setText(_DISCOVER_BUTTON_LABEL)
 
@@ -88105,13 +88808,7 @@ class MainWindow(QMainWindow):
 
         )
 
-        self._find_better_fit_button.setEnabled(
-
-            bool(comparison_fit_contexts)
-
-            and (selected_target_count <= 1 or multiple_target_selection_allowed)
-
-        )
+        self._scan_comps_button.setEnabled(self._selected_source_scan_comps_context() is not None)
 
         self._discover_button.setEnabled(report is not None and report.photometry_mode != ObjectPhotometryMode.MANUAL)
 
@@ -88501,7 +89198,7 @@ class MainWindow(QMainWindow):
 
         self._append_work_log(f"Comparison-fit search failed: {message}")
 
-        QMessageBox.critical(self, "Find Better Fit", message)
+        QMessageBox.critical(self, "Scan Comps", message)
 
     def _apply_discover_source_results(self, source_results: list[DiscoverSourceResult]) -> None:
 

@@ -27,7 +27,7 @@ from matplotlib.ticker import AutoMinorLocator
 
 
 
-from photometry_app.core.image_io import read_image_data
+from photometry_app.core.image_io import RAW_CAMERA_IMAGE_SUFFIXES, read_image_data
 
 from photometry_app.core.models import LightCurvePoint, LightCurveSeries, PhotometryMeasurement
 
@@ -289,9 +289,11 @@ _ANNOTATED_IMAGE_STF_NATIVE_RANGE_FLOOR = 65535.0
 
 _ANNOTATED_IMAGE_HIGHLIGHT_PERCENTILE = 99.85
 
+# Display-oriented rasters are often already stretched for viewing.
+# TIFF/PNG still go through the pixel heuristic below (science TIFFs stay STF).
 _LIKELY_ALREADY_STRETCHED_SUFFIXES = {".jpg", ".jpeg"}
 
-_RASTER_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+_RASTER_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff"} | set(RAW_CAMERA_IMAGE_SUFFIXES)
 
 
 
