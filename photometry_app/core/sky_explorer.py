@@ -22,7 +22,7 @@ from photometry_app.core.catalogs import CatalogService
 from photometry_app.core.image_io import read_header, read_header_and_shape
 from photometry_app.core.models import CatalogStar, SolvedField
 from photometry_app.core.scanner import inspect_fits_file
-from photometry_app.core.settings import AppSettings
+from photometry_app.core.settings import AppSettings, resolve_astrometry_timeout_seconds
 from photometry_app.core.solar_system import SolarSystemSearchResult, search_nearby_known_solar_system_objects
 from photometry_app.core.survey_images import SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS
 from photometry_app.core.wcs import AstrometryNetClient, celestial_wcs, extract_solved_field, infer_astrometry_solve_hints, validate_wcs
@@ -1872,6 +1872,7 @@ def _resolve_source_field(
         source_path,
         settings.cache_dir / "sky-explorer-wcs",
         hints=hints,
+        timeout_seconds=resolve_astrometry_timeout_seconds(settings),
         progress_callback=progress_callback,
     )
     if result.solved_field is None:

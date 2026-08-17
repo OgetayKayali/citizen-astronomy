@@ -11,7 +11,16 @@ import requests
 from astropy.io import fits
 from astropy.io.fits import Header
 
-from photometry_app.core.local_wcs import MetadataWcsSeed, _DetectedSource, _fit_gaia_wcs, infer_metadata_wcs_seed
+from photometry_app.core.local_wcs import (
+    MetadataWcsSeed,
+    _DetectedSource,
+    _fit_gaia_wcs,
+    _gaia_wcs_fallback_query_attempts,
+    _query_gaia_stars_for_wcs_fallback,
+    _select_wcs_match_sources,
+    _should_retry_gaia_wcs_catalog_query,
+    infer_metadata_wcs_seed,
+)
 from photometry_app.core.models import CatalogStar, PlateSolveResult, SolvedField, WcsStatus
 from photometry_app.core.wcs import AstrometryNetClient, _prepare_plate_solve_input, celestial_wcs, scale_wcs_pixel_grid, validate_wcs
 
@@ -56,6 +65,56 @@ class AstrometryNetClientTest(unittest.TestCase):
         self.assertAlmostEqual(seed.pixel_scale_x_arcsec, expected_scale, places=4)
         self.assertAlmostEqual(seed.pixel_scale_y_arcsec, expected_scale, places=4)
         self.assertAlmostEqual(seed.field_radius_deg, 0.5416, places=3)
+
+    def test_gaia_wcs_fallback_attempts_tighten_magnitude_then_shrink_radius(self) -> None:
+        attempts = _gaia_wcs_fallback_query_attempts(1.5)
+
+        self.assertEqual(
+            [(round(mag, 1), round(radius, 3)) for mag, radius, _label in attempts],
+            [(15.5, 1.5), (14.0, 1.5), (12.5, 1.5), (12.5, 1.05), (12.5, 0.75)],
+        )
+
+    def test_gaia_wcs_fallback_retries_empty_vizier_with_brighter_then_smaller_field(self) -> None:
+        field = SolvedField(
+            center_ra_deg=259.97513,
+            center_dec_deg=-35.87114,
+            radius_deg=1.5103,
+            width=6000,
+            height=4000,
+            wcs_path=Path("dense_field.fit"),
+        )
+        service = Mock()
+        empty_parse = RuntimeError(
+            "Failed to parse VIZIER result! Exception: Expecting value: line 1 column 1 (char 0)"
+        )
+        stars = [
+            CatalogStar(
+                catalog="gaia-dr3",
+                source_id="1",
+                name="1",
+                ra_deg=259.97,
+                dec_deg=-35.87,
+                magnitude=11.0,
+                is_variable=False,
+            )
+        ]
+        service.query_gaia_stars_limited.side_effect = [empty_parse, empty_parse, empty_parse, empty_parse, stars]
+        progress: list[str] = []
+
+        result = _query_gaia_stars_for_wcs_fallback(service, field, progress_callback=progress.append)
+
+        self.assertEqual(result, stars)
+        self.assertEqual(service.query_gaia_stars_limited.call_count, 5)
+        first_call = service.query_gaia_stars_limited.call_args_list[0]
+        self.assertEqual(first_call.kwargs["maximum_magnitude"], 15.5)
+        self.assertEqual(first_call.kwargs["row_limit"], 8000)
+        self.assertAlmostEqual(first_call.args[0].radius_deg, 1.5103, places=4)
+        last_call = service.query_gaia_stars_limited.call_args_list[-1]
+        self.assertEqual(last_call.kwargs["maximum_magnitude"], 12.5)
+        self.assertAlmostEqual(last_call.args[0].radius_deg, 1.5103 * 0.5, places=4)
+        self.assertTrue(any("G <= 14.0" in message for message in progress))
+        self.assertTrue(any("50% search radius" in message for message in progress))
+        self.assertTrue(_should_retry_gaia_wcs_catalog_query(empty_parse))
 
     def test_metadata_seeded_gaia_fit_recovers_rotation_and_parity(self) -> None:
         rng = np.random.default_rng(12345)
@@ -165,6 +224,115 @@ class AstrometryNetClientTest(unittest.TestCase):
         fitted = _fit_gaia_wcs(detected_sources, gaia_stars, seed)
 
         self.assertIsNone(fitted)
+
+    def test_select_wcs_match_sources_skips_saturated_peak_plateau_strip(self) -> None:
+        width = 6000
+        height = 4000
+        saturated_peak = 62846.79614631459
+        sources: list[_DetectedSource] = []
+        # Exact ceiling pile-up plus near-ceiling peaks confined to the top strip.
+        for index in range(800):
+            sources.append(
+                _DetectedSource(
+                    x=float(50 + (index % 40) * 140),
+                    y=float(20 + (index // 40) * 20),
+                    peak=saturated_peak if index < 400 else saturated_peak - 50 - (index % 40),
+                )
+            )
+        # Distinct bright unsaturated stars spanning the full frame.
+        for index in range(120):
+            sources.append(
+                _DetectedSource(
+                    x=float(100 + (index % 10) * 550),
+                    y=float(200 + (index // 10) * 300),
+                    peak=float(59000 - index * 10),
+                )
+            )
+
+        selected = _select_wcs_match_sources(sources, width=width, height=height, limit=500)
+
+        self.assertEqual(len(selected), 120)
+        saturation_floor = saturated_peak * 0.985
+        self.assertTrue(all(source.peak < saturation_floor for source in selected))
+        selected_y = [source.y for source in selected]
+        self.assertGreater(max(selected_y), height * 0.7)
+        self.assertLess(min(selected_y), height * 0.2)
+
+    def test_metadata_seeded_gaia_fit_survives_saturated_peak_plateau(self) -> None:
+        rng = np.random.default_rng(2468)
+        width = 1800
+        height = 1400
+        scale_arcsec = 1.5
+        rotation_rad = np.deg2rad(27.0)
+        cosine = float(np.cos(rotation_rad))
+        sine = float(np.sin(rotation_rad))
+
+        true_wcs = celestial_wcs(Header())
+        true_wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        true_wcs.wcs.cunit = ["deg", "deg"]
+        true_wcs.wcs.crval = [80.0, 20.0]
+        true_wcs.wcs.crpix = [(width + 1) / 2.0, (height + 1) / 2.0]
+        rotation = np.asarray([[cosine, -sine], [sine, cosine]], dtype=float)
+        true_wcs.wcs.cd = (scale_arcsec / 3600.0) * rotation @ np.diag([-1.0, 1.0])
+
+        matched_pixels = np.column_stack(
+            (
+                rng.uniform(120.0, width - 120.0, 40),
+                rng.uniform(120.0, height - 120.0, 40),
+            )
+        )
+        world = true_wcs.pixel_to_world(matched_pixels[:, 0], matched_pixels[:, 1])
+        gaia_stars = [
+            CatalogStar(
+                catalog="gaia-dr3",
+                source_id=f"gaia-{index}",
+                name=f"gaia-{index}",
+                ra_deg=float(world[index].ra.deg),
+                dec_deg=float(world[index].dec.deg),
+                magnitude=8.0 + index * 0.1,
+                is_variable=False,
+            )
+            for index in range(len(matched_pixels))
+        ]
+        saturated_peak = 62846.79614631459
+        detected_sources = [
+            _DetectedSource(
+                x=float(40 + (index % 50) * 20),
+                y=float(15 + (index // 50) * 12),
+                peak=saturated_peak if index < 300 else saturated_peak - 80 - (index % 25),
+            )
+            for index in range(600)
+        ]
+        detected_sources.extend(
+            _DetectedSource(
+                x=float(pixel[0] + rng.normal(0.0, 0.08)),
+                y=float(pixel[1] + rng.normal(0.0, 0.08)),
+                peak=float(59000 - index * 200),
+            )
+            for index, pixel in enumerate(matched_pixels)
+        )
+        selected = _select_wcs_match_sources(
+            detected_sources,
+            width=width,
+            height=height,
+            limit=500,
+        )
+        seed = MetadataWcsSeed(
+            center_ra_deg=80.02,
+            center_dec_deg=19.97,
+            pixel_scale_x_arcsec=scale_arcsec,
+            pixel_scale_y_arcsec=scale_arcsec,
+            width=width,
+            height=height,
+        )
+
+        fitted = _fit_gaia_wcs(selected, gaia_stars, seed)
+
+        self.assertIsNotNone(fitted)
+        assert fitted is not None
+        _fitted_wcs, match_count, rms_pixels = fitted
+        self.assertGreaterEqual(match_count, 30)
+        self.assertLess(rms_pixels, 0.4)
 
     def test_scale_wcs_pixel_grid_doubles_image_coordinates(self) -> None:
         header = Header()

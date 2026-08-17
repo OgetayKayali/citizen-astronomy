@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from html import unescape
 
 import json
+import math
 
 from pathlib import Path
 
@@ -30,7 +31,9 @@ import requests
 
 
 
+from photometry_app.core.image_io import read_header
 from photometry_app.core.models import CatalogStar, FieldCatalog, SolvedField
+from photometry_app.core.wcs import celestial_wcs, validate_wcs
 
 
 _GAIA_DR3_VIZIER_COLUMNS = (
@@ -57,6 +60,285 @@ _GAIA_DR3_VIZIER_COLUMNS = (
     "AllWISE",
 )
 
+_GAIA_TILE_MAX_RADIUS_DEG = 0.35
+_GAIA_TILE_RADIUS_MARGIN = 1.12
+_GAIA_TILE_MAX_COUNT = 64
+_GAIA_TILE_MAX_SPLIT_DEPTH = 2
+
+
+@dataclass(frozen=True, slots=True)
+class GaiaTileOptions:
+    max_radius_deg: float = _GAIA_TILE_MAX_RADIUS_DEG
+    radius_margin: float = _GAIA_TILE_RADIUS_MARGIN
+    max_count: int = _GAIA_TILE_MAX_COUNT
+    max_split_depth: int = _GAIA_TILE_MAX_SPLIT_DEPTH
+
+    def cache_token(self) -> str:
+        return (
+            f"r{float(self.max_radius_deg):.2f}"
+            f"-m{float(self.radius_margin):.2f}"
+            f"-n{max(1, int(self.max_count))}"
+            f"-d{max(0, int(self.max_split_depth))}"
+        )
+
+
+DEFAULT_GAIA_TILE_OPTIONS = GaiaTileOptions()
+
+
+def _resolved_gaia_tile_options(options: GaiaTileOptions | None) -> GaiaTileOptions:
+    return DEFAULT_GAIA_TILE_OPTIONS if options is None else options
+
+
+@dataclass(frozen=True, slots=True)
+class _GaiaQueryTile:
+    center: SkyCoord
+    radius_deg: float
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    depth: int = 0
+
+
+def gaia_field_needs_tiles(
+    solved_field: SolvedField,
+    options: GaiaTileOptions | None = None,
+) -> bool:
+    tile_options = _resolved_gaia_tile_options(options)
+    return float(solved_field.radius_deg) > float(tile_options.max_radius_deg)
+
+
+def _gaia_row_limit_progress_suffix(
+    solved_field: SolvedField,
+    row_limit: int | None,
+    options: GaiaTileOptions | None = None,
+) -> str:
+    if row_limit is None:
+        return ""
+    if gaia_field_needs_tiles(solved_field, options):
+        return f", up to {int(row_limit)} row(s) per tile"
+    return f", capped at {int(row_limit)} row(s)"
+
+
+def build_gaia_query_tiles(
+    solved_field: SolvedField,
+    options: GaiaTileOptions | None = None,
+) -> list[_GaiaQueryTile]:
+    tile_options = _resolved_gaia_tile_options(options)
+    radius_deg = max(1.0e-6, float(solved_field.radius_deg))
+    width = max(0, int(solved_field.width or 0))
+    height = max(0, int(solved_field.height or 0))
+    field_center = SkyCoord(solved_field.center_ra_deg * u.deg, solved_field.center_dec_deg * u.deg)
+    if not gaia_field_needs_tiles(solved_field, tile_options):
+        return [
+            _GaiaQueryTile(
+                center=field_center,
+                radius_deg=radius_deg,
+                x0=0.0,
+                y0=0.0,
+                x1=float(width or 1),
+                y1=float(height or 1),
+            )
+        ]
+
+    nx, ny = _gaia_tile_grid_counts(width, height, radius_deg, tile_options)
+    wcs = _solved_field_celestial_wcs(solved_field)
+    tiles: list[_GaiaQueryTile] = []
+    for row in range(ny):
+        for column in range(nx):
+            tiles.append(
+                _gaia_query_tile_from_grid(
+                    column,
+                    row,
+                    nx=nx,
+                    ny=ny,
+                    width=width,
+                    height=height,
+                    field_radius_deg=radius_deg,
+                    field_center=field_center,
+                    wcs=wcs,
+                    options=tile_options,
+                )
+            )
+    return tiles
+
+
+def _gaia_tile_grid_counts(
+    width: int,
+    height: int,
+    radius_deg: float,
+    options: GaiaTileOptions | None = None,
+) -> tuple[int, int]:
+    tile_options = _resolved_gaia_tile_options(options)
+    tile_span_deg = float(tile_options.max_radius_deg) * math.sqrt(2.0)
+    max_count = max(1, int(tile_options.max_count))
+    if width <= 0 or height <= 0:
+        count = max(1, math.ceil((2.0 * radius_deg) / tile_span_deg))
+        return count, count
+    diagonal_px = math.hypot(width, height)
+    width_deg = 2.0 * radius_deg * width / diagonal_px
+    height_deg = 2.0 * radius_deg * height / diagonal_px
+    nx = max(1, math.ceil(width_deg / tile_span_deg))
+    ny = max(1, math.ceil(height_deg / tile_span_deg))
+    while nx * ny > max_count:
+        if nx >= ny and nx > 1:
+            nx -= 1
+        elif ny > 1:
+            ny -= 1
+        else:
+            break
+    return nx, ny
+
+
+def _solved_field_celestial_wcs(solved_field: SolvedField):
+    try:
+        wcs_path = Path(solved_field.wcs_path)
+        if not wcs_path.exists():
+            return None
+        header = read_header(wcs_path)
+        valid, _reasons = validate_wcs(header, wcs_path)
+        if not valid:
+            return None
+        wcs = celestial_wcs(header)
+        width = int(solved_field.width or 0)
+        height = int(solved_field.height or 0)
+        if width > 0 and height > 0:
+            center = wcs.pixel_to_world(width / 2.0, height / 2.0)
+            field_center = SkyCoord(
+                float(solved_field.center_ra_deg) * u.deg,
+                float(solved_field.center_dec_deg) * u.deg,
+                frame="icrs",
+            )
+            separation_deg = float(center.separation(field_center).deg)
+            agree_limit = max(0.5, float(solved_field.radius_deg) * 0.75)
+            if separation_deg > agree_limit:
+                return None
+        return wcs
+    except Exception:
+        return None
+
+
+def _gaia_query_tile_from_grid(
+    column: int,
+    row: int,
+    *,
+    nx: int,
+    ny: int,
+    width: int,
+    height: int,
+    field_radius_deg: float,
+    field_center: SkyCoord,
+    wcs,
+    depth: int = 0,
+    x0: float | None = None,
+    y0: float | None = None,
+    x1: float | None = None,
+    y1: float | None = None,
+    options: GaiaTileOptions | None = None,
+) -> _GaiaQueryTile:
+    tile_options = _resolved_gaia_tile_options(options)
+    radius_margin = float(tile_options.radius_margin)
+    if width > 0 and height > 0 and (x0 is None or y0 is None or x1 is None or y1 is None):
+        x0 = column * width / nx
+        x1 = (column + 1) * width / nx
+        y0 = row * height / ny
+        y1 = (row + 1) * height / ny
+    if width > 0 and height > 0 and x0 is not None and y0 is not None and x1 is not None and y1 is not None:
+        if wcs is not None:
+            center_x = (float(x0) + float(x1)) / 2.0
+            center_y = (float(y0) + float(y1)) / 2.0
+            ra_deg, dec_deg = wcs.pixel_to_world_values(center_x, center_y)
+            center = SkyCoord(float(ra_deg) * u.deg, float(dec_deg) * u.deg)
+            radius_deg = 0.0
+            for corner_x, corner_y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+                corner_ra, corner_dec = wcs.pixel_to_world_values(float(corner_x), float(corner_y))
+                radius_deg = max(
+                    radius_deg,
+                    float(center.separation(SkyCoord(float(corner_ra) * u.deg, float(corner_dec) * u.deg)).deg),
+                )
+            return _GaiaQueryTile(
+                center=center,
+                radius_deg=max(0.02, radius_deg) * radius_margin,
+                x0=float(x0),
+                y0=float(y0),
+                x1=float(x1),
+                y1=float(y1),
+                depth=depth,
+            )
+        diagonal_px = math.hypot(width, height)
+        width_deg = 2.0 * field_radius_deg * width / diagonal_px
+        height_deg = 2.0 * field_radius_deg * height / diagonal_px
+        tile_width_deg = abs(float(x1) - float(x0)) / width * width_deg
+        tile_height_deg = abs(float(y1) - float(y0)) / height * height_deg
+        offset_ra = (((float(x0) + float(x1)) / 2.0) / width - 0.5) * width_deg
+        offset_dec = (((float(y0) + float(y1)) / 2.0) / height - 0.5) * height_deg
+        center = field_center.spherical_offsets_by(offset_ra * u.deg, offset_dec * u.deg)
+        return _GaiaQueryTile(
+            center=center,
+            radius_deg=max(0.02, 0.5 * math.hypot(tile_width_deg, tile_height_deg)) * radius_margin,
+            x0=float(x0),
+            y0=float(y0),
+            x1=float(x1),
+            y1=float(y1),
+            depth=depth,
+        )
+
+    diagonal_px = math.hypot(max(width, 1), max(height, 1))
+    width_deg = 2.0 * field_radius_deg * max(width, 1) / diagonal_px
+    height_deg = 2.0 * field_radius_deg * max(height, 1) / diagonal_px
+    tile_width_deg = width_deg / nx
+    tile_height_deg = height_deg / ny
+    offset_ra = ((column + 0.5) - (nx / 2.0)) * tile_width_deg
+    offset_dec = ((row + 0.5) - (ny / 2.0)) * tile_height_deg
+    center = field_center.spherical_offsets_by(offset_ra * u.deg, offset_dec * u.deg)
+    return _GaiaQueryTile(
+        center=center,
+        radius_deg=max(0.02, 0.5 * math.hypot(tile_width_deg, tile_height_deg)) * radius_margin,
+        x0=float(x0 if x0 is not None else column),
+        y0=float(y0 if y0 is not None else row),
+        x1=float(x1 if x1 is not None else column + 1),
+        y1=float(y1 if y1 is not None else row + 1),
+        depth=depth,
+    )
+
+
+def _subdivide_gaia_query_tile(
+    tile: _GaiaQueryTile,
+    solved_field: SolvedField,
+    options: GaiaTileOptions | None = None,
+) -> list[_GaiaQueryTile]:
+    mid_x = (tile.x0 + tile.x1) / 2.0
+    mid_y = (tile.y0 + tile.y1) / 2.0
+    width = max(0, int(solved_field.width or 0))
+    height = max(0, int(solved_field.height or 0))
+    field_center = SkyCoord(solved_field.center_ra_deg * u.deg, solved_field.center_dec_deg * u.deg)
+    wcs = _solved_field_celestial_wcs(solved_field)
+    rects = (
+        (tile.x0, tile.y0, mid_x, mid_y),
+        (mid_x, tile.y0, tile.x1, mid_y),
+        (tile.x0, mid_y, mid_x, tile.y1),
+        (mid_x, mid_y, tile.x1, tile.y1),
+    )
+    return [
+        _gaia_query_tile_from_grid(
+            0,
+            0,
+            nx=1,
+            ny=1,
+            width=width,
+            height=height,
+            field_radius_deg=float(solved_field.radius_deg),
+            field_center=field_center,
+            wcs=wcs,
+            depth=tile.depth + 1,
+            x0=x0,
+            y0=y0,
+            x1=x1,
+            y1=y1,
+            options=options,
+        )
+        for x0, y0, x1, y1 in rects
+    ]
 
 
 @dataclass(frozen=True)
@@ -151,6 +433,8 @@ class CatalogService:
 
         aavso_chart_id: str | None = None,
 
+        gaia_tile_options: GaiaTileOptions | None = None,
+
         progress_callback: Callable[[str], None] | None = None,
 
     ) -> FieldCatalog:
@@ -169,6 +453,7 @@ class CatalogService:
             gaia_row_cap=gaia_row_cap,
             variable_star_max_magnitude=variable_star_max_magnitude,
             exoplanet_max_magnitude=exoplanet_max_magnitude,
+            gaia_tile_options=gaia_tile_options,
         )
 
         if cache_path.exists():
@@ -219,7 +504,10 @@ class CatalogService:
                 if gaia_max_magnitude is not None:
                     gaia_message += f", G <= {float(gaia_max_magnitude):.1f}"
                 if gaia_row_cap is not None:
-                    gaia_message += f", capped at {int(gaia_row_cap)} row(s)"
+                    if gaia_field_needs_tiles(solved_field, gaia_tile_options):
+                        gaia_message += f", up to {int(gaia_row_cap)} row(s) per tile"
+                    else:
+                        gaia_message += f", capped at {int(gaia_row_cap)} row(s)"
                 progress_callback(f"{gaia_message}.")
             gaia_stars = self._query_gaia_field(
                 solved_field,
@@ -227,6 +515,7 @@ class CatalogService:
                 row_limit=gaia_row_cap,
                 progress_callback=progress_callback,
                 query_label="Gaia DR3",
+                tile_options=gaia_tile_options,
             )
             if progress_callback is not None:
                 progress_callback(f"Gaia DR3 lookup complete: {len(gaia_stars)} star(s) returned.")
@@ -443,7 +732,7 @@ class CatalogService:
                 f"Dec {solved_field.center_dec_deg:.5f} deg, radius {solved_field.radius_deg:.4f} deg, "
 
                 f"G <= {magnitude_limit:.1f}"
-                f"{'' if normalized_row_limit is None else f', capped at {normalized_row_limit} row(s)'}"
+                f"{_gaia_row_limit_progress_suffix(solved_field, normalized_row_limit)}"
                 "."
 
             )
@@ -568,18 +857,62 @@ class CatalogService:
         row_limit: int | None = None,
         progress_callback: Callable[[str], None] | None = None,
         query_label: str = "Gaia DR3",
+        tile_options: GaiaTileOptions | None = None,
     ) -> list[CatalogStar]:
-        return self._query_vizier_with_alternate_centers(
-            solved_field,
-            lambda center, radius: self._query_gaia_filtered(
-                center,
-                radius,
+        resolved_tile_options = _resolved_gaia_tile_options(tile_options)
+        tiles = build_gaia_query_tiles(solved_field, resolved_tile_options)
+        if len(tiles) <= 1:
+            return self._query_vizier_with_alternate_centers(
+                solved_field,
+                lambda center, radius: self._query_gaia_filtered(
+                    center,
+                    radius,
+                    maximum_magnitude=maximum_magnitude,
+                    row_limit=row_limit,
+                ),
+                query_label,
+                progress_callback=progress_callback,
+            )
+
+        if progress_callback is not None:
+            progress_callback(f"Wide field: querying {query_label} in {len(tiles)} tiles.")
+
+        merged: dict[str, CatalogStar] = {}
+        pending = list(tiles)
+        completed = 0
+        planned = len(tiles)
+        while pending:
+            tile = pending.pop(0)
+            completed += 1
+            if progress_callback is not None:
+                progress_callback(
+                    f"{query_label} tile {completed}/{planned} "
+                    f"(RA {tile.center.ra.deg:.5f} deg, Dec {tile.center.dec.deg:.5f} deg, "
+                    f"radius {tile.radius_deg:.4f} deg)."
+                )
+            stars = self._query_gaia_filtered(
+                tile.center,
+                tile.radius_deg * u.deg,
                 maximum_magnitude=maximum_magnitude,
                 row_limit=row_limit,
-            ),
-            query_label,
-            progress_callback=progress_callback,
-        )
+            )
+            if (
+                row_limit is not None
+                and len(stars) >= int(row_limit)
+                and tile.depth < int(resolved_tile_options.max_split_depth)
+            ):
+                children = _subdivide_gaia_query_tile(tile, solved_field, resolved_tile_options)
+                if progress_callback is not None:
+                    progress_callback(
+                        f"{query_label} tile hit the {int(row_limit)}-row cap; "
+                        f"splitting into {len(children)} smaller tiles."
+                    )
+                pending[0:0] = children
+                planned += len(children)
+                continue
+            for star in stars:
+                merged.setdefault(star.source_id, star)
+        return list(merged.values())
 
     def _candidate_query_centers(self, solved_field: SolvedField) -> tuple[SkyCoord, ...]:
 
@@ -629,9 +962,19 @@ class CatalogService:
             column_filters=column_filters,
         )
 
-        tables = vizier.query_region(center, radius=radius, catalog="I/355/gaiadr3")
-
-        return self._gaia_stars_from_tables(tables)
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                tables = vizier.query_region(center, radius=radius, catalog="I/355/gaiadr3")
+                return self._gaia_stars_from_tables(tables)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 0 and _is_vizier_empty_parse_error(exc):
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        return []
 
 
 
@@ -885,6 +1228,7 @@ class CatalogService:
         gaia_row_cap: int | None,
         variable_star_max_magnitude: float | None,
         exoplanet_max_magnitude: float | None,
+        gaia_tile_options: GaiaTileOptions | None = None,
     ) -> str:
 
         base_key = self._cache_key(solved_field)
@@ -927,6 +1271,13 @@ class CatalogService:
 
             suffix_parts.append(f"gaia-n{max(1, int(gaia_row_cap))}")
 
+        if include_gaia and gaia_field_needs_tiles(solved_field, gaia_tile_options):
+
+            suffix_parts.append("gaia-tiles")
+            resolved_tile_options = _resolved_gaia_tile_options(gaia_tile_options)
+            if resolved_tile_options != DEFAULT_GAIA_TILE_OPTIONS:
+                suffix_parts.append(resolved_tile_options.cache_token())
+
         if include_variable_stars and variable_star_max_magnitude is not None:
 
             suffix_parts.append(f"vsx-max{float(variable_star_max_magnitude):.2f}")
@@ -952,6 +1303,10 @@ class CatalogService:
         if row_limit is not None:
 
             suffix += f"_n{max(1, int(row_limit))}"
+
+        if gaia_field_needs_tiles(solved_field):
+
+            suffix += "_tiles"
 
         return f"{cache_stem}{suffix}.json"
 
@@ -1010,6 +1365,15 @@ class CatalogService:
         cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _is_vizier_empty_parse_error(error: str | BaseException) -> bool:
+    text = " ".join(str(error).split()).casefold()
+    return (
+        "failed to parse vizier" in text
+        or "table_parse_error" in text
+        or ("expecting value" in text and "column 1" in text)
+    )
+
+
 def summarize_catalog_service_error(error: str | BaseException) -> str:
 
     raw_message = " ".join(str(error).split()).strip()
@@ -1023,6 +1387,14 @@ def summarize_catalog_service_error(error: str | BaseException) -> str:
     if raw_message.startswith("Could not reach the VizieR catalog service"):
 
         return raw_message
+
+    if _is_vizier_empty_parse_error(raw_message):
+
+        return (
+            "VizieR returned an empty or unreadable Gaia/VSX response for this field. "
+            "Wide or crowded fields can overflow the catalog service; retry after a moment "
+            "or reduce the field size."
+        )
 
     vizier_lookup = (
 

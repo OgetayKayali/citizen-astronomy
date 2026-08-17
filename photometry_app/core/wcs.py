@@ -329,11 +329,38 @@ def infer_astrometry_solve_hints(
     height: int | None,
     source_path: Path | None = None,
 ) -> AstrometrySolveHints | None:
-    normalized_header = _normalize_celestial_wcs_header(header)
     downsample_factor = _recommended_downsample_factor(width, height)
     try:
+        from photometry_app.core.local_wcs import infer_metadata_wcs_seed
+        from photometry_app.core.pointing import assess_image_pointing
+
+        assessment = assess_image_pointing(header, width, height, source_path=source_path)
+        seed = infer_metadata_wcs_seed(header, width, height, source_path=source_path)
+        if seed is not None and width is not None and height is not None:
+            pixel_scale_deg = seed.mean_pixel_scale_arcsec / 3600.0
+            image_width_deg = max(pixel_scale_deg * width, 0.01)
+            radius_deg = float(seed.field_radius_deg)
+            if source_path is not None and is_pixinsight_staralignment_output(source_path):
+                radius_deg = max(radius_deg * 1.5, 0.25)
+            if assessment.prefer_astrometry_first:
+                radius_deg = max(radius_deg, 0.5)
+            return AstrometrySolveHints(
+                center_ra_deg=float(seed.center_ra_deg),
+                center_dec_deg=float(seed.center_dec_deg),
+                radius_deg=radius_deg,
+                scale_lower_degwidth=max(0.01, image_width_deg * 0.7),
+                scale_upper_degwidth=max(0.01, image_width_deg * 1.3),
+                downsample_factor=downsample_factor,
+                parity=None,
+            )
+    except Exception:
+        pass
+
+    normalized_header = _normalize_celestial_wcs_header(header)
+    try:
         wcs = celestial_wcs(normalized_header)
-        if wcs.pixel_n_dim < 2 or wcs.world_n_dim < 2 or width is None or height is None:
+        valid, _reasons = validate_wcs(header, source_path)
+        if (not valid) or wcs.pixel_n_dim < 2 or wcs.world_n_dim < 2 or width is None or height is None:
             if downsample_factor is None:
                 return None
             return AstrometrySolveHints(downsample_factor=downsample_factor)

@@ -66,6 +66,18 @@ from photometry_app.core.animation_export import (
     StreamingMp4Writer,
     resolve_astrostack_stack_export_frame_indices,
 )
+from photometry_app.core.target_field_animation import (
+    MAX_TARGET_FIELD_FOV_PX,
+    MAX_TARGET_FIELD_FPS,
+    MIN_TARGET_FIELD_FOV_PX,
+    MIN_TARGET_FIELD_FPS,
+    TARGET_FIELD_STRETCH_MODE_LABELS,
+    TARGET_FIELD_STRETCH_MODES,
+    TargetFieldAnimationExportOptions,
+    normalize_target_field_fov_px,
+    normalize_target_field_fps,
+    normalize_target_field_stretch_mode,
+)
 from photometry_app.core.catalog_filters import VARIABLE_STAR_DESIGNATION_LABELS, classify_variable_star_designation
 from photometry_app.core.calibration import CalibrationPipelineRequest
 from photometry_app.core.discovery import MissedKnownMovingObject, MovingObjectCandidate, MovingObjectDiscoveryResult, MovingObjectRecoveryResult, RecoveredKnownMovingObject, _estimate_discovery_motion_range, candidate_discovery_method_label
@@ -73,7 +85,18 @@ from photometry_app.core.hr_motion_groups import HrMotionGroupSettings, hr_motio
 from photometry_app.core.models import CatalogStar, FileScanResult, ObjectScanSummary, ObservationMetadata, PhotometryApertureMode, VariableSelectionPreview, VariableStarDesignationFamily, VariableStarLimitMode, WcsStatus
 from photometry_app.core.plotting import AnnotatedImageDisplay, AnnotatedImageRenderSettings
 from photometry_app.core.sky_explorer import SKY_EXPLORER_LAYER_ORDER, sky_explorer_object_type_group_definitions
-from photometry_app.core.settings import AppSettings, _coerce_hex_color, default_custom_theme_colors, default_settings_config_path, resolve_shared_parallel_workers, setup_pixel_scale_arcsec_per_pixel
+from photometry_app.core.settings import (
+    AppSettings,
+    DEFAULT_ASTROMETRY_TIMEOUT_SECONDS,
+    MAX_ASTROMETRY_TIMEOUT_SECONDS,
+    MIN_ASTROMETRY_TIMEOUT_SECONDS,
+    _coerce_hex_color,
+    default_custom_theme_colors,
+    default_settings_config_path,
+    normalize_astrometry_timeout_seconds,
+    resolve_shared_parallel_workers,
+    setup_pixel_scale_arcsec_per_pixel,
+)
 from photometry_app.core.sky_atlas import SkyAtlasObject, load_local_sky_atlas_objects
 from photometry_app.ui.constellation_overlay import ConstellationDataLoader
 from photometry_app.core.meteor_stream import (
@@ -404,6 +427,75 @@ class AstrostackGifExportDialog(QDialog):
             f"{duration_seconds:.2f} s per pass, {self._scale_input.value()}% output size{playback_text}."
             f"{subsample_text}"
         )
+
+
+class TargetFieldAnimationExportDialog(QDialog):
+    def __init__(
+        self,
+        *,
+        initial_options: TargetFieldAnimationExportOptions | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Target Field Animation")
+        self.setMinimumWidth(360)
+        options = (initial_options or TargetFieldAnimationExportOptions()).normalized()
+
+        self._fov_input = QSpinBox(self)
+        self._fov_input.setRange(MIN_TARGET_FIELD_FOV_PX, MAX_TARGET_FIELD_FOV_PX)
+        self._fov_input.setSingleStep(10)
+        self._fov_input.setSuffix(" px")
+        self._fov_input.setValue(options.fov_px)
+        self._fov_input.setToolTip("Square crop size around the selected target in each frame.")
+
+        self._align_input = QCheckBox("Crop target, then align", self)
+        self._align_input.setChecked(bool(options.align))
+        self._align_input.setToolTip(
+            "Crop around the selected target first, then align the smaller field. Matched stars decide whether it needs a left–right, up–down, or 180° flip."
+        )
+
+        self._stretch_input = QComboBox(self)
+        for mode in TARGET_FIELD_STRETCH_MODES:
+            self._stretch_input.addItem(TARGET_FIELD_STRETCH_MODE_LABELS.get(mode, mode), mode)
+        stretch_index = self._stretch_input.findData(options.stretch_mode)
+        self._stretch_input.setCurrentIndex(0 if stretch_index < 0 else stretch_index)
+        self._stretch_input.setToolTip(
+            "Display stretch applied with shared limits after local comparison stars inside the crop normalize frame brightness."
+        )
+
+        self._fps_input = QDoubleSpinBox(self)
+        self._fps_input.setRange(MIN_TARGET_FIELD_FPS, MAX_TARGET_FIELD_FPS)
+        self._fps_input.setDecimals(1)
+        self._fps_input.setSingleStep(1.0)
+        self._fps_input.setSuffix(" fps")
+        self._fps_input.setValue(options.fps)
+        self._fps_input.setToolTip("Playback speed of the exported GIF.")
+
+        form_layout = QFormLayout()
+        form_layout.addRow("Field of view", self._fov_input)
+        form_layout.addRow("Align", self._align_input)
+        form_layout.addRow("Stretch", self._stretch_input)
+        form_layout.addRow("GIF speed", self._fps_input)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_button is not None:
+            ok_button.setText("Export")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addLayout(form_layout)
+        layout.addWidget(buttons)
+        self.setLayout(layout)
+
+    def selected_options(self) -> TargetFieldAnimationExportOptions:
+        return TargetFieldAnimationExportOptions(
+            fov_px=normalize_target_field_fov_px(self._fov_input.value()),
+            align=self._align_input.isChecked(),
+            fps=normalize_target_field_fps(self._fps_input.value()),
+            stretch_mode=normalize_target_field_stretch_mode(self._stretch_input.currentData()),
+        ).normalized()
 
 
 @dataclass(frozen=True, slots=True)
@@ -11312,14 +11404,18 @@ class _SettingsTabScrollArea(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setWidget(content)
 
     def sizeHint(self) -> QSize:
         content = self.widget()
         width = 640
         if content is not None:
-            width = max(width, int(content.sizeHint().width()) + 20)
+            width = max(width, int(content.sizeHint().width()) + 24)
         return QSize(width, 420)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(360, 240)
 
 
 class SettingsDialog(QDialog):
@@ -11337,6 +11433,18 @@ class SettingsDialog(QDialog):
         self._api_key_input = QLineEdit(settings.astrometry_api_key or "")
         self._api_key_input.setPlaceholderText("Astrometry.net API key")
         self._api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._astrometry_timeout_input = QSpinBox()
+        self._astrometry_timeout_input.setRange(MIN_ASTROMETRY_TIMEOUT_SECONDS, MAX_ASTROMETRY_TIMEOUT_SECONDS)
+        self._astrometry_timeout_input.setSuffix(" s")
+        self._astrometry_timeout_input.setSingleStep(30)
+        self._astrometry_timeout_input.setValue(
+            normalize_astrometry_timeout_seconds(
+                getattr(settings, "astrometry_timeout_seconds", DEFAULT_ASTROMETRY_TIMEOUT_SECONDS)
+            )
+        )
+        self._astrometry_timeout_input.setToolTip(
+            "How long to wait for an astrometry.net solve job before giving up. Default is 300 seconds."
+        )
 
         self._use_default_settings_location_input = QCheckBox("Use default AppData settings location")
         self._use_default_settings_location_input.setChecked(self._is_default_settings_location(settings.config_path))
@@ -11764,6 +11872,51 @@ class SettingsDialog(QDialog):
         self._hr_max_sources_input.setSingleStep(500)
         self._hr_max_sources_input.setSpecialValueText("All matched sources")
         self._hr_max_sources_input.setValue(max(0, int(settings.hr_max_sources)))
+        self._hr_gaia_max_magnitude_input = QDoubleSpinBox()
+        self._hr_gaia_max_magnitude_input.setDecimals(1)
+        self._hr_gaia_max_magnitude_input.setRange(-5.0, 30.0)
+        self._hr_gaia_max_magnitude_input.setSingleStep(0.5)
+        self._hr_gaia_max_magnitude_input.setSuffix(" mag")
+        self._hr_gaia_max_magnitude_input.setValue(float(getattr(settings, "hr_gaia_max_magnitude", 18.0)))
+        self._hr_gaia_max_magnitude_input.setToolTip(
+            "Faintest Gaia G magnitude downloaded for the HR field catalog. Fainter cuts return more stars and take longer."
+        )
+        self._hr_gaia_row_cap_input = QSpinBox()
+        self._hr_gaia_row_cap_input.setRange(1000, 100000)
+        self._hr_gaia_row_cap_input.setSingleStep(1000)
+        self._hr_gaia_row_cap_input.setValue(int(getattr(settings, "hr_gaia_row_cap", 35000)))
+        self._hr_gaia_row_cap_input.setToolTip(
+            "Per-tile VizieR safety limit. Wide fields query several tiles; a tile that hits this cap is split and retried."
+        )
+        self._hr_gaia_tile_max_radius_input = QDoubleSpinBox()
+        self._hr_gaia_tile_max_radius_input.setDecimals(2)
+        self._hr_gaia_tile_max_radius_input.setRange(0.10, 2.0)
+        self._hr_gaia_tile_max_radius_input.setSingleStep(0.05)
+        self._hr_gaia_tile_max_radius_input.setSuffix(" deg")
+        self._hr_gaia_tile_max_radius_input.setValue(float(getattr(settings, "hr_gaia_tile_max_radius_deg", 0.35)))
+        self._hr_gaia_tile_max_radius_input.setToolTip(
+            "Fields larger than this radius are split into tiles so VizieR does not return a truncated slice of the frame."
+        )
+        self._hr_gaia_tile_radius_margin_input = QDoubleSpinBox()
+        self._hr_gaia_tile_radius_margin_input.setDecimals(2)
+        self._hr_gaia_tile_radius_margin_input.setRange(1.00, 1.50)
+        self._hr_gaia_tile_radius_margin_input.setSingleStep(0.02)
+        self._hr_gaia_tile_radius_margin_input.setSuffix(" x")
+        self._hr_gaia_tile_radius_margin_input.setValue(float(getattr(settings, "hr_gaia_tile_radius_margin", 1.12)))
+        self._hr_gaia_tile_radius_margin_input.setToolTip(
+            "Extra cone size around each tile so stars near tile edges are not missed."
+        )
+        self._hr_gaia_tile_max_count_input = QSpinBox()
+        self._hr_gaia_tile_max_count_input.setRange(4, 256)
+        self._hr_gaia_tile_max_count_input.setSingleStep(4)
+        self._hr_gaia_tile_max_count_input.setValue(int(getattr(settings, "hr_gaia_tile_max_count", 64)))
+        self._hr_gaia_tile_max_count_input.setToolTip("Upper bound on the initial Gaia tile grid for a wide field.")
+        self._hr_gaia_tile_max_split_depth_input = QSpinBox()
+        self._hr_gaia_tile_max_split_depth_input.setRange(0, 4)
+        self._hr_gaia_tile_max_split_depth_input.setValue(int(getattr(settings, "hr_gaia_tile_max_split_depth", 2)))
+        self._hr_gaia_tile_max_split_depth_input.setToolTip(
+            "How many times a tile that hits the row cap is subdivided. 0 keeps the truncated tile."
+        )
         self._hr_table_row_limit_input = QSpinBox()
         self._hr_table_row_limit_input.setRange(1, 10000)
         self._hr_table_row_limit_input.setSingleStep(100)
@@ -12282,6 +12435,7 @@ class SettingsDialog(QDialog):
 
         form_layout = QFormLayout()
         form_layout.addRow("Astrometry API Key", self._api_key_input)
+        form_layout.addRow("Astrometry Timeout", self._astrometry_timeout_input)
 
         cache_container = QWidget()
         cache_container.setLayout(cache_row)
@@ -12380,17 +12534,23 @@ class SettingsDialog(QDialog):
 
         differential_photometry_layout.addStretch(1)
         differential_photometry_tab.setLayout(differential_photometry_layout)
-        self._differential_photometry_tab = differential_photometry_tab
+        self._differential_photometry_tab = _SettingsTabScrollArea(differential_photometry_tab)
         self._science_export_group = science_metadata_group
 
         hr_tab = QWidget()
         hr_layout = QVBoxLayout()
         hr_description = QLabel(
-            "HR Diagram settings control measurement scope, default plot filters, selected-point circle styling, and the Source Image proper-motion overlay styling."
+            "HR Diagram settings control measurement scope, Gaia catalog download and tiling, default plot filters, selected-point circle styling, and the Source Image proper-motion overlay styling."
         )
         hr_description.setWordWrap(True)
         hr_form_layout = QFormLayout()
         hr_form_layout.addRow("HR Max Sources", self._hr_max_sources_input)
+        hr_form_layout.addRow("Gaia Max Mag", self._hr_gaia_max_magnitude_input)
+        hr_form_layout.addRow("Gaia Row Cap", self._hr_gaia_row_cap_input)
+        hr_form_layout.addRow("Tile Radius", self._hr_gaia_tile_max_radius_input)
+        hr_form_layout.addRow("Tile Overlap", self._hr_gaia_tile_radius_margin_input)
+        hr_form_layout.addRow("Max Tiles", self._hr_gaia_tile_max_count_input)
+        hr_form_layout.addRow("Tile Split Depth", self._hr_gaia_tile_max_split_depth_input)
         hr_form_layout.addRow("Table Row Limit", self._hr_table_row_limit_input)
         hr_form_layout.addRow("Require Parallax", self._hr_plot_require_parallax_input)
         hr_form_layout.addRow("Hide Flagged", self._hr_plot_hide_flagged_input)
@@ -12695,9 +12855,9 @@ class SettingsDialog(QDialog):
         asteroid_export_tracking_layout.addStretch(1)
         asteroid_export_tracking_tab.setLayout(asteroid_export_tracking_layout)
 
-        self._asteroid_search_settings_tab = asteroid_search_tab
-        self._asteroid_visual_settings_tab = asteroid_visual_tab
-        self._asteroid_export_tracking_settings_tab = asteroid_export_tracking_tab
+        self._asteroid_search_settings_tab = _SettingsTabScrollArea(asteroid_search_tab)
+        self._asteroid_visual_settings_tab = _SettingsTabScrollArea(asteroid_visual_tab)
+        self._asteroid_export_tracking_settings_tab = _SettingsTabScrollArea(asteroid_export_tracking_tab)
         self._asteroid_settings_subtabs = QTabWidget()
         self._asteroid_settings_subtabs.addTab(self._asteroid_search_settings_tab, "Search")
         self._asteroid_settings_subtabs.addTab(self._asteroid_visual_settings_tab, "Visuals")
@@ -12707,8 +12867,8 @@ class SettingsDialog(QDialog):
         asteroid_layout.addWidget(self._asteroid_settings_subtabs, stretch=1)
         asteroid_tab.setLayout(asteroid_layout)
 
-        self._general_settings_tab = general_tab
-        self._hr_settings_tab = hr_tab
+        self._general_settings_tab = _SettingsTabScrollArea(general_tab)
+        self._hr_settings_tab = _SettingsTabScrollArea(hr_tab)
         self._asteroid_settings_tab = asteroid_tab
         setup_tab = QWidget()
         setup_layout = QVBoxLayout()
@@ -12739,7 +12899,7 @@ class SettingsDialog(QDialog):
         setup_layout.addWidget(setup_site_group)
         setup_layout.addStretch(1)
         setup_tab.setLayout(setup_layout)
-        self._setup_settings_tab = setup_tab
+        self._setup_settings_tab = _SettingsTabScrollArea(setup_tab)
         sky_explorer_tab = QWidget()
         sky_explorer_layout = QVBoxLayout()
         sky_explorer_description = QLabel(
@@ -12981,8 +13141,8 @@ class SettingsDialog(QDialog):
         sky_explorer_visual_layout.addStretch(1)
         sky_explorer_visual_tab.setLayout(sky_explorer_visual_layout)
 
-        self._sky_explorer_general_settings_tab = sky_explorer_general_tab
-        self._sky_explorer_visual_settings_tab = sky_explorer_visual_tab
+        self._sky_explorer_general_settings_tab = _SettingsTabScrollArea(sky_explorer_general_tab)
+        self._sky_explorer_visual_settings_tab = _SettingsTabScrollArea(sky_explorer_visual_tab)
         self._sky_explorer_settings_subtabs = QTabWidget()
         self._sky_explorer_settings_subtabs.addTab(self._sky_explorer_general_settings_tab, "General")
         self._sky_explorer_settings_subtabs.addTab(self._sky_explorer_visual_settings_tab, "Visuals")
@@ -13240,6 +13400,7 @@ class SettingsDialog(QDialog):
         root_layout.addWidget(self._settings_tabs, stretch=1)
         root_layout.addLayout(button_row)
         self.setLayout(root_layout)
+        self.setSizeGripEnabled(True)
         self._update_aperture_inputs()
         self._update_reference_limit_inputs()
         self._update_wcs_sanity_inputs()
@@ -13252,18 +13413,24 @@ class SettingsDialog(QDialog):
         self._fit_settings_dialog_to_screen()
 
     def _fit_settings_dialog_to_screen(self) -> None:
+        preferred_width = 820
+        preferred_height = 660
+        minimum_width = 640
+        minimum_height = 420
         screen = self.screen()
         if screen is None:
             app = QApplication.instance()
             screen = app.primaryScreen() if app is not None else None
         if screen is None:
-            self.resize(820, 660)
+            self.setMinimumSize(minimum_width, minimum_height)
+            self.resize(preferred_width, preferred_height)
             return
         available = screen.availableGeometry()
-        max_width = max(640, available.width() - 48)
-        max_height = max(480, available.height() - 72)
+        max_width = max(minimum_width, int(available.width() * 0.95))
+        max_height = max(minimum_height, int(available.height() * 0.90))
+        self.setMinimumSize(min(minimum_width, max_width), min(minimum_height, max_height))
         self.setMaximumSize(max_width, max_height)
-        self.resize(min(820, max_width), min(660, max_height))
+        self.resize(min(preferred_width, max_width), min(preferred_height, max_height))
 
     def _add_tooltip_form_row(self, layout: QFormLayout, label_text: str, field: QWidget, tooltip: str) -> None:
         label = QLabel(label_text)
@@ -13282,6 +13449,7 @@ class SettingsDialog(QDialog):
         return replace(
             self._settings,
             astrometry_api_key=self._api_key_input.text().strip() or None,
+            astrometry_timeout_seconds=normalize_astrometry_timeout_seconds(self._astrometry_timeout_input.value()),
             cache_dir=Path(self._cache_dir_input.text()).expanduser(),
             config_path=self._settings.config_path,
             interface_tips_enabled=self._interface_tips_enabled_input.isChecked(),
@@ -13489,6 +13657,12 @@ class SettingsDialog(QDialog):
             scientific_light_curve_pdf_dpi=self._scientific_light_curve_pdf_dpi_input.value(),
             scientific_light_curve_pdf_paper_size=str(self._scientific_light_curve_pdf_paper_size_input.currentData() or "Letter"),
             hr_max_sources=self._hr_max_sources_input.value(),
+            hr_gaia_max_magnitude=self._hr_gaia_max_magnitude_input.value(),
+            hr_gaia_row_cap=self._hr_gaia_row_cap_input.value(),
+            hr_gaia_tile_max_radius_deg=self._hr_gaia_tile_max_radius_input.value(),
+            hr_gaia_tile_radius_margin=self._hr_gaia_tile_radius_margin_input.value(),
+            hr_gaia_tile_max_count=self._hr_gaia_tile_max_count_input.value(),
+            hr_gaia_tile_max_split_depth=self._hr_gaia_tile_max_split_depth_input.value(),
             hr_table_row_limit=self._hr_table_row_limit_input.value(),
             hr_plot_require_parallax=self._hr_plot_require_parallax_input.isChecked(),
             hr_plot_color_saturation=self._hr_plot_color_saturation_input.value(),
@@ -13656,6 +13830,11 @@ class SettingsDialog(QDialog):
         self._theme = defaults.theme
         self._custom_theme_colors = dict(defaults.custom_theme_colors or default_custom_theme_colors())
         self._api_key_input.setText(defaults.astrometry_api_key or "")
+        self._astrometry_timeout_input.setValue(
+            normalize_astrometry_timeout_seconds(
+                getattr(defaults, "astrometry_timeout_seconds", DEFAULT_ASTROMETRY_TIMEOUT_SECONDS)
+            )
+        )
         self._interface_tips_enabled_input.setChecked(bool(defaults.interface_tips_enabled))
         self._show_mode_launcher_on_startup_input.setChecked(bool(defaults.show_mode_launcher_on_startup))
         self._keep_mode_state_on_switch_input.setChecked(bool(defaults.keep_mode_state_on_switch))
@@ -13794,6 +13973,12 @@ class SettingsDialog(QDialog):
         default_paper_index = self._scientific_light_curve_pdf_paper_size_input.findData(defaults.scientific_light_curve_pdf_paper_size)
         self._scientific_light_curve_pdf_paper_size_input.setCurrentIndex(default_paper_index if default_paper_index >= 0 else 0)
         self._hr_max_sources_input.setValue(max(0, int(defaults.hr_max_sources)))
+        self._hr_gaia_max_magnitude_input.setValue(float(getattr(defaults, "hr_gaia_max_magnitude", 18.0)))
+        self._hr_gaia_row_cap_input.setValue(int(getattr(defaults, "hr_gaia_row_cap", 35000)))
+        self._hr_gaia_tile_max_radius_input.setValue(float(getattr(defaults, "hr_gaia_tile_max_radius_deg", 0.35)))
+        self._hr_gaia_tile_radius_margin_input.setValue(float(getattr(defaults, "hr_gaia_tile_radius_margin", 1.12)))
+        self._hr_gaia_tile_max_count_input.setValue(int(getattr(defaults, "hr_gaia_tile_max_count", 64)))
+        self._hr_gaia_tile_max_split_depth_input.setValue(int(getattr(defaults, "hr_gaia_tile_max_split_depth", 2)))
         self._hr_table_row_limit_input.setValue(max(1, int(defaults.hr_table_row_limit)))
         self._hr_plot_require_parallax_input.setChecked(defaults.hr_plot_require_parallax)
         self._hr_plot_color_saturation_input.setValue(defaults.hr_plot_color_saturation)

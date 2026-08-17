@@ -24,6 +24,12 @@ from photometry_app.core.calibration import CalibrationPipelineRequest, calibrat
 from photometry_app.core.catalogs import CatalogService, CatalogTargetAtCoordinate, CatalogTargetDetails, LiteraturePeriodResult, fetch_catalog_literature_period_result, fetch_catalog_target_details, fetch_catalog_targets_at_coordinate, summarize_catalog_service_error
 from photometry_app.core.discovery import DiscoveryCancelledError, MovingObjectDiscoveryResult, MovingObjectRecoveryResult, _detection_within_estimated_limit, discover_unmatched_moving_candidates, export_discovery_residual_debug_outputs, recover_known_moving_objects
 from photometry_app.core.exporters import AnimatedLightCurveExportCanceled, ScienceExportMetadata, export_light_curve_animated_gif
+from photometry_app.core.target_field_animation import (
+    DEFAULT_TARGET_FIELD_ALIGN,
+    DEFAULT_TARGET_FIELD_FPS,
+    DEFAULT_TARGET_FIELD_STRETCH_MODE,
+    export_target_field_animation,
+)
 from photometry_app.core.matching import apply_differential_photometry, apply_measurement_quality_analysis, build_light_curve_series, measurement_has_usable_value, select_reference_stars
 from photometry_app.core.models import CatalogStar, FileScanResult, LightCurveSeries, ManualPhotometryConfig, ObservationMetadata, PhotometryMeasurement, ProcessingReport, ScanReport, VariableSelectionPreview
 from photometry_app.core.pipeline import PhotometryPipeline, PipelineCancelled, _AAVSO_ANALYZE_BEST_MAX_SATURATION_FRACTION, _AAVSO_ANALYZE_BEST_MIN_PEAK_ABOVE_SKY_ADU, _resolve_photometry_parallel_workers
@@ -2753,6 +2759,93 @@ class LightCurveGifExportWorker(QThread):
 
 
 
+class TargetFieldAnimationExportWorker(QThread):
+
+    export_completed = Signal(object)
+
+    export_failed = Signal(str)
+
+    export_cancelled = Signal(str)
+
+    progress_updated = Signal(int, int, str)
+
+    def __init__(
+        self,
+        report: ProcessingReport,
+        source_id: str,
+        output_path: Path,
+        *,
+        fov_px: int,
+        align: bool = DEFAULT_TARGET_FIELD_ALIGN,
+        fps: float = DEFAULT_TARGET_FIELD_FPS,
+        stretch_mode: str = DEFAULT_TARGET_FIELD_STRETCH_MODE,
+        filter_name: str | None = None,
+        cache_dir: Path | None = None,
+        series: LightCurveSeries | None = None,
+        fit_config: object | None = None,
+        y_axis_mode: str = "differential_magnitude",
+        x_axis_mode: str = "datetime",
+        phase_period_hours: float | None = None,
+        phase_anchor_mode: str = "first_observation",
+        plot_theme: str = "normal",
+        custom_theme_colors: dict[str, str] | None = None,
+        parent: object | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._report = report
+        self._source_id = source_id
+        self._output_path = output_path
+        self._fov_px = fov_px
+        self._align = bool(align)
+        self._fps = fps
+        self._stretch_mode = stretch_mode
+        self._filter_name = filter_name
+        self._cache_dir = cache_dir
+        self._series = series
+        self._fit_config = fit_config
+        self._y_axis_mode = y_axis_mode
+        self._x_axis_mode = x_axis_mode
+        self._phase_period_hours = phase_period_hours
+        self._phase_anchor_mode = phase_anchor_mode
+        self._plot_theme = plot_theme
+        self._custom_theme_colors = None if custom_theme_colors is None else dict(custom_theme_colors)
+        self._cancel_requested = Event()
+
+    def request_cancel(self) -> None:
+        self._cancel_requested.set()
+
+    def run(self) -> None:
+        try:
+            export_target_field_animation(
+                self._report,
+                self._source_id,
+                self._output_path,
+                fov_px=self._fov_px,
+                align=self._align,
+                fps=self._fps,
+                stretch_mode=self._stretch_mode,
+                filter_name=self._filter_name,
+                cache_dir=self._cache_dir,
+                series=self._series,
+                fit_config=self._fit_config,
+                y_axis_mode=self._y_axis_mode,
+                x_axis_mode=self._x_axis_mode,
+                phase_period_hours=self._phase_period_hours,
+                phase_anchor_mode=self._phase_anchor_mode,
+                plot_theme=self._plot_theme,
+                custom_theme_colors=self._custom_theme_colors,
+                progress_callback=self.progress_updated.emit,
+                is_cancelled=self._cancel_requested.is_set,
+            )
+        except AnimatedLightCurveExportCanceled as exc:
+            self.export_cancelled.emit(str(exc))
+            return
+        except Exception as exc:
+            self.export_failed.emit(str(exc))
+            return
+        self.export_completed.emit(self._output_path)
+
+
 class HrPrepareWorker(QThread):
 
     preparation_completed = Signal(object)
@@ -2779,7 +2872,7 @@ class HrPrepareWorker(QThread):
 
         except Exception as exc:
 
-            self.preparation_failed.emit(str(exc))
+            self.preparation_failed.emit(summarize_catalog_service_error(exc))
 
             return
 

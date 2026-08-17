@@ -36,7 +36,7 @@ from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QImage, QMous
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtTest import QTest
 
-from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QCheckBox, QDialog, QFrame, QGroupBox, QHeaderView, QHBoxLayout, QLabel, QLayoutItem, QMenu, QMessageBox, QProgressDialog, QPushButton, QSizePolicy, QStyle, QStyleOptionSpinBox, QTableWidget, QTableWidgetItem, QTableWidgetSelectionRange, QToolButton, QVBoxLayout, QWidget, QWidgetAction
+from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QCheckBox, QDialog, QFrame, QGroupBox, QHeaderView, QHBoxLayout, QLabel, QLayoutItem, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSizePolicy, QStyle, QStyleOptionSpinBox, QTableWidget, QTableWidgetItem, QTableWidgetSelectionRange, QToolButton, QVBoxLayout, QWidget, QWidgetAction
 
 
 
@@ -2491,6 +2491,18 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIs(self.window._hr_settings_search_catalog_names_magnitude_threshold_spin.parentWidget(), settings_widget)
 
+        self.assertIs(self.window._hr_settings_gaia_max_magnitude_spin.parentWidget(), settings_widget)
+
+        self.assertIs(self.window._hr_settings_gaia_row_cap_spin.parentWidget(), settings_widget)
+
+        self.assertIs(self.window._hr_settings_gaia_tile_max_radius_spin.parentWidget(), settings_widget)
+
+        self.assertIs(self.window._hr_settings_gaia_tile_radius_margin_spin.parentWidget(), settings_widget)
+
+        self.assertIs(self.window._hr_settings_gaia_tile_max_count_spin.parentWidget(), settings_widget)
+
+        self.assertIs(self.window._hr_settings_gaia_tile_max_split_depth_spin.parentWidget(), settings_widget)
+
         self.assertIs(self.window._hr_roi_mode_combo.parentWidget(), settings_widget)
 
         self.assertIs(self.window._hr_roi_invert_checkbox.parentWidget(), settings_widget)
@@ -2567,6 +2579,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                 "Theme-based",
                 "Scientific",
                 "Animation",
+                "Target Field Animation",
             ],
         )
 
@@ -9375,8 +9388,100 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                 "Theme-based",
                 "Scientific",
                 "Animation",
+                "Target Field Animation",
             ],
         )
+
+    def test_export_target_field_animation_warns_when_no_target_is_selected(self) -> None:
+        series = self._build_series()
+        report = ProcessingReport(
+            object_name="Demo",
+            files_processed=1,
+            solved_files=1,
+            field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, variable_stars=[]),
+            measurements=[],
+            light_curves=[series],
+        )
+        self.window._current_processing_report = report
+        self.window._populate_series_selector([series])
+
+        with patch("photometry_app.ui.main_window.QMessageBox.warning") as warning, patch(
+            "photometry_app.ui.main_window.TargetFieldAnimationExportDialog"
+        ) as options_dialog:
+            self.window._export_target_field_animation()
+
+        warning.assert_called_once()
+        self.assertIn("Select a target", warning.call_args.args[1])
+        options_dialog.assert_not_called()
+
+    def test_export_target_field_animation_prompts_for_options_and_starts_worker(self) -> None:
+        series = self._build_series()
+        measurement = PhotometryMeasurement(
+            source_id=series.source_id,
+            source_name=series.source_name,
+            catalog="vsx",
+            object_name="Demo",
+            file_path=Path("frame_001.fits"),
+            observation_time=datetime(2025, 2, 5, 20, 10, 36),
+            filter_name="V",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            x=40.0,
+            y=30.0,
+            flux=1000.0,
+            flux_error=5.0,
+            instrumental_magnitude=10.0,
+            differential_magnitude=12.1,
+            is_variable=True,
+            is_reference=False,
+        )
+        report = ProcessingReport(
+            object_name="Demo",
+            files_processed=1,
+            solved_files=1,
+            field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, variable_stars=[]),
+            measurements=[measurement],
+            light_curves=[series],
+        )
+        self.window._current_processing_report = report
+        self.window._populate_series_selector([series])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "target_field.gif"
+            worker = MagicMock()
+            progress_dialog = MagicMock()
+            progress_dialog.canceled.connect = MagicMock()
+
+            from photometry_app.core.target_field_animation import TargetFieldAnimationExportOptions
+
+            options = TargetFieldAnimationExportOptions(fov_px=180, align=True, fps=15.0, stretch_mode="asinh")
+            options_dialog = MagicMock()
+            options_dialog.exec.return_value = QDialog.DialogCode.Accepted
+            options_dialog.selected_options.return_value = options
+
+            with patch.object(self.window, "_selected_target_field_source_id", return_value=series.source_id), patch(
+                "photometry_app.ui.main_window.TargetFieldAnimationExportDialog",
+                return_value=options_dialog,
+            ) as dialog_class, patch(
+                "photometry_app.ui.main_window.QFileDialog.getSaveFileName",
+                return_value=(str(output_path), "GIF Files (*.gif)"),
+            ), patch(
+                "photometry_app.ui.main_window.QProgressDialog",
+                return_value=progress_dialog,
+            ), patch(
+                "photometry_app.ui.main_window.TargetFieldAnimationExportWorker",
+                return_value=worker,
+            ) as worker_class:
+                self.window._export_target_field_animation()
+
+            dialog_class.assert_called_once()
+            worker_class.assert_called_once()
+            self.assertEqual(worker_class.call_args.args[1], series.source_id)
+            self.assertEqual(worker_class.call_args.kwargs["fov_px"], 180)
+            self.assertTrue(worker_class.call_args.kwargs["align"])
+            self.assertEqual(worker_class.call_args.kwargs["fps"], 15.0)
+            self.assertEqual(worker_class.call_args.kwargs["stretch_mode"], "asinh")
+            worker.start.assert_called_once()
 
     def test_export_active_light_curve_animated_gif_action_uses_animated_export(self) -> None:
         series = self._build_series()
@@ -52267,6 +52372,18 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._hr_max_sources_input.setValue(9000)
 
+            dialog._hr_gaia_max_magnitude_input.setValue(16.5)
+
+            dialog._hr_gaia_row_cap_input.setValue(12000)
+
+            dialog._hr_gaia_tile_max_radius_input.setValue(0.25)
+
+            dialog._hr_gaia_tile_radius_margin_input.setValue(1.20)
+
+            dialog._hr_gaia_tile_max_count_input.setValue(16)
+
+            dialog._hr_gaia_tile_max_split_depth_input.setValue(1)
+
             dialog._hr_table_row_limit_input.setValue(321)
 
             dialog._hr_plot_require_parallax_input.setChecked(True)
@@ -52344,6 +52461,18 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertEqual(updated_settings.app_mode, AppMode.HR_DIAGRAM)
 
             self.assertEqual(updated_settings.hr_max_sources, 9000)
+
+            self.assertEqual(updated_settings.hr_gaia_max_magnitude, 16.5)
+
+            self.assertEqual(updated_settings.hr_gaia_row_cap, 12000)
+
+            self.assertEqual(updated_settings.hr_gaia_tile_max_radius_deg, 0.25)
+
+            self.assertEqual(updated_settings.hr_gaia_tile_radius_margin, 1.20)
+
+            self.assertEqual(updated_settings.hr_gaia_tile_max_count, 16)
+
+            self.assertEqual(updated_settings.hr_gaia_tile_max_split_depth, 1)
 
             self.assertEqual(updated_settings.hr_table_row_limit, 321)
 
@@ -52477,9 +52606,47 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertFalse(dialog._general_settings_tab.isAncestorOf(dialog._wcs_sanity_settings_group))
 
-            self.assertIs(dialog._science_export_group.parent(), dialog._differential_photometry_tab)
+            self.assertTrue(dialog._differential_photometry_tab.isAncestorOf(dialog._science_export_group))
+
+            for tab in (
+                dialog._general_settings_tab,
+                dialog._advanced_settings_tab,
+                dialog._differential_photometry_tab,
+                dialog._hr_settings_tab,
+                dialog._setup_settings_tab,
+                dialog._asteroid_search_settings_tab,
+                dialog._asteroid_visual_settings_tab,
+                dialog._asteroid_export_tracking_settings_tab,
+                dialog._sky_explorer_general_settings_tab,
+                dialog._sky_explorer_visual_settings_tab,
+            ):
+                self.assertIsInstance(tab, QScrollArea)
+
+            dialog.close()
 
 
+
+    def test_settings_dialog_fits_within_available_screen_height(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root_path = Path(temp_dir)
+
+            dialog = SettingsDialog(root_path, AppSettings.from_root(root_path), parent=self.window)
+
+            screen = dialog.screen() or QApplication.primaryScreen()
+
+            self.assertIsNotNone(screen)
+
+            available = screen.availableGeometry()
+
+            self.assertLessEqual(dialog.height(), int(available.height() * 0.90))
+
+            self.assertLessEqual(dialog.width(), int(available.width() * 0.95))
+
+            self.assertLessEqual(dialog.maximumHeight(), int(available.height() * 0.90))
+
+            self.assertTrue(dialog.isSizeGripEnabled())
 
             dialog.close()
 

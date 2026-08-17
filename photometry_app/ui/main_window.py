@@ -25957,6 +25957,98 @@ class MainWindow(QMainWindow):
 
         self._hr_settings_search_catalog_names_magnitude_threshold_spin.valueChanged.connect(self._handle_hr_settings_menu_changed)
 
+        self._hr_settings_gaia_max_magnitude_spin = QDoubleSpinBox()
+
+        self._hr_settings_gaia_max_magnitude_spin.setDecimals(1)
+
+        self._hr_settings_gaia_max_magnitude_spin.setRange(-5.0, 30.0)
+
+        self._hr_settings_gaia_max_magnitude_spin.setSingleStep(0.5)
+
+        self._hr_settings_gaia_max_magnitude_spin.setSuffix(" mag")
+
+        self._hr_settings_gaia_max_magnitude_spin.setValue(18.0)
+
+        self._hr_settings_gaia_max_magnitude_spin.setToolTip(
+            "Faintest Gaia G magnitude downloaded for the HR field catalog. Fainter cuts return more stars and take longer."
+        )
+
+        self._hr_settings_gaia_max_magnitude_spin.valueChanged.connect(self._handle_hr_settings_menu_changed)
+
+        self._hr_settings_gaia_row_cap_spin = QSpinBox()
+
+        self._hr_settings_gaia_row_cap_spin.setRange(1000, 100000)
+
+        self._hr_settings_gaia_row_cap_spin.setSingleStep(1000)
+
+        self._hr_settings_gaia_row_cap_spin.setValue(35000)
+
+        self._hr_settings_gaia_row_cap_spin.setToolTip(
+            "Per-tile VizieR safety limit. Wide fields query several tiles; a tile that hits this cap is split and retried."
+        )
+
+        self._hr_settings_gaia_row_cap_spin.valueChanged.connect(self._handle_hr_settings_menu_changed)
+
+        self._hr_settings_gaia_tile_max_radius_spin = QDoubleSpinBox()
+
+        self._hr_settings_gaia_tile_max_radius_spin.setDecimals(2)
+
+        self._hr_settings_gaia_tile_max_radius_spin.setRange(0.10, 2.0)
+
+        self._hr_settings_gaia_tile_max_radius_spin.setSingleStep(0.05)
+
+        self._hr_settings_gaia_tile_max_radius_spin.setSuffix(" deg")
+
+        self._hr_settings_gaia_tile_max_radius_spin.setValue(0.35)
+
+        self._hr_settings_gaia_tile_max_radius_spin.setToolTip(
+            "Fields larger than this radius are split into tiles so VizieR does not return a truncated slice of the frame."
+        )
+
+        self._hr_settings_gaia_tile_max_radius_spin.valueChanged.connect(self._handle_hr_settings_menu_changed)
+
+        self._hr_settings_gaia_tile_radius_margin_spin = QDoubleSpinBox()
+
+        self._hr_settings_gaia_tile_radius_margin_spin.setDecimals(2)
+
+        self._hr_settings_gaia_tile_radius_margin_spin.setRange(1.00, 1.50)
+
+        self._hr_settings_gaia_tile_radius_margin_spin.setSingleStep(0.02)
+
+        self._hr_settings_gaia_tile_radius_margin_spin.setSuffix(" x")
+
+        self._hr_settings_gaia_tile_radius_margin_spin.setValue(1.12)
+
+        self._hr_settings_gaia_tile_radius_margin_spin.setToolTip(
+            "Extra cone size around each tile so stars near tile edges are not missed."
+        )
+
+        self._hr_settings_gaia_tile_radius_margin_spin.valueChanged.connect(self._handle_hr_settings_menu_changed)
+
+        self._hr_settings_gaia_tile_max_count_spin = QSpinBox()
+
+        self._hr_settings_gaia_tile_max_count_spin.setRange(4, 256)
+
+        self._hr_settings_gaia_tile_max_count_spin.setSingleStep(4)
+
+        self._hr_settings_gaia_tile_max_count_spin.setValue(64)
+
+        self._hr_settings_gaia_tile_max_count_spin.setToolTip("Upper bound on the initial Gaia tile grid for a wide field.")
+
+        self._hr_settings_gaia_tile_max_count_spin.valueChanged.connect(self._handle_hr_settings_menu_changed)
+
+        self._hr_settings_gaia_tile_max_split_depth_spin = QSpinBox()
+
+        self._hr_settings_gaia_tile_max_split_depth_spin.setRange(0, 4)
+
+        self._hr_settings_gaia_tile_max_split_depth_spin.setValue(2)
+
+        self._hr_settings_gaia_tile_max_split_depth_spin.setToolTip(
+            "How many times a tile that hits the row cap is subdivided. 0 keeps the truncated tile."
+        )
+
+        self._hr_settings_gaia_tile_max_split_depth_spin.valueChanged.connect(self._handle_hr_settings_menu_changed)
+
         self._hr_settings_motion_width_spin = QDoubleSpinBox()
 
         self._hr_settings_motion_width_spin.setRange(0.5, 8.0)
@@ -26764,7 +26856,7 @@ class MainWindow(QMainWindow):
 
         self._export_light_curve_button.setText("Export")
 
-        self._export_light_curve_button.setToolTip("Export the active light curve as a theme-based view, scientific plot, or animated GIF.")
+        self._export_light_curve_button.setToolTip("Export the active light curve as a theme-based view, scientific plot, animated GIF, or a target-field animation.")
 
         self._export_light_curve_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
 
@@ -26785,6 +26877,11 @@ class MainWindow(QMainWindow):
 
         self._light_curve_export_animated_gif_action.triggered.connect(self._export_active_light_curve_animated_gif)
 
+        self._light_curve_export_target_field_action = QAction("Target Field Animation", self)
+        self._light_curve_export_target_field_action.setToolTip(
+            "Crop the selected target from every frame, optionally after aligning the full frames, and export a GIF with the light curve."
+        )
+        self._light_curve_export_target_field_action.triggered.connect(self._export_target_field_animation)
 
         self._light_curve_export_scientific_action = QAction("Scientific", self)
 
@@ -26795,6 +26892,8 @@ class MainWindow(QMainWindow):
         self._light_curve_export_menu.addAction(self._light_curve_export_scientific_action)
 
         self._light_curve_export_menu.addAction(self._light_curve_export_animated_gif_action)
+
+        self._light_curve_export_menu.addAction(self._light_curve_export_target_field_action)
 
         self._export_light_curve_button.setMenu(self._light_curve_export_menu)
 
@@ -28363,6 +28462,12 @@ class MainWindow(QMainWindow):
         self._light_curve_gif_progress_dialog: QProgressDialog | None = None
 
         self._light_curve_gif_cancel_requested = False
+
+        self._target_field_animation_worker: TargetFieldAnimationExportWorker | None = None
+
+        self._target_field_animation_progress_dialog: QProgressDialog | None = None
+
+        self._target_field_animation_options = None
 
         self._comparison_fit_queue: list[_ComparisonFitContext] = []
 
@@ -52694,17 +52799,47 @@ class MainWindow(QMainWindow):
 
         hr_settings_layout.addWidget(self._hr_settings_search_catalog_names_magnitude_threshold_spin, 19, 1)
 
+        gaia_label = QLabel("Gaia Catalog", hr_settings_panel)
+
+        gaia_label.setStyleSheet(section_title_style)
+
+        hr_settings_layout.addWidget(gaia_label, 20, 0, 1, 2)
+
+        hr_settings_layout.addWidget(QLabel("Gaia Max Mag", hr_settings_panel), 21, 0)
+
+        hr_settings_layout.addWidget(self._hr_settings_gaia_max_magnitude_spin, 21, 1)
+
+        hr_settings_layout.addWidget(QLabel("Gaia Row Cap", hr_settings_panel), 22, 0)
+
+        hr_settings_layout.addWidget(self._hr_settings_gaia_row_cap_spin, 22, 1)
+
+        hr_settings_layout.addWidget(QLabel("Tile Radius", hr_settings_panel), 23, 0)
+
+        hr_settings_layout.addWidget(self._hr_settings_gaia_tile_max_radius_spin, 23, 1)
+
+        hr_settings_layout.addWidget(QLabel("Tile Overlap", hr_settings_panel), 24, 0)
+
+        hr_settings_layout.addWidget(self._hr_settings_gaia_tile_radius_margin_spin, 24, 1)
+
+        hr_settings_layout.addWidget(QLabel("Max Tiles", hr_settings_panel), 25, 0)
+
+        hr_settings_layout.addWidget(self._hr_settings_gaia_tile_max_count_spin, 25, 1)
+
+        hr_settings_layout.addWidget(QLabel("Tile Split Depth", hr_settings_panel), 26, 0)
+
+        hr_settings_layout.addWidget(self._hr_settings_gaia_tile_max_split_depth_spin, 26, 1)
+
         source_image_label = QLabel("Source Image", hr_settings_panel)
 
         source_image_label.setStyleSheet(section_title_style)
 
-        hr_settings_layout.addWidget(source_image_label, 20, 0, 1, 2)
+        hr_settings_layout.addWidget(source_image_label, 27, 0, 1, 2)
 
-        hr_settings_layout.addWidget(QLabel("Tool", hr_settings_panel), 21, 0)
+        hr_settings_layout.addWidget(QLabel("Tool", hr_settings_panel), 28, 0)
 
-        hr_settings_layout.addWidget(self._hr_roi_mode_combo, 21, 1)
+        hr_settings_layout.addWidget(self._hr_roi_mode_combo, 28, 1)
 
-        hr_settings_layout.addWidget(self._hr_roi_invert_checkbox, 22, 0, 1, 2)
+        hr_settings_layout.addWidget(self._hr_roi_invert_checkbox, 29, 0, 1, 2)
 
         hr_settings_panel.setLayout(hr_settings_layout)
 
@@ -52762,6 +52897,18 @@ class MainWindow(QMainWindow):
 
         search_catalog_names_magnitude_threshold = 9.0 if settings is None else min(30.0, max(-5.0, float(getattr(settings, "hr_search_catalog_names_magnitude_threshold", 9.0))))
 
+        gaia_max_magnitude = 18.0 if settings is None else min(30.0, max(-5.0, float(getattr(settings, "hr_gaia_max_magnitude", 18.0))))
+
+        gaia_row_cap = 35000 if settings is None else min(100000, max(1000, int(getattr(settings, "hr_gaia_row_cap", 35000))))
+
+        gaia_tile_max_radius = 0.35 if settings is None else min(2.0, max(0.10, float(getattr(settings, "hr_gaia_tile_max_radius_deg", 0.35))))
+
+        gaia_tile_radius_margin = 1.12 if settings is None else min(1.50, max(1.00, float(getattr(settings, "hr_gaia_tile_radius_margin", 1.12))))
+
+        gaia_tile_max_count = 64 if settings is None else min(256, max(4, int(getattr(settings, "hr_gaia_tile_max_count", 64))))
+
+        gaia_tile_max_split_depth = 2 if settings is None else min(4, max(0, int(getattr(settings, "hr_gaia_tile_max_split_depth", 2))))
+
         motion_width = 1.5 if settings is None else min(8.0, max(0.5, float(settings.hr_motion_vector_width)))
 
 
@@ -52787,6 +52934,18 @@ class MainWindow(QMainWindow):
         self._hr_settings_search_catalog_names_checkbox.blockSignals(True)
 
         self._hr_settings_search_catalog_names_magnitude_threshold_spin.blockSignals(True)
+
+        self._hr_settings_gaia_max_magnitude_spin.blockSignals(True)
+
+        self._hr_settings_gaia_row_cap_spin.blockSignals(True)
+
+        self._hr_settings_gaia_tile_max_radius_spin.blockSignals(True)
+
+        self._hr_settings_gaia_tile_radius_margin_spin.blockSignals(True)
+
+        self._hr_settings_gaia_tile_max_count_spin.blockSignals(True)
+
+        self._hr_settings_gaia_tile_max_split_depth_spin.blockSignals(True)
 
         self._hr_settings_motion_width_spin.blockSignals(True)
 
@@ -52814,6 +52973,18 @@ class MainWindow(QMainWindow):
 
         self._hr_settings_search_catalog_names_magnitude_threshold_spin.setValue(search_catalog_names_magnitude_threshold)
 
+        self._hr_settings_gaia_max_magnitude_spin.setValue(gaia_max_magnitude)
+
+        self._hr_settings_gaia_row_cap_spin.setValue(gaia_row_cap)
+
+        self._hr_settings_gaia_tile_max_radius_spin.setValue(gaia_tile_max_radius)
+
+        self._hr_settings_gaia_tile_radius_margin_spin.setValue(gaia_tile_radius_margin)
+
+        self._hr_settings_gaia_tile_max_count_spin.setValue(gaia_tile_max_count)
+
+        self._hr_settings_gaia_tile_max_split_depth_spin.setValue(gaia_tile_max_split_depth)
+
         self._hr_settings_motion_width_spin.setValue(motion_width)
 
         self._hr_settings_require_parallax_checkbox.blockSignals(False)
@@ -52837,6 +53008,18 @@ class MainWindow(QMainWindow):
         self._hr_settings_search_catalog_names_checkbox.blockSignals(False)
 
         self._hr_settings_search_catalog_names_magnitude_threshold_spin.blockSignals(False)
+
+        self._hr_settings_gaia_max_magnitude_spin.blockSignals(False)
+
+        self._hr_settings_gaia_row_cap_spin.blockSignals(False)
+
+        self._hr_settings_gaia_tile_max_radius_spin.blockSignals(False)
+
+        self._hr_settings_gaia_tile_radius_margin_spin.blockSignals(False)
+
+        self._hr_settings_gaia_tile_max_count_spin.blockSignals(False)
+
+        self._hr_settings_gaia_tile_max_split_depth_spin.blockSignals(False)
 
         self._hr_settings_motion_width_spin.blockSignals(False)
 
@@ -53171,6 +53354,18 @@ class MainWindow(QMainWindow):
         settings.hr_search_catalog_names = self._hr_settings_search_catalog_names_checkbox.isChecked()
 
         settings.hr_search_catalog_names_magnitude_threshold = float(self._hr_settings_search_catalog_names_magnitude_threshold_spin.value())
+
+        settings.hr_gaia_max_magnitude = float(self._hr_settings_gaia_max_magnitude_spin.value())
+
+        settings.hr_gaia_row_cap = int(self._hr_settings_gaia_row_cap_spin.value())
+
+        settings.hr_gaia_tile_max_radius_deg = float(self._hr_settings_gaia_tile_max_radius_spin.value())
+
+        settings.hr_gaia_tile_radius_margin = float(self._hr_settings_gaia_tile_radius_margin_spin.value())
+
+        settings.hr_gaia_tile_max_count = int(self._hr_settings_gaia_tile_max_count_spin.value())
+
+        settings.hr_gaia_tile_max_split_depth = int(self._hr_settings_gaia_tile_max_split_depth_spin.value())
 
         settings.hr_motion_vector_width = float(self._hr_settings_motion_width_spin.value())
 
@@ -57155,6 +57350,8 @@ class MainWindow(QMainWindow):
             "_report_export_worker",
 
             "_light_curve_gif_export_worker",
+
+            "_target_field_animation_worker",
 
             "_asteroid_detection_worker",
 
@@ -73767,6 +73964,8 @@ class MainWindow(QMainWindow):
 
                 hints=hints,
 
+                timeout_seconds=resolve_astrometry_timeout_seconds(self._settings),
+
             )
 
         except Exception as exc:
@@ -73793,7 +73992,23 @@ class MainWindow(QMainWindow):
 
         catalog_service = CatalogService(self._hr_catalog_cache_dir())
 
-        return catalog_service.query_field_catalog(solved_field, progress_callback=progress_callback)
+        settings = self._ensure_settings()
+
+        gaia_max_magnitude, gaia_row_cap = resolve_hr_gaia_query_limits(settings)
+
+        return catalog_service.query_field_catalog(
+
+            solved_field,
+
+            gaia_max_magnitude=gaia_max_magnitude,
+
+            gaia_row_cap=gaia_row_cap,
+
+            gaia_tile_options=resolve_hr_gaia_tile_options(settings),
+
+            progress_callback=progress_callback,
+
+        )
 
     def _build_hr_working_table(
 
@@ -83465,6 +83680,176 @@ class MainWindow(QMainWindow):
 
             progress_dialog.close()
 
+            progress_dialog.deleteLater()
+
+    def _selected_target_field_source_id(self) -> str | None:
+        keys = list(self._selected_source_keys())
+        if not keys:
+            current_row = self._source_table.currentRow()
+            if current_row >= 0:
+                source_key = self._source_row_key(current_row)
+                if source_key:
+                    keys = [source_key]
+        if not keys:
+            return None
+        _catalog, separator, source_id = keys[0].partition(":")
+        return source_id if separator and source_id else keys[0]
+
+    def _export_target_field_animation(self) -> None:
+        from photometry_app.core.target_field_animation import (
+            TargetFieldAnimationError,
+            TargetFieldAnimationExportOptions,
+            collect_target_field_frames,
+        )
+
+        if self._current_processing_report is None:
+            QMessageBox.information(self, "Nothing to export", "Process an object before exporting a target-field animation.")
+            return
+        source_id = self._selected_target_field_source_id()
+        if not source_id:
+            QMessageBox.warning(
+                self,
+                "Select a target",
+                "Select a target in Source Results before exporting a target-field animation.",
+            )
+            return
+        selected_series = self._series_selector.currentData()
+        filter_name = None
+        series = None
+        if isinstance(selected_series, LightCurveSeries) and selected_series.source_id == source_id:
+            series = self._active_series_for_plotting(selected_series) or selected_series
+            filter_name = series.filter_name or "unknown"
+        else:
+            series = next(
+                (item for item in self._current_processing_report.light_curves if item.source_id == source_id),
+                None,
+            )
+            if series is not None:
+                filter_name = series.filter_name or "unknown"
+        try:
+            collect_target_field_frames(self._current_processing_report, source_id, filter_name=filter_name)
+        except TargetFieldAnimationError as exc:
+            QMessageBox.warning(self, "Target Field Animation", str(exc))
+            return
+        if series is None or not series.points:
+            QMessageBox.warning(
+                self,
+                "No light curve",
+                "The selected target does not have a light curve to include in the animation.",
+            )
+            return
+        dialog = TargetFieldAnimationExportDialog(
+            initial_options=self._target_field_animation_options or TargetFieldAnimationExportOptions(),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        options = dialog.selected_options()
+        self._target_field_animation_options = options
+        default_path = self._light_curve_export_default_path(series, scientific_style=False, export_format="gif")
+        default_path = default_path.with_name(f"{default_path.stem.rsplit('_theme', 1)[0]}_target_field.gif")
+        default_path.parent.mkdir(parents=True, exist_ok=True)
+        selected, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export target-field animation",
+            str(default_path),
+            "GIF Files (*.gif);;All Files (*)",
+            self._light_curve_export_filter_for_format("gif"),
+        )
+        if not selected:
+            return
+        output_path = self._resolved_light_curve_export_path(selected, selected_filter)
+        progress_dialog = QProgressDialog("Preparing target-field animation...", "Cancel", 0, 1, self)
+        progress_dialog.setWindowTitle("Export Target Field Animation")
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.setAutoClose(False)
+        progress_dialog.setAutoReset(False)
+        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dialog.setValue(0)
+        progress_dialog.canceled.connect(self._cancel_target_field_animation_export)
+        progress_dialog.show()
+        self._target_field_animation_progress_dialog = progress_dialog
+        self._append_work_log(
+            f"Started target-field animation export for {series.source_name} "
+            f"({options.fov_px} px, {options.fps:g} fps, {options.stretch_mode}, "
+            f"align={'on' if options.align else 'off'}) to {output_path}."
+        )
+        self.statusBar().showMessage("Exporting target-field animation...")
+        settings = self._ensure_settings()
+        worker = TargetFieldAnimationExportWorker(
+            self._current_processing_report,
+            source_id,
+            output_path,
+            fov_px=options.fov_px,
+            align=options.align,
+            fps=options.fps,
+            stretch_mode=options.stretch_mode,
+            filter_name=filter_name,
+            cache_dir=Path(settings.cache_dir),
+            series=series,
+            fit_config=self._current_fit_config(),
+            y_axis_mode=self._current_light_curve_y_axis_mode(),
+            x_axis_mode=self._current_light_curve_x_axis_mode(),
+            phase_period_hours=self._fit_period_spin.value() / _MINUTES_PER_HOUR,
+            phase_anchor_mode=self._current_phase_anchor_mode(),
+            plot_theme=self._current_theme_name(),
+            custom_theme_colors=self._current_custom_theme_colors(),
+            parent=self,
+        )
+        worker.progress_updated.connect(self._handle_target_field_animation_progress)
+        worker.export_completed.connect(self._handle_target_field_animation_completed)
+        worker.export_failed.connect(self._handle_target_field_animation_failed)
+        worker.export_cancelled.connect(self._handle_target_field_animation_cancelled)
+        self._target_field_animation_worker = worker
+        worker.start()
+
+    def _handle_target_field_animation_progress(self, completed: int, total: int, message: str) -> None:
+        progress_dialog = self._target_field_animation_progress_dialog
+        if progress_dialog is not None and qt_object_is_valid(progress_dialog):
+            progress_dialog.setMaximum(max(1, int(total)))
+            progress_dialog.setValue(min(max(0, int(completed)), max(1, int(total))))
+            progress_dialog.setLabelText(message)
+        self.statusBar().showMessage(message)
+
+    def _handle_target_field_animation_completed(self, result: object) -> None:
+        self._target_field_animation_worker = None
+        self._close_target_field_animation_progress_dialog()
+        output_path = result if isinstance(result, Path) else None
+        if output_path is None:
+            self._handle_target_field_animation_failed("Target-field animation export returned an unexpected result.")
+            return
+        message = f"Exported target-field animation to {output_path}."
+        self.statusBar().showMessage(message, 5000)
+        self._append_work_log(message)
+
+    def _handle_target_field_animation_failed(self, message: str) -> None:
+        self._target_field_animation_worker = None
+        self._close_target_field_animation_progress_dialog()
+        self.statusBar().showMessage("Target-field animation export failed.", 5000)
+        self._append_work_log(f"Target-field animation export failed: {message}")
+        QMessageBox.warning(self, "Target Field Animation failed", message)
+
+    def _handle_target_field_animation_cancelled(self, message: str) -> None:
+        self._target_field_animation_worker = None
+        self._close_target_field_animation_progress_dialog()
+        cancellation_message = message or "Target-field animation export canceled."
+        self.statusBar().showMessage(cancellation_message, 5000)
+        self._append_work_log(cancellation_message)
+
+    def _cancel_target_field_animation_export(self) -> None:
+        worker = self._target_field_animation_worker
+        progress_dialog = self._target_field_animation_progress_dialog
+        if worker is not None:
+            worker.request_cancel()
+        if progress_dialog is not None and qt_object_is_valid(progress_dialog):
+            progress_dialog.setLabelText("Canceling target-field animation export...")
+        self.statusBar().showMessage("Canceling target-field animation export...")
+
+    def _close_target_field_animation_progress_dialog(self) -> None:
+        progress_dialog = self._target_field_animation_progress_dialog
+        self._target_field_animation_progress_dialog = None
+        if progress_dialog is not None and qt_object_is_valid(progress_dialog):
+            progress_dialog.close()
             progress_dialog.deleteLater()
 
     def _light_curve_animation_frame_payloads(

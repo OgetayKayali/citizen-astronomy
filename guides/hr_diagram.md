@@ -52,7 +52,7 @@ The **working directory** stores HR artifacts such as the working table (`hr_wor
 - `0` means all matched sources
 - in dense fields, the brightest matches are kept first
 
-This limit is the main control on full regeneration time.
+This limit is the main control on full regeneration time. The Gaia/VizieR download itself is limited to G ≤ 18 by default. Wide crowded fields are queried in tiles (with a per-tile row safety limit) so VizieR does not overflow or return only a truncated slice of the frame. Gaia magnitude, row cap, and tiling controls live under **Settings → HR Diagram**.
 
 ### Step 3: Optional ROI
 
@@ -70,7 +70,7 @@ Important design rule: detection and measurement still happen for the field when
 Click **Open** to choose the source image (or set the path from the HR controls). Opening the image starts the full preparation workflow automatically. CAst then:
 
 1. Resolves the image WCS footprint.
-2. Queries field catalogs (primarily Gaia DR3).
+2. Queries field catalogs (primarily Gaia DR3, limited to G ≤ 18; wide fields are tiled so the catalog covers the whole image).
 3. Detects stars on the image itself.
 4. Cross-matches detections to Gaia.
 5. Measures matched sources through aperture photometry.

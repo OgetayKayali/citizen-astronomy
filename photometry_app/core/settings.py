@@ -58,6 +58,25 @@ def resolve_astrostack_parallel_workers(settings: AppSettings | None) -> int:
     return resolve_shared_parallel_workers(settings)
 
 
+DEFAULT_ASTROMETRY_TIMEOUT_SECONDS = 300
+MIN_ASTROMETRY_TIMEOUT_SECONDS = 30
+MAX_ASTROMETRY_TIMEOUT_SECONDS = 3600
+
+
+def normalize_astrometry_timeout_seconds(value: object | None) -> int:
+    try:
+        timeout = int(round(float(value)))
+    except (TypeError, ValueError):
+        timeout = DEFAULT_ASTROMETRY_TIMEOUT_SECONDS
+    return max(MIN_ASTROMETRY_TIMEOUT_SECONDS, min(MAX_ASTROMETRY_TIMEOUT_SECONDS, timeout))
+
+
+def resolve_astrometry_timeout_seconds(settings: AppSettings | None) -> int:
+    if settings is None:
+        return DEFAULT_ASTROMETRY_TIMEOUT_SECONDS
+    return normalize_astrometry_timeout_seconds(getattr(settings, "astrometry_timeout_seconds", DEFAULT_ASTROMETRY_TIMEOUT_SECONDS))
+
+
 
 
 
@@ -236,6 +255,8 @@ class AppSettings:
 
     shared_parallel_workers: int = 0
 
+    astrometry_timeout_seconds: int = DEFAULT_ASTROMETRY_TIMEOUT_SECONDS
+
     astrostack_parallel_workers: int = 0
 
     photometry_parallel_workers: int = 0
@@ -364,6 +385,18 @@ class AppSettings:
     calibration_flat_path: str = ""
 
     hr_max_sources: int = 5000
+
+    hr_gaia_max_magnitude: float = 18.0
+
+    hr_gaia_row_cap: int = 35000
+
+    hr_gaia_tile_max_radius_deg: float = 0.35
+
+    hr_gaia_tile_radius_margin: float = 1.12
+
+    hr_gaia_tile_max_count: int = 64
+
+    hr_gaia_tile_max_split_depth: int = 2
 
     hr_table_row_limit: int = 1000
 
@@ -1625,6 +1658,10 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
             )
         ),
 
+        astrometry_timeout_seconds=normalize_astrometry_timeout_seconds(
+            payload.get("astrometry_timeout_seconds", DEFAULT_ASTROMETRY_TIMEOUT_SECONDS)
+        ),
+
         astrostack_parallel_workers=max(0, int(payload.get("astrostack_parallel_workers", 0))),
 
         photometry_parallel_workers=(
@@ -1780,6 +1817,18 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         calibration_flat_path=_coerce_optional_settings_path("calibration_flat_path"),
 
         hr_max_sources=max(0, int(payload.get("hr_max_sources", 5000))),
+
+        hr_gaia_max_magnitude=_coerce_hr_gaia_max_magnitude(payload.get("hr_gaia_max_magnitude", 18.0)),
+
+        hr_gaia_row_cap=_coerce_hr_gaia_row_cap(payload.get("hr_gaia_row_cap", 35000)),
+
+        hr_gaia_tile_max_radius_deg=_coerce_hr_gaia_tile_max_radius_deg(payload.get("hr_gaia_tile_max_radius_deg", 0.35)),
+
+        hr_gaia_tile_radius_margin=_coerce_hr_gaia_tile_radius_margin(payload.get("hr_gaia_tile_radius_margin", 1.12)),
+
+        hr_gaia_tile_max_count=_coerce_hr_gaia_tile_max_count(payload.get("hr_gaia_tile_max_count", 64)),
+
+        hr_gaia_tile_max_split_depth=_coerce_hr_gaia_tile_max_split_depth(payload.get("hr_gaia_tile_max_split_depth", 2)),
 
         hr_table_row_limit=min(10000, max(1, int(payload.get("hr_table_row_limit", 1000)))),
 
@@ -2253,6 +2302,8 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
 
         "astrometry_api_key": settings.astrometry_api_key or "",
 
+        "astrometry_timeout_seconds": resolve_astrometry_timeout_seconds(settings),
+
         "cache_dir": cache_dir_value,
 
         "assume_aligned_images": settings.assume_aligned_images,
@@ -2420,6 +2471,18 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "calibration_flat_path": _optional_settings_path_value(settings.calibration_flat_path),
 
         "hr_max_sources": max(0, int(settings.hr_max_sources)),
+
+        "hr_gaia_max_magnitude": _coerce_hr_gaia_max_magnitude(settings.hr_gaia_max_magnitude),
+
+        "hr_gaia_row_cap": _coerce_hr_gaia_row_cap(settings.hr_gaia_row_cap),
+
+        "hr_gaia_tile_max_radius_deg": _coerce_hr_gaia_tile_max_radius_deg(settings.hr_gaia_tile_max_radius_deg),
+
+        "hr_gaia_tile_radius_margin": _coerce_hr_gaia_tile_radius_margin(settings.hr_gaia_tile_radius_margin),
+
+        "hr_gaia_tile_max_count": _coerce_hr_gaia_tile_max_count(settings.hr_gaia_tile_max_count),
+
+        "hr_gaia_tile_max_split_depth": _coerce_hr_gaia_tile_max_split_depth(settings.hr_gaia_tile_max_split_depth),
 
         "hr_table_row_limit": min(10000, max(1, int(settings.hr_table_row_limit))),
 
@@ -3265,6 +3328,54 @@ def _coerce_sky_explorer_gaia_max_magnitude(value: object) -> float:
     except (TypeError, ValueError):
         return 17.0
     return min(30.0, max(-5.0, numeric))
+
+
+def _coerce_hr_gaia_max_magnitude(value: object) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 18.0
+    return min(30.0, max(-5.0, numeric))
+
+
+def _coerce_hr_gaia_row_cap(value: object) -> int:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return 35000
+    return min(100000, max(1000, numeric))
+
+
+def _coerce_hr_gaia_tile_max_radius_deg(value: object) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 0.35
+    return min(2.0, max(0.10, numeric))
+
+
+def _coerce_hr_gaia_tile_radius_margin(value: object) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 1.12
+    return min(1.50, max(1.00, numeric))
+
+
+def _coerce_hr_gaia_tile_max_count(value: object) -> int:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return 64
+    return min(256, max(4, numeric))
+
+
+def _coerce_hr_gaia_tile_max_split_depth(value: object) -> int:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return 2
+    return min(4, max(0, numeric))
 
 
 def _coerce_distance_map_max_magnitude(value: object) -> float:

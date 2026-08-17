@@ -16,18 +16,25 @@ from astropy.wcs import WCS
 from astropy.wcs.utils import fit_wcs_from_points, proj_plane_pixel_scales
 from scipy.spatial import cKDTree
 
-from photometry_app.core.catalogs import CatalogService
+from photometry_app.core.catalogs import CatalogService, _is_vizier_empty_parse_error
 from photometry_app.core.image_io import read_header_and_shape, read_photometry_image_data
 from photometry_app.core.models import CatalogStar, PlateSolveResult, SolvedField, WcsStatus
+from photometry_app.core.pointing import assess_image_pointing
 from photometry_app.core.wcs import extract_solved_field, validate_wcs
 
 
 _PLATE_SCALE_ARCSEC_FACTOR = 206.26480624709636
 _GAIA_MAXIMUM_MAGNITUDE = 15.5
-_GAIA_ROW_LIMIT = None
+_GAIA_ROW_LIMIT = 8000
+_GAIA_WCS_MAGNITUDE_LADDER = (_GAIA_MAXIMUM_MAGNITUDE, 14.0, 12.5)
+_GAIA_WCS_RADIUS_SCALES = (1.0, 0.7, 0.5)
 _MINIMUM_FINAL_MATCHES = 10
 _MAXIMUM_FINAL_RMS_PIXELS = 2.5
 _MAXIMUM_FINAL_P90_PIXELS = 4.0
+_WCS_MATCH_SOURCE_LIMIT = 500
+_SATURATED_PEAK_PLATEAU_MIN_COUNT = 25
+_SATURATED_PEAK_FLOOR_FRACTION = 0.985
+_WCS_MATCH_SOURCE_GRID = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +91,7 @@ def solve_wcs_from_metadata_and_gaia(
     except Exception as exc:
         return _unsolved_result(source_path, f"Could not read image metadata for the Gaia WCS fallback: {exc}")
 
-    seed = infer_metadata_wcs_seed(header, width, height)
+    seed = infer_metadata_wcs_seed(header, width, height, source_path=source_path)
     if seed is None:
         return _unsolved_result(
             source_path,
@@ -105,6 +112,11 @@ def solve_wcs_from_metadata_and_gaia(
         )
     solved_path.unlink(missing_ok=True)
 
+    assessment = assess_image_pointing(header, width, height, source_path=source_path)
+    if progress_callback is not None:
+        for message in assessment.messages:
+            progress_callback(message)
+
     if progress_callback is not None:
         progress_callback(
             "Embedded WCS was unusable; matching image stars to Gaia using the header pointing and optical scale."
@@ -120,10 +132,9 @@ def solve_wcs_from_metadata_and_gaia(
     )
     try:
         service = catalog_service or CatalogService(cache_dir / "catalogs")
-        gaia_stars = service.query_gaia_stars_limited(
+        gaia_stars = _query_gaia_stars_for_wcs_fallback(
+            service,
             provisional_field,
-            maximum_magnitude=_GAIA_MAXIMUM_MAGNITUDE,
-            row_limit=_GAIA_ROW_LIMIT,
             progress_callback=progress_callback,
         )
     except Exception as exc:
@@ -197,21 +208,119 @@ def solve_wcs_from_metadata_and_gaia(
     )
 
 
+def _query_gaia_stars_for_wcs_fallback(
+    service: CatalogService,
+    provisional_field: SolvedField,
+    *,
+    progress_callback: Callable[[str], None] | None = None,
+) -> list[CatalogStar]:
+    """Query Gaia with a denser-field retry ladder for local WCS recovery.
+
+    Always caps rows, then on VizieR overload/empty responses tightens the
+    magnitude cut, and finally shrinks the search radius while keeping tiling.
+    """
+    attempts = _gaia_wcs_fallback_query_attempts(provisional_field.radius_deg)
+    last_error: Exception | None = None
+    for index, (maximum_magnitude, radius_deg, label) in enumerate(attempts):
+        query_field = SolvedField(
+            center_ra_deg=provisional_field.center_ra_deg,
+            center_dec_deg=provisional_field.center_dec_deg,
+            radius_deg=radius_deg,
+            width=provisional_field.width,
+            height=provisional_field.height,
+            wcs_path=provisional_field.wcs_path,
+        )
+        if progress_callback is not None and index > 0:
+            progress_callback(f"Gaia WCS fallback retrying with {label}.")
+        try:
+            return service.query_gaia_stars_limited(
+                query_field,
+                maximum_magnitude=maximum_magnitude,
+                row_limit=_GAIA_ROW_LIMIT,
+                progress_callback=progress_callback,
+            )
+        except Exception as exc:
+            last_error = exc
+            if index + 1 >= len(attempts) or not _should_retry_gaia_wcs_catalog_query(exc):
+                raise
+    if last_error is not None:
+        raise last_error
+    return []
+
+
+def _gaia_wcs_fallback_query_attempts(full_radius_deg: float) -> list[tuple[float, float, str]]:
+    radius = max(0.05, float(full_radius_deg))
+    attempts: list[tuple[float, float, str]] = []
+    for magnitude in _GAIA_WCS_MAGNITUDE_LADDER:
+        attempts.append(
+            (
+                float(magnitude),
+                radius,
+                f"G <= {magnitude:.1f} and full search radius",
+            )
+        )
+    for scale in _GAIA_WCS_RADIUS_SCALES[1:]:
+        scaled_radius = max(0.05, radius * float(scale))
+        bright_magnitude = float(_GAIA_WCS_MAGNITUDE_LADDER[-1])
+        attempts.append(
+            (
+                bright_magnitude,
+                scaled_radius,
+                f"G <= {bright_magnitude:.1f} and {int(round(scale * 100.0))}% search radius",
+            )
+        )
+    return attempts
+
+
+def _should_retry_gaia_wcs_catalog_query(error: BaseException) -> bool:
+    if _is_vizier_empty_parse_error(error):
+        return True
+    text = " ".join(str(error).split()).casefold()
+    retry_tokens = (
+        "timeout",
+        "timed out",
+        "connection",
+        "temporarily unavailable",
+        "remote end closed",
+        "chunkedencoding",
+        "incompleteread",
+        "empty or unreadable",
+        "overflow",
+    )
+    return any(token in text for token in retry_tokens)
+
+
 def infer_metadata_wcs_seed(
     header: Header,
     width: int | None,
     height: int | None,
+    *,
+    source_path: Path | None = None,
 ) -> MetadataWcsSeed | None:
     if width is None or height is None or width <= 0 or height <= 0:
         return None
-    center = _header_center_coordinate(header)
-    if center is None:
-        return None
+    assessment = assess_image_pointing(header, width, height, source_path=source_path)
+    preferred_ra = assessment.preferred_ra_deg
+    preferred_dec = assessment.preferred_dec_deg
+    if preferred_ra is None or preferred_dec is None:
+        # Fall back to legacy header center parsing when assessment finds nothing usable.
+        center = _header_center_coordinate(header)
+        if center is None:
+            return None
+        preferred_ra = float(center.ra.deg)
+        preferred_dec = float(center.dec.deg)
 
     direct_scale = _positive_header_float(header, "PIXSCALE", "SECPIX", "SCALE")
     if direct_scale is not None:
         scale_x = direct_scale
         scale_y = direct_scale
+    elif (
+        assessment.preferred_source == "wcs"
+        and assessment.wcs_scale_arcsec is not None
+        and np.isfinite(assessment.wcs_scale_arcsec)
+    ):
+        scale_x = float(assessment.wcs_scale_arcsec)
+        scale_y = float(assessment.wcs_scale_arcsec)
     else:
         focal_length_mm = _positive_header_float(header, "FOCALLEN", "FOCALLENGTH", "FOCAL")
         pixel_size_x_um = _positive_header_float(header, "XPIXSZ", "PIXSIZE1", "PIXELX")
@@ -230,8 +339,8 @@ def infer_metadata_wcs_seed(
     if not all(np.isfinite(value) and 0.01 <= value <= 120.0 for value in (scale_x, scale_y)):
         return None
     return MetadataWcsSeed(
-        center_ra_deg=float(center.ra.deg),
-        center_dec_deg=float(center.dec.deg),
+        center_ra_deg=float(preferred_ra),
+        center_dec_deg=float(preferred_dec),
         pixel_scale_x_arcsec=float(scale_x),
         pixel_scale_y_arcsec=float(scale_y),
         width=int(width),
@@ -322,11 +431,125 @@ def _detect_image_sources(source_path: Path) -> list[_DetectedSource]:
         raise ValueError("only two-dimensional or RGB images are supported")
 
     rows = _detect_hr_image_sources(data, aperture_radius=4.0, usable_margin=12)
-    return [
+    candidates = [
         _DetectedSource(x=float(row.x), y=float(row.y), peak=float(row.peak))
-        for row in rows[:500]
+        for row in rows
         if np.isfinite(row.x) and np.isfinite(row.y) and np.isfinite(row.peak)
     ]
+    height, width = int(data.shape[0]), int(data.shape[1])
+    return _select_wcs_match_sources(candidates, width=width, height=height)
+
+
+def _select_wcs_match_sources(
+    sources: Sequence[_DetectedSource],
+    *,
+    width: int,
+    height: int,
+    limit: int = _WCS_MATCH_SOURCE_LIMIT,
+) -> list[_DetectedSource]:
+    """Pick bright, full-field stars for Gaia pattern matching.
+
+    Background-subtracted saturated stars often share one identical peak, so a
+    naive ``sorted_by_peak[:limit]`` collapses to the first scan-order strip and
+    the local WCS matcher never sees a field-wide pattern.
+    """
+    usable = [
+        source
+        for source in sources
+        if np.isfinite(source.x)
+        and np.isfinite(source.y)
+        and np.isfinite(source.peak)
+        and 0.0 <= float(source.x) < float(max(width, 1))
+        and 0.0 <= float(source.y) < float(max(height, 1))
+    ]
+    if len(usable) <= limit:
+        return usable
+
+    peaks = np.asarray([float(source.peak) for source in usable], dtype=float)
+    max_peak = float(np.max(peaks))
+    exact_plateau_mask = np.isclose(peaks, max_peak, rtol=1e-4, atol=1.0)
+    exact_plateau_count = int(np.count_nonzero(exact_plateau_mask))
+    # Fully saturated stars share one background-subtracted peak. Stars just
+    # below that ceiling still have unreliable centroids, so once a clear
+    # ceiling pile-up exists, demote the whole near-ceiling band.
+    if exact_plateau_count >= max(_SATURATED_PEAK_PLATEAU_MIN_COUNT, limit // 10):
+        saturation_floor = max_peak * _SATURATED_PEAK_FLOOR_FRACTION
+        plateau_mask = peaks >= saturation_floor
+        preferred = [source for source, is_plateau in zip(usable, plateau_mask) if not is_plateau]
+        deferred = [source for source, is_plateau in zip(usable, plateau_mask) if is_plateau]
+    else:
+        preferred = list(usable)
+        deferred = []
+
+    selected = _spatially_thin_sources(preferred, width=width, height=height, limit=limit)
+    # Only borrow saturated-plateau stars when the unsaturated pool is too thin.
+    # Filling from the plateau after a rich preferred set reintroduces the top-strip
+    # bias into triangle/pair anchors and can break an otherwise solvable field.
+    min_preferred = min(limit, max(80, _MINIMUM_FINAL_MATCHES * 5))
+    if len(selected) < min_preferred and deferred:
+        selected_keys = {(round(source.x, 3), round(source.y, 3)) for source in selected}
+        remaining = [
+            source
+            for source in deferred
+            if (round(source.x, 3), round(source.y, 3)) not in selected_keys
+        ]
+        selected.extend(
+            _spatially_thin_sources(
+                remaining,
+                width=width,
+                height=height,
+                limit=limit - len(selected),
+            )
+        )
+    return selected[:limit]
+
+
+def _spatially_thin_sources(
+    sources: Sequence[_DetectedSource],
+    *,
+    width: int,
+    height: int,
+    limit: int,
+    grid: int = _WCS_MATCH_SOURCE_GRID,
+) -> list[_DetectedSource]:
+    if limit <= 0 or not sources:
+        return []
+    ordered = sorted(sources, key=lambda item: float(item.peak), reverse=True)
+    if len(ordered) <= limit:
+        return ordered
+
+    cell_count = max(1, int(grid) * int(grid))
+    buckets: list[list[_DetectedSource]] = [[] for _ in range(cell_count)]
+    grid_size = max(1, int(grid))
+    for source in ordered:
+        column = min(grid_size - 1, max(0, int(float(source.x) * grid_size / max(width, 1))))
+        row = min(grid_size - 1, max(0, int(float(source.y) * grid_size / max(height, 1))))
+        buckets[row * grid_size + column].append(source)
+
+    selected: list[_DetectedSource] = []
+    cursors = [0] * cell_count
+    while len(selected) < limit:
+        progressed = False
+        order = sorted(
+            range(cell_count),
+            key=lambda index: (
+                -float(buckets[index][cursors[index]].peak)
+                if cursors[index] < len(buckets[index])
+                else math.inf
+            ),
+        )
+        for index in order:
+            if len(selected) >= limit:
+                break
+            cursor = cursors[index]
+            if cursor >= len(buckets[index]):
+                continue
+            selected.append(buckets[index][cursor])
+            cursors[index] = cursor + 1
+            progressed = True
+        if not progressed:
+            break
+    return selected
 
 
 def _usable_gaia_stars(stars: Sequence[CatalogStar]) -> list[CatalogStar]:

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+import warnings
 
 import requests
 from astropy.coordinates import SkyCoord
@@ -12,9 +13,14 @@ from astropy import units as u
 
 from photometry_app.core.catalogs import (
     CatalogService,
+    GaiaTileOptions,
     _GAIA_DR3_VIZIER_COLUMNS,
+    _GaiaQueryTile,
+    _solved_field_celestial_wcs,
+    build_gaia_query_tiles,
     fetch_catalog_target_details,
     fetch_catalog_targets_at_coordinate,
+    gaia_field_needs_tiles,
     summarize_catalog_service_error,
 )
 from photometry_app.core.models import CatalogStar, SolvedField
@@ -145,7 +151,7 @@ class CatalogServiceTest(unittest.TestCase):
             attempted_centers: list[tuple[float, float]] = []
             progress_messages: list[str] = []
 
-            def flaky_gaia_query(center, radius):
+            def flaky_gaia_query(center, radius, maximum_magnitude=None, row_limit=None):
                 attempted_centers.append((round(center.ra.deg, 6), round(center.dec.deg, 6)))
                 if len(attempted_centers) == 1:
                     raise requests.ConnectionError("HTTPSConnectionPool(host='vizier.cds.unistra.fr', port=443): failed")
@@ -175,6 +181,75 @@ class CatalogServiceTest(unittest.TestCase):
 
         self.assertIn("Could not reach the VizieR catalog service", message)
         self.assertIn("Check the network connection or try again later", message)
+
+    def test_summarize_catalog_service_error_rewrites_empty_vizier_parse_failure(self) -> None:
+        message = summarize_catalog_service_error(
+            ValueError(
+                "Failed to parse VIZIER result! The raw response can be found in self.response, "
+                "and the error in self.table_parse_error. Exception: Expecting value: line 1 column 1 (char 0)"
+            )
+        )
+
+        self.assertIn("empty or unreadable", message)
+        self.assertNotIn("self.response", message)
+        self.assertNotIn("Expecting value", message)
+
+    def test_query_gaia_filtered_retries_empty_vizier_parse_error_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            center = SkyCoord(83.822 * u.deg, -5.391 * u.deg)
+            parse_error = ValueError(
+                "Failed to parse VIZIER result! Exception: Expecting value: line 1 column 1 (char 0)"
+            )
+            calls = {"count": 0}
+
+            class FakeVizier:
+                def __init__(self, *args, **kwargs) -> None:
+                    pass
+
+                def query_region(self, _center, radius=None, catalog=None):
+                    calls["count"] += 1
+                    if calls["count"] == 1:
+                        raise parse_error
+                    return [[
+                        {
+                            "Source": "3017367151399567872",
+                            "Gmag": 12.4,
+                            "RA_ICRS": 83.822,
+                            "DE_ICRS": -5.391,
+                        }
+                    ]]
+
+            with patch("photometry_app.core.catalogs.Vizier", FakeVizier):
+                stars = service._query_gaia_filtered(center, 0.25 * u.deg, maximum_magnitude=18.0, row_limit=35000)
+
+            self.assertEqual(calls["count"], 2)
+            self.assertEqual([star.source_id for star in stars], ["3017367151399567872"])
+
+    def test_query_field_catalog_forwards_gaia_magnitude_and_row_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            solved_field = self._solved_field()
+            gaia_star = CatalogStar("gaia-dr3", "gaia-ref", "gaia-ref", 83.822, -5.391, 11.0, False)
+
+            with patch.object(CatalogService, "_query_gaia_field", return_value=[gaia_star]) as query_gaia_field, patch.object(
+                CatalogService,
+                "_query_vsx",
+                return_value=[],
+            ), patch.object(CatalogService, "_query_exoplanets", return_value=[]), patch(
+                "photometry_app.core.standard_magnitude.enrich_gaia_stars_with_standard_catalogs",
+                return_value={"apass_matches": 0, "vsp_matches": 0, "vsp_chart_id": None},
+            ):
+                catalog = service.query_field_catalog(
+                    solved_field,
+                    gaia_max_magnitude=18.0,
+                    gaia_row_cap=35000,
+                )
+
+            query_gaia_field.assert_called_once()
+            self.assertEqual(query_gaia_field.call_args.kwargs["maximum_magnitude"], 18.0)
+            self.assertEqual(query_gaia_field.call_args.kwargs["row_limit"], 35000)
+            self.assertEqual([star.source_id for star in catalog.gaia_stars], ["gaia-ref"])
 
     def test_query_gaia_stars_limited_passes_row_limit_to_filtered_query(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -295,3 +370,210 @@ class CatalogServiceTest(unittest.TestCase):
         self.assertEqual(targets[0].main_id, "HD 123456")
         self.assertEqual(targets[1].main_id, "NGC 7000")
         self.assertLess(targets[0].separation_arcsec or 0.0, targets[1].separation_arcsec or 0.0)
+
+
+class GaiaQueryTilesTest(unittest.TestCase):
+    def _small_field(self) -> SolvedField:
+        return SolvedField(
+            center_ra_deg=83.822,
+            center_dec_deg=-5.391,
+            radius_deg=0.25,
+            width=6248,
+            height=4176,
+            wcs_path=Path("test.fits"),
+        )
+
+    def _wide_field(self, wcs_path: Path | None = None) -> SolvedField:
+        return SolvedField(
+            center_ra_deg=327.41,
+            center_dec_deg=47.44,
+            radius_deg=1.978,
+            width=4000,
+            height=2245,
+            wcs_path=wcs_path or Path("test.fits"),
+        )
+
+    def _star(self, source_id: str, ra_deg: float, dec_deg: float) -> CatalogStar:
+        return CatalogStar("gaia-dr3", source_id, source_id, ra_deg, dec_deg, 11.0, False)
+
+    def test_smaller_tile_radius_creates_more_tiles(self) -> None:
+        solved_field = self._wide_field()
+
+        default_tiles = build_gaia_query_tiles(solved_field)
+        finer_tiles = build_gaia_query_tiles(solved_field, GaiaTileOptions(max_radius_deg=0.20))
+
+        self.assertGreater(len(finer_tiles), len(default_tiles))
+
+    def test_small_field_uses_a_single_gaia_tile(self) -> None:
+        solved_field = self._small_field()
+
+        tiles = build_gaia_query_tiles(solved_field)
+
+        self.assertFalse(gaia_field_needs_tiles(solved_field))
+        self.assertEqual(len(tiles), 1)
+        self.assertAlmostEqual(tiles[0].center.ra.deg, solved_field.center_ra_deg, places=5)
+        self.assertAlmostEqual(tiles[0].center.dec.deg, solved_field.center_dec_deg, places=5)
+
+    def test_wide_field_tiles_cover_the_image_footprint(self) -> None:
+        from astropy.io import fits
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wcs_path = Path(temp_dir) / "cocoon.wcs.fits"
+            width, height, radius_deg = 4000, 2245, 1.978
+            scale_deg = (2.0 * radius_deg) / (width**2 + height**2) ** 0.5
+            header = fits.Header()
+            header["NAXIS"] = 2
+            header["NAXIS1"] = width
+            header["NAXIS2"] = height
+            header["CTYPE1"] = "RA---TAN"
+            header["CTYPE2"] = "DEC--TAN"
+            header["CRVAL1"] = 327.41
+            header["CRVAL2"] = 47.44
+            header["CRPIX1"] = width / 2.0
+            header["CRPIX2"] = height / 2.0
+            header["CDELT1"] = -scale_deg
+            header["CDELT2"] = scale_deg
+            header["CUNIT1"] = "deg"
+            header["CUNIT2"] = "deg"
+            fits.PrimaryHDU(header=header).writeto(wcs_path)
+            solved_field = self._wide_field(wcs_path)
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                tiles = build_gaia_query_tiles(solved_field)
+                celestial = _solved_field_celestial_wcs(solved_field)
+
+            self.assertTrue(gaia_field_needs_tiles(solved_field))
+            self.assertGreaterEqual(len(tiles), 8)
+            self.assertLessEqual(len(tiles), 64)
+            assert celestial is not None
+            corners = (
+                (0.0, 0.0),
+                (float(width), 0.0),
+                (0.0, float(height)),
+                (float(width), float(height)),
+                (width / 2.0, height / 2.0),
+            )
+            for pixel_x, pixel_y in corners:
+                ra_deg, dec_deg = celestial.pixel_to_world_values(pixel_x, pixel_y)
+                sky = SkyCoord(float(ra_deg) * u.deg, float(dec_deg) * u.deg)
+                covered = any(
+                    float(sky.separation(tile.center).deg) <= tile.radius_deg for tile in tiles
+                )
+                self.assertTrue(covered, f"pixel ({pixel_x}, {pixel_y}) is not covered by any Gaia tile")
+
+    def test_query_gaia_field_merges_and_dedupes_tiles(self) -> None:
+        solved_field = self._wide_field()
+        tiles = [
+            _GaiaQueryTile(
+                center=SkyCoord(327.2 * u.deg, 47.2 * u.deg),
+                radius_deg=0.3,
+                x0=0.0,
+                y0=0.0,
+                x1=2000.0,
+                y1=1122.0,
+            ),
+            _GaiaQueryTile(
+                center=SkyCoord(327.6 * u.deg, 47.6 * u.deg),
+                radius_deg=0.3,
+                x0=2000.0,
+                y0=1122.0,
+                x1=4000.0,
+                y1=2245.0,
+            ),
+        ]
+
+        def fake_query(center, radius, maximum_magnitude=None, row_limit=None):
+            shared = self._star("shared", 327.41, 47.44)
+            unique = self._star(f"tile-{center.ra.deg:.1f}", center.ra.deg, center.dec.deg)
+            return [shared, unique]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            with patch("photometry_app.core.catalogs.build_gaia_query_tiles", return_value=tiles), patch.object(
+                CatalogService,
+                "_query_gaia_filtered",
+                side_effect=fake_query,
+            ) as query_gaia_filtered:
+                stars = service._query_gaia_field(solved_field, maximum_magnitude=18.0, row_limit=35000)
+
+        self.assertEqual(query_gaia_filtered.call_count, 2)
+        self.assertEqual(sorted(star.source_id for star in stars), ["shared", "tile-327.2", "tile-327.6"])
+
+    def test_query_gaia_field_splits_a_saturated_tile(self) -> None:
+        solved_field = self._wide_field()
+        parent = _GaiaQueryTile(
+            center=SkyCoord(327.41 * u.deg, 47.44 * u.deg),
+            radius_deg=0.4,
+            x0=0.0,
+            y0=0.0,
+            x1=2000.0,
+            y1=1122.0,
+        )
+        neighbor = _GaiaQueryTile(
+            center=SkyCoord(327.8 * u.deg, 47.7 * u.deg),
+            radius_deg=0.3,
+            x0=2000.0,
+            y0=1122.0,
+            x1=4000.0,
+            y1=2245.0,
+        )
+        progress_messages: list[str] = []
+        calls: list[tuple[float, float]] = []
+
+        def fake_query(center, radius, maximum_magnitude=None, row_limit=None):
+            calls.append((round(center.ra.deg, 5), round(center.dec.deg, 5)))
+            if len(calls) == 1:
+                return [self._star(f"sat-{index}", 327.41, 47.44) for index in range(int(row_limit))]
+            return [self._star(f"ok-{len(calls)}", center.ra.deg, center.dec.deg)]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            with patch(
+                "photometry_app.core.catalogs.build_gaia_query_tiles",
+                return_value=[parent, neighbor],
+            ), patch.object(CatalogService, "_query_gaia_filtered", side_effect=fake_query):
+                stars = service._query_gaia_field(
+                    solved_field,
+                    maximum_magnitude=18.0,
+                    row_limit=8,
+                    progress_callback=progress_messages.append,
+                )
+
+        self.assertEqual(len(calls), 6)
+        self.assertTrue(any("splitting into 4 smaller tiles" in message for message in progress_messages))
+        self.assertTrue(any(star.source_id.startswith("ok-") for star in stars))
+        self.assertFalse(any(star.source_id.startswith("sat-") for star in stars))
+
+    def test_wide_field_cache_key_invalidates_single_cone_results(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            small_key = service._field_catalog_cache_key(
+                self._small_field(),
+                include_gaia=True,
+                include_variable_stars=True,
+                include_exoplanets=True,
+                gaia_max_magnitude=18.0,
+                gaia_row_cap=35000,
+                variable_star_max_magnitude=None,
+                exoplanet_max_magnitude=None,
+            )
+            wide_key = service._field_catalog_cache_key(
+                self._wide_field(),
+                include_gaia=True,
+                include_variable_stars=True,
+                include_exoplanets=True,
+                gaia_max_magnitude=18.0,
+                gaia_row_cap=35000,
+                variable_star_max_magnitude=None,
+                exoplanet_max_magnitude=None,
+            )
+            limited_key = service._gaia_filtered_cache_key(
+                self._wide_field(),
+                maximum_magnitude=18.0,
+                row_limit=35000,
+            )
+
+        self.assertNotIn("gaia-tiles", small_key)
+        self.assertIn("gaia-tiles", wide_key)
+        self.assertTrue(limited_key.endswith("_tiles.json"))

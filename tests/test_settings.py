@@ -38,7 +38,15 @@ from photometry_app.core.models import (
 
 )
 
-from photometry_app.core.settings import AppSettings, ObservingSitePreset, load_settings_config_override, save_settings_config_override
+from photometry_app.core.settings import (
+    AppSettings,
+    DEFAULT_ASTROMETRY_TIMEOUT_SECONDS,
+    ObservingSitePreset,
+    load_settings_config_override,
+    normalize_astrometry_timeout_seconds,
+    resolve_astrometry_timeout_seconds,
+    save_settings_config_override,
+)
 
 
 
@@ -84,7 +92,26 @@ class SettingsTest(unittest.TestCase):
 
         self._state_dir.cleanup()
 
+    def test_normalize_astrometry_timeout_seconds(self) -> None:
+        self.assertEqual(normalize_astrometry_timeout_seconds(None), DEFAULT_ASTROMETRY_TIMEOUT_SECONDS)
+        self.assertEqual(normalize_astrometry_timeout_seconds(10), 30)
+        self.assertEqual(normalize_astrometry_timeout_seconds(99999), 3600)
+        self.assertEqual(normalize_astrometry_timeout_seconds("600"), 600)
+        self.assertEqual(resolve_astrometry_timeout_seconds(None), DEFAULT_ASTROMETRY_TIMEOUT_SECONDS)
 
+    def test_settings_round_trip_preserves_astrometry_timeout_seconds(self) -> None:
+        from dataclasses import replace
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = replace(
+                AppSettings.defaults(root),
+                astrometry_api_key="demo-key",
+                astrometry_timeout_seconds=600,
+            )
+            settings.save(root)
+            loaded = AppSettings.from_root(root)
+            self.assertEqual(loaded.astrometry_timeout_seconds, 600)
 
     def test_settings_default_theme_uses_last_saved_app_theme(self) -> None:
 
@@ -145,6 +172,27 @@ class SettingsTest(unittest.TestCase):
 
 
         self.assertEqual(loaded.image_display_stretch_mode, "stf")
+
+    def test_hr_gaia_catalog_settings_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            root.mkdir()
+            settings = AppSettings.from_root(root)
+            settings.hr_gaia_max_magnitude = 16.5
+            settings.hr_gaia_row_cap = 12000
+            settings.hr_gaia_tile_max_radius_deg = 0.25
+            settings.hr_gaia_tile_radius_margin = 1.20
+            settings.hr_gaia_tile_max_count = 16
+            settings.hr_gaia_tile_max_split_depth = 1
+            settings.save(root)
+            loaded = AppSettings.from_root(root)
+
+        self.assertEqual(loaded.hr_gaia_max_magnitude, 16.5)
+        self.assertEqual(loaded.hr_gaia_row_cap, 12000)
+        self.assertEqual(loaded.hr_gaia_tile_max_radius_deg, 0.25)
+        self.assertEqual(loaded.hr_gaia_tile_radius_margin, 1.20)
+        self.assertEqual(loaded.hr_gaia_tile_max_count, 16)
+        self.assertEqual(loaded.hr_gaia_tile_max_split_depth, 1)
 
     def test_settings_round_trip_stf_bright_image_display_stretch_mode(self) -> None:
 
@@ -449,6 +497,18 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(loaded.hr_prerequisites_warning_dismissed_version, "")
 
             self.assertEqual(loaded.hr_table_row_limit, 1000)
+
+            self.assertEqual(loaded.hr_gaia_max_magnitude, 18.0)
+
+            self.assertEqual(loaded.hr_gaia_row_cap, 35000)
+
+            self.assertEqual(loaded.hr_gaia_tile_max_radius_deg, 0.35)
+
+            self.assertEqual(loaded.hr_gaia_tile_radius_margin, 1.12)
+
+            self.assertEqual(loaded.hr_gaia_tile_max_count, 64)
+
+            self.assertEqual(loaded.hr_gaia_tile_max_split_depth, 2)
 
             self.assertEqual(loaded.hr_motion_vector_color, "#3d8bfd")
 

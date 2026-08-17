@@ -89,7 +89,13 @@ from photometry_app.core.photometry import measure_manual_sources, measure_targe
 
 from photometry_app.core.scanner import scan_fits_tree
 
-from photometry_app.core.settings import AppSettings, resolve_shared_parallel_workers
+from photometry_app.core.settings import (
+    AppSettings,
+    DEFAULT_ASTROMETRY_TIMEOUT_SECONDS,
+    normalize_astrometry_timeout_seconds,
+    resolve_astrometry_timeout_seconds,
+    resolve_shared_parallel_workers,
+)
 
 from photometry_app.core.solar_system import estimate_visible_magnitude_limit
 
@@ -1804,6 +1810,8 @@ class PhotometryPipeline:
 
             len(files),
 
+            timeout_seconds=resolve_astrometry_timeout_seconds(settings),
+
         )
 
 
@@ -1867,6 +1875,8 @@ class PhotometryPipeline:
                 progress_callback,
 
                 len(files),
+
+                timeout_seconds=resolve_astrometry_timeout_seconds(settings),
 
             )
 
@@ -2095,6 +2105,8 @@ class PhotometryPipeline:
 
         total_files: int,
 
+        timeout_seconds: int | None = None,
+
     ) -> dict[int, PlateSolveResult]:
 
         if not requests_to_solve:
@@ -2104,6 +2116,10 @@ class PhotometryPipeline:
 
 
         max_workers = min(_DEFAULT_ASTROMETRY_PARALLEL_SUBMISSIONS, len(requests_to_solve))
+
+        resolved_timeout = normalize_astrometry_timeout_seconds(
+            DEFAULT_ASTROMETRY_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        )
 
         results: dict[int, PlateSolveResult] = {}
 
@@ -2124,6 +2140,8 @@ class PhotometryPipeline:
                     progress_callback,
 
                     total_files,
+
+                    resolved_timeout,
 
                 ): request
 
@@ -2184,6 +2202,8 @@ class PhotometryPipeline:
         progress_callback: Callable[[str], None] | None = None,
 
         total_files: int = 1,
+
+        timeout_seconds: int | None = None,
 
     ) -> PlateSolveResult:
 
@@ -2307,7 +2327,14 @@ class PhotometryPipeline:
 
             client = AstrometryNetClient(api_key)
 
-            result = client.solve_file(request.file_result.path, solve_cache_dir, hints=request.hints)
+            result = client.solve_file(
+                request.file_result.path,
+                solve_cache_dir,
+                timeout_seconds=normalize_astrometry_timeout_seconds(
+                    DEFAULT_ASTROMETRY_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+                ),
+                hints=request.hints,
+            )
 
         except Exception as exc:
 

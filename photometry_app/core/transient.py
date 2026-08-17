@@ -17,7 +17,7 @@ from photometry_app.core.catalogs import CatalogService, summarize_catalog_servi
 from photometry_app.core.image_io import read_header, read_header_and_shape, read_photometry_image_data
 from photometry_app.core.models import CatalogStar, FileScanResult, ObservationMetadata, PlateSolveResult, SolvedField, WcsStatus
 from photometry_app.core.scanner import scan_fits_tree
-from photometry_app.core.settings import AppSettings
+from photometry_app.core.settings import AppSettings, resolve_astrometry_timeout_seconds
 from photometry_app.core.wcs import AstrometryNetClient, extract_solved_field, infer_astrometry_solve_hints, validate_wcs
 
 
@@ -325,6 +325,7 @@ def _resolve_frame_wcs(
             file_result.path,
             settings.cache_dir / _TRANSIENT_ASTROMETRY_CACHE_NAME,
             hints=hints,
+            timeout_seconds=resolve_astrometry_timeout_seconds(settings),
         )
     except Exception as exc:
         return TransientFrameResult(

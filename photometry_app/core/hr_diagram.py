@@ -69,7 +69,53 @@ from photometry_app.core.photometry import (
 from photometry_app.core.settings import AppSettings, resolve_shared_parallel_workers
 
 
+HR_GAIA_MAX_MAGNITUDE = 18.0
+HR_GAIA_ROW_CAP = 35000
 
+
+def resolve_hr_gaia_query_limits(settings: object | None = None) -> tuple[float, int]:
+    """Return the Gaia/VizieR magnitude cut and row cap used for HR field catalogs."""
+
+    try:
+        max_sources = max(0, int(getattr(settings, "hr_max_sources", 0) or 0))
+    except (TypeError, ValueError):
+        max_sources = 0
+    try:
+        magnitude = float(getattr(settings, "hr_gaia_max_magnitude", HR_GAIA_MAX_MAGNITUDE))
+    except (TypeError, ValueError):
+        magnitude = HR_GAIA_MAX_MAGNITUDE
+    try:
+        row_cap = int(getattr(settings, "hr_gaia_row_cap", HR_GAIA_ROW_CAP) or HR_GAIA_ROW_CAP)
+    except (TypeError, ValueError):
+        row_cap = HR_GAIA_ROW_CAP
+    return min(30.0, max(-5.0, magnitude)), max(min(100000, max(1000, row_cap)), max_sources)
+
+
+def resolve_hr_gaia_tile_options(settings: object | None = None):
+    """Return the Gaia tile grid used for wide HR field catalogs."""
+
+    from photometry_app.core.catalogs import GaiaTileOptions
+
+    def _float_setting(name: str, default: float, minimum: float, maximum: float) -> float:
+        try:
+            value = float(getattr(settings, name, default))
+        except (TypeError, ValueError):
+            value = default
+        return min(maximum, max(minimum, value))
+
+    def _int_setting(name: str, default: int, minimum: int, maximum: int) -> int:
+        try:
+            value = int(getattr(settings, name, default) or default)
+        except (TypeError, ValueError):
+            value = default
+        return min(maximum, max(minimum, value))
+
+    return GaiaTileOptions(
+        max_radius_deg=_float_setting("hr_gaia_tile_max_radius_deg", 0.35, 0.10, 2.0),
+        radius_margin=_float_setting("hr_gaia_tile_radius_margin", 1.12, 1.00, 1.50),
+        max_count=_int_setting("hr_gaia_tile_max_count", 64, 4, 256),
+        max_split_depth=_int_setting("hr_gaia_tile_max_split_depth", 2, 0, 4),
+    )
 
 
 @dataclass(slots=True)

@@ -221,6 +221,92 @@ class SolarSystemTest(unittest.TestCase):
 
 
 
+    def test_resolve_source_field_prefers_astrometry_before_local_gaia_when_keyed(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root_path = Path(temp_dir)
+
+            source_path = root_path / "unsolved.fits"
+
+            source_path.write_bytes(b"demo")
+
+            settings = AppSettings.from_root(root_path)
+
+            settings.astrometry_api_key = "demo-key"
+
+            solved_path = root_path / "nova-solved.fits"
+
+            solved_field = SolvedField(329.5, 48.9, 1.0, 100, 80, solved_path)
+
+            nova_result = PlateSolveResult(
+
+                source_path=source_path,
+
+                status=WcsStatus.SOLVED,
+
+                solved_field=solved_field,
+
+                reasons=[],
+
+            )
+
+            header = Header()
+
+            header["CTYPE1"] = "RA---TAN"
+
+            header["CTYPE2"] = "DEC--TAN"
+
+            header["RA"] = 329.5
+
+            header["DEC"] = 48.9
+
+            header["FOCALLEN"] = 530.0
+
+            header["XPIXSZ"] = 3.76
+
+            progress: list[str] = []
+
+            with (
+
+                patch("photometry_app.core.solar_system.read_header_and_shape", return_value=(header, 100, 80)),
+
+                patch("photometry_app.core.solar_system.validate_wcs", return_value=(False, ["Missing CRVAL1 WCS keyword."])),
+
+                patch("photometry_app.core.solar_system.solve_wcs_from_metadata_and_gaia") as local_solver,
+
+                patch("photometry_app.core.solar_system.AstrometryNetClient") as astrometry_client,
+
+            ):
+
+                astrometry_client.return_value.solve_file.return_value = nova_result
+
+                resolved_field, used_fallback = _resolve_source_field(
+
+                    source_path,
+
+                    settings,
+
+                    progress_callback=progress.append,
+
+                )
+
+        self.assertEqual(resolved_field, solved_field)
+
+        self.assertTrue(used_fallback)
+
+        astrometry_client.assert_called_once_with("demo-key")
+
+        astrometry_client.return_value.solve_file.assert_called_once()
+
+        local_solver.assert_not_called()
+
+        self.assertTrue(any("astrometry.net first" in message.lower() for message in progress))
+
+        self.assertTrue(any("Mount/header pointing" in message for message in progress))
+
+
+
     def test_parse_observation_time_uses_fallback_timezone_for_naive_input(self) -> None:
 
         parsed = parse_observation_time("2025-01-14T21:12:00", fallback_timezone="America/New_York")
