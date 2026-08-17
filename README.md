@@ -4,7 +4,7 @@ Every clear night, amateur telescopes around the world capture photons that prof
 
 **CAst** is a desktop application (Windows installer primary; unsigned macOS `.app` zip available for alpha testers) that takes folders of FITS and XISF images and gives you the tools to measure variable stars, discover moving asteroids, build Hertzsprung-Russell diagrams, and explore the sky -- all from one guided interface, no command-line scripting required.
 
-Project docs: [Updates](UPDATES.md) · [Contributing](CONTRIBUTING.md) · [License](LICENSE)
+Project docs: [Version history](version.md) · [Contributing](CONTRIBUTING.md) · [License](LICENSE)
 
 ![CAst mode launcher](guides/images/entry_screen.jpg)
 
@@ -135,7 +135,7 @@ Mode guides live under [`guides/`](guides/): [Differential Photometry](guides/di
 
 Shared shell details — themes, folder layout, and common UI panels — are in [Themes, Layout, and Shared UI](guides/themes_layout_ui.md).
 
-Release notes by version are in [Updates](UPDATES.md). For a detailed map of the repository layout, modules, modes, workers, packaging, and tests, see [CODEBASE_MAP.md](CODEBASE_MAP.md).
+Release notes by version are in [Version history](version.md). For a detailed map of the repository layout, modules, modes, workers, packaging, and tests, see [CODEBASE_MAP.md](CODEBASE_MAP.md).
 
 ## Status
 

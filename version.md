@@ -1,8 +1,10 @@
 # Version history
 
+Version history for Citizen Astronomy (CAst), newest first. Installer releases and delta updates are published on the [Releases](https://github.com/OgetayKayali/citizen-astronomy/releases) page.
+
 Current app version: **0.1.1-alpha.10**
 
-This log tracks finished fixes and features for the next published update. Group notes by mode (or App/Display). Prefer one short bullet per change—not intermediate debugging steps.
+This log also tracks finished fixes and features staged for the next published update. Group notes by mode (or App/Display). Prefer one short bullet per change—not intermediate debugging steps.
 
 ## Pending for next release (after 0.1.1-alpha.10)
 

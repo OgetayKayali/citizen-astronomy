@@ -148,7 +148,7 @@ $optionalExtras = @(
     "assets\README.md",
     "assets\citizen_astronomy.png",
     "packaging\macos\.gitkeep",
-    "UPDATES.md",
+    "version.md",
     "CODEBASE_MAP.md"
 )
 foreach ($relative in $optionalExtras) {
