@@ -27,6 +27,8 @@ from photometry_app.core.wcs_sanity import (
     resolve_embedded_wcs_with_sanity,
     select_gaia_sanity_candidates,
     try_repair_crval_from_ccvals,
+    _adaptive_probe_fractions,
+    _select_quality_detections,
 )
 
 
@@ -71,7 +73,7 @@ class WcsSanityTest(unittest.TestCase):
         self.assertAlmostEqual(center.dec.degree, 11.9946611, places=4)
 
     def test_ccvals_keyword_sanity_detects_disagreement(self) -> None:
-        header = Header()
+        header = _tan_wcs(scale_arcsec=1.0).to_header(relax=True)
         header["CCVALS1"] = "16:31:20.93"
         header["CCVALS2"] = "+11:59:40.78"
         header["CRVAL1"] = 247.81776565
@@ -81,6 +83,7 @@ class WcsSanityTest(unittest.TestCase):
         assert result is not None
         self.assertFalse(result.passed)
         self.assertGreater(result.coherent_shift_arcsec or 0.0, 100.0)
+        self.assertGreater(result.coherent_shift_pixels or 0.0, 100.0)
 
     def test_magnitude_bins_include_sequential_ranges(self) -> None:
         bins = magnitude_bins_for_options(WcsSanityOptions(gaia_min_magnitude=5.0, gaia_max_magnitude=14.0))
@@ -148,14 +151,15 @@ class WcsSanityTest(unittest.TestCase):
                 options=WcsSanityOptions(
                     approval_percent=90.0,
                     frame_margin_percent=25.0,
-                    max_median_residual_arcsec=2.0,
+                    max_median_residual_pixels=2.0,
+                    isolation_fwhm_multiplier=0.0,
                 ),
                 cache_dir=Path("."),
                 progress_callback=progress.append,
             )
         self.assertTrue(result.passed)
-        self.assertEqual(result.approved_bin, (5.0, 10.0))
-        self.assertTrue(any("G=5-10" in line and "approved" in line for line in progress))
+        self.assertIsNone(result.approved_bin)
+        self.assertTrue(any("quality sample" in line and "approved" in line for line in progress))
         self.assertTrue(any("detection→Gaia" in line for line in progress))
         self.assertTrue(any("central 75%" in line for line in progress))
 
@@ -212,16 +216,15 @@ class WcsSanityTest(unittest.TestCase):
                 options=WcsSanityOptions(
                     approval_percent=90.0,
                     frame_margin_percent=25.0,
-                    isolation_arcsec=0.0,
-                    skip_brightest_detections=0,
-                    detection_sample_count=20,
+                    isolation_fwhm_multiplier=0.0,
+                    quality_sample_max_count=20,
                     soft_accept_enabled=False,
                 ),
                 cache_dir=Path("."),
             )
         self.assertTrue(result.passed)
-        self.assertGreaterEqual(result.match_count, 18)
-        self.assertEqual(result.candidate_count, 20)
+        self.assertGreaterEqual(result.match_count, 8)
+        self.assertGreaterEqual(result.candidate_count, 8)
 
     def test_evaluate_wcs_sanity_soft_accepts_stable_moderate_match(self) -> None:
         width = height = 400
@@ -270,15 +273,14 @@ class WcsSanityTest(unittest.TestCase):
                 solved_field,
                 options=WcsSanityOptions(
                     approval_percent=99.0,
-                    match_tolerance_arcsec=8.0,
-                    skip_brightest_detections=0,
-                    detection_sample_count=40,
+                    match_tolerance_pixels=7.0,
+                    quality_sample_max_count=40,
                     subtract_coherent_shift=True,
                     soft_accept_enabled=True,
                     soft_approval_percent=65.0,
-                    soft_max_median_residual_arcsec=5.0,
-                    soft_max_coherent_shift_arcsec=6.0,
-                    isolation_arcsec=0.0,
+                    soft_max_median_residual_pixels=4.0,
+                    soft_max_coherent_shift_pixels=4.0,
+                    isolation_fwhm_multiplier=0.0,
                     frame_margin_percent=25.0,
                 ),
                 cache_dir=Path("."),
@@ -287,7 +289,7 @@ class WcsSanityTest(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertTrue(any("soft-accepted" in line or "via soft accept" in line for line in progress))
 
-    def test_evaluate_wcs_sanity_falls_through_bins_then_passes(self) -> None:
+    def test_evaluate_wcs_sanity_matches_quality_sample_across_gaia_magnitudes(self) -> None:
         width = height = 400
         wcs = _tan_wcs(width, height, scale_arcsec=1.2)
         header = wcs.to_header(relax=True)
@@ -338,9 +340,8 @@ class WcsSanityTest(unittest.TestCase):
                 progress_callback=progress.append,
             )
         self.assertTrue(result.passed)
-        self.assertEqual(result.approved_bin, (10.0, 12.0))
-        self.assertTrue(any("G=5-10" in line and "below approval" in line for line in progress))
-        self.assertTrue(any("G=10-12" in line and "approved" in line for line in progress))
+        self.assertIsNone(result.approved_bin)
+        self.assertTrue(any("quality sample" in line and "approved" in line for line in progress))
 
     def test_evaluate_wcs_sanity_fails_on_shifted_wcs(self) -> None:
         width = height = 400
@@ -379,7 +380,7 @@ class WcsSanityTest(unittest.TestCase):
                 Path("dummy.fits"),
                 header,
                 solved_field,
-                options=WcsSanityOptions(approval_percent=90.0, max_median_residual_arcsec=3.0),
+                options=WcsSanityOptions(approval_percent=90.0, max_median_residual_pixels=2.0),
                 cache_dir=Path("."),
             )
         self.assertFalse(result.passed)
@@ -532,18 +533,118 @@ class WcsSanityTest(unittest.TestCase):
             wcs_sanity_candidate_count = 4
             wcs_sanity_min_matches = 20
             wcs_sanity_approval_percent = 90.0
-            wcs_sanity_max_median_residual_arcsec = 3.0
+            wcs_sanity_probe_start_percent = 12.0
+            wcs_sanity_quality_sample_max_count = 28
+            wcs_sanity_minimum_source_snr = 9.0
+            wcs_sanity_max_median_residual_pixels = 1.75
+            wcs_sanity_match_tolerance_pixels = 2.5
+            wcs_sanity_isolation_fwhm_multiplier = 3.0
+            wcs_sanity_soft_max_median_residual_pixels = 1.25
+            wcs_sanity_soft_max_coherent_shift_pixels = 1.75
+            wcs_sanity_ccvals_max_disagreement_pixels = 4.0
             wcs_sanity_gaia_min_magnitude = 14.0
             wcs_sanity_gaia_max_magnitude = 10.0
             wcs_sanity_edge_margin_percent = 25.0
-            wcs_sanity_isolation_arcsec = 8.0
             wcs_sanity_ccvals_repair_enabled = True
 
         options = options_from_settings(_Settings())
         self.assertEqual(options.approval_percent, 90.0)
         self.assertEqual(options.frame_margin_percent, 25.0)
+        self.assertEqual(options.probe_start_fraction, 0.12)
+        self.assertEqual(options.match_tolerance_pixels, 2.5)
+        self.assertEqual(options.isolation_fwhm_multiplier, 3.0)
+        self.assertEqual(options.ccvals_max_disagreement_pixels, 4.0)
         self.assertEqual(options.gaia_min_magnitude, 10.0)
         self.assertEqual(options.gaia_max_magnitude, 14.0)
+
+    def test_adaptive_probe_fractions_start_relative_and_expand_to_full_field(self) -> None:
+        fractions = _adaptive_probe_fractions(0.10)
+        self.assertEqual(fractions[0], 0.10)
+        self.assertEqual(fractions[-1], 1.0)
+        self.assertTrue(all(left < right for left, right in zip(fractions, fractions[1:])))
+
+    def test_quality_selection_avoids_clipped_and_low_snr_sources(self) -> None:
+        sources = [
+            _DetectedSource(float(index * 10), 50.0, 60000.0, snr=100.0, fwhm_px=3.0)
+            for index in range(8)
+        ]
+        sources.extend(
+            _DetectedSource(float(index * 10), 100.0, 5000.0 + index * 100.0, snr=30.0, fwhm_px=3.0)
+            for index in range(12)
+        )
+        sources.extend(
+            _DetectedSource(float(index * 10), 150.0, 500.0 + index, snr=2.0, fwhm_px=3.0)
+            for index in range(8)
+        )
+        selected = _select_quality_detections(
+            sources,
+            width=300,
+            height=200,
+            minimum_snr=8.0,
+            max_count=16,
+        )
+        self.assertGreaterEqual(len(selected), 8)
+        self.assertTrue(all(source.peak < 60000.0 for source in selected))
+        self.assertTrue(all((source.snr or 0.0) >= 8.0 for source in selected))
+
+    def test_evaluate_wcs_sanity_queries_central_cone_on_wide_field(self) -> None:
+        width, height = 2000, 1500
+        wcs = _tan_wcs(width, height, scale_arcsec=3.0)
+        header = wcs.to_header(relax=True)
+        detected = []
+        gaia = []
+        for index in range(10):
+            x_value = 1000 + (index % 5) * 12
+            y_value = 750 + (index // 5) * 14
+            world = wcs.pixel_to_world(x_value, y_value)
+            detected.append(_DetectedSource(x=float(x_value), y=float(y_value), peak=1000 - index))
+            gaia.append(
+                _catalog_star(
+                    f"center-{index}",
+                    float(world.ra.deg),
+                    float(world.dec.deg),
+                    8.0 + index * 0.1,
+                )
+            )
+        # Bright stars far from the center must not force a full-field Gaia dump or tank the score.
+        for index in range(8):
+            detected.append(_DetectedSource(x=300.0 + index, y=200.0, peak=5000 - index))
+        solved_field = SolvedField(
+            center_ra_deg=180.0,
+            center_dec_deg=10.0,
+            radius_deg=1.05,
+            width=width,
+            height=height,
+            wcs_path=Path("dummy.fits"),
+        )
+        progress: list[str] = []
+        with (
+            patch("photometry_app.core.wcs_sanity._detect_image_sources", return_value=detected),
+            patch("photometry_app.core.wcs_sanity.CatalogService") as catalog_cls,
+        ):
+            catalog_cls.return_value.query_gaia_stars_limited.return_value = gaia
+            result = evaluate_wcs_sanity(
+                Path("dummy.fits"),
+                header,
+                solved_field,
+                options=WcsSanityOptions(
+                    approval_percent=90.0,
+                    frame_margin_percent=25.0,
+                    probe_start_fraction=0.10,
+                    quality_sample_max_count=20,
+                    isolation_fwhm_multiplier=0.0,
+                ),
+                cache_dir=Path("."),
+                progress_callback=progress.append,
+            )
+        self.assertTrue(result.passed)
+        query = catalog_cls.return_value.query_gaia_stars_limited
+        query.assert_called_once()
+        queried_field = query.call_args.args[0]
+        self.assertAlmostEqual(queried_field.radius_deg, solved_field.radius_deg * 0.10)
+        self.assertEqual(query.call_args.kwargs["progress_label"], "WCS sanity probe")
+        self.assertEqual(result.candidate_count, 10)
+        self.assertTrue(any("10% of field radius" in line for line in progress))
 
 
 if __name__ == "__main__":

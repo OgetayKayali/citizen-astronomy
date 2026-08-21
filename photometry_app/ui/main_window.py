@@ -229,7 +229,6 @@ from photometry_app.core.transient import *
 from photometry_app.core.wcs import *
 from photometry_app.ui.dialogs import *
 from photometry_app.ui.distance_map_view import DistanceMapPanel
-from photometry_app.ui.astro_tools_panel import AstroToolsPanel
 from photometry_app.ui.differential_label_dialog import DifferentialQuickLabelDialog
 from photometry_app.ui.sky_explorer_collage_dialog import SkyExplorerCollageDialog
 from photometry_app.ui.sky_explorer_mag_limit_dialog import SkyExplorerMagLimitDialog, SkyExplorerMagLimitOptions
@@ -267,6 +266,7 @@ from photometry_app.ui.sky_view_star_renderer import (
 from photometry_app.ui.transient_label_dialog import TRANSIENT_QUICK_LABEL_OPTIONS, TransientQuickLabelDialog
 from photometry_app.ui.workers import *
 from photometry_app.ui.scan_comps_dialog import ScanCompsDialog, ScanCompsDialogResult
+from photometry_app.ui.variable_ephemeris_dialog import VariableEphemerisDialog
 from photometry_app.core.scan_comps import ScanCompReferenceInput, catalog_star_bp_rp
 
 
@@ -590,6 +590,7 @@ _TRANSIENT_SCORE_COLUMN = 9
 _CALCULATE_PERIOD_BUTTON_LABEL = "Calculate Period"
 _PULL_PERIOD_BUTTON_LABEL = "Pull Period"
 _SCAN_COMPS_BUTTON_LABEL = "Scan Comps"
+_EPHEMERIS_BUTTON_LABEL = "Ephemeris"
 _DISCOVER_BUTTON_LABEL = "Discover"
 _INCREASE_SNR_BUTTON_LABEL = "Increase SNR"
 _RESET_SNR_BUTTON_LABEL = "Reset SNR"
@@ -722,8 +723,10 @@ _ASTEROID_SKY_VIEW_MAX_OFFSET_HOURS = 12.0
 _ASTEROID_SKY_VIEW_OFFSET_STEP_HOURS = 0.5
 _ASTEROID_ALL_GROUP_KEY = "__all__"
 _ASTEROID_BLINK_INTERVAL_MS = 350
+_IMAGE_BLINK_INTERVAL_MS = 350
 _MODE_TOOLBAR_BUTTON_HEIGHT = 46
 _MODE_TOOLBAR_BUTTON_RADIUS_PX = 4
+_IMAGE_FRAME_SELECTOR_CLOSED_WIDTH = 156
 _TRANSIENT_BLINK_INTERVAL_OPTIONS_MS = (100, 180, 350, 700)
 _TRANSIENT_BLINK_INTERVAL_MS = 350
 _SKY_EXPLORER_STROKE_COLOR_COLUMN = 0
@@ -1044,6 +1047,23 @@ class _DifferentialWorkflowOptions:
 
     brightest_variable_percent: int = 100
 
+
+
+class _CompactPopupComboBox(QComboBox):
+    """A combo that stays compact when closed but shows full item text in the popup."""
+
+    def showPopup(self) -> None:
+        popup_view = self.view()
+        if popup_view is not None:
+            metrics = popup_view.fontMetrics()
+            widest = max(
+                (metrics.horizontalAdvance(self.itemText(index)) for index in range(self.count())),
+                default=0,
+            )
+            extra = popup_view.verticalScrollBar().sizeHint().width() + 24
+            popup_view.setMinimumWidth(max(self.width(), widest + extra))
+            popup_view.setTextElideMode(Qt.TextElideMode.ElideNone)
+        super().showPopup()
 
 
 class _ElidedLabel(QLabel):
@@ -7548,6 +7568,14 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._appearance_animation_timer.start()
 
         super().showEvent(event)
+
+        if (
+            hasattr(self, "_mode_launcher_is_visible")
+            and not self._mode_launcher_is_visible()
+            and self._current_app_mode() == AppMode.ASTRO_TOOLS
+            and getattr(self, "_astro_tools_panel_widget", None) is None
+        ):
+            QTimer.singleShot(0, self._ensure_astro_tools_panel)
 
     def hideEvent(self, event) -> None:  # type: ignore[override]
 
@@ -27127,13 +27155,42 @@ class MainWindow(QMainWindow):
 
 
 
-        self._image_frame_selector = QComboBox()
+        self._image_frame_selector = _CompactPopupComboBox()
 
-        self._image_frame_selector.currentIndexChanged.connect(self._render_image_panel)
+        self._image_frame_selector.setToolTip("Select an image frame.")
 
-        self._image_frame_selector.hide()
+        self._image_frame_selector.setAccessibleName("Image frame")
 
+        self._image_frame_selector.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
 
+        self._image_frame_selector.setMinimumContentsLength(8)
+
+        self._image_frame_selector.setFixedWidth(_IMAGE_FRAME_SELECTOR_CLOSED_WIDTH)
+
+        self._image_frame_selector.setFixedHeight(_MODE_TOOLBAR_BUTTON_HEIGHT)
+
+        self._image_frame_selector.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        if hasattr(self._image_frame_selector, "setElideMode"):
+
+            self._image_frame_selector.setElideMode(Qt.TextElideMode.ElideMiddle)
+
+        self._image_frame_selector.setMaxVisibleItems(18)
+
+        self._image_frame_selector.addItem("No processed frames", None)
+
+        self._image_frame_selector.setEnabled(False)
+
+        self._image_frame_selector.currentIndexChanged.connect(self._handle_image_frame_changed)
+
+        self._image_blink_button = QPushButton("Blink")
+        self._image_blink_button.setCheckable(True)
+        self._image_blink_button.setEnabled(False)
+        self._image_blink_button.setToolTip("Blink through processed frames of the current series.")
+        self._image_blink_button.setMinimumWidth(
+            self.fontMetrics().horizontalAdvance("Blink") + 32
+        )
+        self._image_blink_button.toggled.connect(self._handle_image_blink_toggled)
 
         self._image_zoom_in_button = QPushButton("Zoom In")
 
@@ -27191,7 +27248,7 @@ class MainWindow(QMainWindow):
 
         self._image_adjust_levels_button.clicked.connect(self._open_image_levels_dialog)
 
-        self._image_center_object_button = QPushButton("Center Object")
+        self._image_center_object_button = QPushButton("Center")
 
         self._image_center_object_button.setCheckable(True)
 
@@ -27202,7 +27259,7 @@ class MainWindow(QMainWindow):
         self._image_center_object_button.setToolTip("When enabled, automatically center the image on the selected Source Results target.")
 
         self._image_center_object_button.setMinimumWidth(
-            self.fontMetrics().horizontalAdvance("Center Object") + 32
+            self.fontMetrics().horizontalAdvance("Center") + 32
         )
 
         self._image_center_object_button.toggled.connect(self._handle_image_center_object_toggled)
@@ -27451,6 +27508,16 @@ class MainWindow(QMainWindow):
 
         self._scan_comps_button.clicked.connect(self._open_scan_comps_dialog)
 
+        self._ephemeris_button = QPushButton(_EPHEMERIS_BUTTON_LABEL)
+
+        self._ephemeris_button.setToolTip(
+
+            "Look up a variable star by name and see upcoming maxima or minima in your timezone. No image is required."
+
+        )
+
+        self._ephemeris_button.clicked.connect(self._open_variable_ephemeris_dialog)
+
         self._discover_button = QPushButton(_DISCOVER_BUTTON_LABEL)
 
         self._discover_button.setToolTip(
@@ -27555,6 +27622,8 @@ class MainWindow(QMainWindow):
         self._measurement_filter_row.setContentsMargins(0, 0, 0, 0)
 
         self._measurement_filter_row.setSpacing(6)
+
+        self._measurement_filter_row.addWidget(self._ephemeris_button)
 
         self._measurement_filter_row.addWidget(self._scan_comps_button)
 
@@ -27817,6 +27886,10 @@ class MainWindow(QMainWindow):
         image_controls_layout.setSpacing(6)
 
         image_controls_layout.addWidget(self._display_section_label)
+
+        image_controls_layout.addWidget(self._image_frame_selector)
+
+        image_controls_layout.addWidget(self._image_blink_button)
 
         image_controls_layout.addWidget(self._image_center_object_button)
 
@@ -28465,7 +28538,7 @@ class MainWindow(QMainWindow):
 
         self._target_field_animation_worker: TargetFieldAnimationExportWorker | None = None
 
-        self._target_field_animation_progress_dialog: QProgressDialog | None = None
+        self._target_field_animation_progress_dialog: TargetFieldAnimationProgressDialog | None = None
 
         self._target_field_animation_options = None
 
@@ -28500,6 +28573,8 @@ class MainWindow(QMainWindow):
         self._current_image_context_key: tuple[str, str, str, str] | None = None
 
         self._image_display_cache: dict[tuple[str, int, int], AnnotatedImageDisplay] = {}
+        self._image_blink_cache_floor = 0
+        self._image_blink_frame_advance_in_progress = False
 
         self._scan_file_result_lookup: dict[str, FileScanResult] = {}
 
@@ -28801,6 +28876,11 @@ class MainWindow(QMainWindow):
         self._transient_blink_timer.setInterval(_TRANSIENT_BLINK_INTERVAL_MS)
 
         self._transient_blink_timer.timeout.connect(self._advance_transient_blink_frame)
+
+        self._image_blink_timer = QTimer(self)
+        self._image_blink_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._image_blink_timer.setInterval(_IMAGE_BLINK_INTERVAL_MS)
+        self._image_blink_timer.timeout.connect(self._advance_image_blink_frame)
 
         self._hr_refresh_timer = QTimer(self)
 
@@ -39087,8 +39167,35 @@ class MainWindow(QMainWindow):
         return panel
 
     def _create_astro_tools_panel(self) -> QWidget:
-        panel = AstroToolsPanel(self)
+        host = QWidget(self)
+        host.setObjectName("observationDeckHost")
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._astro_tools_panel_widget = None
+        return host
+
+    def _ensure_astro_tools_panel(self) -> QWidget | None:
+        existing = getattr(self, "_astro_tools_panel_widget", None)
+        if existing is not None:
+            load_cached = getattr(existing, "load_cached_library", None)
+            if callable(load_cached):
+                load_cached()
+            return existing
+        from photometry_app.ui.astro_tools_panel import AstroToolsPanel
+
+        host = getattr(self, "_astro_tools_panel", None)
+        if host is None:
+            return None
+        panel = AstroToolsPanel(host)
+        layout = host.layout()
+        if layout is None:
+            layout = QVBoxLayout(host)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+        layout.addWidget(panel)
         self._astro_tools_panel_widget = panel
+        QTimer.singleShot(0, panel.load_cached_library)
         return panel
 
     def _current_distance_map_cluster_settings(self) -> DistanceMapClusterSettings:
@@ -52165,6 +52272,8 @@ class MainWindow(QMainWindow):
 
         self._asteroid_marker_style_combo.addItem("Open crosshair", "crosshair")
 
+        self._asteroid_marker_style_combo.addItem("Pointer", "pointer")
+
         self._asteroid_marker_style_combo.setToolTip(
             "Marker shape used for the selected object when Target Marker is on. Only one target marker is shown."
         )
@@ -56099,7 +56208,15 @@ class MainWindow(QMainWindow):
 
         self._history_table.setRowCount(0)
 
+        self._image_frame_selector.blockSignals(True)
+
         self._image_frame_selector.clear()
+
+        self._image_frame_selector.addItem("No processed frames", None)
+
+        self._image_frame_selector.setEnabled(False)
+
+        self._image_frame_selector.blockSignals(False)
 
         self._current_preview = None
 
@@ -57060,6 +57177,10 @@ class MainWindow(QMainWindow):
 
         self._apply_app_mode(mode)
 
+        if mode == AppMode.ASTRO_TOOLS:
+
+            self._ensure_astro_tools_panel()
+
         self._save_settings_snapshot()
 
         if mode == AppMode.HR_DIAGRAM:
@@ -57924,11 +58045,11 @@ class MainWindow(QMainWindow):
 
         panel = getattr(self, "_astro_tools_panel_widget", None)
 
-        clear_method = getattr(panel, "clear_loaded_work", None) if panel is not None else None
+        stop_method = getattr(panel, "stop_background_work", None) if panel is not None else None
 
-        if callable(clear_method):
+        if callable(stop_method):
 
-            clear_method()
+            stop_method()
 
     def _handle_open_file_action(self) -> None:
 
@@ -57994,13 +58115,13 @@ class MainWindow(QMainWindow):
 
     def _browse_for_astro_tools_folder(self) -> None:
 
-        panel = getattr(self, "_astro_tools_panel_widget", None)
+        panel = self._ensure_astro_tools_panel()
 
         if panel is None:
 
             return
 
-        panel.observation_map_tool.browse_for_folder()
+        panel.browse_for_folder()
 
     def _handle_hr_max_sources_changed(self, value: int) -> None:
 
@@ -65113,7 +65234,9 @@ class MainWindow(QMainWindow):
 
                     show_annulus=False,
 
-                    marker_style="target",
+                    marker_style=coerce_asteroid_visual_marker_style(
+                        getattr(settings, "asteroid_visual_marker_style", "target")
+                    ),
 
                     show_marker=True,
 
@@ -66470,11 +66593,9 @@ class MainWindow(QMainWindow):
 
             selected_row = self._selected_asteroid_result_row()
 
-            configured_marker_style = str(getattr(settings, "asteroid_visual_marker_style", "target") or "target").strip().lower() or "target"
-
-            if configured_marker_style not in {"target", "circle", "brackets", "crosshair"}:
-
-                configured_marker_style = "target"
+            configured_marker_style = coerce_asteroid_visual_marker_style(
+                getattr(settings, "asteroid_visual_marker_style", "target")
+            )
 
             target_marker_enabled = selected_row is not None and bool(settings.asteroid_visual_show_target_marker)
 
@@ -66672,7 +66793,9 @@ class MainWindow(QMainWindow):
 
                     show_label=True,
 
-                    marker_style="target",
+                    marker_style=coerce_asteroid_visual_marker_style(
+                        getattr(settings, "asteroid_visual_marker_style", "target")
+                    ),
 
                     pen_width=max(0.5, line_width - 0.6),
 
@@ -66748,7 +66871,9 @@ class MainWindow(QMainWindow):
 
                 show_label=True,
 
-                marker_style="target",
+                marker_style=coerce_asteroid_visual_marker_style(
+                    getattr(settings, "asteroid_visual_marker_style", "target")
+                ),
 
                 pen_width=line_width,
 
@@ -75494,6 +75619,9 @@ class MainWindow(QMainWindow):
 
             self._save_settings_snapshot()
 
+        if self._stop_image_blink_playback():
+            self.statusBar().showMessage("Stopped blink playback before applying image display changes.", 4000)
+
         self._render_image_panel()
 
     def _current_image_render_settings(self) -> AnnotatedImageRenderSettings:
@@ -75502,9 +75630,11 @@ class MainWindow(QMainWindow):
 
         black_point, midtone_point, white_point = self._image_levels
 
+        resolved_stretch_mode = str(stretch_mode) if isinstance(stretch_mode, str) and stretch_mode else "stf"
+
         return AnnotatedImageRenderSettings(
 
-            stretch_mode=str(stretch_mode) if isinstance(stretch_mode, str) and stretch_mode else "stf",
+            stretch_mode=resolved_stretch_mode,
 
             black_point=black_point,
 
@@ -77606,6 +77736,8 @@ class MainWindow(QMainWindow):
 
         accent_outline_buttons = [
 
+            self._ephemeris_button,
+
             self._scan_comps_button,
 
             self._discover_button,
@@ -77643,6 +77775,8 @@ class MainWindow(QMainWindow):
             self._image_zoom_reset_button,
 
             self._image_reset_display_button,
+
+            self._image_blink_button,
 
             self._image_center_object_button,
 
@@ -77914,6 +78048,16 @@ class MainWindow(QMainWindow):
                 f"QPushButton:hover {{ background-color: {card_bg_hover}; color: {muted_text}; border: 2px solid {accent_soft}; }}"
 
                 f"QPushButton:pressed {{ background-color: {card_bg_pressed}; color: {muted_text}; border-color: {accent_border}; }}"
+
+                "QPushButton:checked {"
+
+                f"background-color: {accent.name().lower()};"
+
+                f"color: {accent_text};"
+
+                f"border: 1px solid {accent_border};"
+
+                "}"
 
                 "QPushButton:disabled {"
 
@@ -79883,6 +80027,32 @@ class MainWindow(QMainWindow):
 
         return display
 
+    def _create_image_loading_progress_dialog(self, message: str) -> QProgressDialog:
+
+        progress_dialog = QProgressDialog(message, "", 0, 0, self)
+
+        progress_dialog.setWindowTitle("Loading image")
+
+        progress_dialog.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+
+        progress_dialog.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, False)
+
+        progress_dialog.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
+
+        progress_dialog.setCancelButton(None)
+
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+
+        progress_dialog.setMinimumDuration(0)
+
+        progress_dialog.setRange(0, 0)
+
+        progress_dialog.setAutoClose(False)
+
+        progress_dialog.setAutoReset(False)
+
+        return progress_dialog
+
     def _preload_annotated_image_display_with_loading_dialog(self, image_path: Path, *, loading_text: str) -> None:
 
         try:
@@ -80015,7 +80185,10 @@ class MainWindow(QMainWindow):
 
         self._image_display_cache[cache_key] = display
 
-        while len(self._image_display_cache) > _MAX_IMAGE_DISPLAY_CACHE_ENTRIES:
+        while len(self._image_display_cache) > max(
+            _MAX_IMAGE_DISPLAY_CACHE_ENTRIES,
+            int(getattr(self, "_image_blink_cache_floor", 0) or 0),
+        ):
 
             oldest_key = next(iter(self._image_display_cache))
 
@@ -81041,6 +81214,8 @@ class MainWindow(QMainWindow):
         }
 
         self._image_display_cache = {}
+
+        self._stop_image_blink_playback()
 
         self._populate_object_table(report.object_summaries)
 
@@ -82294,6 +82469,8 @@ class MainWindow(QMainWindow):
 
     def _handle_light_curve_series_filter_changed(self, _value: object | None = None) -> None:
 
+        self._stop_image_blink_playback()
+
         if self._current_processing_report is None:
 
             return
@@ -82309,6 +82486,8 @@ class MainWindow(QMainWindow):
         self._render_image_panel()
 
     def _handle_series_selection_changed(self) -> None:
+
+        self._stop_image_blink_playback()
 
         self._image_context_source = "series"
 
@@ -83700,6 +83879,7 @@ class MainWindow(QMainWindow):
             TargetFieldAnimationError,
             TargetFieldAnimationExportOptions,
             collect_target_field_frames,
+            load_target_field_preview_source,
         )
 
         if self._current_processing_report is None:
@@ -83727,7 +83907,7 @@ class MainWindow(QMainWindow):
             if series is not None:
                 filter_name = series.filter_name or "unknown"
         try:
-            collect_target_field_frames(self._current_processing_report, source_id, filter_name=filter_name)
+            frames = collect_target_field_frames(self._current_processing_report, source_id, filter_name=filter_name)
         except TargetFieldAnimationError as exc:
             QMessageBox.warning(self, "Target Field Animation", str(exc))
             return
@@ -83738,41 +83918,56 @@ class MainWindow(QMainWindow):
                 "The selected target does not have a light curve to include in the animation.",
             )
             return
+        preview_image, preview_x, preview_y = load_target_field_preview_source(frames[0])
         dialog = TargetFieldAnimationExportDialog(
+            frame_count=len(frames),
             initial_options=self._target_field_animation_options or TargetFieldAnimationExportOptions(),
+            preview_image=preview_image,
+            preview_x=preview_x,
+            preview_y=preview_y,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         options = dialog.selected_options()
         self._target_field_animation_options = options
-        default_path = self._light_curve_export_default_path(series, scientific_style=False, export_format="gif")
-        default_path = default_path.with_name(f"{default_path.stem.rsplit('_theme', 1)[0]}_target_field.gif")
+        export_format = options.export_format
+        default_path = self._light_curve_export_default_path(series, scientific_style=False, export_format=export_format)
+        default_path = default_path.with_name(f"{default_path.stem.rsplit('_theme', 1)[0]}_target_field.{export_format}")
         default_path.parent.mkdir(parents=True, exist_ok=True)
+        selected_filter = "MP4 Video Files (*.mp4)" if export_format == "mp4" else "GIF Files (*.gif)"
         selected, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Export target-field animation",
             str(default_path),
-            "GIF Files (*.gif);;All Files (*)",
-            self._light_curve_export_filter_for_format("gif"),
+            "GIF Files (*.gif);;MP4 Video Files (*.mp4);;All Files (*)",
+            selected_filter,
         )
         if not selected:
             return
-        output_path = self._resolved_light_curve_export_path(selected, selected_filter)
-        progress_dialog = QProgressDialog("Preparing target-field animation...", "Cancel", 0, 1, self)
-        progress_dialog.setWindowTitle("Export Target Field Animation")
-        progress_dialog.setMinimumDuration(0)
-        progress_dialog.setAutoClose(False)
-        progress_dialog.setAutoReset(False)
-        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-        progress_dialog.setValue(0)
-        progress_dialog.canceled.connect(self._cancel_target_field_animation_export)
+        output_path = Path(selected)
+        if not output_path.suffix:
+            if "mp4" in selected_filter.lower():
+                output_path = output_path.with_suffix(".mp4")
+            else:
+                output_path = output_path.with_suffix(".gif")
+        elif output_path.suffix.lower() not in {".gif", ".mp4"}:
+            output_path = output_path.with_suffix(".gif" if export_format == "gif" else ".mp4")
+        export_format = "mp4" if output_path.suffix.lower() == ".mp4" else "gif"
+        progress_dialog = TargetFieldAnimationProgressDialog(
+            frame_count=len(frames),
+            align_mode=options.align_mode,
+            export_format=export_format,
+            output_name=output_path.name,
+            parent=self,
+        )
+        progress_dialog.cancel_requested.connect(self._cancel_target_field_animation_export)
         progress_dialog.show()
         self._target_field_animation_progress_dialog = progress_dialog
         self._append_work_log(
             f"Started target-field animation export for {series.source_name} "
-            f"({options.fov_px} px, {options.fps:g} fps, {options.stretch_mode}, "
-            f"align={'on' if options.align else 'off'}) to {output_path}."
+            f"({options.fov_px} px, {options.duration_seconds:g} s, {options.scale_percent}%, "
+            f"{options.stretch_mode}, align={options.align_mode}, {export_format}) to {output_path}."
         )
         self.statusBar().showMessage("Exporting target-field animation...")
         settings = self._ensure_settings()
@@ -83781,9 +83976,14 @@ class MainWindow(QMainWindow):
             source_id,
             output_path,
             fov_px=options.fov_px,
-            align=options.align,
-            fps=options.fps,
+            align_mode=options.align_mode,
+            duration_seconds=options.duration_seconds,
+            loop_count=options.loop_count,
+            scale_percent=options.scale_percent,
             stretch_mode=options.stretch_mode,
+            export_format=export_format,
+            marker_style=options.marker_style,
+            marker_appearance=options.marker_appearance(),
             filter_name=filter_name,
             cache_dir=Path(settings.cache_dir),
             series=series,
@@ -83794,6 +83994,7 @@ class MainWindow(QMainWindow):
             phase_anchor_mode=self._current_phase_anchor_mode(),
             plot_theme=self._current_theme_name(),
             custom_theme_colors=self._current_custom_theme_colors(),
+            max_workers=resolve_shared_parallel_workers(settings),
             parent=self,
         )
         worker.progress_updated.connect(self._handle_target_field_animation_progress)
@@ -83803,22 +84004,24 @@ class MainWindow(QMainWindow):
         self._target_field_animation_worker = worker
         worker.start()
 
-    def _handle_target_field_animation_progress(self, completed: int, total: int, message: str) -> None:
+    def _handle_target_field_animation_progress(self, progress: object) -> None:
         progress_dialog = self._target_field_animation_progress_dialog
         if progress_dialog is not None and qt_object_is_valid(progress_dialog):
-            progress_dialog.setMaximum(max(1, int(total)))
-            progress_dialog.setValue(min(max(0, int(completed)), max(1, int(total))))
-            progress_dialog.setLabelText(message)
-        self.statusBar().showMessage(message)
+            progress_dialog.apply_progress(progress)
+        message = getattr(progress, "message", "")
+        if message:
+            self.statusBar().showMessage(str(message))
 
     def _handle_target_field_animation_completed(self, result: object) -> None:
         self._target_field_animation_worker = None
-        self._close_target_field_animation_progress_dialog()
         output_path = result if isinstance(result, Path) else None
         if output_path is None:
             self._handle_target_field_animation_failed("Target-field animation export returned an unexpected result.")
             return
         message = f"Exported target-field animation to {output_path}."
+        progress_dialog = self._target_field_animation_progress_dialog
+        if progress_dialog is not None and qt_object_is_valid(progress_dialog):
+            progress_dialog.set_finished(f"Saved target-field animation to {output_path.name}.")
         self.statusBar().showMessage(message, 5000)
         self._append_work_log(message)
 
@@ -83842,7 +84045,7 @@ class MainWindow(QMainWindow):
         if worker is not None:
             worker.request_cancel()
         if progress_dialog is not None and qt_object_is_valid(progress_dialog):
-            progress_dialog.setLabelText("Canceling target-field animation export...")
+            progress_dialog.set_canceling()
         self.statusBar().showMessage("Canceling target-field animation export...")
 
     def _close_target_field_animation_progress_dialog(self) -> None:
@@ -88760,6 +88963,18 @@ class MainWindow(QMainWindow):
             reference_source_magnitudes,
         )
 
+    def _open_variable_ephemeris_dialog(self) -> None:
+        settings = self._ensure_sky_view_settings_loaded()
+        dialog = VariableEphemerisDialog(
+            timezone_name=settings.observation_timezone,
+            latitude_deg=settings.observing_site_latitude_deg,
+            longitude_deg=settings.observing_site_longitude_deg,
+            elevation_m=settings.observing_site_elevation_m,
+            min_altitude_deg=settings.ephemeris_min_altitude_deg,
+            parent=self,
+        )
+        dialog.exec()
+
     def _open_scan_comps_dialog(self) -> None:
         if self._period_job_active():
             self.statusBar().showMessage("Another period or comparison job is already running.")
@@ -89198,6 +89413,8 @@ class MainWindow(QMainWindow):
         self._discover_button.setEnabled(report is not None and report.photometry_mode != ObjectPhotometryMode.MANUAL)
 
         self._increase_snr_button.setEnabled(bool(reset_snr_entries) or bool(increase_snr_tasks))
+
+        self._ephemeris_button.setEnabled(True)
 
     def _current_calculate_period_series(self) -> dict[tuple[str, str], LightCurveSeries]:
 
@@ -91545,6 +91762,8 @@ class MainWindow(QMainWindow):
 
     def _handle_light_curve_segment_selected(self, measurement_keys: object) -> None:
 
+        self._stop_image_blink_playback()
+
         series = self._series_selector.currentData()
 
         if not isinstance(series, LightCurveSeries):
@@ -91605,7 +91824,11 @@ class MainWindow(QMainWindow):
 
             self._image_frame_selector.addItem("No processed frames", None)
 
+            self._image_frame_selector.setEnabled(False)
+
             self._image_frame_selector.blockSignals(False)
+
+            self._sync_image_blink_button_enabled()
 
             return
 
@@ -91613,9 +91836,19 @@ class MainWindow(QMainWindow):
 
         for measurement in series_measurements:
 
-            label = measurement.observation_time.isoformat(sep=" ") if measurement.observation_time else measurement.file_path.name
+            file_name = measurement.file_path.name
 
-            self._image_frame_selector.addItem(f"{label} | {measurement.file_path.name}", self._measurement_key(measurement))
+            self._image_frame_selector.addItem(file_name, self._measurement_key(measurement))
+
+            item_index = self._image_frame_selector.count() - 1
+
+            tooltip = file_name
+
+            if measurement.observation_time is not None:
+
+                tooltip = f"{file_name}\n{measurement.observation_time.isoformat(sep=' ')}"
+
+            self._image_frame_selector.setItemData(item_index, tooltip, Qt.ItemDataRole.ToolTipRole)
 
 
 
@@ -91627,7 +91860,178 @@ class MainWindow(QMainWindow):
 
                 self._image_frame_selector.setCurrentIndex(index)
 
+        self._image_frame_selector.setEnabled(True)
+
         self._image_frame_selector.blockSignals(False)
+
+        self._sync_image_blink_button_enabled()
+
+    def _handle_image_frame_changed(self, _index: int = 0) -> None:
+
+        self._image_context_source = "series"
+
+        if self._image_blink_playback_active():
+
+            self._render_image_panel()
+
+            return
+
+        image_path, _measurement, _comparison_measurements, _status_text = self._image_context()
+
+        loading_name = image_path.name if image_path is not None else "image"
+
+        progress_dialog = self._create_image_loading_progress_dialog(f"Loading {loading_name}...")
+
+        progress_dialog.show()
+
+        QGuiApplication.processEvents()
+
+        try:
+
+            self._render_image_panel()
+
+        finally:
+
+            if qt_object_is_valid(progress_dialog):
+
+                progress_dialog.close()
+
+                progress_dialog.deleteLater()
+
+            QGuiApplication.processEvents()
+
+    def _image_blink_playback_active(self) -> bool:
+        button = getattr(self, "_image_blink_button", None)
+        timer = getattr(self, "_image_blink_timer", None)
+        return bool(
+            (button is not None and button.isChecked())
+            or (timer is not None and timer.isActive())
+        )
+
+    def _sync_image_blink_button_enabled(self) -> None:
+        if not hasattr(self, "_image_blink_button"):
+            return
+        enabled = self._image_frame_selector.isEnabled() and self._image_frame_selector.count() >= 2
+        self._image_blink_button.setEnabled(enabled)
+        if not enabled:
+            self._stop_image_blink_playback()
+
+    def _image_blink_frame_paths(self) -> list[Path]:
+        measurements = {
+            self._measurement_key(measurement): measurement
+            for measurement in self._series_measurements(self._series_selector.currentData())
+        }
+        paths: list[Path] = []
+        seen: set[Path] = set()
+        for index in range(self._image_frame_selector.count()):
+            key = self._image_frame_selector.itemData(index)
+            measurement = measurements.get(key) if key is not None else None
+            if measurement is None:
+                continue
+            try:
+                resolved = measurement.file_path.resolve()
+            except OSError:
+                continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            paths.append(measurement.file_path)
+        return paths
+
+    def _handle_image_blink_toggled(self, checked: bool) -> None:
+        if checked:
+            self._prepare_image_blink_playback()
+            return
+        self._stop_image_blink_playback()
+
+    def _prepare_image_blink_playback(self) -> None:
+        paths = self._image_blink_frame_paths()
+        if len(paths) <= 1:
+            self._image_blink_button.blockSignals(True)
+            self._image_blink_button.setChecked(False)
+            self._image_blink_button.blockSignals(False)
+            self.statusBar().showMessage("Select a series with at least two processed frames before blinking.", 5000)
+            return
+        progress_dialog = QProgressDialog("Preparing blink playback...", "", 0, max(1, len(paths)), self)
+        progress_dialog.setWindowTitle("Preparing Blink")
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.setAutoClose(False)
+        progress_dialog.setAutoReset(False)
+        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dialog.setValue(0)
+        progress_dialog.show()
+        QApplication.processEvents()
+        try:
+            self._image_blink_cache_floor = len(paths)
+            for frame_index, image_path in enumerate(paths, start=1):
+                progress_dialog.setLabelText(f"Loading {frame_index}/{len(paths)}: {image_path.name}")
+                progress_dialog.setValue(frame_index - 1)
+                QApplication.processEvents()
+                self._cached_annotated_image_display(image_path)
+                progress_dialog.setValue(frame_index)
+                QApplication.processEvents()
+        except Exception as exc:
+            self._image_blink_cache_floor = 0
+            self._image_blink_button.blockSignals(True)
+            self._image_blink_button.setChecked(False)
+            self._image_blink_button.blockSignals(False)
+            QMessageBox.warning(self, "Blink preload failed", str(exc))
+            return
+        finally:
+            progress_dialog.close()
+            progress_dialog.deleteLater()
+        if self._image_blink_button.isChecked():
+            self._start_image_blink_playback()
+
+    def _start_image_blink_playback(self) -> None:
+        if self._image_frame_selector.count() <= 1:
+            self._stop_image_blink_playback()
+            return
+        self._image_blink_timer.setInterval(_IMAGE_BLINK_INTERVAL_MS)
+        self._image_blink_timer.start()
+        self.statusBar().showMessage(
+            f"Blinking {self._image_frame_selector.count()} frame(s).",
+            3000,
+        )
+
+    def _stop_image_blink_playback(self) -> bool:
+        button = getattr(self, "_image_blink_button", None)
+        timer = getattr(self, "_image_blink_timer", None)
+        was_blinking = bool(
+            (timer is not None and timer.isActive())
+            or (button is not None and button.isChecked())
+        )
+        if timer is not None:
+            timer.stop()
+        self._image_blink_frame_advance_in_progress = False
+        self._image_blink_cache_floor = 0
+        if button is not None:
+            button.blockSignals(True)
+            button.setChecked(False)
+            button.blockSignals(False)
+        return was_blinking
+
+    def _advance_image_blink_frame(self) -> None:
+        if self._image_blink_frame_advance_in_progress:
+            return
+        frame_count = self._image_frame_selector.count()
+        if not self._image_frame_selector.isEnabled() or frame_count <= 1:
+            self._stop_image_blink_playback()
+            return
+        current_index = self._image_frame_selector.currentIndex()
+        if current_index < 0:
+            current_index = 0
+        next_index = (current_index + 1) % frame_count
+        restart_timer = self._image_blink_timer.isActive()
+        if restart_timer:
+            self._image_blink_timer.stop()
+        self._image_blink_frame_advance_in_progress = True
+        try:
+            self._image_frame_selector.setCurrentIndex(next_index)
+        finally:
+            self._image_blink_frame_advance_in_progress = False
+            if restart_timer and self._image_blink_button.isChecked() and self._image_frame_selector.count() > 1:
+                self._image_blink_timer.start()
 
     def _render_image_panel(self) -> None:
 
@@ -92611,6 +93015,18 @@ class MainWindow(QMainWindow):
 
         except Exception:
 
+            wcs = None
+
+        if wcs is None:
+
+            for source in config.sources:
+
+                if source.source_id in positions:
+
+                    continue
+
+                positions[source.source_id] = (float(source.reference_x), float(source.reference_y))
+
             return positions
 
         for source in config.sources:
@@ -92627,7 +93043,7 @@ class MainWindow(QMainWindow):
 
             except Exception:
 
-                continue
+                positions[source.source_id] = (float(source.reference_x), float(source.reference_y))
 
         return positions
 

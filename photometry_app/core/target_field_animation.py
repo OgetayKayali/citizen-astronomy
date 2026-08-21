@@ -1,32 +1,41 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 import hashlib
 import math
+import os
 from pathlib import Path
 
 from matplotlib.figure import Figure
 import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QImage, QPainter
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPen
 
 from photometry_app.core.alignment import (
     _alignment_detection_plane,
     _extract_alignment_stars,
     _fast_affine_pixel_transform,
 )
-from photometry_app.core.animation_export import export_qimages_to_gif
+from photometry_app.core.animation_export import export_qimages_to_gif, export_qimages_to_mp4
 from photometry_app.core.exporters import AnimatedLightCurveExportCanceled
-from photometry_app.core.image_io import read_photometry_image_data
+from photometry_app.core.image_io import read_header_and_shape, read_photometry_image_data
 from photometry_app.core.models import LightCurvePoint, LightCurveSeries, PhotometryMeasurement, ProcessingReport
 from photometry_app.core.plotting import (
     LightCurvePlotPayload,
     _stretched_image_data,
     build_light_curve_plot_payload,
     plot_light_curve_payload,
+)
+from photometry_app.core.target_markers import (
+    DEFAULT_TARGET_FIELD_MARKER_STYLE,
+    TARGET_FIELD_MARKER_NONE,
+    TargetMarkerAppearance,
+    coerce_target_field_marker_style,
+    pointer_marker_segments,
 )
 
 
@@ -36,7 +45,42 @@ MAX_TARGET_FIELD_FOV_PX = 2000
 DEFAULT_TARGET_FIELD_FPS = 12.0
 MIN_TARGET_FIELD_FPS = 1.0
 MAX_TARGET_FIELD_FPS = 30.0
+DEFAULT_TARGET_FIELD_DURATION_SECONDS = 8.0
+MIN_TARGET_FIELD_DURATION_SECONDS = 0.5
+MAX_TARGET_FIELD_DURATION_SECONDS = 120.0
+DEFAULT_TARGET_FIELD_LOOP_COUNT = 1
+MIN_TARGET_FIELD_LOOP_COUNT = 1
+MAX_TARGET_FIELD_LOOP_COUNT = 20
+DEFAULT_TARGET_FIELD_SCALE_PERCENT = 100
+MIN_TARGET_FIELD_SCALE_PERCENT = 10
+MAX_TARGET_FIELD_SCALE_PERCENT = 200
+DEFAULT_TARGET_FIELD_MARKER_LENGTH_PERCENT = 36
+MIN_TARGET_FIELD_MARKER_LENGTH_PERCENT = 10
+MAX_TARGET_FIELD_MARKER_LENGTH_PERCENT = 90
+DEFAULT_TARGET_FIELD_MARKER_LINE_WIDTH = 2.0
+MIN_TARGET_FIELD_MARKER_LINE_WIDTH = 0.5
+MAX_TARGET_FIELD_MARKER_LINE_WIDTH = 12.0
+DEFAULT_TARGET_FIELD_MARKER_LINE_COLOR = "#ef4444"
 DEFAULT_TARGET_FIELD_ALIGN = True
+TARGET_FIELD_ALIGN_CROP_THEN_ALIGN = "crop_then_align"
+TARGET_FIELD_ALIGN_ALIGN_THEN_CROP = "align_then_crop"
+TARGET_FIELD_ALIGN_NONE = "none"
+DEFAULT_TARGET_FIELD_ALIGN_MODE = TARGET_FIELD_ALIGN_CROP_THEN_ALIGN
+TARGET_FIELD_ALIGN_MODES = (
+    TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
+    TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+    TARGET_FIELD_ALIGN_NONE,
+)
+TARGET_FIELD_ALIGN_MODE_LABELS = {
+    TARGET_FIELD_ALIGN_CROP_THEN_ALIGN: "Crop, then align",
+    TARGET_FIELD_ALIGN_ALIGN_THEN_CROP: "Align, then crop (slower)",
+    TARGET_FIELD_ALIGN_NONE: "Crop only",
+}
+TARGET_FIELD_EXPORT_FORMATS = ("gif", "mp4")
+TARGET_FIELD_EXPORT_FORMAT_LABELS = {
+    "gif": "GIF",
+    "mp4": "MP4",
+}
 DEFAULT_TARGET_FIELD_STRETCH_MODE = "stf_bright"
 TARGET_FIELD_STRETCH_MODES = ("stf_bright", "stf", "asinh", "sqrt", "log", "linear")
 TARGET_FIELD_STRETCH_MODE_LABELS = {
@@ -57,6 +101,10 @@ _ALIGN_ORIENTATION_IMPROVEMENT = 1.12
 _ALIGN_MIN_ORIENTATION_RUN = 2
 _FULL_FRAME_ALIGN_MAX_EDGE = 512
 _FULL_FRAME_ALIGN_SHIFT_FRACTION = 0.20
+_TARGET_FIELD_AUTO_MAX_WORKERS = 8
+_WORKING_IMAGE_DTYPE = np.float32
+_FULL_FRAME_WORKER_BUDGET_BYTES = 512 * 1024 * 1024
+_SMALL_FRAME_WORKER_BYTES = 8 * 1024 * 1024
 
 
 class TargetFieldAnimationError(ValueError):
@@ -80,21 +128,89 @@ class StampAlignmentSolution:
 @dataclass(frozen=True, slots=True)
 class TargetFieldAnimationExportOptions:
     fov_px: int = DEFAULT_TARGET_FIELD_FOV_PX
-    align: bool = DEFAULT_TARGET_FIELD_ALIGN
-    fps: float = DEFAULT_TARGET_FIELD_FPS
+    align_mode: str = DEFAULT_TARGET_FIELD_ALIGN_MODE
+    duration_seconds: float = DEFAULT_TARGET_FIELD_DURATION_SECONDS
+    loop_count: int = DEFAULT_TARGET_FIELD_LOOP_COUNT
+    scale_percent: int = DEFAULT_TARGET_FIELD_SCALE_PERCENT
     stretch_mode: str = DEFAULT_TARGET_FIELD_STRETCH_MODE
+    export_format: str = "gif"
+    marker_style: str = DEFAULT_TARGET_FIELD_MARKER_STYLE
+    marker_length_percent: int = DEFAULT_TARGET_FIELD_MARKER_LENGTH_PERCENT
+    marker_line_width: float = DEFAULT_TARGET_FIELD_MARKER_LINE_WIDTH
+    marker_line_color: str = DEFAULT_TARGET_FIELD_MARKER_LINE_COLOR
 
     def normalized(self) -> TargetFieldAnimationExportOptions:
         return TargetFieldAnimationExportOptions(
             fov_px=normalize_target_field_fov_px(self.fov_px),
-            align=bool(self.align),
-            fps=normalize_target_field_fps(self.fps),
+            align_mode=normalize_target_field_align_mode(self.align_mode),
+            duration_seconds=normalize_target_field_duration_seconds(self.duration_seconds),
+            loop_count=normalize_target_field_loop_count(self.loop_count),
+            scale_percent=normalize_target_field_scale_percent(self.scale_percent),
             stretch_mode=normalize_target_field_stretch_mode(self.stretch_mode),
+            export_format=normalize_target_field_export_format(self.export_format),
+            marker_style=normalize_target_field_marker_style(self.marker_style),
+            marker_length_percent=normalize_target_field_marker_length_percent(self.marker_length_percent),
+            marker_line_width=normalize_target_field_marker_line_width(self.marker_line_width),
+            marker_line_color=normalize_target_field_marker_line_color(self.marker_line_color),
+        )
+
+    def marker_appearance(self) -> TargetMarkerAppearance:
+        options = self.normalized()
+        return TargetMarkerAppearance(
+            line_color=options.marker_line_color,
+            outline_color="",
+            line_width=options.marker_line_width,
+            length_percent=float(options.marker_length_percent),
         )
 
     @property
-    def frame_duration_ms(self) -> int:
-        return target_field_frame_duration_ms(self.fps)
+    def align(self) -> bool:
+        return self.align_mode != TARGET_FIELD_ALIGN_NONE
+
+
+TARGET_FIELD_PROGRESS_PREPARE = "prepare"
+TARGET_FIELD_PROGRESS_NORMALIZE = "normalize"
+TARGET_FIELD_PROGRESS_COMPOSE = "compose"
+TARGET_FIELD_PROGRESS_ENCODE = "encode"
+TARGET_FIELD_PROGRESS_STAGES = (
+    TARGET_FIELD_PROGRESS_PREPARE,
+    TARGET_FIELD_PROGRESS_NORMALIZE,
+    TARGET_FIELD_PROGRESS_COMPOSE,
+    TARGET_FIELD_PROGRESS_ENCODE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TargetFieldAnimationProgress:
+    stage: str
+    completed: int
+    total: int
+    message: str
+    done: bool = False
+
+
+def target_field_progress_stage_title(
+    stage: str,
+    *,
+    align_mode: str = DEFAULT_TARGET_FIELD_ALIGN_MODE,
+    export_format: str = "gif",
+) -> str:
+    resolved_stage = str(stage or "").strip().lower()
+    resolved_mode = normalize_target_field_align_mode(align_mode)
+    resolved_format = normalize_target_field_export_format(export_format)
+    if resolved_stage == TARGET_FIELD_PROGRESS_PREPARE:
+        if resolved_mode == TARGET_FIELD_ALIGN_ALIGN_THEN_CROP:
+            return "Align, then crop"
+        if resolved_mode == TARGET_FIELD_ALIGN_NONE:
+            return "Crop frames"
+        return "Crop, then align"
+    if resolved_stage == TARGET_FIELD_PROGRESS_NORMALIZE:
+        return "Normalize & stretch"
+    if resolved_stage == TARGET_FIELD_PROGRESS_COMPOSE:
+        return "Compose frames"
+    if resolved_stage == TARGET_FIELD_PROGRESS_ENCODE:
+        return f"Encode {resolved_format.upper()}"
+    return resolved_stage or "Pipeline"
 
 
 def normalize_target_field_fov_px(value: object, default: int = DEFAULT_TARGET_FIELD_FOV_PX) -> int:
@@ -115,9 +231,124 @@ def normalize_target_field_fps(value: object, default: float = DEFAULT_TARGET_FI
     return min(MAX_TARGET_FIELD_FPS, max(MIN_TARGET_FIELD_FPS, fps))
 
 
+def normalize_target_field_duration_seconds(
+    value: object,
+    default: float = DEFAULT_TARGET_FIELD_DURATION_SECONDS,
+) -> float:
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        duration = float(default)
+    if not math.isfinite(duration):
+        duration = float(default)
+    return min(MAX_TARGET_FIELD_DURATION_SECONDS, max(MIN_TARGET_FIELD_DURATION_SECONDS, duration))
+
+
+def normalize_target_field_loop_count(
+    value: object,
+    default: int = DEFAULT_TARGET_FIELD_LOOP_COUNT,
+) -> int:
+    try:
+        count = int(round(float(value)))
+    except (TypeError, ValueError):
+        count = int(default)
+    return min(MAX_TARGET_FIELD_LOOP_COUNT, max(MIN_TARGET_FIELD_LOOP_COUNT, count))
+
+
+def normalize_target_field_scale_percent(
+    value: object,
+    default: int = DEFAULT_TARGET_FIELD_SCALE_PERCENT,
+) -> int:
+    try:
+        percent = int(value)
+    except (TypeError, ValueError):
+        percent = int(default)
+    return min(MAX_TARGET_FIELD_SCALE_PERCENT, max(MIN_TARGET_FIELD_SCALE_PERCENT, percent))
+
+
+def normalize_target_field_align_mode(
+    value: object,
+    default: str = DEFAULT_TARGET_FIELD_ALIGN_MODE,
+) -> str:
+    if isinstance(value, bool):
+        return TARGET_FIELD_ALIGN_CROP_THEN_ALIGN if value else TARGET_FIELD_ALIGN_NONE
+    mode = str(value if value is not None else default).strip().lower()
+    if mode in {"true", "1", "yes", "on"}:
+        return TARGET_FIELD_ALIGN_CROP_THEN_ALIGN
+    if mode in {"false", "0", "no", "off"}:
+        return TARGET_FIELD_ALIGN_NONE
+    if mode in TARGET_FIELD_ALIGN_MODES:
+        return mode
+    return default if default in TARGET_FIELD_ALIGN_MODES else DEFAULT_TARGET_FIELD_ALIGN_MODE
+
+
+def normalize_target_field_export_format(value: object, default: str = "gif") -> str:
+    fmt = str(value or default).strip().lower().lstrip(".")
+    if fmt in TARGET_FIELD_EXPORT_FORMATS:
+        return fmt
+    return default if default in TARGET_FIELD_EXPORT_FORMATS else "gif"
+
+
+def normalize_target_field_marker_style(
+    value: object,
+    default: str = DEFAULT_TARGET_FIELD_MARKER_STYLE,
+) -> str:
+    if value is None or str(value).strip() == "":
+        return coerce_target_field_marker_style(default)
+    return coerce_target_field_marker_style(value)
+
+
+def normalize_target_field_marker_length_percent(
+    value: object,
+    default: int = DEFAULT_TARGET_FIELD_MARKER_LENGTH_PERCENT,
+) -> int:
+    try:
+        length = int(round(float(value)))
+    except (TypeError, ValueError):
+        length = int(default)
+    return min(MAX_TARGET_FIELD_MARKER_LENGTH_PERCENT, max(MIN_TARGET_FIELD_MARKER_LENGTH_PERCENT, length))
+
+
+def normalize_target_field_marker_line_width(
+    value: object,
+    default: float = DEFAULT_TARGET_FIELD_MARKER_LINE_WIDTH,
+) -> float:
+    try:
+        width = float(value)
+    except (TypeError, ValueError):
+        width = float(default)
+    if not math.isfinite(width):
+        width = float(default)
+    return min(MAX_TARGET_FIELD_MARKER_LINE_WIDTH, max(MIN_TARGET_FIELD_MARKER_LINE_WIDTH, width))
+
+
+def normalize_target_field_marker_line_color(
+    value: object,
+    default: str = DEFAULT_TARGET_FIELD_MARKER_LINE_COLOR,
+) -> str:
+    color = QColor(str(value or "").strip() or default)
+    if not color.isValid():
+        color = QColor(default)
+    if not color.isValid():
+        return DEFAULT_TARGET_FIELD_MARKER_LINE_COLOR
+    return color.name(QColor.NameFormat.HexRgb).lower()
+
+
 def target_field_frame_duration_ms(fps: object, default: float = DEFAULT_TARGET_FIELD_FPS) -> int:
     resolved_fps = normalize_target_field_fps(fps, default=default)
     return max(20, int(round(1000.0 / resolved_fps)))
+
+
+def target_field_duration_frame_ms(
+    duration_seconds: object,
+    frame_count: int,
+    *,
+    gif: bool = False,
+    default: float = DEFAULT_TARGET_FIELD_DURATION_SECONDS,
+) -> int:
+    resolved_duration = normalize_target_field_duration_seconds(duration_seconds, default=default)
+    per_frame = int(round(resolved_duration * 1000.0 / max(1, int(frame_count))))
+    return max(20 if gif else 1, per_frame)
 
 
 def normalize_target_field_stretch_mode(
@@ -341,6 +572,45 @@ def estimate_alignment_from_star_positions(
     *,
     previous_orientation: str = "identity",
 ) -> StampAlignmentSolution | None:
+    packed = _star_position_alignment_candidates(reference_positions, source_positions, image_shape)
+    if packed is None:
+        return None
+    candidates, match_count = packed
+    return _choose_orientation_from_candidates(
+        candidates,
+        previous_orientation=previous_orientation,
+        match_count=match_count,
+    )
+
+
+def estimate_full_frame_alignment(
+    reference: np.ndarray,
+    source: np.ndarray,
+    *,
+    previous_orientation: str = "identity",
+    reference_positions: dict[str, tuple[float, float]] | None = None,
+    source_positions: dict[str, tuple[float, float]] | None = None,
+) -> StampAlignmentSolution:
+    candidates, match_count, fallback = _collect_full_frame_alignment_inputs(
+        reference,
+        source,
+        reference_positions=reference_positions,
+        source_positions=source_positions,
+    )
+    if candidates is not None:
+        return _choose_orientation_from_candidates(
+            candidates,
+            previous_orientation=previous_orientation,
+            match_count=match_count,
+        )
+    return fallback if fallback is not None else StampAlignmentSolution()
+
+
+def _star_position_alignment_candidates(
+    reference_positions: dict[str, tuple[float, float]],
+    source_positions: dict[str, tuple[float, float]],
+    image_shape: tuple[int, int],
+) -> tuple[dict[str, tuple[StampAlignmentSolution, float, int]], int] | None:
     shared_ids = [source_id for source_id in reference_positions if source_id in source_positions]
     if len(shared_ids) < 1:
         return None
@@ -359,39 +629,62 @@ def estimate_alignment_from_star_positions(
             reference_x, reference_y = reference_positions[source_id]
             shifts.append((reference_y - source_y, reference_x - source_x))
         candidates[orientation] = _robust_shift_solution(shifts, orientation=orientation)
-    return _choose_orientation_from_candidates(
-        candidates,
-        previous_orientation=previous_orientation,
-        match_count=len(shared_ids),
-    )
+    return candidates, len(shared_ids)
 
 
-def estimate_full_frame_alignment(
-    reference: np.ndarray,
-    source: np.ndarray,
+def _collect_full_frame_alignment_inputs(
+    reference: np.ndarray | None,
+    source: np.ndarray | None,
     *,
-    previous_orientation: str = "identity",
+    source_shape: tuple[int, ...] | None = None,
     reference_positions: dict[str, tuple[float, float]] | None = None,
     source_positions: dict[str, tuple[float, float]] | None = None,
-) -> StampAlignmentSolution:
-    source_plane = np.asarray(_as_grayscale(source), dtype=float)
-    if reference_positions and source_positions:
-        solution = estimate_alignment_from_star_positions(
+) -> tuple[dict[str, tuple[StampAlignmentSolution, float, int]] | None, int, StampAlignmentSolution | None]:
+    if source_shape is None and source is not None:
+        source_shape = tuple(int(axis) for axis in np.asarray(source).shape[:2])
+    if reference_positions and source_positions and source_shape is not None and len(source_shape) >= 2:
+        packed = _star_position_alignment_candidates(
             reference_positions,
             source_positions,
-            source_plane.shape,
-            previous_orientation=previous_orientation,
+            (int(source_shape[0]), int(source_shape[1])),
         )
-        if solution is not None:
-            return solution
-    detected = _estimate_alignment_from_detected_stars(
-        reference,
-        source_plane,
-        previous_orientation=previous_orientation,
+        if packed is not None:
+            candidates, match_count = packed
+            return candidates, match_count, None
+    if reference is None or source is None:
+        return None, 0, None
+    source_small, scale = _downsample_for_alignment(source)
+    reference_small, _reference_scale = _downsample_for_alignment(reference, target_shape=source_small.shape)
+    packed = _detected_star_alignment_candidates(reference_small, source_small)
+    if packed is not None:
+        candidates, match_count = packed
+        return _scale_alignment_candidates(candidates, scale), match_count, None
+    fallback = _translation_only_full_frame_alignment(reference_small, source_small)
+    return None, 0, _scale_alignment_solution(fallback, scale)
+
+
+def _scale_alignment_solution(solution: StampAlignmentSolution, scale: float) -> StampAlignmentSolution:
+    if abs(float(scale) - 1.0) < 0.01:
+        return solution
+    return StampAlignmentSolution(
+        orientation=solution.orientation,
+        shift_y=float(solution.shift_y) * float(scale),
+        shift_x=float(solution.shift_x) * float(scale),
+        score=solution.score,
     )
-    if detected is not None:
-        return detected
-    return _translation_only_full_frame_alignment(reference, source_plane)
+
+
+def _scale_alignment_candidates(
+    candidates: dict[str, tuple[StampAlignmentSolution, float, int]],
+    scale: float,
+) -> dict[str, tuple[StampAlignmentSolution, float, int]]:
+    if abs(float(scale) - 1.0) < 0.01:
+        return candidates
+    scaled: dict[str, tuple[StampAlignmentSolution, float, int]] = {}
+    for orientation, (solution, residual, count) in candidates.items():
+        scaled_residual = residual * float(scale) if math.isfinite(residual) else residual
+        scaled[orientation] = (_scale_alignment_solution(solution, scale), scaled_residual, count)
+    return scaled
 
 
 def crop_wcs_aligned_stamp(
@@ -440,7 +733,7 @@ def crop_image_aligned_stamp(
     center_y: float,
     fov_px: int,
 ) -> np.ndarray:
-    plane = np.asarray(_as_grayscale(source_image), dtype=float)
+    plane = np.asarray(_as_grayscale(source_image), dtype=np.float32)
     size = max(1, int(fov_px))
     height, width = plane.shape
     y0 = float(center_y) - (size - 1) / 2.0
@@ -751,14 +1044,22 @@ def target_field_stamp_cache_path(
     x: float,
     y: float,
     align: bool = False,
+    align_mode: str | None = None,
     crop_x: float | None = None,
     crop_y: float | None = None,
 ) -> Path:
+    resolved_mode = normalize_target_field_align_mode(
+        align_mode if align_mode is not None else (TARGET_FIELD_ALIGN_CROP_THEN_ALIGN if align else TARGET_FIELD_ALIGN_NONE)
+    )
+    mode_token = {
+        TARGET_FIELD_ALIGN_CROP_THEN_ALIGN: "crop-then-align-v5",
+        TARGET_FIELD_ALIGN_ALIGN_THEN_CROP: "align-then-crop-v1",
+    }.get(resolved_mode, "raw-crop")
     token = "|".join(
         (
             str(source_id),
             str(int(fov_px)),
-            "target-center-v5" if align else "raw-crop",
+            mode_token,
             str(Path(file_path)),
             f"{float(x):.3f}",
             f"{float(y):.3f}",
@@ -768,6 +1069,377 @@ def target_field_stamp_cache_path(
     )
     digest = hashlib.sha1(token.encode("utf-8")).hexdigest()[:20]
     return Path(cache_dir) / "target-field-animation" / f"{digest}.npy"
+
+
+def _full_frame_bytes(frame_shape: tuple[int, int]) -> int:
+    height, width = int(frame_shape[0]), int(frame_shape[1])
+    return max(1, height * width * int(np.dtype(_WORKING_IMAGE_DTYPE).itemsize))
+
+
+def _full_frame_worker_cap(frame_shape: tuple[int, int]) -> int | None:
+    bytes_per_frame = _full_frame_bytes(frame_shape)
+    if bytes_per_frame < _SMALL_FRAME_WORKER_BYTES:
+        return None
+    return max(1, int(_FULL_FRAME_WORKER_BUDGET_BYTES // (2 * bytes_per_frame)))
+
+
+def resolve_target_field_parallel_workers(
+    max_workers: int | None = None,
+    *,
+    frame_shape: tuple[int, int] | None = None,
+) -> int:
+    if max_workers is not None and int(max_workers) > 0:
+        workers = max(1, min(32, int(max_workers)))
+    else:
+        cpu_count = os.cpu_count() or 2
+        workers = max(1, min(_TARGET_FIELD_AUTO_MAX_WORKERS, cpu_count - 1))
+    if frame_shape is not None:
+        cap = _full_frame_worker_cap(frame_shape)
+        if cap is not None:
+            workers = min(workers, cap)
+    return workers
+
+
+@dataclass(slots=True)
+class _PreparedTargetFieldFrame:
+    index: int
+    cache_path: Path | None = None
+    cached_stamp: np.ndarray | None = None
+    image_path: Path | None = None
+    stamp: np.ndarray | None = None
+    candidates: dict[str, tuple[StampAlignmentSolution, float, int]] | None = None
+    match_count: int = 0
+    fallback_solution: StampAlignmentSolution | None = None
+    is_reference: bool = False
+
+
+def _save_target_field_stamp_cache(cache_path: Path | None, stamp: np.ndarray) -> None:
+    if cache_path is None:
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(cache_path, stamp)
+
+
+def _load_cached_target_field_stamp(cache_path: Path | None, fov_px: int) -> np.ndarray | None:
+    if cache_path is None or not cache_path.exists():
+        return None
+    try:
+        cached = np.load(cache_path)
+    except (OSError, ValueError):
+        cache_path.unlink(missing_ok=True)
+        return None
+    if cached.shape != (int(fov_px), int(fov_px)):
+        return None
+    return np.asarray(cached, dtype=float)
+
+
+def _load_working_image(path: Path) -> np.ndarray:
+    return _as_grayscale(read_photometry_image_data(path, dtype=_WORKING_IMAGE_DTYPE))
+
+
+def _image_shape_hw(path: Path, fallback: np.ndarray | None = None) -> tuple[int, int] | None:
+    try:
+        _header, width, height = read_header_and_shape(path)
+    except Exception:
+        width = height = None
+    if width and height:
+        return int(height), int(width)
+    if fallback is not None:
+        plane = np.asarray(fallback)
+        if plane.ndim >= 2:
+            return int(plane.shape[0]), int(plane.shape[1])
+    return None
+
+
+def _prepare_target_field_frame(
+    index: int,
+    measurement: PhotometryMeasurement,
+    *,
+    align_mode: str,
+    fov_px: int,
+    cache_dir: Path | None,
+    source_id: str,
+    reference_measurement: PhotometryMeasurement,
+    reference_image: np.ndarray | None,
+    reference_crop: np.ndarray | None,
+    reference_positions: dict[str, tuple[float, float]] | None,
+    source_positions: dict[str, tuple[float, float]] | None,
+) -> _PreparedTargetFieldFrame:
+    cache_path = None
+    if cache_dir is not None:
+        cache_path = target_field_stamp_cache_path(
+            cache_dir,
+            source_id=source_id,
+            fov_px=fov_px,
+            file_path=measurement.file_path,
+            x=measurement.x,
+            y=measurement.y,
+            align=align_mode == TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
+            align_mode=align_mode,
+            crop_x=reference_measurement.x,
+            crop_y=reference_measurement.y,
+        )
+        cached = _load_cached_target_field_stamp(cache_path, fov_px)
+        if cached is not None:
+            return _PreparedTargetFieldFrame(index=index, cache_path=cache_path, cached_stamp=cached)
+    image_path = Path(measurement.file_path)
+    if not image_path.exists():
+        raise TargetFieldAnimationError(f"Missing image for target-field animation: {image_path}")
+    is_reference_frame = image_path == Path(reference_measurement.file_path)
+    if align_mode == TARGET_FIELD_ALIGN_NONE:
+        stamp = crop_target_stamp(_load_working_image(image_path), measurement.x, measurement.y, fov_px)
+        return _PreparedTargetFieldFrame(index=index, cache_path=cache_path, stamp=stamp)
+    if is_reference_frame:
+        source_image = _as_grayscale(reference_image) if reference_image is not None else _load_working_image(image_path)
+        center_x = reference_measurement.x if align_mode == TARGET_FIELD_ALIGN_ALIGN_THEN_CROP else measurement.x
+        center_y = reference_measurement.y if align_mode == TARGET_FIELD_ALIGN_ALIGN_THEN_CROP else measurement.y
+        stamp = crop_target_stamp(source_image, center_x, center_y, fov_px)
+        return _PreparedTargetFieldFrame(
+            index=index,
+            cache_path=cache_path,
+            stamp=stamp,
+            is_reference=True,
+        )
+    source_shape = _image_shape_hw(image_path, fallback=reference_image)
+    if align_mode == TARGET_FIELD_ALIGN_ALIGN_THEN_CROP:
+        candidates = None
+        match_count = 0
+        fallback = None
+        if source_shape is not None:
+            candidates, match_count, fallback = _collect_full_frame_alignment_inputs(
+                None,
+                None,
+                source_shape=source_shape,
+                reference_positions=reference_positions,
+                source_positions=source_positions,
+            )
+        if candidates is None and fallback is None:
+            source_image = _load_working_image(image_path)
+            try:
+                candidates, match_count, fallback = _collect_full_frame_alignment_inputs(
+                    reference_image if reference_image is not None else source_image,
+                    source_image,
+                    source_shape=source_image.shape,
+                    reference_positions=reference_positions,
+                    source_positions=source_positions,
+                )
+            finally:
+                del source_image
+        return _PreparedTargetFieldFrame(
+            index=index,
+            cache_path=cache_path,
+            image_path=image_path,
+            candidates=candidates,
+            match_count=match_count,
+            fallback_solution=fallback,
+        )
+    source_image = _load_working_image(image_path)
+    try:
+        stamp = crop_target_stamp(source_image, measurement.x, measurement.y, fov_px)
+        source_shape = tuple(int(axis) for axis in source_image.shape[:2])
+    finally:
+        del source_image
+    candidates = None
+    match_count = 0
+    fallback = None
+    if reference_positions and source_positions and source_shape is not None:
+        shared_count = len(reference_positions.keys() & source_positions.keys())
+        if shared_count >= 2:
+            packed = _star_position_alignment_candidates(
+                reference_positions,
+                source_positions,
+                source_shape,
+            )
+            if packed is not None:
+                candidates, match_count = packed
+    if candidates is None:
+        aligned_reference_crop = reference_crop
+        if aligned_reference_crop is None and reference_image is not None:
+            aligned_reference_crop = crop_target_stamp(
+                reference_image,
+                reference_measurement.x,
+                reference_measurement.y,
+                fov_px,
+            )
+        if aligned_reference_crop is not None:
+            candidates, match_count, fallback = _collect_full_frame_alignment_inputs(
+                aligned_reference_crop,
+                stamp,
+            )
+    return _PreparedTargetFieldFrame(
+        index=index,
+        cache_path=cache_path,
+        stamp=stamp,
+        candidates=candidates,
+        match_count=match_count,
+        fallback_solution=fallback,
+    )
+
+
+def _finalize_prepared_target_field_frame(
+    prepared: _PreparedTargetFieldFrame,
+    *,
+    align_mode: str,
+    previous_orientation: str,
+    reference_measurement: PhotometryMeasurement,
+    fov_px: int,
+) -> tuple[np.ndarray, str]:
+    if prepared.cached_stamp is not None:
+        return prepared.cached_stamp, previous_orientation
+    if prepared.is_reference or align_mode == TARGET_FIELD_ALIGN_NONE:
+        stamp = prepared.stamp
+        if stamp is None:
+            raise TargetFieldAnimationError("Prepared target-field frame is missing a crop.")
+        _save_target_field_stamp_cache(prepared.cache_path, stamp)
+        return stamp, "identity" if prepared.is_reference else previous_orientation
+    if prepared.candidates is not None:
+        solution = _choose_orientation_from_candidates(
+            prepared.candidates,
+            previous_orientation=previous_orientation,
+            match_count=prepared.match_count,
+        )
+    else:
+        solution = prepared.fallback_solution or StampAlignmentSolution()
+    if align_mode == TARGET_FIELD_ALIGN_ALIGN_THEN_CROP:
+        if prepared.image_path is None:
+            raise TargetFieldAnimationError("Prepared target-field frame is missing the source image path.")
+        source_image = _load_working_image(prepared.image_path)
+        try:
+            stamp = crop_image_aligned_stamp(
+                source_image,
+                solution,
+                center_x=reference_measurement.x,
+                center_y=reference_measurement.y,
+                fov_px=fov_px,
+            )
+        finally:
+            del source_image
+    else:
+        if prepared.stamp is None:
+            raise TargetFieldAnimationError("Prepared target-field frame is missing a crop.")
+        stamp = orient_target_stamp(prepared.stamp, solution.orientation)
+    _save_target_field_stamp_cache(prepared.cache_path, stamp)
+    return stamp, solution.orientation
+
+
+def _load_target_field_stamps_parallel(
+    frames: Sequence[TargetFieldFrame],
+    *,
+    align_mode: str,
+    fov_px: int,
+    cache_dir: Path | None,
+    source_id: str,
+    reference_measurement: PhotometryMeasurement,
+    reference_image: np.ndarray | None,
+    reference_crop: np.ndarray | None,
+    positions_by_file: dict[str, dict[str, tuple[float, float]]],
+    max_workers: int,
+    progress_callback: Callable[[TargetFieldAnimationProgress], None] | None,
+    is_cancelled: Callable[[], bool] | None,
+    progress_message: Callable[[int, int], str],
+) -> list[np.ndarray]:
+    frame_count = len(frames)
+    frame_shape = None
+    if reference_image is not None:
+        frame_shape = tuple(int(axis) for axis in np.asarray(reference_image).shape[:2])
+    elif frames:
+        frame_shape = _image_shape_hw(Path(frames[0].measurement.file_path))
+    worker_count = max(1, min(int(max_workers), frame_count))
+    if frame_shape is not None:
+        ram_cap = _full_frame_worker_cap(frame_shape)
+        if ram_cap is not None:
+            worker_count = max(1, min(worker_count, ram_cap))
+    stamps: list[np.ndarray | None] = [None] * frame_count
+    previous_orientation = "identity"
+    reference_positions = positions_by_file.get(_file_key(reference_measurement.file_path))
+
+    def _prepare(index: int) -> _PreparedTargetFieldFrame:
+        frame = frames[index]
+        return _prepare_target_field_frame(
+            index,
+            frame.measurement,
+            align_mode=align_mode,
+            fov_px=fov_px,
+            cache_dir=cache_dir,
+            source_id=source_id,
+            reference_measurement=reference_measurement,
+            reference_image=reference_image,
+            reference_crop=reference_crop,
+            reference_positions=reference_positions,
+            source_positions=positions_by_file.get(_file_key(frame.measurement.file_path)),
+        )
+
+    def _finalize_ready(prepared_by_index: dict[int, _PreparedTargetFieldFrame], next_index: int) -> int:
+        nonlocal previous_orientation
+        while next_index in prepared_by_index:
+            _raise_if_canceled(is_cancelled)
+            prepared = prepared_by_index.pop(next_index)
+            stamp, previous_orientation = _finalize_prepared_target_field_frame(
+                prepared,
+                align_mode=align_mode,
+                previous_orientation=previous_orientation,
+                reference_measurement=reference_measurement,
+                fov_px=fov_px,
+            )
+            stamps[next_index] = stamp
+            completed = next_index + 1
+            _emit_progress(
+                progress_callback,
+                stage=TARGET_FIELD_PROGRESS_PREPARE,
+                completed=completed,
+                total=frame_count,
+                message=progress_message(completed, frame_count),
+            )
+            next_index += 1
+        return next_index
+
+    if worker_count <= 1:
+        prepared_by_index: dict[int, _PreparedTargetFieldFrame] = {}
+        next_index = 0
+        for index in range(frame_count):
+            _raise_if_canceled(is_cancelled)
+            prepared_by_index[index] = _prepare(index)
+            next_index = _finalize_ready(prepared_by_index, next_index)
+    else:
+        prepared_by_index = {}
+        next_index = 0
+        next_submit = 0
+        in_flight: dict = {}
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            def _submit_available() -> None:
+                nonlocal next_submit
+                while (
+                    next_submit < frame_count
+                    and (len(in_flight) + len(prepared_by_index)) < worker_count
+                ):
+                    _raise_if_canceled(is_cancelled)
+                    future = executor.submit(_prepare, next_submit)
+                    in_flight[future] = next_submit
+                    next_submit += 1
+
+            try:
+                while next_index < frame_count:
+                    _raise_if_canceled(is_cancelled)
+                    _submit_available()
+                    if next_index in prepared_by_index:
+                        next_index = _finalize_ready(prepared_by_index, next_index)
+                        continue
+                    if not in_flight:
+                        raise TargetFieldAnimationError(
+                            "Target-field animation did not finish preparing every frame."
+                        )
+                    done, _pending = wait(in_flight, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        in_flight.pop(future, None)
+                        prepared = future.result()
+                        prepared_by_index[prepared.index] = prepared
+            except BaseException:
+                for future in list(in_flight):
+                    future.cancel()
+                raise
+    if any(stamp is None for stamp in stamps):
+        raise TargetFieldAnimationError("Target-field animation did not finish preparing every frame.")
+    return [np.asarray(stamp, dtype=float) for stamp in stamps if stamp is not None]
 
 
 def load_or_create_target_stamp(
@@ -797,7 +1469,7 @@ def load_or_create_target_stamp(
     image_path = Path(measurement.file_path)
     if not image_path.exists():
         raise TargetFieldAnimationError(f"Missing image for target-field animation: {image_path}")
-    stamp = crop_target_stamp(read_photometry_image_data(image_path), measurement.x, measurement.y, fov_px)
+    stamp = crop_target_stamp(_load_working_image(image_path), measurement.x, measurement.y, fov_px)
     if cache_path is not None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(cache_path, stamp)
@@ -827,6 +1499,7 @@ def load_or_create_full_aligned_stamp(
             x=measurement.x,
             y=measurement.y,
             align=True,
+            align_mode=TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
             crop_x=reference_measurement.x,
             crop_y=reference_measurement.y,
         )
@@ -842,9 +1515,9 @@ def load_or_create_full_aligned_stamp(
         raise TargetFieldAnimationError(f"Missing image for target-field animation: {image_path}")
     is_reference_frame = image_path == Path(reference_measurement.file_path)
     source_image = (
-        np.asarray(reference_image, dtype=float)
+        _as_grayscale(reference_image)
         if is_reference_frame
-        else _as_grayscale(read_photometry_image_data(image_path))
+        else _load_working_image(image_path)
     )
     stamp = crop_target_stamp(source_image, measurement.x, measurement.y, fov_px)
     if is_reference_frame:
@@ -885,12 +1558,245 @@ def load_or_create_full_aligned_stamp(
     return stamp, orientation
 
 
+def load_or_create_align_then_crop_stamp(
+    measurement: PhotometryMeasurement,
+    *,
+    reference_measurement: PhotometryMeasurement,
+    reference_image: np.ndarray,
+    fov_px: int,
+    cache_dir: Path | None,
+    source_id: str,
+    previous_orientation: str = "identity",
+    reference_positions: dict[str, tuple[float, float]] | None = None,
+    source_positions: dict[str, tuple[float, float]] | None = None,
+) -> tuple[np.ndarray, str]:
+    cache_path = None
+    if cache_dir is not None:
+        cache_path = target_field_stamp_cache_path(
+            cache_dir,
+            source_id=source_id,
+            fov_px=fov_px,
+            file_path=measurement.file_path,
+            x=measurement.x,
+            y=measurement.y,
+            align_mode=TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+            crop_x=reference_measurement.x,
+            crop_y=reference_measurement.y,
+        )
+        if cache_path.exists():
+            try:
+                cached = np.load(cache_path)
+                if cached.shape == (int(fov_px), int(fov_px)):
+                    return np.asarray(cached, dtype=float), previous_orientation
+            except (OSError, ValueError):
+                cache_path.unlink(missing_ok=True)
+    image_path = Path(measurement.file_path)
+    if not image_path.exists():
+        raise TargetFieldAnimationError(f"Missing image for target-field animation: {image_path}")
+    is_reference_frame = image_path == Path(reference_measurement.file_path)
+    source_image = (
+        _as_grayscale(reference_image)
+        if is_reference_frame
+        else _load_working_image(image_path)
+    )
+    if is_reference_frame:
+        orientation = "identity"
+        stamp = crop_target_stamp(source_image, reference_measurement.x, reference_measurement.y, fov_px)
+    else:
+        solution = estimate_full_frame_alignment(
+            reference_image,
+            source_image,
+            previous_orientation=previous_orientation,
+            reference_positions=reference_positions,
+            source_positions=source_positions,
+        )
+        orientation = solution.orientation
+        stamp = crop_image_aligned_stamp(
+            source_image,
+            solution,
+            center_x=reference_measurement.x,
+            center_y=reference_measurement.y,
+            fov_px=fov_px,
+        )
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(cache_path, stamp)
+    return stamp, orientation
+
+
 def stamp_to_qimage(stamp: np.ndarray) -> QImage:
     display = np.clip(np.nan_to_num(np.asarray(stamp, dtype=float), nan=0.0), 0.0, 1.0)
     pixels = np.ascontiguousarray(np.round(display * 255.0).astype(np.uint8))
     height, width = pixels.shape
     image = QImage(pixels.data, width, height, width, QImage.Format.Format_Grayscale8)
     return image.copy()
+
+
+def _stamp_marker_pens(appearance: TargetMarkerAppearance) -> tuple[QPen | None, QPen]:
+    line_color = QColor(appearance.line_color)
+    if not line_color.isValid():
+        line_color = QColor("#ef4444")
+    line_width = normalize_target_field_marker_line_width(appearance.line_width)
+    pen = QPen(line_color, line_width)
+    pen.setCosmetic(True)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    outline_color = QColor(str(appearance.outline_color or "").strip())
+    outline_pen: QPen | None = None
+    if outline_color.isValid() and outline_color.alpha() > 0 and line_width > 0.0:
+        outline_pen = QPen(outline_color, line_width + 1.6)
+        outline_pen.setCosmetic(True)
+        outline_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        outline_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    return outline_pen, pen
+
+
+def target_field_marker_extents(
+    width: float,
+    height: float,
+    length_percent: object = DEFAULT_TARGET_FIELD_MARKER_LENGTH_PERCENT,
+) -> tuple[float, float]:
+    size = max(1.0, min(float(width), float(height)))
+    outer = max(8.0, (size * 0.5) * (normalize_target_field_marker_length_percent(length_percent) / 100.0))
+    gap = min(outer - 3.0, max(8.0, size * 0.10))
+    if gap >= outer - 2.0:
+        gap = max(3.0, outer * 0.45)
+    return outer, gap
+
+
+def _paint_stamp_marker_shape(
+    painter: QPainter,
+    style: str,
+    *,
+    center_x: float,
+    center_y: float,
+    width: float,
+    height: float,
+    length_percent: object = DEFAULT_TARGET_FIELD_MARKER_LENGTH_PERCENT,
+) -> None:
+    outer, gap = target_field_marker_extents(width, height, length_percent)
+    left = center_x - outer
+    top = center_y - outer
+    right = center_x + outer
+    bottom = center_y + outer
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    if style == "pointer":
+        for start, end in pointer_marker_segments(center_x, center_y, left=left, top=top, gap=gap):
+            painter.drawLine(QPointF(start[0], start[1]), QPointF(end[0], end[1]))
+        return
+    if style == "crosshair":
+        painter.drawLine(QPointF(center_x - outer, center_y), QPointF(center_x - gap, center_y))
+        painter.drawLine(QPointF(center_x + gap, center_y), QPointF(center_x + outer, center_y))
+        painter.drawLine(QPointF(center_x, center_y - outer), QPointF(center_x, center_y - gap))
+        painter.drawLine(QPointF(center_x, center_y + gap), QPointF(center_x, center_y + outer))
+        return
+    if style == "brackets":
+        arm = max(4.0, min(outer * 0.5, outer - 1.5))
+        corners = (
+            (center_x - outer, center_y - outer, arm, arm, 1, 1),
+            (center_x + outer, center_y - outer, arm, arm, -1, 1),
+            (center_x - outer, center_y + outer, arm, arm, 1, -1),
+            (center_x + outer, center_y + outer, arm, arm, -1, -1),
+        )
+        for corner_x, corner_y, arm_x, arm_y, sign_x, sign_y in corners:
+            painter.drawLine(
+                QPointF(corner_x, corner_y),
+                QPointF(corner_x + sign_x * arm_x, corner_y),
+            )
+            painter.drawLine(
+                QPointF(corner_x, corner_y),
+                QPointF(corner_x, corner_y + sign_y * arm_y),
+            )
+        return
+    if style == "target":
+        edge_gap = max(2.0, min(10.0, outer * 0.35))
+        painter.drawRect(QRectF(left, top, max(1.0, right - left), max(1.0, bottom - top)))
+        painter.drawLine(QPointF(left - edge_gap, center_y), QPointF(left, center_y))
+        painter.drawLine(QPointF(right, center_y), QPointF(right + edge_gap, center_y))
+        painter.drawLine(QPointF(center_x, top - edge_gap), QPointF(center_x, top))
+        painter.drawLine(QPointF(center_x, bottom), QPointF(center_x, bottom + edge_gap))
+        return
+    painter.drawEllipse(QPointF(center_x, center_y), max(6.0, outer * 0.72), max(6.0, outer * 0.72))
+
+
+def apply_target_field_marker(
+    stamp_image: QImage,
+    *,
+    style: str,
+    appearance: TargetMarkerAppearance | None = None,
+) -> QImage:
+    resolved_style = normalize_target_field_marker_style(style)
+    if resolved_style == TARGET_FIELD_MARKER_NONE:
+        return stamp_image
+    marked = stamp_image.convertToFormat(QImage.Format.Format_RGB888)
+    if marked.isNull():
+        return stamp_image
+    resolved_appearance = appearance or TargetMarkerAppearance()
+    painter = QPainter(marked)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        outline_pen, pen = _stamp_marker_pens(resolved_appearance)
+        center_x = marked.width() * 0.5
+        center_y = marked.height() * 0.5
+        paint_kwargs = {
+            "center_x": center_x,
+            "center_y": center_y,
+            "width": float(marked.width()),
+            "height": float(marked.height()),
+            "length_percent": resolved_appearance.length_percent,
+        }
+        if outline_pen is not None:
+            painter.setPen(outline_pen)
+            _paint_stamp_marker_shape(painter, resolved_style, **paint_kwargs)
+        painter.setPen(pen)
+        _paint_stamp_marker_shape(painter, resolved_style, **paint_kwargs)
+    finally:
+        painter.end()
+    return marked
+
+
+def synthetic_target_field_preview_stamp(fov_px: int) -> np.ndarray:
+    size = normalize_target_field_fov_px(fov_px)
+    yy, xx = np.mgrid[0:size, 0:size]
+    center = (size - 1) / 2.0
+    radius = max(1.2, size * 0.018)
+    stamp = np.full((size, size), 0.10, dtype=float)
+    stamp += np.exp(-((xx - center) ** 2 + (yy - center) ** 2) / (2.0 * radius * radius))
+    return stamp
+
+
+def render_target_field_marker_preview(
+    image: np.ndarray | None,
+    x: float | None,
+    y: float | None,
+    *,
+    fov_px: int,
+    stretch_mode: str = DEFAULT_TARGET_FIELD_STRETCH_MODE,
+    marker_style: str = DEFAULT_TARGET_FIELD_MARKER_STYLE,
+    appearance: TargetMarkerAppearance | None = None,
+) -> QImage:
+    resolved_fov = normalize_target_field_fov_px(fov_px)
+    if image is None or x is None or y is None:
+        stamp = synthetic_target_field_preview_stamp(resolved_fov)
+    else:
+        stamp = crop_target_stamp(image, float(x), float(y), resolved_fov)
+    stretched = stretch_stamps_to_shared_display([stamp], stretch_mode=stretch_mode)[0]
+    stamp_image = stamp_to_qimage(stretched)
+    return apply_target_field_marker(
+        stamp_image,
+        style=marker_style,
+        appearance=appearance,
+    )
+
+
+def load_target_field_preview_source(frame: TargetFieldFrame) -> tuple[np.ndarray | None, float, float]:
+    x = float(frame.measurement.x)
+    y = float(frame.measurement.y)
+    try:
+        image = read_photometry_image_data(frame.measurement.file_path)
+    except Exception:
+        return None, x, y
+    return image, x, y
 
 
 def compose_target_field_animation_frame(stamp_image: QImage, plot_image: QImage) -> QImage:
@@ -914,9 +1820,16 @@ def export_target_field_animation(
     output_path: Path,
     *,
     fov_px: int = DEFAULT_TARGET_FIELD_FOV_PX,
-    align: bool = DEFAULT_TARGET_FIELD_ALIGN,
-    fps: float = DEFAULT_TARGET_FIELD_FPS,
+    align: bool | None = None,
+    align_mode: str | None = None,
+    fps: float | None = None,
+    duration_seconds: float = DEFAULT_TARGET_FIELD_DURATION_SECONDS,
+    loop_count: int = DEFAULT_TARGET_FIELD_LOOP_COUNT,
+    scale_percent: int = DEFAULT_TARGET_FIELD_SCALE_PERCENT,
     stretch_mode: str = DEFAULT_TARGET_FIELD_STRETCH_MODE,
+    export_format: str | None = None,
+    marker_style: str = DEFAULT_TARGET_FIELD_MARKER_STYLE,
+    marker_appearance: TargetMarkerAppearance | None = None,
     filter_name: str | None = None,
     cache_dir: Path | None = None,
     series: LightCurveSeries | None = None,
@@ -928,16 +1841,34 @@ def export_target_field_animation(
     plot_theme: str = "normal",
     custom_theme_colors: dict[str, str] | None = None,
     frame_duration_ms: int | None = None,
-    progress_callback: Callable[[int, int, str], None] | None = None,
+    max_workers: int | None = None,
+    progress_callback: Callable[[TargetFieldAnimationProgress], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
 ) -> None:
     frames = collect_target_field_frames(report, source_id, filter_name=filter_name)
     resolved_fov = normalize_target_field_fov_px(fov_px)
-    align_enabled = bool(align)
-    duration_ms = max(
-        20,
-        int(frame_duration_ms) if frame_duration_ms is not None else target_field_frame_duration_ms(fps),
+    resolved_mode = normalize_target_field_align_mode(
+        align_mode
+        if align_mode is not None
+        else (TARGET_FIELD_ALIGN_CROP_THEN_ALIGN if (DEFAULT_TARGET_FIELD_ALIGN if align is None else align) else TARGET_FIELD_ALIGN_NONE)
     )
+    resolved_format = normalize_target_field_export_format(
+        export_format if export_format is not None else Path(output_path).suffix
+    )
+    resolved_marker_style = normalize_target_field_marker_style(marker_style)
+    resolved_marker_appearance = marker_appearance or TargetMarkerAppearance()
+    resolved_scale = normalize_target_field_scale_percent(scale_percent)
+    resolved_loop_count = normalize_target_field_loop_count(loop_count)
+    if frame_duration_ms is not None:
+        duration_ms = max(1, int(frame_duration_ms))
+    elif fps is not None:
+        duration_ms = target_field_frame_duration_ms(fps)
+    else:
+        duration_ms = target_field_duration_frame_ms(
+            duration_seconds,
+            len(frames),
+            gif=resolved_format == "gif",
+        )
     plot_series = series or _series_for_source(report, source_id, filter_name)
     if plot_series is None or not plot_series.points:
         raise TargetFieldAnimationError("The selected target does not have a light curve to animate.")
@@ -950,54 +1881,67 @@ def export_target_field_animation(
         phase_period_hours=phase_period_hours,
         phase_anchor_mode=phase_anchor_mode,
     )
-    progress_total = len(frames) + 2
-    progress_label = "Cropping and aligning target-field frames..." if align_enabled else "Cropping target-field frames..."
-    _emit_progress(progress_callback, 0, progress_total, progress_label)
+    frame_count = len(frames)
+    if resolved_mode == TARGET_FIELD_ALIGN_ALIGN_THEN_CROP:
+        progress_label = "Aligning frames, then cropping the target field..."
+    elif resolved_mode == TARGET_FIELD_ALIGN_CROP_THEN_ALIGN:
+        progress_label = "Cropping and aligning target-field frames..."
+    else:
+        progress_label = "Cropping target-field frames..."
+    _emit_progress(
+        progress_callback,
+        stage=TARGET_FIELD_PROGRESS_PREPARE,
+        completed=0,
+        total=frame_count,
+        message=progress_label,
+    )
     _raise_if_canceled(is_cancelled)
-    stamps: list[np.ndarray] = []
     reference_measurement = frames[0].measurement
     reference_image = None
     reference_crop = None
-    previous_orientation = "identity"
     positions_by_file: dict[str, dict[str, tuple[float, float]]] = {}
-    if align_enabled:
-        reference_image = _as_grayscale(read_photometry_image_data(reference_measurement.file_path))
-        reference_crop = crop_target_stamp(reference_image, reference_measurement.x, reference_measurement.y, resolved_fov)
+    if resolved_mode != TARGET_FIELD_ALIGN_NONE:
+        reference_image = _load_working_image(reference_measurement.file_path)
         positions_by_file = star_positions_by_file(report, filter_name=filter_name)
-    for index, frame in enumerate(frames, start=1):
-        _raise_if_canceled(is_cancelled)
-        if align_enabled:
-            stamp, previous_orientation = load_or_create_full_aligned_stamp(
-                frame.measurement,
-                reference_measurement=reference_measurement,
-                reference_image=reference_image,
-                fov_px=resolved_fov,
-                cache_dir=cache_dir,
-                source_id=source_id,
-                previous_orientation=previous_orientation,
-                reference_positions=positions_by_file.get(_file_key(reference_measurement.file_path)),
-                source_positions=positions_by_file.get(_file_key(frame.measurement.file_path)),
-                reference_crop=reference_crop,
-            )
-            stamps.append(stamp)
-            _emit_progress(
-                progress_callback,
-                index,
-                progress_total,
-                f"Cropping and aligning frame {index}/{len(frames)}...",
-            )
-        else:
-            stamps.append(
-                load_or_create_target_stamp(
-                    frame.measurement,
-                    fov_px=resolved_fov,
-                    cache_dir=cache_dir,
-                    source_id=source_id,
-                )
-            )
-            _emit_progress(progress_callback, index, progress_total, f"Cropping target-field frame {index}/{len(frames)}...")
+        if resolved_mode == TARGET_FIELD_ALIGN_CROP_THEN_ALIGN:
+            reference_crop = crop_target_stamp(reference_image, reference_measurement.x, reference_measurement.y, resolved_fov)
+    if resolved_mode == TARGET_FIELD_ALIGN_ALIGN_THEN_CROP:
+        def _prepare_progress(completed: int, total: int) -> str:
+            return f"Aligning, then cropping frame {completed}/{total}..."
+    elif resolved_mode == TARGET_FIELD_ALIGN_CROP_THEN_ALIGN:
+        def _prepare_progress(completed: int, total: int) -> str:
+            return f"Cropping and aligning frame {completed}/{total}..."
+    else:
+        def _prepare_progress(completed: int, total: int) -> str:
+            return f"Cropping target-field frame {completed}/{total}..."
+    frame_shape = None
+    if reference_image is not None:
+        frame_shape = tuple(int(axis) for axis in np.asarray(reference_image).shape[:2])
+    elif frames:
+        frame_shape = _image_shape_hw(Path(frames[0].measurement.file_path))
+    stamps = _load_target_field_stamps_parallel(
+        frames,
+        align_mode=resolved_mode,
+        fov_px=resolved_fov,
+        cache_dir=cache_dir,
+        source_id=source_id,
+        reference_measurement=reference_measurement,
+        reference_image=reference_image,
+        reference_crop=reference_crop,
+        positions_by_file=positions_by_file,
+        max_workers=resolve_target_field_parallel_workers(max_workers, frame_shape=frame_shape),
+        progress_callback=progress_callback,
+        is_cancelled=is_cancelled,
+        progress_message=_prepare_progress,
+    )
     _raise_if_canceled(is_cancelled)
-    _emit_progress(progress_callback, len(frames), progress_total, "Normalizing local comparison stars and stretching frames...")
+    _emit_progress(
+        progress_callback,
+        stage=TARGET_FIELD_PROGRESS_NORMALIZE,
+        completed=0,
+        total=1,
+        message="Normalizing local comparison stars and stretching frames...",
+    )
     comparison_scales = crop_comparison_scale_factors(stamps)
     if comparison_scales is None:
         comparison_scales = local_comparison_scale_factors(
@@ -1009,7 +1953,21 @@ def export_target_field_animation(
         match_stamp_backgrounds(stamps, scale_factors=comparison_scales),
         stretch_mode=stretch_mode,
     )
+    _emit_progress(
+        progress_callback,
+        stage=TARGET_FIELD_PROGRESS_NORMALIZE,
+        completed=1,
+        total=1,
+        message="Normalized local comparison stars and stretched frames.",
+    )
     composed_frames: list[QImage] = []
+    _emit_progress(
+        progress_callback,
+        stage=TARGET_FIELD_PROGRESS_COMPOSE,
+        completed=0,
+        total=frame_count,
+        message="Composing animation frames...",
+    )
     for index, (frame, stamp) in enumerate(zip(frames, display_stamps, strict=True), start=1):
         _raise_if_canceled(is_cancelled)
         highlight = _highlight_for_frame(payload, frame)
@@ -1020,32 +1978,64 @@ def export_target_field_animation(
             plot_theme=plot_theme,
             custom_theme_colors=custom_theme_colors,
         )
-        composed_frames.append(compose_target_field_animation_frame(stamp_to_qimage(stamp), plot_image))
+        stamp_image = stamp_to_qimage(stamp)
+        if resolved_marker_style != TARGET_FIELD_MARKER_NONE:
+            stamp_image = apply_target_field_marker(
+                stamp_image,
+                style=resolved_marker_style,
+                appearance=resolved_marker_appearance,
+            )
+        composed_frames.append(compose_target_field_animation_frame(stamp_image, plot_image))
         _emit_progress(
             progress_callback,
-            len(frames),
-            progress_total,
-            f"Composing animation frame {index}/{len(frames)}...",
+            stage=TARGET_FIELD_PROGRESS_COMPOSE,
+            completed=index,
+            total=frame_count,
+            message=f"Composing animation frame {index}/{frame_count}...",
         )
     _raise_if_canceled(is_cancelled)
-    _emit_progress(progress_callback, len(frames) + 1, progress_total, "Encoding target-field GIF...")
-    export_qimages_to_gif(
-        composed_frames,
-        output_path,
-        frame_duration_ms=duration_ms,
-        loop_count=0,
+    format_label = "MP4" if resolved_format == "mp4" else "GIF"
+    _emit_progress(
+        progress_callback,
+        stage=TARGET_FIELD_PROGRESS_ENCODE,
+        completed=0,
+        total=1,
+        message=f"Encoding target-field {format_label}...",
     )
-    _emit_progress(progress_callback, progress_total, progress_total, f"Saved target-field GIF to {output_path.name}.")
+    if resolved_format == "mp4":
+        export_qimages_to_mp4(
+            composed_frames,
+            output_path,
+            frame_duration_ms=duration_ms,
+            scale_percent=resolved_scale,
+            repeat_count=resolved_loop_count,
+        )
+    else:
+        export_qimages_to_gif(
+            composed_frames,
+            output_path,
+            frame_duration_ms=max(20, duration_ms),
+            loop_count=0,
+            scale_percent=resolved_scale,
+        )
+    _emit_progress(
+        progress_callback,
+        stage=TARGET_FIELD_PROGRESS_ENCODE,
+        completed=1,
+        total=1,
+        message=f"Saved target-field {format_label} to {output_path.name}.",
+        done=True,
+    )
 
 
 def _as_grayscale(image: np.ndarray) -> np.ndarray:
-    data = np.asarray(image, dtype=float)
+    data = np.asarray(image, dtype=_WORKING_IMAGE_DTYPE)
     if data.ndim == 2:
         return data
     if data.ndim == 3 and data.shape[-1] in {1, 3, 4}:
-        return np.asarray(np.mean(data[..., :3], axis=-1), dtype=float)
+        return np.asarray(np.mean(data[..., :3], axis=-1), dtype=_WORKING_IMAGE_DTYPE)
     if data.ndim == 3 and data.shape[0] in {1, 3, 4}:
-        return np.asarray(np.mean(data[:3], axis=0), dtype=float)
+        return np.asarray(np.mean(data[:3], axis=0), dtype=_WORKING_IMAGE_DTYPE)
     raise TargetFieldAnimationError("Image is not a usable grayscale or RGB frame.")
 
 
@@ -1143,13 +2133,25 @@ def _observation_sort_key(value: datetime | None) -> datetime:
 
 
 def _emit_progress(
-    progress_callback: Callable[[int, int, str], None] | None,
+    progress_callback: Callable[[TargetFieldAnimationProgress], None] | None,
+    *,
+    stage: str,
     completed: int,
     total: int,
     message: str,
+    done: bool = False,
 ) -> None:
-    if progress_callback is not None:
-        progress_callback(completed, total, message)
+    if progress_callback is None:
+        return
+    progress_callback(
+        TargetFieldAnimationProgress(
+            stage=str(stage),
+            completed=max(0, int(completed)),
+            total=max(1, int(total)),
+            message=str(message),
+            done=bool(done),
+        )
+    )
 
 
 def _raise_if_canceled(is_cancelled: Callable[[], bool] | None) -> None:
@@ -1336,6 +2338,21 @@ def _estimate_alignment_from_detected_stars(
     *,
     previous_orientation: str,
 ) -> StampAlignmentSolution | None:
+    packed = _detected_star_alignment_candidates(reference, source)
+    if packed is None:
+        return None
+    candidates, match_count = packed
+    return _choose_orientation_from_candidates(
+        candidates,
+        previous_orientation=previous_orientation,
+        match_count=match_count,
+    )
+
+
+def _detected_star_alignment_candidates(
+    reference: np.ndarray,
+    source: np.ndarray,
+) -> tuple[dict[str, tuple[StampAlignmentSolution, float, int]], int] | None:
     reference_stars = _extract_alignment_stars(_alignment_detection_plane(reference))
     source_stars = _extract_alignment_stars(_alignment_detection_plane(source))
     if len(reference_stars) < 2 or len(source_stars) < 2:
@@ -1354,11 +2371,7 @@ def _estimate_alignment_from_detected_stars(
         candidates[orientation] = _robust_shift_solution(shifts, orientation=orientation)
     if match_count == 0:
         return None
-    return _choose_orientation_from_candidates(
-        candidates,
-        previous_orientation=previous_orientation,
-        match_count=match_count,
-    )
+    return candidates, match_count
 
 
 def _consensus_star_shifts(

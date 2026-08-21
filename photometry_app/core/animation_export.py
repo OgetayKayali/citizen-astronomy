@@ -437,7 +437,7 @@ def _qimage_to_gif_frame(image: QImage) -> Image.Image:
 
 
 def _scaled_qimage(image: QImage, scale_percent: int) -> QImage:
-    normalized_scale = min(100, max(10, int(scale_percent)))
+    normalized_scale = min(400, max(10, int(scale_percent)))
     if normalized_scale == 100:
         return image
     width = max(1, int(round(image.width() * normalized_scale / 100.0)))
@@ -696,14 +696,17 @@ def export_qimages_to_mp4(
     *,
     frame_duration_ms: int,
     scale_percent: int = 100,
+    repeat_count: int = 1,
 ) -> None:
     if not frames:
         raise ValueError("Blink export requires at least one frame.")
 
+    repeats = max(1, int(repeat_count))
     with StreamingMp4Writer(
         output_path,
         frame_duration_ms=frame_duration_ms,
         scale_percent=scale_percent,
     ) as writer:
-        for frame in frames:
-            writer.append_qimage(frame)
+        for _repeat in range(repeats):
+            for frame in frames:
+                writer.append_qimage(frame)

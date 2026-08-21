@@ -17,8 +17,12 @@ from photometry_app.core.wcs import validate_wcs
 DATE_FORMATS = (
     "%Y-%m-%dT%H:%M:%S.%f",
     "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S.%f",
     "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
 )
+
+_LONG_FRACTIONAL_SECONDS_PATTERN = re.compile(r"(\.\d{6})\d+")
 
 _MIN_UTC_DATETIME = datetime.min.replace(tzinfo=UTC)
 
@@ -193,6 +197,7 @@ def _parse_date_obs(value: object, observation_timezone: str = "UTC") -> datetim
         return None
 
     text = str(value).strip()
+    text = _LONG_FRACTIONAL_SECONDS_PATTERN.sub(r"\1", text)
     for fmt in DATE_FORMATS:
         try:
             return _normalize_observation_time(datetime.strptime(text, fmt), observation_timezone)

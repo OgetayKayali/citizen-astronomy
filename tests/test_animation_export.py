@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PySide6.QtGui import QColor, QImage
 
@@ -256,6 +257,28 @@ class AnimationExportTest(unittest.TestCase):
 
             self.assertTrue(output_path.exists())
             self.assertGreater(output_path.stat().st_size, 0)
+
+    def test_export_qimages_to_mp4_repeats_the_sequence(self) -> None:
+        dark_frame = QImage(32, 24, QImage.Format.Format_ARGB32)
+        dark_frame.fill(QColor("black"))
+        bright_frame = QImage(32, 24, QImage.Format.Format_ARGB32)
+        bright_frame.fill(QColor("white"))
+        FakeStreamingMp4Writer.last_instance = None
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch(
+            "photometry_app.core.animation_export.StreamingMp4Writer",
+            FakeStreamingMp4Writer,
+        ):
+            output_path = Path(temp_dir) / "looped.mp4"
+            export_qimages_to_mp4(
+                [dark_frame, bright_frame],
+                output_path,
+                frame_duration_ms=100,
+                repeat_count=3,
+            )
+        writer = FakeStreamingMp4Writer.last_instance
+        self.assertIsNotNone(writer)
+        assert writer is not None
+        self.assertEqual(len(writer.frames), 6)
 
 
 if __name__ == "__main__":

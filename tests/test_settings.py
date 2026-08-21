@@ -41,9 +41,11 @@ from photometry_app.core.models import (
 from photometry_app.core.settings import (
     AppSettings,
     DEFAULT_ASTROMETRY_TIMEOUT_SECONDS,
+    DEFAULT_EPHEMERIS_MIN_ALTITUDE_DEG,
     ObservingSitePreset,
     load_settings_config_override,
     normalize_astrometry_timeout_seconds,
+    normalize_ephemeris_min_altitude_deg,
     resolve_astrometry_timeout_seconds,
     save_settings_config_override,
 )
@@ -1070,6 +1072,8 @@ class SettingsTest(unittest.TestCase):
 
                 observing_site_elevation_m=35.0,
 
+                ephemeris_min_altitude_deg=7.5,
+
                 observing_site_presets=[
                     ObservingSitePreset(name="Backyard", latitude_deg=51.5074, longitude_deg=-0.1278, elevation_m=35.0),
                     ObservingSitePreset(name="Remote Dark Site", latitude_deg=-24.6270, longitude_deg=-70.4045, elevation_m=2635.0),
@@ -1343,6 +1347,8 @@ class SettingsTest(unittest.TestCase):
 
             self.assertEqual(loaded.observing_site_elevation_m, 35.0)
 
+            self.assertEqual(loaded.ephemeris_min_altitude_deg, 7.5)
+
             self.assertEqual(len(loaded.observing_site_presets or []), 2)
 
             assert loaded.observing_site_presets is not None
@@ -1489,6 +1495,8 @@ class SettingsTest(unittest.TestCase):
 
                         "observing_site_elevation_m": 15000.0,
 
+                        "ephemeris_min_altitude_deg": 120.0,
+
                     }
 
                 ),
@@ -1508,6 +1516,26 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(loaded.observing_site_longitude_deg, -180.0)
 
             self.assertEqual(loaded.observing_site_elevation_m, 12000.0)
+
+            self.assertEqual(loaded.ephemeris_min_altitude_deg, 90.0)
+
+
+
+    def test_ephemeris_min_altitude_defaults_to_five_degrees(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root = Path(temp_dir)
+
+            loaded = AppSettings.from_root(root)
+
+            self.assertEqual(loaded.ephemeris_min_altitude_deg, DEFAULT_EPHEMERIS_MIN_ALTITUDE_DEG)
+
+            self.assertEqual(normalize_ephemeris_min_altitude_deg(None), 5.0)
+
+            self.assertEqual(normalize_ephemeris_min_altitude_deg(0), 0.0)
+
+            self.assertEqual(normalize_ephemeris_min_altitude_deg(-4), 0.0)
 
 
 
@@ -1843,6 +1871,24 @@ class SettingsTest(unittest.TestCase):
 
                 wcs_sanity_approval_percent=88.0,
 
+                wcs_sanity_probe_start_percent=12.0,
+
+                wcs_sanity_quality_sample_max_count=28,
+
+                wcs_sanity_minimum_source_snr=9.0,
+
+                wcs_sanity_max_median_residual_pixels=1.8,
+
+                wcs_sanity_match_tolerance_pixels=2.8,
+
+                wcs_sanity_isolation_fwhm_multiplier=3.0,
+
+                wcs_sanity_soft_max_median_residual_pixels=1.3,
+
+                wcs_sanity_soft_max_coherent_shift_pixels=1.9,
+
+                wcs_sanity_ccvals_max_disagreement_pixels=4.0,
+
                 wcs_sanity_max_median_residual_arcsec=2.5,
 
                 wcs_sanity_match_tolerance_arcsec=7.5,
@@ -1884,6 +1930,24 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(loaded.wcs_sanity_min_matches, 6)
 
             self.assertAlmostEqual(loaded.wcs_sanity_approval_percent, 88.0)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_probe_start_percent, 12.0)
+
+            self.assertEqual(loaded.wcs_sanity_quality_sample_max_count, 28)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_minimum_source_snr, 9.0)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_max_median_residual_pixels, 1.8)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_match_tolerance_pixels, 2.8)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_isolation_fwhm_multiplier, 3.0)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_soft_max_median_residual_pixels, 1.3)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_soft_max_coherent_shift_pixels, 1.9)
+
+            self.assertAlmostEqual(loaded.wcs_sanity_ccvals_max_disagreement_pixels, 4.0)
 
             self.assertAlmostEqual(loaded.wcs_sanity_max_median_residual_arcsec, 2.5)
 

@@ -16,6 +16,7 @@ from pathlib import Path
 
 
 
+from photometry_app.core.target_markers import coerce_asteroid_visual_marker_style
 from photometry_app.core.models import (
 
     AppMode,
@@ -61,6 +62,9 @@ def resolve_astrostack_parallel_workers(settings: AppSettings | None) -> int:
 DEFAULT_ASTROMETRY_TIMEOUT_SECONDS = 300
 MIN_ASTROMETRY_TIMEOUT_SECONDS = 30
 MAX_ASTROMETRY_TIMEOUT_SECONDS = 3600
+DEFAULT_EPHEMERIS_MIN_ALTITUDE_DEG = 5.0
+MIN_EPHEMERIS_MIN_ALTITUDE_DEG = 0.0
+MAX_EPHEMERIS_MIN_ALTITUDE_DEG = 90.0
 
 
 def normalize_astrometry_timeout_seconds(value: object | None) -> int:
@@ -69,6 +73,18 @@ def normalize_astrometry_timeout_seconds(value: object | None) -> int:
     except (TypeError, ValueError):
         timeout = DEFAULT_ASTROMETRY_TIMEOUT_SECONDS
     return max(MIN_ASTROMETRY_TIMEOUT_SECONDS, min(MAX_ASTROMETRY_TIMEOUT_SECONDS, timeout))
+
+
+def normalize_ephemeris_min_altitude_deg(value: object | None) -> float:
+    if value in (None, ""):
+        return DEFAULT_EPHEMERIS_MIN_ALTITUDE_DEG
+    try:
+        altitude = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_EPHEMERIS_MIN_ALTITUDE_DEG
+    if not math.isfinite(altitude):
+        return DEFAULT_EPHEMERIS_MIN_ALTITUDE_DEG
+    return max(MIN_EPHEMERIS_MIN_ALTITUDE_DEG, min(MAX_EPHEMERIS_MIN_ALTITUDE_DEG, altitude))
 
 
 def resolve_astrometry_timeout_seconds(settings: AppSettings | None) -> int:
@@ -484,6 +500,12 @@ class AppSettings:
 
     sky_explorer_main_splitter_sizes: list[int] | None = None
 
+    observation_deck_main_splitter_sizes: list[int] | None = None
+
+    observation_deck_left_splitter_sizes: list[int] | None = None
+
+    observation_deck_right_splitter_sizes: list[int] | None = None
+
     sky_explorer_object_type_column_widths: list[int] | None = None
 
     sky_explorer_results_column_widths: list[int] | None = None
@@ -619,6 +641,25 @@ class AppSettings:
 
     wcs_sanity_approval_percent: float = 90.0
 
+    wcs_sanity_probe_start_percent: float = 10.0
+
+    wcs_sanity_quality_sample_max_count: int = 32
+
+    wcs_sanity_minimum_source_snr: float = 8.0
+
+    wcs_sanity_max_median_residual_pixels: float = 2.0
+
+    wcs_sanity_match_tolerance_pixels: float = 3.0
+
+    wcs_sanity_isolation_fwhm_multiplier: float = 2.5
+
+    wcs_sanity_soft_max_median_residual_pixels: float = 1.5
+
+    wcs_sanity_soft_max_coherent_shift_pixels: float = 2.0
+
+    wcs_sanity_ccvals_max_disagreement_pixels: float = 5.0
+
+    # Legacy angular/count settings retained so older settings files still load.
     wcs_sanity_max_median_residual_arcsec: float = 3.0
 
     wcs_sanity_match_tolerance_arcsec: float = 8.0
@@ -762,6 +803,8 @@ class AppSettings:
     observing_site_longitude_deg: float | None = None
 
     observing_site_elevation_m: float | None = None
+
+    ephemeris_min_altitude_deg: float = DEFAULT_EPHEMERIS_MIN_ALTITUDE_DEG
 
     observing_site_presets: list[ObservingSitePreset] | None = None
 
@@ -1295,6 +1338,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
     observing_site_longitude_deg = _coerce_optional_float(payload.get("observing_site_longitude_deg"), minimum=-180.0, maximum=180.0)
 
     observing_site_elevation_m = _coerce_optional_float(payload.get("observing_site_elevation_m"), minimum=-500.0, maximum=12000.0)
+
+    ephemeris_min_altitude_deg = normalize_ephemeris_min_altitude_deg(payload.get("ephemeris_min_altitude_deg"))
 
     observing_site_presets = _coerce_observing_site_presets(payload.get("observing_site_presets"))
 
@@ -1907,6 +1952,9 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         sky_explorer_left_splitter_sizes=_coerce_splitter_sizes(payload.get("sky_explorer_left_splitter_sizes"), expected_count=2),
         sky_explorer_results_splitter_sizes=_coerce_splitter_sizes(payload.get("sky_explorer_results_splitter_sizes"), expected_count=2),
         sky_explorer_main_splitter_sizes=_coerce_splitter_sizes(payload.get("sky_explorer_main_splitter_sizes"), expected_count=2),
+        observation_deck_main_splitter_sizes=_coerce_splitter_sizes(payload.get("observation_deck_main_splitter_sizes"), expected_count=3),
+        observation_deck_left_splitter_sizes=_coerce_splitter_sizes(payload.get("observation_deck_left_splitter_sizes"), expected_count=2),
+        observation_deck_right_splitter_sizes=_coerce_splitter_sizes(payload.get("observation_deck_right_splitter_sizes"), expected_count=2),
         sky_explorer_object_type_column_widths=_coerce_sky_explorer_object_type_column_widths(payload.get("sky_explorer_object_type_column_widths")),
         sky_explorer_results_column_widths=_coerce_sky_explorer_results_column_widths(payload.get("sky_explorer_results_column_widths")),
         sky_explorer_simbad_search_radius_arcsec=_coerce_sky_explorer_simbad_search_radius_arcsec(payload.get("sky_explorer_simbad_search_radius_arcsec", 10.0)),
@@ -1984,6 +2032,42 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
         wcs_sanity_approval_percent=min(
             100.0, max(1.0, float(payload.get("wcs_sanity_approval_percent", 90.0)))
+        ),
+
+        wcs_sanity_probe_start_percent=min(
+            100.0, max(1.0, float(payload.get("wcs_sanity_probe_start_percent", 10.0)))
+        ),
+
+        wcs_sanity_quality_sample_max_count=min(
+            128, max(8, int(payload.get("wcs_sanity_quality_sample_max_count", 32)))
+        ),
+
+        wcs_sanity_minimum_source_snr=min(
+            1000.0, max(1.0, float(payload.get("wcs_sanity_minimum_source_snr", 8.0)))
+        ),
+
+        wcs_sanity_max_median_residual_pixels=min(
+            20.0, max(0.1, float(payload.get("wcs_sanity_max_median_residual_pixels", 2.0)))
+        ),
+
+        wcs_sanity_match_tolerance_pixels=min(
+            20.0, max(0.5, float(payload.get("wcs_sanity_match_tolerance_pixels", 3.0)))
+        ),
+
+        wcs_sanity_isolation_fwhm_multiplier=min(
+            20.0, max(0.0, float(payload.get("wcs_sanity_isolation_fwhm_multiplier", 2.5)))
+        ),
+
+        wcs_sanity_soft_max_median_residual_pixels=min(
+            20.0, max(0.1, float(payload.get("wcs_sanity_soft_max_median_residual_pixels", 1.5)))
+        ),
+
+        wcs_sanity_soft_max_coherent_shift_pixels=min(
+            20.0, max(0.1, float(payload.get("wcs_sanity_soft_max_coherent_shift_pixels", 2.0)))
+        ),
+
+        wcs_sanity_ccvals_max_disagreement_pixels=min(
+            100.0, max(0.1, float(payload.get("wcs_sanity_ccvals_max_disagreement_pixels", 5.0)))
         ),
 
         wcs_sanity_max_median_residual_arcsec=min(
@@ -2145,6 +2229,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         observing_site_longitude_deg=observing_site_longitude_deg,
 
         observing_site_elevation_m=observing_site_elevation_m,
+
+        ephemeris_min_altitude_deg=ephemeris_min_altitude_deg,
 
         observing_site_presets=observing_site_presets,
 
@@ -2559,6 +2645,9 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "sky_explorer_left_splitter_sizes": _coerce_splitter_sizes(settings.sky_explorer_left_splitter_sizes, expected_count=2),
         "sky_explorer_results_splitter_sizes": _coerce_splitter_sizes(settings.sky_explorer_results_splitter_sizes, expected_count=2),
         "sky_explorer_main_splitter_sizes": _coerce_splitter_sizes(settings.sky_explorer_main_splitter_sizes, expected_count=2),
+        "observation_deck_main_splitter_sizes": _coerce_splitter_sizes(settings.observation_deck_main_splitter_sizes, expected_count=3),
+        "observation_deck_left_splitter_sizes": _coerce_splitter_sizes(settings.observation_deck_left_splitter_sizes, expected_count=2),
+        "observation_deck_right_splitter_sizes": _coerce_splitter_sizes(settings.observation_deck_right_splitter_sizes, expected_count=2),
         "sky_explorer_object_type_column_widths": _coerce_sky_explorer_object_type_column_widths(settings.sky_explorer_object_type_column_widths),
         "sky_explorer_results_column_widths": _coerce_sky_explorer_results_column_widths(settings.sky_explorer_results_column_widths),
         "sky_explorer_simbad_search_radius_arcsec": _coerce_sky_explorer_simbad_search_radius_arcsec(settings.sky_explorer_simbad_search_radius_arcsec),
@@ -2635,6 +2724,42 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "wcs_sanity_min_matches": min(30, max(1, int(settings.wcs_sanity_min_matches))),
 
         "wcs_sanity_approval_percent": min(100.0, max(1.0, float(settings.wcs_sanity_approval_percent))),
+
+        "wcs_sanity_probe_start_percent": min(
+            100.0, max(1.0, float(settings.wcs_sanity_probe_start_percent))
+        ),
+
+        "wcs_sanity_quality_sample_max_count": min(
+            128, max(8, int(settings.wcs_sanity_quality_sample_max_count))
+        ),
+
+        "wcs_sanity_minimum_source_snr": min(
+            1000.0, max(1.0, float(settings.wcs_sanity_minimum_source_snr))
+        ),
+
+        "wcs_sanity_max_median_residual_pixels": min(
+            20.0, max(0.1, float(settings.wcs_sanity_max_median_residual_pixels))
+        ),
+
+        "wcs_sanity_match_tolerance_pixels": min(
+            20.0, max(0.5, float(settings.wcs_sanity_match_tolerance_pixels))
+        ),
+
+        "wcs_sanity_isolation_fwhm_multiplier": min(
+            20.0, max(0.0, float(settings.wcs_sanity_isolation_fwhm_multiplier))
+        ),
+
+        "wcs_sanity_soft_max_median_residual_pixels": min(
+            20.0, max(0.1, float(settings.wcs_sanity_soft_max_median_residual_pixels))
+        ),
+
+        "wcs_sanity_soft_max_coherent_shift_pixels": min(
+            20.0, max(0.1, float(settings.wcs_sanity_soft_max_coherent_shift_pixels))
+        ),
+
+        "wcs_sanity_ccvals_max_disagreement_pixels": min(
+            100.0, max(0.1, float(settings.wcs_sanity_ccvals_max_disagreement_pixels))
+        ),
 
         "wcs_sanity_max_median_residual_arcsec": min(
             60.0, max(0.1, float(settings.wcs_sanity_max_median_residual_arcsec))
@@ -2823,6 +2948,8 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "observing_site_longitude_deg": None if settings.observing_site_longitude_deg is None else min(180.0, max(-180.0, float(settings.observing_site_longitude_deg))),
 
         "observing_site_elevation_m": None if settings.observing_site_elevation_m is None else min(12000.0, max(-500.0, float(settings.observing_site_elevation_m))),
+
+        "ephemeris_min_altitude_deg": normalize_ephemeris_min_altitude_deg(settings.ephemeris_min_altitude_deg),
 
         "observing_site_presets": _serialize_observing_site_presets(settings.observing_site_presets),
 
@@ -3221,17 +3348,7 @@ def _synthetic_tracking_legacy_combine_mode(integration_mode: object, rejection_
 
 
 def _coerce_asteroid_visual_marker_style(value: object) -> str:
-    key = str(value or "target").strip().lower()
-    allowed = {"target", "circle", "brackets", "crosshair"}
-    if key in {"square", "aim", "square-aim", "square_aim"}:
-        return "target"
-    if key in {"open_cross", "open-cross", "open_crosshair"}:
-        return "crosshair"
-    if key in {"corner", "corner_brackets", "corner-brackets"}:
-        return "brackets"
-    if key == "diamond":
-        return "target"
-    return key if key in allowed else "target"
+    return coerce_asteroid_visual_marker_style(value)
 
 def _coerce_asteroid_track_object_position_mode(value: object) -> str:
 

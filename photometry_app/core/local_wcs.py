@@ -66,6 +66,8 @@ class _DetectedSource:
     x: float
     y: float
     peak: float
+    snr: float | None = None
+    fwhm_px: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,8 +438,65 @@ def _detect_image_sources(source_path: Path) -> list[_DetectedSource]:
         for row in rows
         if np.isfinite(row.x) and np.isfinite(row.y) and np.isfinite(row.peak)
     ]
+    candidates = _characterize_detected_sources(data, candidates)
     height, width = int(data.shape[0]), int(data.shape[1])
     return _select_wcs_match_sources(candidates, width=width, height=height)
+
+
+def _characterize_detected_sources(
+    data: np.ndarray,
+    sources: Sequence[_DetectedSource],
+) -> list[_DetectedSource]:
+    """Attach setup-independent SNR and FWHM estimates to detected peaks."""
+    sample_step = max(1, int(math.sqrt(max(1, data.size // 250_000))))
+    sample = np.asarray(data[::sample_step, ::sample_step], dtype=float)
+    finite = np.asarray(sample[np.isfinite(sample)], dtype=float)
+    if finite.size == 0:
+        return list(sources)
+    background = float(np.median(finite))
+    mad = float(np.median(np.abs(finite - background)))
+    noise = max(1.0e-9, 1.4826 * mad)
+    height, width = int(data.shape[0]), int(data.shape[1])
+    characterized: list[_DetectedSource] = []
+    for source in sources:
+        center_x = int(round(float(source.x)))
+        center_y = int(round(float(source.y)))
+        radius = 6
+        x0 = max(0, center_x - radius)
+        x1 = min(width, center_x + radius + 1)
+        y0 = max(0, center_y - radius)
+        y1 = min(height, center_y + radius + 1)
+        patch = np.asarray(data[y0:y1, x0:x1], dtype=float)
+        fwhm_px: float | None = None
+        if patch.size:
+            border = np.concatenate((patch[0, :], patch[-1, :], patch[:, 0], patch[:, -1]))
+            finite_border = border[np.isfinite(border)]
+            local_background = float(np.median(finite_border)) if finite_border.size else background
+            weights = np.clip(np.nan_to_num(patch - local_background, nan=0.0), 0.0, None)
+            yy, xx = np.indices(weights.shape, dtype=float)
+            xx += float(x0)
+            yy += float(y0)
+            radial_mask = np.square(xx - float(source.x)) + np.square(yy - float(source.y)) <= float(radius * radius)
+            weights = np.where(radial_mask, weights, 0.0)
+            total = float(np.sum(weights))
+            if total > 0:
+                variance_x = float(np.sum(weights * np.square(xx - float(source.x))) / total)
+                variance_y = float(np.sum(weights * np.square(yy - float(source.y))) / total)
+                sigma = math.sqrt(max(0.0, (variance_x + variance_y) / 2.0))
+                candidate_fwhm = 2.354820045 * sigma
+                if np.isfinite(candidate_fwhm) and 0.5 <= candidate_fwhm <= float(radius * 2):
+                    fwhm_px = candidate_fwhm
+        snr = float(source.peak) / noise if np.isfinite(source.peak) else None
+        characterized.append(
+            _DetectedSource(
+                x=float(source.x),
+                y=float(source.y),
+                peak=float(source.peak),
+                snr=float(snr) if snr is not None and np.isfinite(snr) else None,
+                fwhm_px=fwhm_px,
+            )
+        )
+    return characterized
 
 
 def _select_wcs_match_sources(

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QWidget
 
 
 from photometry_app.core.plotting import AnnotatedImageDisplay, AnnotatedImageRenderSettings, render_annotated_image
+from photometry_app.core.target_markers import pointer_marker_segments
 
 
 _OVERLAY_LABEL_CANDIDATE_ANGLES: tuple[float, ...] = (
@@ -3452,6 +3453,50 @@ class AnnotatedImageView(QWidget):
             painter.setPen(pen)
 
             draw_crosshair(painter)
+
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+
+            return
+
+        if overlay.marker_style == "pointer":
+
+            gap = max(6.0, float(overlay.aperture_radius) * 1.15)
+
+            image_bounds = self._image_bounds_rect()
+
+            fallback_length = max(8.0, float(overlay.aperture_radius) * 2.2)
+
+            left_bound = overlay.x - fallback_length
+
+            top_bound = overlay.y - fallback_length
+
+            if not image_bounds.isEmpty():
+
+                left_bound = image_bounds.left() + 2.0
+
+                top_bound = image_bounds.top() + 2.0
+
+            def draw_pointer(active_painter: QPainter) -> None:
+
+                for start, end in pointer_marker_segments(
+                    overlay.x,
+                    overlay.y,
+                    left=left_bound,
+                    top=top_bound,
+                    gap=gap,
+                ):
+
+                    active_painter.drawLine(QPointF(start[0], start[1]), QPointF(end[0], end[1]))
+
+            if outline_pen is not None:
+
+                painter.setPen(outline_pen)
+
+                draw_pointer(painter)
+
+            painter.setPen(pen)
+
+            draw_pointer(painter)
 
             painter.setBrush(Qt.BrushStyle.NoBrush)
 

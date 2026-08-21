@@ -2637,7 +2637,21 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(self.window._image_info_panel_toggle_button.text(), "Hide Info")
 
-        self.assertFalse(self.window._image_frame_selector.isVisible())
+        self.assertFalse(self.window._image_frame_selector.isHidden())
+
+        self.assertEqual(self.window._image_frame_selector.width(), 156)
+
+        self.assertFalse(self.window._image_frame_selector.isEnabled())
+
+        self.assertEqual(self.window._image_frame_selector.currentText(), "No processed frames")
+
+        self.assertEqual(self.window._image_blink_button.text(), "Blink")
+
+        self.assertTrue(self.window._image_blink_button.isCheckable())
+
+        self.assertFalse(self.window._image_blink_button.isEnabled())
+
+        self.assertEqual(self.window._image_center_object_button.text(), "Center")
 
 
 
@@ -2681,7 +2695,21 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIsNotNone(display_controls_layout_obj)
 
-        display_controls_layout = cast(QHBoxLayout, display_controls_layout_obj)
+        display_controls_layout = cast(QVBoxLayout, display_controls_layout_obj)
+
+        stretch_row_item = display_controls_layout.itemAt(0)
+
+        action_row_item = display_controls_layout.itemAt(1)
+
+        self.assertIsNotNone(stretch_row_item)
+
+        self.assertIsNotNone(action_row_item)
+
+        assert stretch_row_item is not None and action_row_item is not None
+
+        stretch_row = cast(QHBoxLayout, stretch_row_item.layout())
+
+        action_row = cast(QHBoxLayout, action_row_item.layout())
 
 
 
@@ -2695,9 +2723,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(controls_layout.indexOf(self.window._image_mark_saturated_checkbox), -1)
 
-        self.assertEqual(controls_layout.indexOf(self.window._image_frame_selector), -1)
+        self.assertGreaterEqual(controls_layout.indexOf(self.window._image_frame_selector), 0)
 
         self.assertGreaterEqual(controls_layout.indexOf(self.window._display_section_label), 0)
+
+        self.assertGreaterEqual(controls_layout.indexOf(self.window._image_blink_button), 0)
+
+        self.assertGreaterEqual(controls_layout.indexOf(self.window._image_center_object_button), 0)
 
         self.assertEqual(controls_layout.indexOf(self.window._image_stretch_combo), -1)
 
@@ -2707,15 +2739,21 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(controls_layout.indexOf(self.window._image_zoom_reset_button), -1)
 
-        self.assertGreaterEqual(display_controls_layout.indexOf(self.window._image_stretch_combo), 0)
+        self.assertGreaterEqual(stretch_row.indexOf(self.window._image_stretch_combo), 0)
 
-        self.assertGreater(display_controls_layout.indexOf(self.window._image_adjust_levels_button), display_controls_layout.indexOf(self.window._image_stretch_combo))
+        self.assertGreaterEqual(action_row.indexOf(self.window._image_adjust_levels_button), 0)
 
-        self.assertGreater(display_controls_layout.indexOf(self.window._image_invert_checkbox), display_controls_layout.indexOf(self.window._image_adjust_levels_button))
+        self.assertGreater(action_row.indexOf(self.window._image_invert_checkbox), action_row.indexOf(self.window._image_adjust_levels_button))
 
-        self.assertGreater(display_controls_layout.indexOf(self.window._image_zoom_reset_button), display_controls_layout.indexOf(self.window._image_invert_checkbox))
+        self.assertGreater(action_row.indexOf(self.window._image_zoom_reset_button), action_row.indexOf(self.window._image_invert_checkbox))
 
-        self.assertGreater(controls_layout.indexOf(self.window._edit_apertures_checkbox), controls_layout.indexOf(self.window._display_section_label))
+        self.assertGreater(controls_layout.indexOf(self.window._image_frame_selector), controls_layout.indexOf(self.window._display_section_label))
+
+        self.assertGreater(controls_layout.indexOf(self.window._image_blink_button), controls_layout.indexOf(self.window._image_frame_selector))
+
+        self.assertGreater(controls_layout.indexOf(self.window._image_center_object_button), controls_layout.indexOf(self.window._image_blink_button))
+
+        self.assertGreater(controls_layout.indexOf(self.window._edit_apertures_checkbox), controls_layout.indexOf(self.window._image_center_object_button))
 
         self.assertGreater(controls_layout.indexOf(self.window._apply_apertures_button), controls_layout.indexOf(self.window._edit_apertures_checkbox))
 
@@ -2928,6 +2966,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(self.window._measurement_filter_row.indexOf(self.window._calculate_period_button), -1)
 
+        self.assertLess(self.window._measurement_filter_row.indexOf(self.window._ephemeris_button), self.window._measurement_filter_row.indexOf(self.window._scan_comps_button))
+
         self.assertLess(self.window._measurement_filter_row.indexOf(self.window._scan_comps_button), self.window._measurement_filter_row.indexOf(self.window._discover_button))
 
         self.assertLess(self.window._measurement_filter_row.indexOf(self.window._increase_snr_button), self.window._measurement_filter_row.indexOf(self.window._discover_button))
@@ -2935,6 +2975,11 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(self.window._measurement_filter_row.indexOf(self.window._clear_source_selection_button), -1)
 
         self.assertEqual(self.window._measurement_filter_row.indexOf(self.window._measurement_reset_button), -1)
+
+    def test_ephemeris_button_is_enabled_without_an_image(self) -> None:
+        self.assertTrue(self.window._ephemeris_button.isEnabled())
+        self.assertEqual(self.window._ephemeris_button.text(), "Ephemeris")
+        self.assertFalse(self.window._scan_comps_button.isEnabled())
 
 
 
@@ -2966,6 +3011,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIn("border: 1px solid", self.window._scan_comps_button.styleSheet())
 
+        self.assertIn("border: 1px solid", self.window._ephemeris_button.styleSheet())
+
         self.assertIn("border: 1px solid", self.window._discover_button.styleSheet())
 
         self.assertIn("border: 1px solid", self.window._increase_snr_button.styleSheet())
@@ -2995,9 +3042,14 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.window._display_section_label.height(),
         )
 
+        self.assertEqual(
+            self.window._image_blink_button.height(),
+            self.window._display_section_label.height(),
+        )
+
         self.assertGreater(
             self.window._image_center_object_button.minimumWidth(),
-            self.window._image_center_object_button.fontMetrics().horizontalAdvance("Center Object"),
+            self.window._image_center_object_button.fontMetrics().horizontalAdvance("Center"),
         )
 
         accent = QColor(
@@ -3082,18 +3134,32 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertIsNotNone(display_controls_layout_obj)
 
-        display_controls_layout = cast(QHBoxLayout, display_controls_layout_obj)
+        display_controls_layout = cast(QVBoxLayout, display_controls_layout_obj)
 
+        action_row_item = display_controls_layout.itemAt(1)
+
+        self.assertIsNotNone(action_row_item)
+
+        assert action_row_item is not None
+
+        action_row = cast(QHBoxLayout, action_row_item.layout())
+
+
+        self.assertLess(controls_layout.indexOf(self.window._display_section_label), controls_layout.indexOf(self.window._image_frame_selector))
+
+        self.assertLess(controls_layout.indexOf(self.window._image_frame_selector), controls_layout.indexOf(self.window._image_blink_button))
+
+        self.assertLess(controls_layout.indexOf(self.window._image_blink_button), controls_layout.indexOf(self.window._image_center_object_button))
+
+        self.assertLess(controls_layout.indexOf(self.window._image_center_object_button), controls_layout.indexOf(self.window._edit_apertures_checkbox))
 
         self.assertLess(controls_layout.indexOf(self.window._edit_apertures_checkbox), controls_layout.indexOf(self.window._apply_apertures_button))
 
         self.assertLess(controls_layout.indexOf(self.window._apply_apertures_button), controls_layout.indexOf(self.window._image_info_panel_toggle_button))
 
-        self.assertLess(controls_layout.indexOf(self.window._display_section_label), controls_layout.indexOf(self.window._edit_apertures_checkbox))
-
         self.assertEqual(self.window._display_section_label.minimumHeight(), self.window._increase_snr_button.minimumHeight())
 
-        self.assertLess(display_controls_layout.indexOf(self.window._image_invert_checkbox), display_controls_layout.indexOf(self.window._image_zoom_reset_button))
+        self.assertLess(action_row.indexOf(self.window._image_invert_checkbox), action_row.indexOf(self.window._image_zoom_reset_button))
 
         self.assertEqual(controls_layout.indexOf(self.window._aperture_preset_combo), -1)
 
@@ -3127,6 +3193,246 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(self.window._image_info_panel_toggle_button.text(), "Hide Info")
 
         render_image.assert_called_once()
+
+
+
+    def test_image_frame_selector_popup_shows_full_frame_name(self) -> None:
+        long_name = "aligned_very_long_science_frame_name_that_must_stay_readable.fits"
+        self.window._image_frame_selector.blockSignals(True)
+        self.window._image_frame_selector.clear()
+        self.window._image_frame_selector.addItem(long_name, ("vsx-1", "V", long_name, "-"))
+        self.window._image_frame_selector.setEnabled(True)
+        self.window._image_frame_selector.blockSignals(False)
+        self.window._image_frame_selector.showPopup()
+        popup_width = self.window._image_frame_selector.view().minimumWidth()
+        self.window._image_frame_selector.hidePopup()
+        self.assertEqual(self.window._image_frame_selector.width(), 156)
+        self.assertGreater(popup_width, self.window._image_frame_selector.width())
+        self.assertGreaterEqual(popup_width, self.window.fontMetrics().horizontalAdvance(long_name))
+
+    def test_switching_image_frame_keeps_overlays_updates_info_and_reuses_stf(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first_path = Path(temp_dir) / "aligned_long_frame_name_01.fits"
+            second_path = Path(temp_dir) / "aligned_long_frame_name_02.fits"
+            first_path.write_bytes(b"frame-a")
+            second_path.write_bytes(b"frame-b")
+            time_a = datetime(2026, 3, 16, 1, 0, 0)
+            time_b = datetime(2026, 3, 16, 1, 5, 0)
+
+            def _measurement(path: Path, observation_time: datetime, snr: float, x_value: float, y_value: float) -> PhotometryMeasurement:
+                return PhotometryMeasurement(
+                    source_id="vsx-1",
+                    source_name="Target",
+                    catalog="vsx",
+                    object_name="Demo",
+                    file_path=path,
+                    observation_time=observation_time,
+                    filter_name="V",
+                    ra_deg=10.0,
+                    dec_deg=20.0,
+                    x=x_value,
+                    y=y_value,
+                    flux=5000.0,
+                    flux_error=125.0,
+                    instrumental_magnitude=-9.0,
+                    differential_magnitude=0.32,
+                    is_variable=True,
+                    is_reference=False,
+                    snr=snr,
+                    aperture_radius=6.0,
+                    annulus_inner_radius=10.0,
+                    annulus_outer_radius=14.0,
+                )
+
+            first_measurement = _measurement(first_path, time_a, 40.5, 50.0, 60.0)
+            second_measurement = _measurement(second_path, time_b, 22.0, 55.0, 62.0)
+            series = LightCurveSeries(
+                object_name="Demo",
+                source_id="vsx-1",
+                source_name="Target",
+                filter_name="V",
+                points=[
+                    LightCurvePoint(observation_time=time_a, file_path=first_path, differential_magnitude=0.32, instrumental_magnitude=-9.0, flux=5000.0, flux_error=125.0),
+                    LightCurvePoint(observation_time=time_b, file_path=second_path, differential_magnitude=0.35, instrumental_magnitude=-9.1, flux=4800.0, flux_error=130.0),
+                ],
+            )
+            self.window._current_processing_report = ProcessingReport(
+                object_name="Demo",
+                files_processed=2,
+                solved_files=2,
+                field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, variable_stars=[]),
+                measurements=[first_measurement, second_measurement],
+                light_curves=[series],
+            )
+            preview_a = np.full((8, 8), 0.08, dtype=float)
+            preview_a[3, 3] = 0.9
+            preview_b = np.clip(preview_a * 1.7, 0.0, 1.0)
+            display_a = AnnotatedImageDisplay(image_path=first_path, normalized_data=preview_a, norm=object(), preview_normalized=preview_a)
+            display_b = AnnotatedImageDisplay(image_path=second_path, normalized_data=preview_b, norm=object(), preview_normalized=preview_b)
+            displays = {first_path.resolve(): display_a, second_path.resolve(): display_b}
+            captured: list[tuple[object, object, object, object]] = []
+
+            def _set_content(display, overlays, *args, **kwargs):
+                captured.append((display, overlays, kwargs.get("render_settings"), kwargs.get("info_panel")))
+
+            self.window._series_selector.blockSignals(True)
+            self.window._series_selector.clear()
+            self.window._series_selector.addItem("Target [V]", series)
+            self.window._series_selector.setCurrentIndex(0)
+            self.window._series_selector.blockSignals(False)
+            self.window._image_context_source = "series"
+            self.window._populate_image_frame_selector()
+            self.assertEqual(
+                [self.window._image_frame_selector.itemText(index) for index in range(self.window._image_frame_selector.count())],
+                [first_path.name, second_path.name],
+            )
+            self.assertEqual(self.window._image_frame_selector.width(), 156)
+
+            with (
+                patch.object(self.window, "_cached_annotated_image_display", side_effect=lambda path: displays[path.resolve()]),
+                patch.object(self.window._image_view, "set_content", side_effect=_set_content),
+                patch.object(self.window._image_view, "set_hover_text_formatter"),
+                patch.object(self.window, "_selected_object_name", return_value="Demo"),
+                patch.object(self.window, "_create_image_loading_progress_dialog", return_value=MagicMock()),
+            ):
+                self.window._render_image_panel()
+                self.window._image_context_source = "source"
+                self.window._image_frame_selector.setCurrentIndex(1)
+
+            self.assertEqual(self.window._image_context_source, "series")
+            self.assertEqual(len(captured), 2)
+            first_overlays = captured[0][1]
+            second_overlays = captured[1][1]
+            self.assertTrue(first_overlays)
+            self.assertTrue(second_overlays)
+            self.assertEqual(first_overlays[0].x, 50.0)
+            self.assertEqual(second_overlays[0].x, 55.0)
+            first_settings = captured[0][2]
+            second_settings = captured[1][2]
+            self.assertEqual(first_settings.stretch_mode, "stf")
+            self.assertEqual(second_settings.stretch_mode, "stf")
+            first_sections = {section.title: {item.label: item.value for item in section.items} for section in captured[0][3].sections}
+            second_sections = {section.title: {item.label: item.value for item in section.items} for section in captured[1][3].sections}
+            self.assertEqual(first_sections["Selected Source"]["SNR"], "40.50")
+            self.assertEqual(second_sections["Selected Source"]["SNR"], "22.00")
+            self.assertEqual(first_sections["Frame"]["File"], first_path.name)
+            self.assertEqual(second_sections["Frame"]["File"], second_path.name)
+
+
+    def test_switching_image_frame_shows_loading_dialog(self) -> None:
+        dialog = MagicMock()
+        with (
+            patch.object(self.window, "_create_image_loading_progress_dialog", return_value=dialog) as create_dialog,
+            patch.object(self.window, "_render_image_panel") as render_panel,
+            patch.object(self.window, "_image_context", return_value=(Path("frame_02.fits"), None, [], "")),
+            patch("photometry_app.ui.main_window.qt_object_is_valid", return_value=True),
+        ):
+            self.window._handle_image_frame_changed(1)
+        create_dialog.assert_called_once_with("Loading frame_02.fits...")
+        dialog.show.assert_called_once_with()
+        render_panel.assert_called_once_with()
+        dialog.close.assert_called_once_with()
+        dialog.deleteLater.assert_called_once_with()
+
+
+    def test_image_blink_cycles_frames_without_loading_dialog(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first_path = Path(temp_dir) / "frame_01.fits"
+            second_path = Path(temp_dir) / "frame_02.fits"
+            first_path.write_bytes(b"frame-a")
+            second_path.write_bytes(b"frame-b")
+            time_a = datetime(2026, 3, 16, 1, 0, 0)
+            time_b = datetime(2026, 3, 16, 1, 5, 0)
+            first_measurement = PhotometryMeasurement(
+                source_id="vsx-1",
+                source_name="Target",
+                catalog="vsx",
+                object_name="Demo",
+                file_path=first_path,
+                observation_time=time_a,
+                filter_name="V",
+                ra_deg=10.0,
+                dec_deg=20.0,
+                x=50.0,
+                y=60.0,
+                flux=5000.0,
+                flux_error=125.0,
+                instrumental_magnitude=-9.0,
+                differential_magnitude=0.32,
+                is_variable=True,
+                is_reference=False,
+                snr=40.5,
+                aperture_radius=6.0,
+                annulus_inner_radius=10.0,
+                annulus_outer_radius=14.0,
+            )
+            second_measurement = PhotometryMeasurement(
+                source_id="vsx-1",
+                source_name="Target",
+                catalog="vsx",
+                object_name="Demo",
+                file_path=second_path,
+                observation_time=time_b,
+                filter_name="V",
+                ra_deg=10.0,
+                dec_deg=20.0,
+                x=55.0,
+                y=62.0,
+                flux=4800.0,
+                flux_error=130.0,
+                instrumental_magnitude=-9.1,
+                differential_magnitude=0.35,
+                is_variable=True,
+                is_reference=False,
+                snr=22.0,
+                aperture_radius=6.0,
+                annulus_inner_radius=10.0,
+                annulus_outer_radius=14.0,
+            )
+            series = LightCurveSeries(
+                object_name="Demo",
+                source_id="vsx-1",
+                source_name="Target",
+                filter_name="V",
+                points=[
+                    LightCurvePoint(observation_time=time_a, file_path=first_path, differential_magnitude=0.32, instrumental_magnitude=-9.0, flux=5000.0, flux_error=125.0),
+                    LightCurvePoint(observation_time=time_b, file_path=second_path, differential_magnitude=0.35, instrumental_magnitude=-9.1, flux=4800.0, flux_error=130.0),
+                ],
+            )
+            self.window._current_processing_report = ProcessingReport(
+                object_name="Demo",
+                files_processed=2,
+                solved_files=2,
+                field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, variable_stars=[]),
+                measurements=[first_measurement, second_measurement],
+                light_curves=[series],
+            )
+            self.window._series_selector.blockSignals(True)
+            self.window._series_selector.clear()
+            self.window._series_selector.addItem("Target [V]", series)
+            self.window._series_selector.setCurrentIndex(0)
+            self.window._series_selector.blockSignals(False)
+            self.window._populate_image_frame_selector()
+            self.assertTrue(self.window._image_blink_button.isEnabled())
+            progress_dialog = MagicMock()
+            with (
+                patch.object(self.window, "_cached_annotated_image_display"),
+                patch.object(self.window, "_render_image_panel") as render_panel,
+                patch.object(self.window, "_create_image_loading_progress_dialog") as create_dialog,
+                patch("photometry_app.ui.main_window.QProgressDialog", return_value=progress_dialog),
+            ):
+                self.window._image_blink_button.setChecked(True)
+                self.assertTrue(self.window._image_blink_timer.isActive())
+                self.assertEqual(self.window._image_frame_selector.currentIndex(), 0)
+                self.window._advance_image_blink_frame()
+                self.assertEqual(self.window._image_frame_selector.currentIndex(), 1)
+                self.window._advance_image_blink_frame()
+                self.assertEqual(self.window._image_frame_selector.currentIndex(), 0)
+                self.window._image_blink_button.setChecked(False)
+            self.assertFalse(self.window._image_blink_timer.isActive())
+            self.assertFalse(self.window._image_blink_button.isChecked())
+            create_dialog.assert_not_called()
+            self.assertGreaterEqual(render_panel.call_count, 2)
 
 
     def test_apply_apertures_button_only_enables_with_editor_on(self) -> None:
@@ -3543,6 +3849,44 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             positions = self.window._manual_overlay_positions_for_image(image_path, config)
 
         self.assertEqual(positions["manual-comp-1"], (123.5, 456.5))
+
+
+
+    def test_manual_overlay_positions_keep_reference_pixels_when_other_frame_has_no_wcs(self) -> None:
+
+        source = ManualSourceConfig(
+
+            source_id="manual-target-1",
+
+            name="Target",
+
+            role=ManualSourceRole.TARGET,
+
+            ra_deg=10.0,
+
+            dec_deg=20.0,
+
+            reference_frame_name="frame_01.fits",
+
+            reference_x=123.5,
+
+            reference_y=456.5,
+
+            aperture_radius=6.0,
+
+            annulus_inner_radius=9.0,
+
+            annulus_outer_radius=13.0,
+
+        )
+
+        config = ManualPhotometryConfig(object_name="Demo", keep_comparison_stars=False, sources=[source])
+
+        with patch.object(self.window, "_celestial_wcs_for_manual_image", side_effect=RuntimeError("no wcs")):
+
+            positions = self.window._manual_overlay_positions_for_image(Path("frame_02.fits"), config)
+
+        self.assertEqual(positions["manual-target-1"], (123.5, 456.5))
 
 
 
@@ -9450,11 +9794,18 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             output_path = Path(temp_dir) / "target_field.gif"
             worker = MagicMock()
             progress_dialog = MagicMock()
-            progress_dialog.canceled.connect = MagicMock()
+            progress_dialog.cancel_requested.connect = MagicMock()
 
             from photometry_app.core.target_field_animation import TargetFieldAnimationExportOptions
 
-            options = TargetFieldAnimationExportOptions(fov_px=180, align=True, fps=15.0, stretch_mode="asinh")
+            options = TargetFieldAnimationExportOptions(
+                fov_px=180,
+                align_mode="align_then_crop",
+                duration_seconds=6.0,
+                scale_percent=75,
+                stretch_mode="asinh",
+                export_format="gif",
+            )
             options_dialog = MagicMock()
             options_dialog.exec.return_value = QDialog.DialogCode.Accepted
             options_dialog.selected_options.return_value = options
@@ -9466,22 +9817,152 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                 "photometry_app.ui.main_window.QFileDialog.getSaveFileName",
                 return_value=(str(output_path), "GIF Files (*.gif)"),
             ), patch(
-                "photometry_app.ui.main_window.QProgressDialog",
+                "photometry_app.ui.main_window.TargetFieldAnimationProgressDialog",
                 return_value=progress_dialog,
-            ), patch(
+            ) as progress_class, patch(
                 "photometry_app.ui.main_window.TargetFieldAnimationExportWorker",
                 return_value=worker,
             ) as worker_class:
                 self.window._export_target_field_animation()
 
             dialog_class.assert_called_once()
+            self.assertEqual(dialog_class.call_args.kwargs["frame_count"], 1)
+            progress_class.assert_called_once()
+            self.assertEqual(progress_class.call_args.kwargs["frame_count"], 1)
+            self.assertEqual(progress_class.call_args.kwargs["align_mode"], "align_then_crop")
+            self.assertEqual(progress_class.call_args.kwargs["export_format"], "gif")
+            progress_dialog.cancel_requested.connect.assert_called_once()
+            progress_dialog.show.assert_called_once()
             worker_class.assert_called_once()
             self.assertEqual(worker_class.call_args.args[1], series.source_id)
             self.assertEqual(worker_class.call_args.kwargs["fov_px"], 180)
-            self.assertTrue(worker_class.call_args.kwargs["align"])
-            self.assertEqual(worker_class.call_args.kwargs["fps"], 15.0)
+            self.assertEqual(worker_class.call_args.kwargs["align_mode"], "align_then_crop")
+            self.assertEqual(worker_class.call_args.kwargs["duration_seconds"], 6.0)
+            self.assertEqual(worker_class.call_args.kwargs["loop_count"], 1)
+            self.assertEqual(worker_class.call_args.kwargs["scale_percent"], 75)
             self.assertEqual(worker_class.call_args.kwargs["stretch_mode"], "asinh")
+            self.assertEqual(worker_class.call_args.kwargs["export_format"], "gif")
+            self.assertEqual(worker_class.call_args.kwargs["marker_style"], "none")
             worker.start.assert_called_once()
+
+    def test_target_field_animation_dialog_defaults_and_mp4_options(self) -> None:
+        from photometry_app.core.target_field_animation import (
+            DEFAULT_TARGET_FIELD_ALIGN_MODE,
+            DEFAULT_TARGET_FIELD_DURATION_SECONDS,
+            DEFAULT_TARGET_FIELD_SCALE_PERCENT,
+            TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+            TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
+        )
+        from photometry_app.ui.dialogs import TargetFieldAnimationExportDialog
+
+        dialog = TargetFieldAnimationExportDialog(frame_count=10, parent=self.window)
+        options = dialog.selected_options()
+        self.assertEqual(options.align_mode, DEFAULT_TARGET_FIELD_ALIGN_MODE)
+        self.assertEqual(options.align_mode, TARGET_FIELD_ALIGN_CROP_THEN_ALIGN)
+        self.assertEqual(options.duration_seconds, DEFAULT_TARGET_FIELD_DURATION_SECONDS)
+        self.assertEqual(options.loop_count, 1)
+        self.assertEqual(options.scale_percent, DEFAULT_TARGET_FIELD_SCALE_PERCENT)
+        self.assertEqual(options.export_format, "gif")
+        self.assertEqual(options.marker_style, "none")
+        self.assertEqual(options.marker_length_percent, 36)
+        self.assertEqual(options.marker_line_width, 2.0)
+        self.assertFalse(dialog._marker_length_input.isEnabled())
+        self.assertFalse(dialog._loop_input.isEnabled())
+        self.assertFalse(dialog._preview_label.pixmap().isNull())
+        self.assertEqual(dialog._marker_input.itemText(0), "None")
+        self.assertGreaterEqual(dialog._marker_input.findData("pointer"), 0)
+        self.assertIn(
+            "slower",
+            dialog._align_input.itemText(dialog._align_input.findData(TARGET_FIELD_ALIGN_ALIGN_THEN_CROP)),
+        )
+
+        dialog._align_input.setCurrentIndex(dialog._align_input.findData(TARGET_FIELD_ALIGN_ALIGN_THEN_CROP))
+        dialog._format_input.setCurrentIndex(dialog._format_input.findData("mp4"))
+        dialog._duration_input.setValue(12.0)
+        dialog._loop_input.setValue(4)
+        dialog._scale_input.setValue(150)
+        dialog._marker_input.setCurrentIndex(dialog._marker_input.findData("pointer"))
+        dialog._marker_length_input.setValue(24)
+        dialog._marker_width_input.setValue(3.0)
+        dialog._marker_line_color = "#22c55e"
+        dialog._update_marker_color_button()
+        dialog._refresh_preview()
+        options = dialog.selected_options()
+        self.assertEqual(options.align_mode, TARGET_FIELD_ALIGN_ALIGN_THEN_CROP)
+        self.assertEqual(options.export_format, "mp4")
+        self.assertEqual(options.duration_seconds, 12.0)
+        self.assertEqual(options.loop_count, 4)
+        self.assertEqual(options.scale_percent, 150)
+        self.assertEqual(options.marker_style, "pointer")
+        self.assertEqual(options.marker_length_percent, 24)
+        self.assertEqual(options.marker_line_width, 3.0)
+        self.assertEqual(options.marker_line_color, "#22c55e")
+        self.assertTrue(dialog._marker_length_input.isEnabled())
+        self.assertTrue(dialog._loop_input.isEnabled())
+        self.assertFalse(dialog._preview_label.pixmap().isNull())
+        self.assertIn("MP4", dialog._summary_label.text())
+        self.assertIn("4 loops", dialog._summary_label.text())
+
+    def test_target_field_animation_progress_dialog_shows_pipeline_and_green_finished_text(self) -> None:
+        from photometry_app.core.target_field_animation import (
+            TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+            TARGET_FIELD_PROGRESS_COMPOSE,
+            TARGET_FIELD_PROGRESS_PREPARE,
+            TARGET_FIELD_PROGRESS_STAGES,
+            TargetFieldAnimationProgress,
+        )
+        from photometry_app.ui.dialogs import TargetFieldAnimationProgressDialog
+
+        dialog = TargetFieldAnimationProgressDialog(
+            frame_count=8,
+            align_mode=TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+            export_format="mp4",
+            output_name="demo_target_field.mp4",
+            parent=self.window,
+        )
+        try:
+            self.assertEqual(len(dialog._stage_bars), 4)
+            self.assertEqual(list(dialog._stage_bars), list(TARGET_FIELD_PROGRESS_STAGES))
+            self.assertEqual(dialog._stage_titles[TARGET_FIELD_PROGRESS_PREPARE].text(), "Align, then crop")
+            self.assertEqual(dialog._close_button.text(), "Cancel")
+            self.assertIn("Step 1 of 4", dialog._remaining_label.text())
+
+            dialog.apply_progress(
+                TargetFieldAnimationProgress(
+                    stage=TARGET_FIELD_PROGRESS_PREPARE,
+                    completed=3,
+                    total=8,
+                    message="Aligning, then cropping frame 3/8...",
+                )
+            )
+            self.assertEqual(dialog._stage_bars[TARGET_FIELD_PROGRESS_PREPARE].value(), 3)
+            self.assertEqual(dialog._stage_bars[TARGET_FIELD_PROGRESS_PREPARE].maximum(), 8)
+            self.assertEqual(dialog._stage_status[TARGET_FIELD_PROGRESS_PREPARE].text(), "3 / 8")
+            self.assertEqual(dialog._stage_bars[TARGET_FIELD_PROGRESS_COMPOSE].value(), 0)
+
+            dialog.apply_progress(
+                TargetFieldAnimationProgress(
+                    stage=TARGET_FIELD_PROGRESS_COMPOSE,
+                    completed=2,
+                    total=8,
+                    message="Composing animation frame 2/8...",
+                )
+            )
+            self.assertEqual(dialog._stage_bars[TARGET_FIELD_PROGRESS_PREPARE].value(), 8)
+            self.assertEqual(dialog._stage_status[TARGET_FIELD_PROGRESS_PREPARE].text(), "Done")
+            self.assertEqual(dialog._stage_bars[TARGET_FIELD_PROGRESS_COMPOSE].value(), 2)
+            self.assertIn("Step 3 of 4", dialog._remaining_label.text())
+
+            dialog.set_finished("Saved target-field animation to demo_target_field.mp4.")
+            self.assertEqual(dialog._close_button.text(), "Close")
+            self.assertTrue(dialog._tip_label.text().startswith("✓"))
+            self.assertIn("#22c55e", dialog._tip_label.styleSheet())
+            self.assertEqual(dialog._remaining_label.text(), "Pipeline complete.")
+            for stage in TARGET_FIELD_PROGRESS_STAGES:
+                self.assertEqual(dialog._stage_status[stage].text(), "Done")
+                self.assertEqual(dialog._stage_bars[stage].value(), dialog._stage_bars[stage].maximum())
+        finally:
+            dialog.close()
 
     def test_export_active_light_curve_animated_gif_action_uses_animated_export(self) -> None:
         series = self._build_series()
@@ -16744,6 +17225,30 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                 "Observation Deck",
             ],
         )
+
+
+    def test_observation_deck_is_not_loaded_until_mode_is_selected(self) -> None:
+        self.assertIsNone(getattr(self.window, "_astro_tools_panel_widget", None))
+        with (
+            patch("photometry_app.ui.astro_tools_panel.load_observation_deck_library", return_value=None) as load_cached,
+            patch("photometry_app.ui.astro_tools_panel.scan_observation_deck") as scan,
+        ):
+            self.window._handle_app_mode_changed(AppMode.ASTRO_TOOLS)
+            scan.assert_not_called()
+            self.assertIsNotNone(self.window._astro_tools_panel_widget)
+            QApplication.processEvents()
+            panel = self.window._astro_tools_panel_widget
+            worker = getattr(getattr(panel, "_workspace", None), "_load_worker", None)
+            if worker is None:
+                QApplication.processEvents()
+                worker = getattr(getattr(panel, "_workspace", None), "_load_worker", None)
+            if worker is not None:
+                worker.wait(3000)
+                QApplication.processEvents()
+            load_cached.assert_called()
+            scan.assert_not_called()
+        self.assertIsNotNone(self.window._astro_tools_panel_widget)
+        self.assertEqual(self.window._app_mode_stack.currentWidget(), self.window._astro_tools_panel)
 
 
     def test_switching_to_sky_view_mode_shows_standalone_catalog_panel(self) -> None:
@@ -47423,6 +47928,104 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertFalse(overlays[0].show_center_dot)
 
+    def test_asteroid_overlays_use_pointer_marker_style(self) -> None:
+
+        source_path = Path(self._config_dir.name) / "known_pointer.fit"
+
+        source_path.write_bytes(b"simple")
+
+        detection = SolarSystemDetection(
+
+            name="Pointer 1",
+
+            designation="1",
+
+            object_type="Asteroid",
+
+            orbit_class="MBA",
+
+            predicted_ra_deg=10.0,
+
+            predicted_dec_deg=20.0,
+
+            predicted_x=40.0,
+
+            predicted_y=30.0,
+
+            predicted_magnitude=9.2,
+
+            ra_rate_arcsec_per_hour=12.0,
+
+            dec_rate_arcsec_per_hour=3.0,
+
+            motion_rate_arcsec_per_hour=12.4,
+
+            expected_trail_length_px=1.2,
+
+            positional_uncertainty_arcsec=0.5,
+
+            altitude_deg=48.0,
+
+            likely_visible=True,
+
+            confidence_score=0.91,
+
+            status="Likely visible",
+
+        )
+
+        self.window._settings.asteroid_visual_show_known_objects = True
+
+        self.window._settings.asteroid_visual_show_object_markers = True
+
+        self.window._settings.asteroid_visual_label_all_objects = False
+
+        self.window._settings.asteroid_visual_marker_style = "pointer"
+
+        self.window._settings.asteroid_visual_show_target_marker = True
+
+        self.window._current_asteroid_source_image = source_path
+
+        self.window._current_asteroid_detection_result = SolarSystemDetectionResult(
+
+            source_path=source_path,
+
+            solved_field=SolvedField(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, width=200, height=120, wcs_path=source_path),
+
+            observation_time=datetime(2025, 1, 14, 21, 12, tzinfo=UTC),
+
+            prediction_time=datetime(2025, 1, 14, 21, 13, tzinfo=UTC),
+
+            exposure_seconds=120.0,
+
+            filter_name="L",
+
+            pixel_scale_arcsec_per_pixel=1.5,
+
+            field_width_deg=0.2,
+
+            field_height_deg=0.12,
+
+            magnitude_limit=18.0,
+
+            used_astrometry_fallback=False,
+
+            detections=[detection],
+
+            summary_text="1 predicted object",
+
+        )
+
+        self.window._selected_asteroid_detection_index = 0
+
+        overlays = self.window._current_asteroid_image_overlays()
+
+        self.assertEqual(len(overlays), 1)
+
+        self.assertEqual(overlays[0].marker_style, "pointer")
+
+        self.assertTrue(overlays[0].show_marker)
+
 
 
     def test_asteroid_overlays_labels_without_target_marker_hide_markers(self) -> None:
@@ -52430,6 +53033,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._observing_site_elevation_input.setText("35")
 
+            dialog._ephemeris_min_altitude_input.setValue(12.0)
+
             dialog._telescope_input.setText("Test Telescope")
 
             dialog._telescope_focal_length_input.setValue(600.0)
@@ -52529,6 +53134,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertEqual(updated_settings.observing_site_longitude_deg, -0.1278)
 
             self.assertEqual(updated_settings.observing_site_elevation_m, 35.0)
+
+            self.assertEqual(updated_settings.ephemeris_min_altitude_deg, 12.0)
 
             self.assertEqual(updated_settings.telescope, "Test Telescope")
 
@@ -53170,6 +53777,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._frame_edge_margin_percent_input.setValue(12.0)
 
+            dialog._ephemeris_min_altitude_input.setValue(20.0)
+
             dialog._sky_explorer_simbad_search_radius_arcsec_input.setValue(44.0)
 
             dialog._sky_explorer_gaia_max_magnitude_input.setValue(19.5)
@@ -53213,6 +53822,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertEqual(updated_settings.nearby_reference_count, 5)
 
             self.assertEqual(updated_settings.frame_edge_margin_percent, 5.0)
+
+            self.assertEqual(updated_settings.ephemeris_min_altitude_deg, 5.0)
 
             self.assertEqual(updated_settings.sky_explorer_simbad_search_radius_arcsec, 10.0)
 

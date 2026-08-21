@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 import hashlib
+import math
 from pathlib import Path
 import re
 import warnings
@@ -15,14 +16,15 @@ from astropy.io.fits import Header
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 
-from photometry_app.core.catalogs import CatalogService
-from photometry_app.core.local_wcs import _detect_image_sources, _unique_nearest_matches
+from photometry_app.core.catalogs import CatalogService, DEFAULT_GAIA_TILE_OPTIONS, capped_solved_field
+from photometry_app.core.local_wcs import _DetectedSource, _detect_image_sources, _unique_nearest_matches
 from photometry_app.core.models import CatalogStar, SolvedField
 from photometry_app.core.wcs import celestial_wcs, extract_solved_field, validate_wcs
 
 
-_CCVALS_DISAGREE_ARCSEC = 15.0
 _MIN_DETECTION_SAMPLE = 8
+# Stay at or below the Gaia tile threshold so a WCS spot-check is one VizieR cone.
+_WCS_SANITY_PROBE_MAX_RADIUS_DEG = float(DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg)
 _MIN_BIN_GAIA_STARS = 5
 _DEFAULT_MAGNITUDE_BINS: tuple[tuple[float, float], ...] = (
     (5.0, 10.0),
@@ -37,22 +39,31 @@ _DEFAULT_MAGNITUDE_BINS: tuple[tuple[float, float], ...] = (
 class WcsSanityOptions:
     enabled: bool = True
     approval_percent: float = 90.0
-    max_median_residual_arcsec: float = 3.0
-    match_tolerance_arcsec: float = 8.0
-    detection_sample_count: int = 80
-    skip_brightest_detections: int = 10
+    probe_start_fraction: float = 0.10
+    quality_sample_max_count: int = 32
+    minimum_source_snr: float = 8.0
+    max_median_residual_pixels: float = 2.0
+    match_tolerance_pixels: float = 3.0
     subtract_coherent_shift: bool = True
     soft_accept_enabled: bool = True
     soft_approval_percent: float = 65.0
-    soft_max_median_residual_arcsec: float = 5.0
-    soft_max_coherent_shift_arcsec: float = 6.0
+    soft_max_median_residual_pixels: float = 1.5
+    soft_max_coherent_shift_pixels: float = 2.0
     frame_margin_percent: float = 25.0
     gaia_max_magnitude: float = 18.0
+    isolation_fwhm_multiplier: float = 2.5
+    ccvals_max_disagreement_pixels: float = 5.0
     ccvals_repair_enabled: bool = True
     # Retained for settings compatibility with older installs.
     candidate_count: int = 10
     min_matches: int = 5
     gaia_min_magnitude: float = 5.0
+    max_median_residual_arcsec: float = 3.0
+    match_tolerance_arcsec: float = 8.0
+    detection_sample_count: int = 80
+    skip_brightest_detections: int = 10
+    soft_max_median_residual_arcsec: float = 5.0
+    soft_max_coherent_shift_arcsec: float = 6.0
     isolation_arcsec: float = 8.0
 
 
@@ -65,6 +76,8 @@ class WcsSanityCheckResult:
     candidate_count: int = 0
     median_residual_arcsec: float | None = None
     coherent_shift_arcsec: float | None = None
+    median_residual_pixels: float | None = None
+    coherent_shift_pixels: float | None = None
     approved_bin: tuple[float, float] | None = None
 
 
@@ -129,6 +142,7 @@ def apply_embedded_wcs_policy(
     *,
     policy: EmbeddedWcsPolicy,
     cache_dir: Path,
+    max_disagreement_pixels: float = 5.0,
 ) -> EmbeddedWcsResolution:
     """Apply the chosen WCS reading method to one frame without re-running Gaia spot checks."""
     valid, validation_reasons = validate_wcs(header, source_path)
@@ -147,6 +161,7 @@ def apply_embedded_wcs_policy(
             width,
             height,
             cache_dir=cache_dir,
+            max_disagreement_pixels=max_disagreement_pixels,
         )
         reasons.extend(repair_reasons)
         if repaired_field is not None:
@@ -199,7 +214,7 @@ def resolve_embedded_wcs_with_sanity(
             _emit(progress_callback, reason)
         return EmbeddedWcsResolution(accepted=True, solved_field=solved_field, reasons=reasons)
 
-    _emit(progress_callback, "Checking embedded WCS against Gaia stars by magnitude bins.")
+    _emit(progress_callback, "Checking embedded WCS against quality-selected image stars and Gaia.")
     sanity = evaluate_wcs_sanity(
         source_path,
         header,
@@ -225,6 +240,7 @@ def resolve_embedded_wcs_with_sanity(
             width,
             height,
             cache_dir=cache_dir,
+            max_disagreement_pixels=options.ccvals_max_disagreement_pixels,
         )
         for reason in repair_reasons:
             _emit(progress_callback, reason)
@@ -264,7 +280,10 @@ def evaluate_wcs_sanity(
     cache_dir: Path | None = None,
     progress_callback: Callable[[str], None] | None = None,
 ) -> WcsSanityCheckResult:
-    keyword_result = evaluate_ccvals_keyword_sanity(header)
+    keyword_result = evaluate_ccvals_keyword_sanity(
+        header,
+        max_disagreement_pixels=options.ccvals_max_disagreement_pixels,
+    )
     if keyword_result is not None:
         for reason in keyword_result.reasons:
             _emit(progress_callback, reason)
@@ -294,6 +313,13 @@ def evaluate_wcs_sanity(
         ),
     )
 
+    pixel_scales = proj_plane_pixel_scales(wcs) * 3600.0
+    mean_scale = float(np.mean(pixel_scales))
+    if not np.isfinite(mean_scale) or mean_scale <= 0:
+        mean_scale = 1.0
+    center_x = width / 2.0
+    center_y = height / 2.0
+
     try:
         detected_sources = _detect_image_sources(source_path)
     except Exception as exc:
@@ -303,100 +329,151 @@ def evaluate_wcs_sanity(
         _emit(progress_callback, reason)
         return WcsSanityCheckResult(passed=True, status="skipped", reasons=[reason])
 
-    usable_detections = sorted(
-        (
-            source
-            for source in detected_sources
-            if x_min <= source.x <= x_max and y_min <= source.y <= y_max
-        ),
-        key=lambda source: float(source.peak),
-        reverse=True,
+    probe_samples = _adaptive_probe_samples(
+        detected_sources,
+        solved_field=solved_field,
+        mean_scale_arcsec=mean_scale,
+        width=width,
+        height=height,
+        x_min=x_min,
+        x_max=x_max,
+        y_min=y_min,
+        y_max=y_max,
+        options=options,
     )
+    if not probe_samples:
+        if keyword_result is not None and not keyword_result.passed:
+            return keyword_result
+        reason = (
+            "WCS sanity check skipped; the adaptive probe could not find enough "
+            "unsaturated, measurable image stars."
+        )
+        _emit(progress_callback, reason)
+        return WcsSanityCheckResult(passed=True, status="skipped", reasons=[reason])
+
+    service = catalog_service or CatalogService((cache_dir or Path(".")) / "catalogs")
+    selected_sources: list[_DetectedSource] = []
+    probe_fraction = 1.0
+    gaia_stars: list[CatalogStar] = []
+    projected: list[tuple[float, float, float, CatalogStar]] = []
+    isolated: list[tuple[float, float, float, CatalogStar]] = []
+    isolation_pixels = 0.0
+    median_fwhm_px: float | None = None
+    for probe_index, (candidate_fraction, candidate_radius_px, candidate_sources) in enumerate(probe_samples):
+        probe_field = capped_solved_field(
+            solved_field,
+            min(
+                _WCS_SANITY_PROBE_MAX_RADIUS_DEG,
+                max(1.0e-6, float(solved_field.radius_deg) * candidate_fraction),
+            ),
+        )
+        _emit(
+            progress_callback,
+            (
+                f"WCS sanity adaptive probe {candidate_fraction * 100.0:.0f}% of field radius "
+                f"({candidate_radius_px:.0f} px, {probe_field.radius_deg:.4f} deg): "
+                f"{len(candidate_sources)} quality-selected detection(s)."
+            ),
+        )
+        _emit_quality_sample_summary(progress_callback, candidate_sources)
+        try:
+            candidate_gaia = service.query_gaia_stars_limited(
+                probe_field,
+                maximum_magnitude=options.gaia_max_magnitude,
+                row_limit=5000,
+                progress_callback=progress_callback,
+                progress_label="WCS sanity probe",
+            )
+        except Exception as exc:
+            if keyword_result is not None and not keyword_result.passed:
+                return WcsSanityCheckResult(
+                    passed=False,
+                    status="keyword_fail",
+                    reasons=[
+                        *keyword_result.reasons,
+                        f"Gaia spot-check unavailable ({exc}); rejecting embedded WCS from keyword disagreement.",
+                    ],
+                    coherent_shift_arcsec=keyword_result.coherent_shift_arcsec,
+                    coherent_shift_pixels=keyword_result.coherent_shift_pixels,
+                )
+            reason = f"WCS sanity check skipped; Gaia query failed: {exc}"
+            _emit(progress_callback, reason)
+            return WcsSanityCheckResult(passed=True, status="skipped", reasons=[reason])
+
+        candidate_projected = _project_gaia_in_usable_frame(
+            candidate_gaia,
+            wcs,
+            x_min=x_min,
+            x_max=x_max,
+            y_min=y_min,
+            y_max=y_max,
+        )
+        candidate_projected = [
+            item
+            for item in candidate_projected
+            if float(np.hypot(item[1] - center_x, item[2] - center_y)) <= candidate_radius_px
+        ]
+        candidate_fwhm = _median_detection_fwhm(candidate_sources)
+        candidate_isolation_pixels = _resolved_isolation_pixels(
+            candidate_fwhm,
+            options.isolation_fwhm_multiplier,
+        )
+        candidate_isolated = _isolated_projected_gaia(
+            candidate_projected,
+            candidate_isolation_pixels,
+        )
+        selected_sources = candidate_sources
+        probe_fraction = candidate_fraction
+        gaia_stars = candidate_gaia
+        projected = candidate_projected
+        isolated = candidate_isolated
+        isolation_pixels = candidate_isolation_pixels
+        median_fwhm_px = candidate_fwhm
+        if len(isolated) >= max(_MIN_BIN_GAIA_STARS, int(options.min_matches)):
+            break
+        if probe_index + 1 < len(probe_samples):
+            _emit(
+                progress_callback,
+                (
+                    f"WCS sanity probe found only {len(isolated)} isolated Gaia star(s); "
+                    "expanding the relative probe."
+                ),
+            )
+
     detected_points = np.asarray(
-        [(source.x, source.y) for source in usable_detections],
+        [(source.x, source.y) for source in selected_sources],
         dtype=float,
     )
     _emit(
         progress_callback,
-        f"WCS sanity detections: {len(detected_points)} source(s) inside the usable frame "
-        f"({len(detected_sources)} total detected).",
+        (
+            f"WCS sanity detections: selected {len(detected_points)} quality source(s) "
+            f"inside the {probe_fraction * 100.0:.0f}% relative probe "
+            f"({len(detected_sources)} total detected)."
+        ),
     )
-    if len(detected_points) < 3:
-        if keyword_result is not None and not keyword_result.passed:
-            return keyword_result
-        reason = (
-            f"WCS sanity check skipped; only {len(detected_points)} image star(s) "
-            "detected inside the usable frame."
-        )
-        _emit(progress_callback, reason)
-        return WcsSanityCheckResult(passed=True, status="skipped", reasons=[reason])
-
-    try:
-        service = catalog_service or CatalogService((cache_dir or Path(".")) / "catalogs")
-        gaia_stars = service.query_gaia_stars_limited(
-            solved_field,
-            maximum_magnitude=options.gaia_max_magnitude,
-            row_limit=5000,
-            progress_callback=progress_callback,
-        )
-    except Exception as exc:
-        if keyword_result is not None and not keyword_result.passed:
-            return WcsSanityCheckResult(
-                passed=False,
-                status="keyword_fail",
-                reasons=[
-                    *keyword_result.reasons,
-                    f"Gaia spot-check unavailable ({exc}); rejecting embedded WCS from keyword disagreement.",
-                ],
-                coherent_shift_arcsec=keyword_result.coherent_shift_arcsec,
-            )
-        reason = f"WCS sanity check skipped; Gaia query failed: {exc}"
-        _emit(progress_callback, reason)
-        return WcsSanityCheckResult(passed=True, status="skipped", reasons=[reason])
-
-    _emit(progress_callback, f"WCS sanity Gaia catalog: {len(gaia_stars)} star(s) at G <= {options.gaia_max_magnitude:.1f}.")
-
-    pixel_scales = proj_plane_pixel_scales(wcs) * 3600.0
-    mean_scale = float(np.mean(pixel_scales))
-    if not np.isfinite(mean_scale) or mean_scale <= 0:
-        mean_scale = 1.0
-    search_arcsec = max(0.5, float(options.match_tolerance_arcsec))
-    residual_limit_arcsec = max(
-        options.max_median_residual_arcsec * 2.0,
-        search_arcsec,
+    _emit(
+        progress_callback,
+        f"WCS sanity Gaia catalog: {len(gaia_stars)} star(s) at G <= {options.gaia_max_magnitude:.1f}.",
     )
-    tolerance_pixels = max(1.5, search_arcsec / mean_scale)
-    isolation_pixels = (
-        0.0
-        if float(options.isolation_arcsec) <= 0.0
-        else max(1.0, float(options.isolation_arcsec) / mean_scale)
+    tolerance_pixels = max(
+        1.0,
+        float(options.match_tolerance_pixels),
+        0.75 * median_fwhm_px if median_fwhm_px is not None else 0.0,
     )
+    hard_residual_limit_pixels = max(0.25, float(options.max_median_residual_pixels))
     approval_fraction = min(1.0, max(0.0, float(options.approval_percent) / 100.0))
     soft_approval_fraction = min(1.0, max(0.0, float(options.soft_approval_percent) / 100.0))
-    skip_brightest = max(0, int(options.skip_brightest_detections))
-    sample_size = max(_MIN_DETECTION_SAMPLE, int(options.detection_sample_count))
-    if len(detected_points) <= _MIN_DETECTION_SAMPLE:
-        detection_sample = detected_points
-        skipped_brightest = 0
-    else:
-        start = min(skip_brightest, max(0, len(detected_points) - _MIN_DETECTION_SAMPLE))
-        detection_sample = detected_points[start : start + sample_size]
-        if len(detection_sample) < _MIN_DETECTION_SAMPLE:
-            detection_sample = detected_points[:sample_size]
-            skipped_brightest = 0
-        else:
-            skipped_brightest = start
     _emit(
         progress_callback,
         (
-            f"WCS sanity detection→Gaia check: sample {len(detection_sample)} detection(s) "
-            f"(skipped {skipped_brightest} brightest); "
-            f"match tolerance {search_arcsec:.1f}\" ({tolerance_pixels:.2f} px); "
+            f"WCS sanity detection→Gaia check: {len(detected_points)} quality detection(s); "
+            f"match tolerance {tolerance_pixels:.2f} px ({tolerance_pixels * mean_scale:.2f}\"); "
             f"hard approval {options.approval_percent:.0f}%"
             + (
                 f", soft accept >= {options.soft_approval_percent:.0f}% "
-                f"with residual <= {options.soft_max_median_residual_arcsec:.1f}\" "
-                f"and shift <= {options.soft_max_coherent_shift_arcsec:.1f}\""
+                f"with residual <= {options.soft_max_median_residual_pixels:.2f} px "
+                f"and shift <= {options.soft_max_coherent_shift_pixels:.2f} px"
                 if options.soft_accept_enabled
                 else ""
             )
@@ -407,21 +484,12 @@ def evaluate_wcs_sanity(
             )
         ),
     )
-
-    projected = _project_gaia_in_usable_frame(
-        gaia_stars,
-        wcs,
-        x_min=x_min,
-        x_max=x_max,
-        y_min=y_min,
-        y_max=y_max,
-    )
-    isolated = _isolated_projected_gaia(projected, isolation_pixels)
     _emit(
         progress_callback,
         (
-            f"WCS sanity projected {len(projected)} Gaia star(s) into the usable frame "
-            f"({len(isolated)} isolated, neighbor > {options.isolation_arcsec:.1f}\")."
+            f"WCS sanity projected {len(projected)} Gaia star(s) into the probe region "
+            f"({len(isolated)} isolated, neighbor > {isolation_pixels:.2f} px"
+            f"{'' if median_fwhm_px is None else f' = {options.isolation_fwhm_multiplier:.2f}× median FWHM'})."
         ),
     )
 
@@ -429,135 +497,125 @@ def evaluate_wcs_sanity(
     if keyword_result is not None:
         reasons.extend(keyword_result.reasons)
 
-    bins_checked = 0
-    for mag_min, mag_max in magnitude_bins_for_options(options):
-        # Match detections against Gaia stars brighter than the bin ceiling so a
-        # bright-star sample is not forced to find partners only inside a faint bin.
-        match_catalog = [item for item in isolated if item[0] < mag_max]
-        bin_reference = [item for item in match_catalog if item[0] >= mag_min]
-        if len(bin_reference) < _MIN_BIN_GAIA_STARS:
-            message = (
-                f"WCS sanity G={mag_min:.0f}-{mag_max:.0f}: "
-                f"only {len(bin_reference)} isolated Gaia star(s) in bin; trying next bin."
+    if len(isolated) < max(_MIN_BIN_GAIA_STARS, int(options.min_matches)):
+        reason = (
+            "WCS sanity check skipped; the adaptive probe did not contain enough "
+            "isolated Gaia references."
+        )
+        reasons.append(reason)
+        _emit(progress_callback, reason)
+        if keyword_result is not None and not keyword_result.passed:
+            return WcsSanityCheckResult(
+                passed=False,
+                status="keyword_fail",
+                reasons=reasons,
+                coherent_shift_arcsec=keyword_result.coherent_shift_arcsec,
+                coherent_shift_pixels=keyword_result.coherent_shift_pixels,
             )
-            reasons.append(message)
-            _emit(progress_callback, message)
-            continue
-        if len(match_catalog) < _MIN_BIN_GAIA_STARS:
-            message = (
-                f"WCS sanity G={mag_min:.0f}-{mag_max:.0f}: "
-                f"insufficient isolated Gaia stars brighter than G={mag_max:.0f}; trying next bin."
+        return WcsSanityCheckResult(passed=True, status="skipped", reasons=reasons)
+
+    catalog_points = np.asarray([(item[1], item[2]) for item in isolated], dtype=float)
+    probe_tolerance = tolerance_pixels * (1.5 if options.subtract_coherent_shift else 1.0)
+    detection_indices, catalog_indices, distances_px = _unique_nearest_matches(
+        detected_points,
+        catalog_points,
+        probe_tolerance,
+    )
+    coherent_shift_pixels = None
+    if len(detection_indices) >= max(3, int(options.min_matches)):
+        offset_vectors = detected_points[detection_indices] - catalog_points[catalog_indices]
+        median_offset_px = np.median(offset_vectors, axis=0)
+        coherent_shift_pixels = float(np.hypot(median_offset_px[0], median_offset_px[1]))
+        if options.subtract_coherent_shift and coherent_shift_pixels > 0.05:
+            shifted_detections = detected_points - median_offset_px
+            detection_indices, catalog_indices, distances_px = _unique_nearest_matches(
+                shifted_detections,
+                catalog_points,
+                tolerance_pixels,
             )
-            reasons.append(message)
-            _emit(progress_callback, message)
-            continue
 
-        bins_checked += 1
-        catalog_points = np.asarray([(item[1], item[2]) for item in match_catalog], dtype=float)
-        match_points = detection_sample
-        probe_tolerance = tolerance_pixels * (1.5 if options.subtract_coherent_shift else 1.0)
-        detection_indices, catalog_indices, distances_px = _unique_nearest_matches(
-            match_points,
-            catalog_points,
-            probe_tolerance,
-        )
-        coherent_shift = None
-        median_offset_px = None
-        if len(detection_indices) >= max(3, int(options.min_matches)):
-            offset_vectors = match_points[detection_indices] - catalog_points[catalog_indices]
-            median_offset_px = np.median(offset_vectors, axis=0)
-            coherent_shift = float(np.hypot(median_offset_px[0], median_offset_px[1]) * mean_scale)
-            if options.subtract_coherent_shift and coherent_shift is not None and coherent_shift > 0.05:
-                shifted_detections = match_points - median_offset_px
-                detection_indices, catalog_indices, distances_px = _unique_nearest_matches(
-                    shifted_detections,
-                    catalog_points,
-                    tolerance_pixels,
-                )
-                if len(detection_indices) >= max(3, int(options.min_matches)):
-                    refined_offsets = shifted_detections[detection_indices] - catalog_points[catalog_indices]
-                    refined_median = np.median(refined_offsets, axis=0)
-                    # Report the pre-subtraction coherent shift; residual is after subtraction.
-                    coherent_shift = float(np.hypot(median_offset_px[0], median_offset_px[1]) * mean_scale)
-                    _ = refined_median
+    matched = int(len(detection_indices))
+    total = int(len(detected_points))
+    approval = (matched / total) if total else 0.0
+    median_residual_pixels = float(np.median(distances_px)) if matched else None
+    median_residual_arcsec = (
+        median_residual_pixels * mean_scale if median_residual_pixels is not None else None
+    )
+    coherent_shift_arcsec = (
+        coherent_shift_pixels * mean_scale if coherent_shift_pixels is not None else None
+    )
 
-        matched = int(len(detection_indices))
-        total = int(len(detection_sample))
-        approval = (matched / total) if total else 0.0
-        median_residual = float(np.median(distances_px) * mean_scale) if matched else None
+    residual_ok = (
+        median_residual_pixels is not None
+        and median_residual_pixels <= hard_residual_limit_pixels
+    )
+    hard_approved = (
+        approval >= approval_fraction
+        and matched >= max(3, int(options.min_matches))
+        and residual_ok
+    )
+    soft_approved = bool(
+        options.soft_accept_enabled
+        and matched >= max(3, int(options.min_matches))
+        and approval >= soft_approval_fraction
+        and median_residual_pixels is not None
+        and median_residual_pixels <= float(options.soft_max_median_residual_pixels)
+        and coherent_shift_pixels is not None
+        and coherent_shift_pixels <= float(options.soft_max_coherent_shift_pixels)
+    )
+    approved = hard_approved or soft_approved
+    residual_text = (
+        f", median residual {median_residual_pixels:.2f} px ({median_residual_arcsec:.2f}\")"
+        f", coherent shift {coherent_shift_pixels:.2f} px ({coherent_shift_arcsec:.2f}\")"
+        if median_residual_pixels is not None and coherent_shift_pixels is not None
+        else ""
+    )
+    if hard_approved:
+        verdict = " - approved."
+    elif soft_approved:
+        verdict = " - soft-accepted (stable pixel residual/shift)."
+    else:
+        verdict = " - below approval threshold."
+    message = (
+        f"WCS sanity quality sample: matched {matched}/{total} detections "
+        f"({approval * 100.0:.1f}%){residual_text}{verdict}"
+    )
+    reasons.append(message)
+    _emit(progress_callback, message)
 
-        residual_ok = median_residual is not None and median_residual <= residual_limit_arcsec
-        hard_approved = (
-            approval >= approval_fraction
-            and matched >= max(3, int(options.min_matches))
-            and residual_ok
+    if approved:
+        summary = (
+            f"WCS sanity check passed using quality-selected, unsaturated detections "
+            f"({matched}/{total} = {approval * 100.0:.1f}%"
+            f"{'' if hard_approved else ' via soft accept'}, "
+            f"median residual {median_residual_pixels:.2f} px ({median_residual_arcsec:.2f}\")"
+            f"{'' if coherent_shift_pixels is None else f', coherent shift {coherent_shift_pixels:.2f} px ({coherent_shift_arcsec:.2f}\")'})."
         )
-        soft_approved = bool(
-            options.soft_accept_enabled
-            and matched >= max(3, int(options.min_matches))
-            and approval >= soft_approval_fraction
-            and median_residual is not None
-            and median_residual <= float(options.soft_max_median_residual_arcsec)
-            and coherent_shift is not None
-            and coherent_shift <= float(options.soft_max_coherent_shift_arcsec)
+        reasons.append(summary)
+        _emit(progress_callback, summary)
+        return WcsSanityCheckResult(
+            passed=True,
+            status="passed",
+            reasons=reasons,
+            match_count=matched,
+            candidate_count=total,
+            median_residual_arcsec=median_residual_arcsec,
+            coherent_shift_arcsec=coherent_shift_arcsec,
+            median_residual_pixels=median_residual_pixels,
+            coherent_shift_pixels=coherent_shift_pixels,
         )
-        approved = hard_approved or soft_approved
-        residual_text = (
-            f", median residual {median_residual:.2f}\", coherent shift {coherent_shift:.2f}\""
-            if median_residual is not None and coherent_shift is not None
+
+    reason = (
+        "WCS sanity check failed; the quality-selected sample did not reach "
+        f"{options.approval_percent:.0f}% approval with median residual <= "
+        f"{hard_residual_limit_pixels:.2f} px"
+        + (
+            f" or soft-accept (>= {options.soft_approval_percent:.0f}% with stable pixel residual/shift)"
+            if options.soft_accept_enabled
             else ""
         )
-        if hard_approved:
-            verdict = " - approved."
-        elif soft_approved:
-            verdict = " - soft-accepted (stable residual/shift)."
-        else:
-            verdict = " - below approval threshold."
-        message = (
-            f"WCS sanity G<{mag_max:.0f} (bin G={mag_min:.0f}-{mag_max:.0f}): "
-            f"matched {matched}/{total} detections ({approval * 100.0:.1f}%){residual_text}"
-            f"{verdict}"
-        )
-        reasons.append(message)
-        _emit(progress_callback, message)
-
-        if approved:
-            summary = (
-                f"WCS sanity check passed using detection→Gaia sample for G={mag_min:.0f}-{mag_max:.0f} "
-                f"({matched}/{total} = {approval * 100.0:.1f}%"
-                f"{'' if hard_approved else ' via soft accept'}, "
-                f"median residual {median_residual:.2f}\""
-                f"{'' if coherent_shift is None else f', coherent shift {coherent_shift:.2f}\"'})."
-            )
-            reasons.append(summary)
-            _emit(progress_callback, summary)
-            return WcsSanityCheckResult(
-                passed=True,
-                status="passed",
-                reasons=reasons,
-                match_count=matched,
-                candidate_count=total,
-                median_residual_arcsec=median_residual,
-                coherent_shift_arcsec=coherent_shift,
-                approved_bin=(mag_min, mag_max),
-            )
-
-    if bins_checked == 0:
-        reason = (
-            "WCS sanity check failed; no magnitude bin had enough isolated Gaia stars "
-            "to score the detection sample."
-        )
-    else:
-        reason = (
-            "WCS sanity check failed; no magnitude bin reached "
-            f"{options.approval_percent:.0f}% detection→Gaia approval"
-            + (
-                f" or soft-accept (>= {options.soft_approval_percent:.0f}% with stable residual/shift)"
-                if options.soft_accept_enabled
-                else ""
-            )
-            + f" with median residual <= {residual_limit_arcsec:.1f}\"."
-        )
+        + "."
+    )
     reasons.append(reason)
     _emit(progress_callback, reason)
     if keyword_result is not None and not keyword_result.passed:
@@ -565,12 +623,243 @@ def evaluate_wcs_sanity(
             passed=False,
             status="failed",
             reasons=reasons,
+            match_count=matched,
+            candidate_count=total,
+            median_residual_arcsec=median_residual_arcsec,
             coherent_shift_arcsec=keyword_result.coherent_shift_arcsec,
+            median_residual_pixels=median_residual_pixels,
+            coherent_shift_pixels=keyword_result.coherent_shift_pixels,
         )
-    return WcsSanityCheckResult(passed=False, status="failed", reasons=reasons)
+    return WcsSanityCheckResult(
+        passed=False,
+        status="failed",
+        reasons=reasons,
+        match_count=matched,
+        candidate_count=total,
+        median_residual_arcsec=median_residual_arcsec,
+        coherent_shift_arcsec=coherent_shift_arcsec,
+        median_residual_pixels=median_residual_pixels,
+        coherent_shift_pixels=coherent_shift_pixels,
+    )
 
 
-def evaluate_ccvals_keyword_sanity(header: Header) -> WcsSanityCheckResult | None:
+def _adaptive_probe_samples(
+    detected_sources: Sequence[_DetectedSource],
+    *,
+    solved_field: SolvedField,
+    mean_scale_arcsec: float,
+    width: int,
+    height: int,
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+    options: WcsSanityOptions,
+) -> list[tuple[float, float, list[_DetectedSource]]]:
+    center_x = width / 2.0
+    center_y = height / 2.0
+    samples: list[tuple[float, float, list[_DetectedSource]]] = []
+    max_fraction = min(
+        1.0,
+        _WCS_SANITY_PROBE_MAX_RADIUS_DEG / max(1.0e-6, float(solved_field.radius_deg)),
+    )
+    for fraction in _adaptive_probe_fractions(options.probe_start_fraction, max_fraction):
+        radius_deg = min(
+            _WCS_SANITY_PROBE_MAX_RADIUS_DEG,
+            max(1.0e-6, float(solved_field.radius_deg) * fraction),
+        )
+        radius_px = radius_deg * 3600.0 / max(mean_scale_arcsec, 1.0e-9)
+        inside = [
+            source
+            for source in detected_sources
+            if x_min <= source.x <= x_max
+            and y_min <= source.y <= y_max
+            and float(np.hypot(source.x - center_x, source.y - center_y)) <= radius_px
+        ]
+        selected = _select_quality_detections(
+            inside,
+            width=width,
+            height=height,
+            minimum_snr=options.minimum_source_snr,
+            max_count=options.quality_sample_max_count,
+        )
+        if len(selected) >= _MIN_DETECTION_SAMPLE:
+            samples.append((fraction, radius_px, selected))
+    return samples
+
+
+def _adaptive_probe_fractions(start_fraction: float, max_fraction: float = 1.0) -> list[float]:
+    ceiling = min(1.0, max(0.01, float(max_fraction)))
+    current = min(ceiling, max(0.01, float(start_fraction)))
+    fractions = [current]
+    while current < ceiling - 1.0e-9:
+        current = min(ceiling, max(current + 0.05, current * 1.8))
+        if current - fractions[-1] > 1.0e-9:
+            fractions.append(current)
+    return fractions
+
+
+def _select_quality_detections(
+    sources: Sequence[_DetectedSource],
+    *,
+    width: int,
+    height: int,
+    minimum_snr: float,
+    max_count: int,
+) -> list[_DetectedSource]:
+    usable = [
+        source
+        for source in sources
+        if np.isfinite(source.x)
+        and np.isfinite(source.y)
+        and np.isfinite(source.peak)
+        and float(source.peak) > 0.0
+    ]
+    if not usable:
+        return []
+
+    snr_filtered = [
+        source
+        for source in usable
+        if source.snr is None
+        or not np.isfinite(source.snr)
+        or float(source.snr) >= max(1.0, float(minimum_snr))
+    ]
+    if len(snr_filtered) >= _MIN_DETECTION_SAMPLE:
+        usable = snr_filtered
+
+    fwhm_values = np.asarray(
+        [
+            float(source.fwhm_px)
+            for source in usable
+            if source.fwhm_px is not None and np.isfinite(source.fwhm_px)
+        ],
+        dtype=float,
+    )
+    if len(fwhm_values) >= _MIN_DETECTION_SAMPLE:
+        median_fwhm = float(np.median(fwhm_values))
+        fwhm_filtered = [
+            source
+            for source in usable
+            if source.fwhm_px is None
+            or not np.isfinite(source.fwhm_px)
+            or 0.5 * median_fwhm <= float(source.fwhm_px) <= 2.0 * median_fwhm
+        ]
+        if len(fwhm_filtered) >= _MIN_DETECTION_SAMPLE:
+            usable = fwhm_filtered
+
+    peaks = np.asarray([float(source.peak) for source in usable], dtype=float)
+    max_peak = float(np.max(peaks))
+    near_ceiling = peaks >= max_peak * 0.985
+    exact_ceiling = np.isclose(peaks, max_peak, rtol=1.0e-4, atol=1.0)
+    if len(usable) >= _MIN_DETECTION_SAMPLE and int(np.count_nonzero(exact_ceiling)) >= max(2, len(usable) // 8):
+        unsaturated = [source for source, is_ceiling in zip(usable, near_ceiling) if not is_ceiling]
+        if len(unsaturated) >= _MIN_DETECTION_SAMPLE:
+            usable = unsaturated
+            peaks = np.asarray([float(source.peak) for source in usable], dtype=float)
+
+    if len(usable) >= 12:
+        low_peak, high_peak = np.percentile(peaks, [15.0, 90.0])
+        moderate = [
+            source
+            for source in usable
+            if float(low_peak) <= float(source.peak) <= float(high_peak)
+        ]
+        if len(moderate) >= _MIN_DETECTION_SAMPLE:
+            usable = moderate
+            peaks = np.asarray([float(source.peak) for source in usable], dtype=float)
+
+    target_peak = float(np.percentile(peaks, 65.0))
+    ranked = sorted(
+        usable,
+        key=lambda source: (
+            abs(math.log(max(float(source.peak), 1.0e-9)) - math.log(max(target_peak, 1.0e-9))),
+            -(float(source.snr) if source.snr is not None and np.isfinite(source.snr) else 0.0),
+        ),
+    )
+    return _spatial_quality_sample(
+        ranked,
+        width=width,
+        height=height,
+        limit=max(_MIN_DETECTION_SAMPLE, int(max_count)),
+    )
+
+
+def _spatial_quality_sample(
+    ranked_sources: Sequence[_DetectedSource],
+    *,
+    width: int,
+    height: int,
+    limit: int,
+    grid: int = 4,
+) -> list[_DetectedSource]:
+    if len(ranked_sources) <= limit:
+        return list(ranked_sources)
+    grid_size = max(1, int(grid))
+    buckets: list[list[_DetectedSource]] = [[] for _ in range(grid_size * grid_size)]
+    for source in ranked_sources:
+        column = min(grid_size - 1, max(0, int(float(source.x) * grid_size / max(width, 1))))
+        row = min(grid_size - 1, max(0, int(float(source.y) * grid_size / max(height, 1))))
+        buckets[row * grid_size + column].append(source)
+    selected: list[_DetectedSource] = []
+    cursor = 0
+    while len(selected) < limit:
+        progressed = False
+        for bucket in buckets:
+            if cursor < len(bucket):
+                selected.append(bucket[cursor])
+                progressed = True
+                if len(selected) >= limit:
+                    break
+        if not progressed:
+            break
+        cursor += 1
+    return selected
+
+
+def _median_detection_fwhm(sources: Sequence[_DetectedSource]) -> float | None:
+    values = [
+        float(source.fwhm_px)
+        for source in sources
+        if source.fwhm_px is not None and np.isfinite(source.fwhm_px) and float(source.fwhm_px) > 0
+    ]
+    return float(np.median(values)) if values else None
+
+
+def _resolved_isolation_pixels(median_fwhm_px: float | None, multiplier: float) -> float:
+    if float(multiplier) <= 0.0:
+        return 0.0
+    if median_fwhm_px is None:
+        return max(1.0, float(multiplier))
+    return max(1.0, float(multiplier) * float(median_fwhm_px))
+
+
+def _emit_quality_sample_summary(
+    progress_callback: Callable[[str], None] | None,
+    sources: Sequence[_DetectedSource],
+) -> None:
+    if not sources:
+        return
+    peaks = [float(source.peak) for source in sources]
+    snr_values = [
+        float(source.snr)
+        for source in sources
+        if source.snr is not None and np.isfinite(source.snr)
+    ]
+    fwhm = _median_detection_fwhm(sources)
+    details = f"background-subtracted peak {min(peaks):.1f}-{max(peaks):.1f}"
+    if snr_values:
+        details += f", SNR {min(snr_values):.1f}-{max(snr_values):.1f}"
+    if fwhm is not None:
+        details += f", median FWHM {fwhm:.2f} px"
+    _emit(progress_callback, f"WCS sanity source quality: {details}.")
+
+
+def evaluate_ccvals_keyword_sanity(
+    header: Header,
+    *,
+    max_disagreement_pixels: float = 5.0,
+) -> WcsSanityCheckResult | None:
     ccvals = parse_ccvals_center(header)
     if ccvals is None or "CRVAL1" not in header or "CRVAL2" not in header:
         return None
@@ -579,23 +868,41 @@ def evaluate_ccvals_keyword_sanity(header: Header) -> WcsSanityCheckResult | Non
     except Exception:
         return None
     separation = float(ccvals.separation(crval).arcsec)
-    if separation <= _CCVALS_DISAGREE_ARCSEC:
+    scale_arcsec = _header_mean_pixel_scale_arcsec(header)
+    separation_pixels = separation / scale_arcsec if scale_arcsec is not None else None
+    threshold_pixels = max(0.1, float(max_disagreement_pixels))
+    if separation_pixels is None:
+        return WcsSanityCheckResult(
+            passed=True,
+            status="keyword_skipped",
+            reasons=[
+                f"CCVALS and CRVAL differ by {separation:.1f}\", but pixel-scale "
+                "comparison is unavailable; leaving CRVAL unchanged."
+            ],
+            coherent_shift_arcsec=separation,
+        )
+    if separation_pixels <= threshold_pixels:
         return WcsSanityCheckResult(
             passed=True,
             status="keyword_ok",
-            reasons=[f"CCVALS and CRVAL agree within {separation:.1f}\"."],
+            reasons=[
+                f"CCVALS and CRVAL agree within {separation_pixels:.2f} px "
+                f"({separation:.1f}\")."
+            ],
             coherent_shift_arcsec=separation,
+            coherent_shift_pixels=separation_pixels,
         )
     return WcsSanityCheckResult(
         passed=False,
         status="keyword_fail",
         reasons=[
-            f"Embedded WCS keywords disagree: CCVALS and CRVAL differ by {separation:.1f}\" "
-            f"(threshold {_CCVALS_DISAGREE_ARCSEC:.0f}\")."
+            f"Embedded WCS keywords disagree: CCVALS and CRVAL differ by "
+            f"{separation_pixels:.2f} px ({separation:.1f}\"; "
+            f"threshold {threshold_pixels:.2f} px)."
         ],
         coherent_shift_arcsec=separation,
+        coherent_shift_pixels=separation_pixels,
     )
-
 
 def magnitude_bins_for_options(options: WcsSanityOptions) -> list[tuple[float, float]]:
     start = float(options.gaia_min_magnitude)
@@ -657,6 +964,7 @@ def try_repair_crval_from_ccvals(
     height: int | None,
     *,
     cache_dir: Path,
+    max_disagreement_pixels: float = 5.0,
 ) -> tuple[SolvedField | None, list[str]]:
     ccvals = parse_ccvals_center(header)
     if ccvals is None:
@@ -670,14 +978,26 @@ def try_repair_crval_from_ccvals(
         return None, [f"CCVALS repair unavailable; could not parse CRVAL: {exc}"]
 
     separation = float(ccvals.separation(crval).arcsec)
-    if separation <= _CCVALS_DISAGREE_ARCSEC:
-        return None, [f"CCVALS repair skipped; CRVAL already within {separation:.1f}\" of CCVALS."]
+    scale_arcsec = _header_mean_pixel_scale_arcsec(header)
+    if scale_arcsec is None:
+        return None, [
+            f"CCVALS repair skipped; CRVAL differs by {separation:.1f}\", but "
+            "the WCS pixel scale is unavailable."
+        ]
+    separation_pixels = separation / scale_arcsec
+    threshold_pixels = max(0.1, float(max_disagreement_pixels))
+    if separation_pixels <= threshold_pixels:
+        return None, [
+            f"CCVALS repair skipped; CRVAL already within {separation_pixels:.2f} px "
+            f"({separation:.1f}\") of CCVALS."
+        ]
 
     repaired = header.copy()
     repaired["CRVAL1"] = (float(ccvals.ra.deg), "Repaired from CCVALS1")
     repaired["CRVAL2"] = (float(ccvals.dec.deg), "Repaired from CCVALS2")
     repaired["WCSMETH"] = ("CCVALS-REPAIR", "CRVAL replaced from CCVALS sexagesimal center")
     repaired["WCSREPR"] = (separation, "Original CRVAL-CCVALS separation (arcsec)")
+    repaired["WCSREPP"] = (separation_pixels, "Original CRVAL-CCVALS separation (pixels)")
 
     valid, reasons = validate_wcs(repaired, source_path)
     if not valid:
@@ -694,7 +1014,8 @@ def try_repair_crval_from_ccvals(
         repaired_path.unlink(missing_ok=True)
         return None, ["CCVALS repair wrote a header but could not extract a solved field."]
     return solved_field, [
-        f"Repaired embedded WCS by replacing CRVAL with CCVALS (was off by {separation:.1f}\")."
+        f"Repaired embedded WCS by replacing CRVAL with CCVALS "
+        f"(was off by {separation_pixels:.2f} px / {separation:.1f}\")."
     ]
 
 
@@ -726,28 +1047,41 @@ def options_from_settings(settings: object) -> WcsSanityOptions:
     return WcsSanityOptions(
         enabled=bool(getattr(settings, "wcs_sanity_check_enabled", True)),
         approval_percent=min(100.0, max(1.0, approval_percent)),
-        max_median_residual_arcsec=max(
-            0.1, float(getattr(settings, "wcs_sanity_max_median_residual_arcsec", 3.0))
+        probe_start_fraction=min(
+            1.0,
+            max(
+                0.01,
+                float(getattr(settings, "wcs_sanity_probe_start_percent", 10.0)) / 100.0,
+            ),
         ),
-        match_tolerance_arcsec=max(
-            0.5, float(getattr(settings, "wcs_sanity_match_tolerance_arcsec", 8.0))
+        quality_sample_max_count=max(
+            _MIN_DETECTION_SAMPLE,
+            int(getattr(settings, "wcs_sanity_quality_sample_max_count", 32)),
         ),
-        detection_sample_count=max(
-            _MIN_DETECTION_SAMPLE, int(getattr(settings, "wcs_sanity_detection_sample_count", 80))
+        minimum_source_snr=max(
+            1.0,
+            float(getattr(settings, "wcs_sanity_minimum_source_snr", 8.0)),
         ),
-        skip_brightest_detections=max(
-            0, int(getattr(settings, "wcs_sanity_skip_brightest_detections", 10))
+        max_median_residual_pixels=max(
+            0.1,
+            float(getattr(settings, "wcs_sanity_max_median_residual_pixels", 2.0)),
+        ),
+        match_tolerance_pixels=max(
+            0.5,
+            float(getattr(settings, "wcs_sanity_match_tolerance_pixels", 3.0)),
         ),
         subtract_coherent_shift=bool(getattr(settings, "wcs_sanity_subtract_coherent_shift", True)),
         soft_accept_enabled=bool(getattr(settings, "wcs_sanity_soft_accept_enabled", True)),
         soft_approval_percent=min(
             100.0, max(1.0, float(getattr(settings, "wcs_sanity_soft_approval_percent", 65.0)))
         ),
-        soft_max_median_residual_arcsec=max(
-            0.1, float(getattr(settings, "wcs_sanity_soft_max_median_residual_arcsec", 5.0))
+        soft_max_median_residual_pixels=max(
+            0.1,
+            float(getattr(settings, "wcs_sanity_soft_max_median_residual_pixels", 1.5)),
         ),
-        soft_max_coherent_shift_arcsec=max(
-            0.1, float(getattr(settings, "wcs_sanity_soft_max_coherent_shift_arcsec", 6.0))
+        soft_max_coherent_shift_pixels=max(
+            0.1,
+            float(getattr(settings, "wcs_sanity_soft_max_coherent_shift_pixels", 2.0)),
         ),
         frame_margin_percent=min(
             90.0, max(0.0, float(getattr(settings, "wcs_sanity_edge_margin_percent", 25.0)))
@@ -756,9 +1090,25 @@ def options_from_settings(settings: object) -> WcsSanityOptions:
         gaia_min_magnitude=min(gaia_min, gaia_max),
         candidate_count=max(3, int(getattr(settings, "wcs_sanity_candidate_count", 10))),
         min_matches=max(1, int(getattr(settings, "wcs_sanity_min_matches", 5))),
-        isolation_arcsec=max(0.0, float(getattr(settings, "wcs_sanity_isolation_arcsec", 8.0))),
+        isolation_fwhm_multiplier=max(
+            0.0,
+            float(getattr(settings, "wcs_sanity_isolation_fwhm_multiplier", 2.5)),
+        ),
+        ccvals_max_disagreement_pixels=max(
+            0.1,
+            float(getattr(settings, "wcs_sanity_ccvals_max_disagreement_pixels", 5.0)),
+        ),
         ccvals_repair_enabled=bool(getattr(settings, "wcs_sanity_ccvals_repair_enabled", True)),
     )
+
+
+def _header_mean_pixel_scale_arcsec(header: Header) -> float | None:
+    try:
+        scales = proj_plane_pixel_scales(celestial_wcs(header)) * 3600.0
+        mean_scale = float(np.mean(scales))
+    except Exception:
+        return None
+    return mean_scale if np.isfinite(mean_scale) and mean_scale > 0 else None
 
 
 def _usable_frame_fraction(frame_margin_percent: float) -> float:
@@ -883,7 +1233,7 @@ def _write_wcs_sidecar_fits(
             if key in header:
                 clean[key] = header[key]
 
-    for key in ("CCVALS1", "CCVALS2", "WCSMETH", "WCSREPR"):
+    for key in ("CCVALS1", "CCVALS2", "WCSMETH", "WCSREPR", "WCSREPP"):
         if key not in header:
             continue
         try:

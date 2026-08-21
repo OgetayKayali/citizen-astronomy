@@ -18,7 +18,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolb
 from matplotlib.figure import Figure
 import numpy as np
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QRect, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QImage, QPainter, QPalette, QPen, QVector3D
+from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QImage, QPainter, QPalette, QPen, QPixmap, QVector3D
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QMenu,
     QPlainTextEdit,
+    QProgressBar,
     QProgressDialog,
     QPushButton,
     QRadioButton,
@@ -67,16 +68,50 @@ from photometry_app.core.animation_export import (
     resolve_astrostack_stack_export_frame_indices,
 )
 from photometry_app.core.target_field_animation import (
+    MAX_TARGET_FIELD_DURATION_SECONDS,
     MAX_TARGET_FIELD_FOV_PX,
-    MAX_TARGET_FIELD_FPS,
+    MAX_TARGET_FIELD_LOOP_COUNT,
+    MAX_TARGET_FIELD_MARKER_LENGTH_PERCENT,
+    MAX_TARGET_FIELD_MARKER_LINE_WIDTH,
+    MAX_TARGET_FIELD_SCALE_PERCENT,
+    MIN_TARGET_FIELD_DURATION_SECONDS,
     MIN_TARGET_FIELD_FOV_PX,
-    MIN_TARGET_FIELD_FPS,
+    MIN_TARGET_FIELD_LOOP_COUNT,
+    MIN_TARGET_FIELD_MARKER_LENGTH_PERCENT,
+    MIN_TARGET_FIELD_MARKER_LINE_WIDTH,
+    MIN_TARGET_FIELD_SCALE_PERCENT,
+    TARGET_FIELD_ALIGN_MODE_LABELS,
+    TARGET_FIELD_ALIGN_MODES,
+    TARGET_FIELD_EXPORT_FORMAT_LABELS,
+    TARGET_FIELD_EXPORT_FORMATS,
+    TARGET_FIELD_MARKER_NONE,
+    TARGET_FIELD_PROGRESS_COMPOSE,
+    TARGET_FIELD_PROGRESS_PREPARE,
+    TARGET_FIELD_PROGRESS_STAGES,
     TARGET_FIELD_STRETCH_MODE_LABELS,
     TARGET_FIELD_STRETCH_MODES,
     TargetFieldAnimationExportOptions,
+    TargetFieldAnimationProgress,
+    normalize_target_field_align_mode,
+    normalize_target_field_duration_seconds,
+    normalize_target_field_export_format,
     normalize_target_field_fov_px,
-    normalize_target_field_fps,
+    normalize_target_field_loop_count,
+    normalize_target_field_marker_length_percent,
+    normalize_target_field_marker_line_color,
+    normalize_target_field_marker_line_width,
+    normalize_target_field_marker_style,
+    normalize_target_field_scale_percent,
     normalize_target_field_stretch_mode,
+    render_target_field_marker_preview,
+    target_field_duration_frame_ms,
+    target_field_progress_stage_title,
+)
+from photometry_app.core.target_markers import (
+    ASTEROID_VISUAL_MARKER_STYLE_LABELS,
+    ASTEROID_VISUAL_MARKER_STYLES,
+    TARGET_FIELD_MARKER_STYLE_LABELS,
+    TARGET_FIELD_MARKER_STYLES,
 )
 from photometry_app.core.catalog_filters import VARIABLE_STAR_DESIGNATION_LABELS, classify_variable_star_designation
 from photometry_app.core.calibration import CalibrationPipelineRequest
@@ -88,12 +123,16 @@ from photometry_app.core.sky_explorer import SKY_EXPLORER_LAYER_ORDER, sky_explo
 from photometry_app.core.settings import (
     AppSettings,
     DEFAULT_ASTROMETRY_TIMEOUT_SECONDS,
+    DEFAULT_EPHEMERIS_MIN_ALTITUDE_DEG,
     MAX_ASTROMETRY_TIMEOUT_SECONDS,
+    MAX_EPHEMERIS_MIN_ALTITUDE_DEG,
     MIN_ASTROMETRY_TIMEOUT_SECONDS,
+    MIN_EPHEMERIS_MIN_ALTITUDE_DEG,
     _coerce_hex_color,
     default_custom_theme_colors,
     default_settings_config_path,
     normalize_astrometry_timeout_seconds,
+    normalize_ephemeris_min_altitude_deg,
     resolve_shared_parallel_workers,
     setup_pixel_scale_arcsec_per_pixel,
 )
@@ -430,15 +469,25 @@ class AstrostackGifExportDialog(QDialog):
 
 
 class TargetFieldAnimationExportDialog(QDialog):
+    _PREVIEW_SIZE = 280
+
     def __init__(
         self,
         *,
+        frame_count: int = 1,
         initial_options: TargetFieldAnimationExportOptions | None = None,
+        preview_image: np.ndarray | None = None,
+        preview_x: float | None = None,
+        preview_y: float | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Target Field Animation")
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(720)
+        self._frame_count = max(1, int(frame_count))
+        self._preview_image = None if preview_image is None else np.asarray(preview_image)
+        self._preview_x = None if preview_x is None else float(preview_x)
+        self._preview_y = None if preview_y is None else float(preview_y)
         options = (initial_options or TargetFieldAnimationExportOptions()).normalized()
 
         self._fov_input = QSpinBox(self)
@@ -448,10 +497,14 @@ class TargetFieldAnimationExportDialog(QDialog):
         self._fov_input.setValue(options.fov_px)
         self._fov_input.setToolTip("Square crop size around the selected target in each frame.")
 
-        self._align_input = QCheckBox("Crop target, then align", self)
-        self._align_input.setChecked(bool(options.align))
+        self._align_input = QComboBox(self)
+        for mode in TARGET_FIELD_ALIGN_MODES:
+            self._align_input.addItem(TARGET_FIELD_ALIGN_MODE_LABELS.get(mode, mode), mode)
+        align_index = self._align_input.findData(options.align_mode)
+        self._align_input.setCurrentIndex(0 if align_index < 0 else align_index)
         self._align_input.setToolTip(
-            "Crop around the selected target first, then align the smaller field. Matched stars decide whether it needs a left–right, up–down, or 180° flip."
+            "Crop, then align is faster and keeps the target centered. "
+            "Align, then crop registers the full frame first, then cuts the field; it is slower."
         )
 
         self._stretch_input = QComboBox(self)
@@ -463,19 +516,110 @@ class TargetFieldAnimationExportDialog(QDialog):
             "Display stretch applied with shared limits after local comparison stars inside the crop normalize frame brightness."
         )
 
-        self._fps_input = QDoubleSpinBox(self)
-        self._fps_input.setRange(MIN_TARGET_FIELD_FPS, MAX_TARGET_FIELD_FPS)
-        self._fps_input.setDecimals(1)
-        self._fps_input.setSingleStep(1.0)
-        self._fps_input.setSuffix(" fps")
-        self._fps_input.setValue(options.fps)
-        self._fps_input.setToolTip("Playback speed of the exported GIF.")
+        self._format_input = QComboBox(self)
+        for format_key in TARGET_FIELD_EXPORT_FORMATS:
+            self._format_input.addItem(TARGET_FIELD_EXPORT_FORMAT_LABELS.get(format_key, format_key.upper()), format_key)
+        format_index = self._format_input.findData(options.export_format)
+        self._format_input.setCurrentIndex(0 if format_index < 0 else format_index)
+        self._format_input.setToolTip("Save as an animated GIF or an MP4 video.")
+
+        self._duration_input = QDoubleSpinBox(self)
+        self._duration_input.setRange(MIN_TARGET_FIELD_DURATION_SECONDS, MAX_TARGET_FIELD_DURATION_SECONDS)
+        self._duration_input.setDecimals(1)
+        self._duration_input.setSingleStep(0.5)
+        self._duration_input.setSuffix(" s")
+        self._duration_input.setValue(options.duration_seconds)
+        self._duration_input.setToolTip("Playback length of one pass through the frames.")
+
+        self._loop_input = QSpinBox(self)
+        self._loop_input.setRange(MIN_TARGET_FIELD_LOOP_COUNT, MAX_TARGET_FIELD_LOOP_COUNT)
+        self._loop_input.setValue(options.loop_count)
+        self._loop_input.setToolTip(
+            "How many times to write the sequence into the MP4. "
+            "Total length is loop duration times this count. GIF already loops forever in the player."
+        )
+
+        self._scale_input = QSpinBox(self)
+        self._scale_input.setRange(MIN_TARGET_FIELD_SCALE_PERCENT, MAX_TARGET_FIELD_SCALE_PERCENT)
+        self._scale_input.setSingleStep(5)
+        self._scale_input.setSuffix(" %")
+        self._scale_input.setValue(options.scale_percent)
+        self._scale_input.setToolTip("Output size as a percentage of the composed animation.")
+
+        self._marker_input = QComboBox(self)
+        for style in TARGET_FIELD_MARKER_STYLES:
+            self._marker_input.addItem(TARGET_FIELD_MARKER_STYLE_LABELS.get(style, style), style)
+        marker_index = self._marker_input.findData(options.marker_style)
+        self._marker_input.setCurrentIndex(0 if marker_index < 0 else marker_index)
+        self._marker_input.setToolTip("Optional marker drawn on the target in each animation frame.")
+
+        self._marker_length_input = QSpinBox(self)
+        self._marker_length_input.setRange(MIN_TARGET_FIELD_MARKER_LENGTH_PERCENT, MAX_TARGET_FIELD_MARKER_LENGTH_PERCENT)
+        self._marker_length_input.setSingleStep(2)
+        self._marker_length_input.setSuffix(" %")
+        self._marker_length_input.setValue(options.marker_length_percent)
+        self._marker_length_input.setToolTip("Marker reach as a percentage of the field radius. Lower values keep shorter arms around the star.")
+
+        self._marker_width_input = QDoubleSpinBox(self)
+        self._marker_width_input.setRange(MIN_TARGET_FIELD_MARKER_LINE_WIDTH, MAX_TARGET_FIELD_MARKER_LINE_WIDTH)
+        self._marker_width_input.setDecimals(1)
+        self._marker_width_input.setSingleStep(0.5)
+        self._marker_width_input.setSuffix(" px")
+        self._marker_width_input.setValue(options.marker_line_width)
+        self._marker_width_input.setToolTip("Line thickness of the target marker.")
+
+        self._marker_line_color = options.marker_line_color
+        self._marker_color_button = QPushButton(self)
+        self._marker_color_button.setToolTip("Line color of the target marker.")
+        self._marker_color_button.clicked.connect(self._choose_marker_color)
+        self._update_marker_color_button()
+
+        self._preview_label = QLabel(self)
+        self._preview_label.setObjectName("targetFieldAnimationPreview")
+        self._preview_label.setFixedSize(self._PREVIEW_SIZE, self._PREVIEW_SIZE)
+        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview_label.setFrameShape(QFrame.Shape.StyledPanel)
+        self._preview_label.setStyleSheet("background-color: #111111;")
+
+        self._summary_label = QLabel(self)
+        self._summary_label.setWordWrap(True)
+
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(50)
+        self._preview_timer.timeout.connect(self._refresh_preview)
+
+        self._duration_input.valueChanged.connect(lambda _value: self._update_summary())
+        self._loop_input.valueChanged.connect(lambda _value: self._update_summary())
+        self._format_input.currentIndexChanged.connect(lambda _index: self._handle_format_changed())
+        self._scale_input.valueChanged.connect(lambda _index: self._update_summary())
+        self._fov_input.valueChanged.connect(lambda _value: self._schedule_preview())
+        self._stretch_input.currentIndexChanged.connect(lambda _index: self._schedule_preview())
+        self._marker_input.currentIndexChanged.connect(lambda _index: self._handle_marker_changed())
+        self._marker_length_input.valueChanged.connect(lambda _value: self._schedule_preview())
+        self._marker_width_input.valueChanged.connect(lambda _value: self._schedule_preview())
 
         form_layout = QFormLayout()
         form_layout.addRow("Field of view", self._fov_input)
         form_layout.addRow("Align", self._align_input)
         form_layout.addRow("Stretch", self._stretch_input)
-        form_layout.addRow("GIF speed", self._fps_input)
+        form_layout.addRow("Format", self._format_input)
+        form_layout.addRow("Loop duration", self._duration_input)
+        form_layout.addRow("MP4 loops", self._loop_input)
+        form_layout.addRow("Output size", self._scale_input)
+        form_layout.addRow("Target marker", self._marker_input)
+        form_layout.addRow("Marker length", self._marker_length_input)
+        form_layout.addRow("Marker thickness", self._marker_width_input)
+        form_layout.addRow("Marker color", self._marker_color_button)
+
+        preview_group = QGroupBox("Preview")
+        preview_layout = QVBoxLayout(preview_group)
+        preview_layout.addWidget(self._preview_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        preview_layout.addStretch(1)
+
+        content_layout = QHBoxLayout()
+        content_layout.addWidget(preview_group)
+        content_layout.addLayout(form_layout, stretch=1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
@@ -485,17 +629,428 @@ class TargetFieldAnimationExportDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout()
-        layout.addLayout(form_layout)
+        layout.addLayout(content_layout)
+        layout.addWidget(self._summary_label)
         layout.addWidget(buttons)
         self.setLayout(layout)
+        self._sync_marker_controls()
+        self._sync_loop_controls()
+        self._update_summary()
+        self._refresh_preview()
 
     def selected_options(self) -> TargetFieldAnimationExportOptions:
         return TargetFieldAnimationExportOptions(
             fov_px=normalize_target_field_fov_px(self._fov_input.value()),
-            align=self._align_input.isChecked(),
-            fps=normalize_target_field_fps(self._fps_input.value()),
+            align_mode=normalize_target_field_align_mode(self._align_input.currentData()),
+            duration_seconds=normalize_target_field_duration_seconds(self._duration_input.value()),
+            loop_count=normalize_target_field_loop_count(self._loop_input.value()),
+            scale_percent=normalize_target_field_scale_percent(self._scale_input.value()),
             stretch_mode=normalize_target_field_stretch_mode(self._stretch_input.currentData()),
+            export_format=normalize_target_field_export_format(self._format_input.currentData()),
+            marker_style=normalize_target_field_marker_style(self._marker_input.currentData()),
+            marker_length_percent=normalize_target_field_marker_length_percent(self._marker_length_input.value()),
+            marker_line_width=normalize_target_field_marker_line_width(self._marker_width_input.value()),
+            marker_line_color=normalize_target_field_marker_line_color(self._marker_line_color),
         ).normalized()
+
+    def _update_summary(self) -> None:
+        options = self.selected_options()
+        duration_ms = target_field_duration_frame_ms(
+            options.duration_seconds,
+            self._frame_count,
+            gif=options.export_format == "gif",
+        )
+        playback_seconds = self._frame_count * duration_ms / 1000.0
+        format_label = TARGET_FIELD_EXPORT_FORMAT_LABELS.get(options.export_format, options.export_format.upper())
+        note = ""
+        if options.export_format == "gif" and playback_seconds > options.duration_seconds + 0.05:
+            note = " GIF frames cannot be shorter than 20 ms, so playback may run a little longer."
+        if options.export_format == "mp4" and options.loop_count > 1:
+            total_seconds = playback_seconds * options.loop_count
+            timing_text = (
+                f"{self._frame_count} frame(s) over {playback_seconds:.1f} s per loop "
+                f"× {options.loop_count} loops ({total_seconds:.1f} s total, {duration_ms} ms each)"
+            )
+        else:
+            timing_text = (
+                f"{self._frame_count} frame(s) over {playback_seconds:.1f} s "
+                f"({duration_ms} ms each)"
+            )
+        self._summary_label.setText(
+            f"{timing_text}, {options.scale_percent}% {format_label}.{note}"
+        )
+
+    def _handle_format_changed(self) -> None:
+        self._sync_loop_controls()
+        self._update_summary()
+
+    def _sync_loop_controls(self) -> None:
+        self._loop_input.setEnabled(
+            normalize_target_field_export_format(self._format_input.currentData()) == "mp4"
+        )
+
+    def _handle_marker_changed(self) -> None:
+        self._sync_marker_controls()
+        self._schedule_preview()
+
+    def _sync_marker_controls(self) -> None:
+        enabled = normalize_target_field_marker_style(self._marker_input.currentData()) != TARGET_FIELD_MARKER_NONE
+        self._marker_length_input.setEnabled(enabled)
+        self._marker_width_input.setEnabled(enabled)
+        self._marker_color_button.setEnabled(enabled)
+
+    def _schedule_preview(self) -> None:
+        self._preview_timer.start()
+
+    def _refresh_preview(self) -> None:
+        options = self.selected_options()
+        image = render_target_field_marker_preview(
+            self._preview_image,
+            self._preview_x,
+            self._preview_y,
+            fov_px=options.fov_px,
+            stretch_mode=options.stretch_mode,
+            marker_style=options.marker_style,
+            appearance=options.marker_appearance(),
+        )
+        pixmap = QPixmap.fromImage(image)
+        self._preview_label.setPixmap(
+            pixmap.scaled(
+                self._preview_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def _choose_marker_color(self) -> None:
+        selected = QColorDialog.getColor(QColor(self._marker_line_color), self, "Target Marker Color")
+        if not selected.isValid():
+            return
+        self._marker_line_color = selected.name(QColor.NameFormat.HexRgb).lower()
+        self._update_marker_color_button()
+        self._schedule_preview()
+
+    def _update_marker_color_button(self) -> None:
+        text_color = "#ffffff" if QColor(self._marker_line_color).lightness() < 128 else "#1f1f1f"
+        self._marker_color_button.setText(self._marker_line_color.upper())
+        self._marker_color_button.setStyleSheet(
+            f"background-color: {self._marker_line_color}; color: {text_color}; padding: 4px 8px;"
+        )
+
+
+class TargetFieldAnimationProgressDialog(QDialog):
+    cancel_requested = Signal()
+
+    _FINISHED_TIP_COLOR = "#22c55e"
+
+    def __init__(
+        self,
+        *,
+        frame_count: int,
+        align_mode: str,
+        export_format: str,
+        output_name: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("targetFieldAnimationProgressDialog")
+        self.setWindowTitle("Target Field Animation")
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self.setMinimumWidth(460)
+        self._busy = True
+        self._finished = False
+        self._frame_count = max(1, int(frame_count))
+        self._align_mode = normalize_target_field_align_mode(align_mode)
+        self._export_format = normalize_target_field_export_format(export_format)
+        self._stage_totals = {
+            TARGET_FIELD_PROGRESS_STAGES[0]: self._frame_count,
+            TARGET_FIELD_PROGRESS_STAGES[1]: 1,
+            TARGET_FIELD_PROGRESS_STAGES[2]: self._frame_count,
+            TARGET_FIELD_PROGRESS_STAGES[3]: 1,
+        }
+        self._stage_values = {stage: 0 for stage in TARGET_FIELD_PROGRESS_STAGES}
+        self._active_stage = TARGET_FIELD_PROGRESS_STAGES[0]
+        self._colors: dict[str, str] = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        intro = QLabel("Each pipeline step has its own progress, so you can see how much work is still remaining.")
+        intro.setObjectName("targetFieldProgressIntroLabel")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        if output_name:
+            output_label = QLabel(output_name)
+            output_label.setObjectName("targetFieldProgressOutputLabel")
+            output_label.setWordWrap(True)
+            layout.addWidget(output_label)
+
+        pipeline_group = QGroupBox("Pipeline")
+        pipeline_layout = QVBoxLayout(pipeline_group)
+        pipeline_layout.setSpacing(10)
+        pipeline_layout.setContentsMargins(12, 16, 12, 12)
+
+        self._stage_badges: dict[str, QLabel] = {}
+        self._stage_titles: dict[str, QLabel] = {}
+        self._stage_status: dict[str, QLabel] = {}
+        self._stage_bars: dict[str, QProgressBar] = {}
+        for index, stage in enumerate(TARGET_FIELD_PROGRESS_STAGES, start=1):
+            row = QWidget(pipeline_group)
+            row_layout = QVBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
+
+            header = QHBoxLayout()
+            header.setContentsMargins(0, 0, 0, 0)
+            header.setSpacing(8)
+            badge = QLabel(str(index), row)
+            badge.setObjectName("targetFieldStageBadge")
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            badge.setFixedSize(22, 22)
+            title = QLabel(
+                target_field_progress_stage_title(stage, align_mode=self._align_mode, export_format=self._export_format),
+                row,
+            )
+            title.setObjectName("targetFieldStageTitle")
+            status = QLabel("Waiting", row)
+            status.setObjectName("targetFieldStageStatus")
+            status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            header.addWidget(badge)
+            header.addWidget(title, stretch=1)
+            header.addWidget(status)
+            row_layout.addLayout(header)
+
+            bar = QProgressBar(row)
+            bar.setObjectName("targetFieldStageBar")
+            bar.setTextVisible(False)
+            bar.setFixedHeight(10)
+            bar.setRange(0, max(1, self._stage_totals[stage]))
+            bar.setValue(0)
+            row_layout.addWidget(bar)
+
+            pipeline_layout.addWidget(row)
+            self._stage_badges[stage] = badge
+            self._stage_titles[stage] = title
+            self._stage_status[stage] = status
+            self._stage_bars[stage] = bar
+
+        layout.addWidget(pipeline_group)
+
+        self._remaining_label = QLabel(self)
+        self._remaining_label.setObjectName("targetFieldProgressRemainingLabel")
+        layout.addWidget(self._remaining_label)
+
+        self._tip_label = QLabel("Preparing the target-field animation pipeline...")
+        self._tip_label.setObjectName("targetFieldProgressTipLabel")
+        self._tip_label.setWordWrap(True)
+        layout.addWidget(self._tip_label)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self._close_button = QPushButton("Cancel", self)
+        self._close_button.setObjectName("targetFieldProgressTerminateButton")
+        self._close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._close_button.setFixedHeight(34)
+        self._close_button.clicked.connect(self._handle_close_or_cancel)
+        button_row.addWidget(self._close_button)
+        layout.addLayout(button_row)
+
+        self._apply_visual_style()
+        self._refresh_stage_widgets()
+        self.resize(max(480, self.sizeHint().width()), self.sizeHint().height())
+
+    def apply_progress(self, progress: TargetFieldAnimationProgress | object) -> None:
+        if not isinstance(progress, TargetFieldAnimationProgress):
+            return
+        stage = progress.stage if progress.stage in self._stage_bars else TARGET_FIELD_PROGRESS_STAGES[0]
+        self._active_stage = stage
+        self._stage_totals[stage] = max(1, int(progress.total))
+        self._stage_values[stage] = min(max(0, int(progress.completed)), self._stage_totals[stage])
+        stage_index = TARGET_FIELD_PROGRESS_STAGES.index(stage)
+        for earlier in TARGET_FIELD_PROGRESS_STAGES[:stage_index]:
+            self._stage_values[earlier] = self._stage_totals[earlier]
+        if progress.done:
+            for key in TARGET_FIELD_PROGRESS_STAGES:
+                self._stage_values[key] = self._stage_totals[key]
+            self.set_finished(progress.message)
+            return
+        self._tip_label.setStyleSheet("")
+        self._tip_label.setText(progress.message)
+        self._refresh_stage_widgets()
+
+    def set_finished(self, detail: str) -> None:
+        self._busy = False
+        self._finished = True
+        for key in TARGET_FIELD_PROGRESS_STAGES:
+            self._stage_values[key] = self._stage_totals[key]
+        self._active_stage = TARGET_FIELD_PROGRESS_STAGES[-1]
+        detail_text = str(detail).strip() or "Target-field animation is ready."
+        if not detail_text.startswith("\u2713"):
+            detail_text = f"\u2713 {detail_text}"
+        self._tip_label.setText(detail_text)
+        self._tip_label.setStyleSheet(f"color: {self._FINISHED_TIP_COLOR}; font-weight: 700;")
+        self._close_button.setText("Close")
+        self._close_button.setObjectName("targetFieldProgressGenerateButton")
+        self._close_button.style().unpolish(self._close_button)
+        self._close_button.style().polish(self._close_button)
+        self._refresh_stage_widgets()
+
+    def set_canceling(self, message: str = "Canceling target-field animation export...") -> None:
+        if self._finished:
+            return
+        self._tip_label.setStyleSheet("")
+        self._tip_label.setText(message)
+        self._close_button.setEnabled(False)
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        if self._busy and not self._finished:
+            event.ignore()
+            self._request_cancel()
+            return
+        super().closeEvent(event)
+
+    def _handle_close_or_cancel(self) -> None:
+        if self._busy and not self._finished:
+            self._request_cancel()
+            return
+        self.accept()
+
+    def _request_cancel(self) -> None:
+        self.set_canceling()
+        self.cancel_requested.emit()
+
+    def _refresh_stage_widgets(self) -> None:
+        for stage in TARGET_FIELD_PROGRESS_STAGES:
+            total = max(1, int(self._stage_totals[stage]))
+            value = min(max(0, int(self._stage_values[stage])), total)
+            bar = self._stage_bars[stage]
+            bar.setRange(0, total)
+            bar.setValue(value)
+            if value >= total:
+                state = "done"
+                status = "Done"
+            elif stage == self._active_stage or value > 0:
+                state = "active"
+                status = f"{value} / {total}"
+            else:
+                state = "waiting"
+                status = "Waiting"
+            self._stage_status[stage].setText(status)
+            self._stage_titles[stage].setProperty("stageState", state)
+            self._stage_badges[stage].setProperty("stageState", state)
+            self._stage_status[stage].setProperty("stageState", state)
+            for widget in (self._stage_titles[stage], self._stage_badges[stage], self._stage_status[stage]):
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+        if self._finished:
+            self._remaining_label.setText("Pipeline complete.")
+            return
+        stage_number = TARGET_FIELD_PROGRESS_STAGES.index(self._active_stage) + 1
+        total = max(1, int(self._stage_totals[self._active_stage]))
+        value = min(max(0, int(self._stage_values[self._active_stage])), total)
+        if self._active_stage in {TARGET_FIELD_PROGRESS_PREPARE, TARGET_FIELD_PROGRESS_COMPOSE}:
+            self._remaining_label.setText(f"Step {stage_number} of 4 · {value} / {total} frames")
+            return
+        self._remaining_label.setText(f"Step {stage_number} of 4")
+
+    def _apply_visual_style(self) -> None:
+        palette = self.palette()
+        parent_window = self.parentWidget()
+        colors: dict[str, str] = {}
+        if parent_window is not None and hasattr(parent_window, "_resolved_theme_editor_colors"):
+            colors = dict(parent_window._resolved_theme_editor_colors())
+        window_bg = colors.get("panel_bg", palette.window().color().name().lower())
+        card_bg = QColor(window_bg).lighter(106).name().lower()
+        border_color = QColor(colors.get("gridline", window_bg)).lighter(118).name().lower()
+        accent_color = QColor(colors.get("accent", "#3d8bfd"))
+        accent = accent_color.name().lower()
+        accent_soft = accent_color.lighter(130).name().lower()
+        accent_deep = accent_color.darker(118).name().lower()
+        body_text = colors.get("text", palette.windowText().color().name().lower())
+        muted_text = colors.get("placeholder", QColor(body_text).lighter(130).name().lower())
+        contrast = "#0f1720" if accent_color.lightness() > 160 else "#f7fbff"
+        track = QColor(window_bg).darker(108).name().lower()
+        self._colors = {
+            "window_bg": window_bg,
+            "card_bg": card_bg,
+            "border": border_color,
+            "accent": accent,
+            "body": body_text,
+            "muted": muted_text,
+        }
+        self.setStyleSheet(
+            "QDialog#targetFieldAnimationProgressDialog {"
+            f"background-color: {window_bg};"
+            f"color: {body_text};"
+            "}"
+            "QGroupBox {"
+            f"background-color: {card_bg};"
+            f"border: 1px solid {border_color};"
+            "border-radius: 12px;"
+            "margin-top: 16px;"
+            "padding: 16px 12px 12px 12px;"
+            "font-weight: 600;"
+            f"color: {body_text};"
+            "}"
+            "QGroupBox::title {"
+            "subcontrol-origin: margin;"
+            "left: 12px;"
+            "padding: 0 6px;"
+            f"color: {accent};"
+            "}"
+            f"QLabel#targetFieldProgressIntroLabel {{ color: {muted_text}; }}"
+            f"QLabel#targetFieldProgressOutputLabel {{ color: {body_text}; font-weight: 600; }}"
+            f"QLabel#targetFieldProgressRemainingLabel {{ color: {accent_soft}; font-style: italic; }}"
+            f"QLabel#targetFieldProgressTipLabel {{ color: {muted_text}; }}"
+            "QLabel#targetFieldStageBadge {"
+            "border-radius: 11px;"
+            "font-weight: 700;"
+            "font-size: 11px;"
+            f"background-color: {QColor(border_color).darker(102).name().lower()};"
+            f"color: {muted_text};"
+            "}"
+            "QLabel#targetFieldStageBadge[stageState='active'] {"
+            f"background-color: {accent};"
+            f"color: {contrast};"
+            "}"
+            "QLabel#targetFieldStageBadge[stageState='done'] {"
+            f"background-color: {self._FINISHED_TIP_COLOR};"
+            "color: #f7fbff;"
+            "}"
+            f"QLabel#targetFieldStageTitle {{ color: {muted_text}; font-weight: 600; }}"
+            f"QLabel#targetFieldStageTitle[stageState='active'] {{ color: {accent}; font-weight: 700; }}"
+            f"QLabel#targetFieldStageTitle[stageState='done'] {{ color: {body_text}; }}"
+            f"QLabel#targetFieldStageStatus {{ color: {muted_text}; }}"
+            f"QLabel#targetFieldStageStatus[stageState='active'] {{ color: {accent}; font-weight: 600; }}"
+            f"QLabel#targetFieldStageStatus[stageState='done'] {{ color: {self._FINISHED_TIP_COLOR}; font-weight: 600; }}"
+            "QProgressBar#targetFieldStageBar {"
+            f"background-color: {track};"
+            f"border: 1px solid {border_color};"
+            "border-radius: 5px;"
+            "padding: 1px;"
+            "}"
+            "QProgressBar#targetFieldStageBar::chunk {"
+            f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {accent_soft}, stop:1 {accent});"
+            "border-radius: 4px;"
+            "}"
+            "QPushButton {"
+            f"background-color: {card_bg};"
+            f"color: {body_text};"
+            f"border: 1px solid {border_color};"
+            "border-radius: 8px;"
+            "padding: 6px 14px;"
+            "font-weight: 600;"
+            "}"
+            f"QPushButton:hover {{ border-color: {accent_soft}; background-color: {QColor(card_bg).lighter(112).name().lower()}; }}"
+            f"QPushButton:pressed {{ background-color: {QColor(card_bg).darker(108).name().lower()}; }}"
+            f"QPushButton#targetFieldProgressGenerateButton {{ background-color: {accent}; color: {contrast}; border-color: {accent_deep}; }}"
+            f"QPushButton#targetFieldProgressTerminateButton {{ background-color: {card_bg}; color: {body_text}; border: 2px solid {accent}; }}"
+            f"QPushButton#targetFieldProgressTerminateButton:hover {{ border: 2px solid {accent_soft}; }}"
+            f"QPushButton:disabled {{ color: {muted_text}; }}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -12064,10 +12619,11 @@ class SettingsDialog(QDialog):
         self._asteroid_visual_label_all_objects_input = QCheckBox("Show asteroid/comet name labels on the main image")
         self._asteroid_visual_label_all_objects_input.setChecked(settings.asteroid_visual_label_all_objects)
         self._asteroid_visual_marker_style_input = QComboBox()
-        self._asteroid_visual_marker_style_input.addItem("Square aim", "target")
-        self._asteroid_visual_marker_style_input.addItem("Circle", "circle")
-        self._asteroid_visual_marker_style_input.addItem("Corner brackets", "brackets")
-        self._asteroid_visual_marker_style_input.addItem("Open crosshair", "crosshair")
+        for style in ASTEROID_VISUAL_MARKER_STYLES:
+            self._asteroid_visual_marker_style_input.addItem(
+                ASTEROID_VISUAL_MARKER_STYLE_LABELS.get(style, style),
+                style,
+            )
         marker_style_index = self._asteroid_visual_marker_style_input.findData(
             str(getattr(settings, "asteroid_visual_marker_style", "target") or "target")
         )
@@ -12185,43 +12741,56 @@ class SettingsDialog(QDialog):
             " %",
         )
         self._wcs_sanity_approval_percent_input.setSingleStep(1.0)
-        self._wcs_sanity_max_median_residual_arcsec_input = QDoubleSpinBox()
+        self._wcs_sanity_probe_start_percent_input = QDoubleSpinBox()
         self._configure_float_spin_box(
-            self._wcs_sanity_max_median_residual_arcsec_input,
-            float(settings.wcs_sanity_max_median_residual_arcsec),
+            self._wcs_sanity_probe_start_percent_input,
+            float(getattr(settings, "wcs_sanity_probe_start_percent", 10.0)),
+            1.0,
+            100.0,
+            " %",
+        )
+        self._wcs_sanity_probe_start_percent_input.setSingleStep(1.0)
+        self._wcs_sanity_quality_sample_max_count_input = QSpinBox()
+        self._wcs_sanity_quality_sample_max_count_input.setRange(8, 128)
+        self._wcs_sanity_quality_sample_max_count_input.setValue(
+            int(getattr(settings, "wcs_sanity_quality_sample_max_count", 32))
+        )
+        self._wcs_sanity_minimum_source_snr_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_minimum_source_snr_input,
+            float(getattr(settings, "wcs_sanity_minimum_source_snr", 8.0)),
+            1.0,
+            1000.0,
+            "",
+        )
+        self._wcs_sanity_minimum_source_snr_input.setSingleStep(1.0)
+        self._wcs_sanity_max_median_residual_pixels_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._wcs_sanity_max_median_residual_pixels_input,
+            float(getattr(settings, "wcs_sanity_max_median_residual_pixels", 2.0)),
             0.1,
-            60.0,
-            " arcsec",
+            20.0,
+            " px",
         )
-        self._wcs_sanity_max_median_residual_arcsec_input.setSingleStep(0.5)
-        self._wcs_sanity_match_tolerance_arcsec_input = QDoubleSpinBox()
+        self._wcs_sanity_max_median_residual_pixels_input.setSingleStep(0.1)
+        self._wcs_sanity_match_tolerance_pixels_input = QDoubleSpinBox()
         self._configure_float_spin_box(
-            self._wcs_sanity_match_tolerance_arcsec_input,
-            float(getattr(settings, "wcs_sanity_match_tolerance_arcsec", 8.0)),
+            self._wcs_sanity_match_tolerance_pixels_input,
+            float(getattr(settings, "wcs_sanity_match_tolerance_pixels", 3.0)),
             0.5,
-            60.0,
-            " arcsec",
+            20.0,
+            " px",
         )
-        self._wcs_sanity_match_tolerance_arcsec_input.setSingleStep(0.5)
-        self._wcs_sanity_detection_sample_count_input = QSpinBox()
-        self._wcs_sanity_detection_sample_count_input.setRange(8, 300)
-        self._wcs_sanity_detection_sample_count_input.setValue(
-            int(getattr(settings, "wcs_sanity_detection_sample_count", 80))
-        )
-        self._wcs_sanity_skip_brightest_detections_input = QSpinBox()
-        self._wcs_sanity_skip_brightest_detections_input.setRange(0, 100)
-        self._wcs_sanity_skip_brightest_detections_input.setValue(
-            int(getattr(settings, "wcs_sanity_skip_brightest_detections", 10))
-        )
-        self._wcs_sanity_isolation_arcsec_input = QDoubleSpinBox()
+        self._wcs_sanity_match_tolerance_pixels_input.setSingleStep(0.25)
+        self._wcs_sanity_isolation_fwhm_multiplier_input = QDoubleSpinBox()
         self._configure_float_spin_box(
-            self._wcs_sanity_isolation_arcsec_input,
-            float(getattr(settings, "wcs_sanity_isolation_arcsec", 8.0)),
+            self._wcs_sanity_isolation_fwhm_multiplier_input,
+            float(getattr(settings, "wcs_sanity_isolation_fwhm_multiplier", 2.5)),
             0.0,
-            120.0,
-            " arcsec",
+            20.0,
+            " × FWHM",
         )
-        self._wcs_sanity_isolation_arcsec_input.setSingleStep(0.5)
+        self._wcs_sanity_isolation_fwhm_multiplier_input.setSingleStep(0.25)
         self._wcs_sanity_subtract_coherent_shift_input = QCheckBox("Subtract coherent shift before scoring")
         self._wcs_sanity_subtract_coherent_shift_input.setChecked(
             bool(getattr(settings, "wcs_sanity_subtract_coherent_shift", True))
@@ -12240,33 +12809,33 @@ class SettingsDialog(QDialog):
             " %",
         )
         self._wcs_sanity_soft_approval_percent_input.setSingleStep(1.0)
-        self._wcs_sanity_soft_max_median_residual_arcsec_input = QDoubleSpinBox()
+        self._wcs_sanity_soft_max_median_residual_pixels_input = QDoubleSpinBox()
         self._configure_float_spin_box(
-            self._wcs_sanity_soft_max_median_residual_arcsec_input,
-            float(getattr(settings, "wcs_sanity_soft_max_median_residual_arcsec", 5.0)),
+            self._wcs_sanity_soft_max_median_residual_pixels_input,
+            float(getattr(settings, "wcs_sanity_soft_max_median_residual_pixels", 1.5)),
             0.1,
-            60.0,
-            " arcsec",
+            20.0,
+            " px",
         )
-        self._wcs_sanity_soft_max_median_residual_arcsec_input.setSingleStep(0.5)
-        self._wcs_sanity_soft_max_coherent_shift_arcsec_input = QDoubleSpinBox()
+        self._wcs_sanity_soft_max_median_residual_pixels_input.setSingleStep(0.1)
+        self._wcs_sanity_soft_max_coherent_shift_pixels_input = QDoubleSpinBox()
         self._configure_float_spin_box(
-            self._wcs_sanity_soft_max_coherent_shift_arcsec_input,
-            float(getattr(settings, "wcs_sanity_soft_max_coherent_shift_arcsec", 6.0)),
+            self._wcs_sanity_soft_max_coherent_shift_pixels_input,
+            float(getattr(settings, "wcs_sanity_soft_max_coherent_shift_pixels", 2.0)),
             0.1,
-            60.0,
-            " arcsec",
+            20.0,
+            " px",
         )
-        self._wcs_sanity_soft_max_coherent_shift_arcsec_input.setSingleStep(0.5)
-        self._wcs_sanity_gaia_min_magnitude_input = QDoubleSpinBox()
+        self._wcs_sanity_soft_max_coherent_shift_pixels_input.setSingleStep(0.1)
+        self._wcs_sanity_ccvals_max_disagreement_pixels_input = QDoubleSpinBox()
         self._configure_float_spin_box(
-            self._wcs_sanity_gaia_min_magnitude_input,
-            float(settings.wcs_sanity_gaia_min_magnitude),
-            -5.0,
-            30.0,
-            " mag",
+            self._wcs_sanity_ccvals_max_disagreement_pixels_input,
+            float(getattr(settings, "wcs_sanity_ccvals_max_disagreement_pixels", 5.0)),
+            0.1,
+            100.0,
+            " px",
         )
-        self._wcs_sanity_gaia_min_magnitude_input.setSingleStep(0.5)
+        self._wcs_sanity_ccvals_max_disagreement_pixels_input.setSingleStep(0.5)
         self._wcs_sanity_gaia_max_magnitude_input = QDoubleSpinBox()
         self._configure_float_spin_box(
             self._wcs_sanity_gaia_max_magnitude_input,
@@ -12327,6 +12896,19 @@ class SettingsDialog(QDialog):
         self._observing_site_elevation_input.setPlaceholderText("e.g. 45")
         self._observing_site_elevation_input.setClearButtonEnabled(True)
         self._observing_site_elevation_input.setValidator(QDoubleValidator(-500.0, 12000.0, 2, self))
+        self._ephemeris_min_altitude_input = QDoubleSpinBox()
+        self._configure_float_spin_box(
+            self._ephemeris_min_altitude_input,
+            normalize_ephemeris_min_altitude_deg(settings.ephemeris_min_altitude_deg),
+            MIN_EPHEMERIS_MIN_ALTITUDE_DEG,
+            MAX_EPHEMERIS_MIN_ALTITUDE_DEG,
+            " °",
+        )
+        self._ephemeris_min_altitude_input.setDecimals(1)
+        self._ephemeris_min_altitude_input.setSingleStep(1.0)
+        self._ephemeris_min_altitude_input.setToolTip(
+            "Variable Ephemeris treats a star as up when its altitude is at least this value. Default 5°."
+        )
         self._telescope_input = QLineEdit(settings.telescope)
         self._telescope_focal_length_input = QDoubleSpinBox()
         self._configure_optional_float_spin_box(self._telescope_focal_length_input, settings.telescope_focal_length_mm, 0.1, 100000.0, " mm", decimals=1, step=10.0)
@@ -12892,6 +13474,12 @@ class SettingsDialog(QDialog):
         setup_site_layout.addRow("Observing Latitude", self._observing_site_latitude_input)
         setup_site_layout.addRow("Observing Longitude", self._observing_site_longitude_input)
         setup_site_layout.addRow("Observing Elevation", self._observing_site_elevation_input)
+        self._add_tooltip_form_row(
+            setup_site_layout,
+            "Ephemeris Min Altitude",
+            self._ephemeris_min_altitude_input,
+            "Variable Ephemeris treats a star as up when its altitude is at least this value. Default 5°.",
+        )
         setup_site_layout.addRow("Bortle Scale", self._bortle_scale_input)
         setup_site_group.setLayout(setup_site_layout)
         setup_layout.addWidget(setup_description)
@@ -13163,7 +13751,7 @@ class SettingsDialog(QDialog):
             wcs_sanity_layout,
             "Enable",
             self._wcs_sanity_check_enabled_input,
-            "When enabled, the first frame is checked with a detection→Gaia sample to choose a WCS reading method. Results are written to the Work Log. That method is then applied independently to every frame (accept embedded CRVAL/WCS, repair CRVAL from CCVALS, or re-solve each frame).",
+            "When enabled, the first frame is checked with an adaptive, quality-selected detection→Gaia sample to choose a WCS reading method. Results are written to the Work Log. That method is then applied independently to every frame (accept embedded CRVAL/WCS, repair CRVAL from CCVALS, or re-solve each frame).",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
@@ -13173,39 +13761,45 @@ class SettingsDialog(QDialog):
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
-            "Detection Sample",
-            self._wcs_sanity_detection_sample_count_input,
-            "How many image detections to score against Gaia after skipping the brightest peaks. Larger samples are stricter but slower.",
+            "Probe Start Radius",
+            self._wcs_sanity_probe_start_percent_input,
+            "Start with this percentage of the solved field radius around the image center. The probe expands automatically until it has enough quality detections and isolated Gaia references, without tiling the whole field.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
-            "Skip Brightest",
-            self._wcs_sanity_skip_brightest_detections_input,
-            "Skip this many brightest detections before sampling. Helps avoid saturated stars with poor centroids.",
+            "Quality Sample Cap",
+            self._wcs_sanity_quality_sample_max_count_input,
+            "Maximum number of spatially distributed, unsaturated detections to score. The actual sample adapts to the stars available.",
+        )
+        self._add_tooltip_form_row(
+            wcs_sanity_layout,
+            "Minimum Source SNR",
+            self._wcs_sanity_minimum_source_snr_input,
+            "Prefer detections at or above this signal-to-noise ratio. The selector relaxes this filter if too few sources remain.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
             "Hard Approval",
             self._wcs_sanity_approval_percent_input,
-            "Hard pass when at least this percentage of the detection sample matches Gaia within the match tolerance.",
+            "Hard pass when at least this percentage of the quality sample matches Gaia within the match tolerance.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
             "Match Tolerance",
-            self._wcs_sanity_match_tolerance_arcsec_input,
-            "Maximum separation for counting a detection→Gaia match.",
+            self._wcs_sanity_match_tolerance_pixels_input,
+            "Base maximum pixel separation for counting a detection→Gaia match. The effective value also follows the measured stellar FWHM.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
             "Residual Limit",
-            self._wcs_sanity_max_median_residual_arcsec_input,
-            "Hard-pass residual quality scale. Median residual must stay within about twice this value.",
+            self._wcs_sanity_max_median_residual_pixels_input,
+            "Maximum median detection→Gaia residual in pixels for a hard pass.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
-            "Isolation",
-            self._wcs_sanity_isolation_arcsec_input,
-            "Ignore Gaia stars that have another Gaia neighbor closer than this separation when building the match catalog.",
+            "Isolation Radius",
+            self._wcs_sanity_isolation_fwhm_multiplier_input,
+            "Ignore Gaia stars with another projected neighbor closer than this multiple of the image's median stellar FWHM.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
@@ -13228,26 +13822,26 @@ class SettingsDialog(QDialog):
         self._add_tooltip_form_row(
             wcs_sanity_layout,
             "Soft Residual Limit",
-            self._wcs_sanity_soft_max_median_residual_arcsec_input,
-            "Maximum median residual allowed for soft accept.",
+            self._wcs_sanity_soft_max_median_residual_pixels_input,
+            "Maximum median pixel residual allowed for soft accept.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
             "Soft Shift Limit",
-            self._wcs_sanity_soft_max_coherent_shift_arcsec_input,
-            "Maximum coherent shift allowed for soft accept.",
+            self._wcs_sanity_soft_max_coherent_shift_pixels_input,
+            "Maximum coherent pixel shift allowed for soft accept.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
-            "Min Gaia Magnitude",
-            self._wcs_sanity_gaia_min_magnitude_input,
-            "Bright end of the first magnitude bin. Default 5 starts with G=5-10, then 10-12, 12-14, and so on.",
+            "CCVALS Difference",
+            self._wcs_sanity_ccvals_max_disagreement_pixels_input,
+            "Maximum pixel-equivalent difference between CCVALS and CRVAL before CCVALS repair is considered.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
             "Max Gaia Magnitude",
             self._wcs_sanity_gaia_max_magnitude_input,
-            "Faintest magnitude bin edge used by the sequential magnitude-bin checks.",
+            "Faintest Gaia source fetched for matching. Image detections are selected by signal, SNR, centroid shape, and saturation rather than Gaia magnitude bins.",
         )
         self._add_tooltip_form_row(
             wcs_sanity_layout,
@@ -13458,25 +14052,20 @@ class SettingsDialog(QDialog):
             nearby_reference_count=self._nearby_reference_count_input.value(),
             wcs_sanity_check_enabled=self._wcs_sanity_check_enabled_input.isChecked(),
             wcs_sanity_approval_percent=self._wcs_sanity_approval_percent_input.value(),
-            wcs_sanity_max_median_residual_arcsec=self._wcs_sanity_max_median_residual_arcsec_input.value(),
-            wcs_sanity_match_tolerance_arcsec=self._wcs_sanity_match_tolerance_arcsec_input.value(),
-            wcs_sanity_detection_sample_count=self._wcs_sanity_detection_sample_count_input.value(),
-            wcs_sanity_skip_brightest_detections=self._wcs_sanity_skip_brightest_detections_input.value(),
+            wcs_sanity_probe_start_percent=self._wcs_sanity_probe_start_percent_input.value(),
+            wcs_sanity_quality_sample_max_count=self._wcs_sanity_quality_sample_max_count_input.value(),
+            wcs_sanity_minimum_source_snr=self._wcs_sanity_minimum_source_snr_input.value(),
+            wcs_sanity_max_median_residual_pixels=self._wcs_sanity_max_median_residual_pixels_input.value(),
+            wcs_sanity_match_tolerance_pixels=self._wcs_sanity_match_tolerance_pixels_input.value(),
+            wcs_sanity_isolation_fwhm_multiplier=self._wcs_sanity_isolation_fwhm_multiplier_input.value(),
             wcs_sanity_subtract_coherent_shift=self._wcs_sanity_subtract_coherent_shift_input.isChecked(),
             wcs_sanity_soft_accept_enabled=self._wcs_sanity_soft_accept_enabled_input.isChecked(),
             wcs_sanity_soft_approval_percent=self._wcs_sanity_soft_approval_percent_input.value(),
-            wcs_sanity_soft_max_median_residual_arcsec=self._wcs_sanity_soft_max_median_residual_arcsec_input.value(),
-            wcs_sanity_soft_max_coherent_shift_arcsec=self._wcs_sanity_soft_max_coherent_shift_arcsec_input.value(),
-            wcs_sanity_gaia_min_magnitude=min(
-                self._wcs_sanity_gaia_min_magnitude_input.value(),
-                self._wcs_sanity_gaia_max_magnitude_input.value(),
-            ),
-            wcs_sanity_gaia_max_magnitude=max(
-                self._wcs_sanity_gaia_min_magnitude_input.value(),
-                self._wcs_sanity_gaia_max_magnitude_input.value(),
-            ),
+            wcs_sanity_soft_max_median_residual_pixels=self._wcs_sanity_soft_max_median_residual_pixels_input.value(),
+            wcs_sanity_soft_max_coherent_shift_pixels=self._wcs_sanity_soft_max_coherent_shift_pixels_input.value(),
+            wcs_sanity_ccvals_max_disagreement_pixels=self._wcs_sanity_ccvals_max_disagreement_pixels_input.value(),
+            wcs_sanity_gaia_max_magnitude=self._wcs_sanity_gaia_max_magnitude_input.value(),
             wcs_sanity_edge_margin_percent=self._wcs_sanity_edge_margin_percent_input.value(),
-            wcs_sanity_isolation_arcsec=self._wcs_sanity_isolation_arcsec_input.value(),
             wcs_sanity_ccvals_repair_enabled=self._wcs_sanity_ccvals_repair_enabled_input.isChecked(),
             shared_parallel_workers=self._shared_parallel_workers_input.value(),
             sky_atlas_custom_overlay_cache_max_long_edge=self._sky_atlas_custom_overlay_cache_max_long_edge_input.value(),
@@ -13580,6 +14169,7 @@ class SettingsDialog(QDialog):
             observing_site_latitude_deg=self._parse_optional_float(self._observing_site_latitude_input.text(), minimum=-90.0, maximum=90.0),
             observing_site_longitude_deg=self._parse_optional_float(self._observing_site_longitude_input.text(), minimum=-180.0, maximum=180.0),
             observing_site_elevation_m=self._parse_optional_float(self._observing_site_elevation_input.text(), minimum=-500.0, maximum=12000.0),
+            ephemeris_min_altitude_deg=normalize_ephemeris_min_altitude_deg(self._ephemeris_min_altitude_input.value()),
             telescope=self._telescope_input.text().strip(),
             telescope_focal_length_mm=self._optional_float_spin_value(self._telescope_focal_length_input),
             telescope_aperture_mm=self._optional_float_spin_value(self._telescope_aperture_input),
@@ -13843,21 +14433,24 @@ class SettingsDialog(QDialog):
         self._wcs_sanity_check_enabled_input.setChecked(bool(defaults.wcs_sanity_check_enabled))
         self._wcs_sanity_edge_margin_percent_input.setValue(float(defaults.wcs_sanity_edge_margin_percent))
         self._wcs_sanity_approval_percent_input.setValue(float(getattr(defaults, "wcs_sanity_approval_percent", 90.0)))
-        self._wcs_sanity_max_median_residual_arcsec_input.setValue(float(defaults.wcs_sanity_max_median_residual_arcsec))
-        self._wcs_sanity_match_tolerance_arcsec_input.setValue(float(getattr(defaults, "wcs_sanity_match_tolerance_arcsec", 8.0)))
-        self._wcs_sanity_detection_sample_count_input.setValue(int(getattr(defaults, "wcs_sanity_detection_sample_count", 80)))
-        self._wcs_sanity_skip_brightest_detections_input.setValue(int(getattr(defaults, "wcs_sanity_skip_brightest_detections", 10)))
-        self._wcs_sanity_isolation_arcsec_input.setValue(float(getattr(defaults, "wcs_sanity_isolation_arcsec", 8.0)))
+        self._wcs_sanity_probe_start_percent_input.setValue(float(getattr(defaults, "wcs_sanity_probe_start_percent", 10.0)))
+        self._wcs_sanity_quality_sample_max_count_input.setValue(int(getattr(defaults, "wcs_sanity_quality_sample_max_count", 32)))
+        self._wcs_sanity_minimum_source_snr_input.setValue(float(getattr(defaults, "wcs_sanity_minimum_source_snr", 8.0)))
+        self._wcs_sanity_max_median_residual_pixels_input.setValue(float(getattr(defaults, "wcs_sanity_max_median_residual_pixels", 2.0)))
+        self._wcs_sanity_match_tolerance_pixels_input.setValue(float(getattr(defaults, "wcs_sanity_match_tolerance_pixels", 3.0)))
+        self._wcs_sanity_isolation_fwhm_multiplier_input.setValue(float(getattr(defaults, "wcs_sanity_isolation_fwhm_multiplier", 2.5)))
         self._wcs_sanity_subtract_coherent_shift_input.setChecked(bool(getattr(defaults, "wcs_sanity_subtract_coherent_shift", True)))
         self._wcs_sanity_soft_accept_enabled_input.setChecked(bool(getattr(defaults, "wcs_sanity_soft_accept_enabled", True)))
         self._wcs_sanity_soft_approval_percent_input.setValue(float(getattr(defaults, "wcs_sanity_soft_approval_percent", 65.0)))
-        self._wcs_sanity_soft_max_median_residual_arcsec_input.setValue(
-            float(getattr(defaults, "wcs_sanity_soft_max_median_residual_arcsec", 5.0))
+        self._wcs_sanity_soft_max_median_residual_pixels_input.setValue(
+            float(getattr(defaults, "wcs_sanity_soft_max_median_residual_pixels", 1.5))
         )
-        self._wcs_sanity_soft_max_coherent_shift_arcsec_input.setValue(
-            float(getattr(defaults, "wcs_sanity_soft_max_coherent_shift_arcsec", 6.0))
+        self._wcs_sanity_soft_max_coherent_shift_pixels_input.setValue(
+            float(getattr(defaults, "wcs_sanity_soft_max_coherent_shift_pixels", 2.0))
         )
-        self._wcs_sanity_gaia_min_magnitude_input.setValue(float(defaults.wcs_sanity_gaia_min_magnitude))
+        self._wcs_sanity_ccvals_max_disagreement_pixels_input.setValue(
+            float(getattr(defaults, "wcs_sanity_ccvals_max_disagreement_pixels", 5.0))
+        )
         self._wcs_sanity_gaia_max_magnitude_input.setValue(float(defaults.wcs_sanity_gaia_max_magnitude))
         self._wcs_sanity_ccvals_repair_enabled_input.setChecked(bool(defaults.wcs_sanity_ccvals_repair_enabled))
         self._update_wcs_sanity_inputs()
@@ -14050,6 +14643,9 @@ class SettingsDialog(QDialog):
         self._observing_site_latitude_input.setText(self._optional_float_text(defaults.observing_site_latitude_deg))
         self._observing_site_longitude_input.setText(self._optional_float_text(defaults.observing_site_longitude_deg))
         self._observing_site_elevation_input.setText(self._optional_float_text(defaults.observing_site_elevation_m))
+        self._ephemeris_min_altitude_input.setValue(
+            normalize_ephemeris_min_altitude_deg(getattr(defaults, "ephemeris_min_altitude_deg", DEFAULT_EPHEMERIS_MIN_ALTITUDE_DEG))
+        )
         self._telescope_input.setText(defaults.telescope)
         self._telescope_focal_length_input.setValue(0.0 if defaults.telescope_focal_length_mm is None else defaults.telescope_focal_length_mm)
         self._telescope_aperture_input.setValue(0.0 if defaults.telescope_aperture_mm is None else defaults.telescope_aperture_mm)
@@ -14178,22 +14774,23 @@ class SettingsDialog(QDialog):
         for widget in (
             self._wcs_sanity_edge_margin_percent_input,
             self._wcs_sanity_approval_percent_input,
-            self._wcs_sanity_max_median_residual_arcsec_input,
-            self._wcs_sanity_match_tolerance_arcsec_input,
-            self._wcs_sanity_detection_sample_count_input,
-            self._wcs_sanity_skip_brightest_detections_input,
-            self._wcs_sanity_isolation_arcsec_input,
+            self._wcs_sanity_probe_start_percent_input,
+            self._wcs_sanity_quality_sample_max_count_input,
+            self._wcs_sanity_minimum_source_snr_input,
+            self._wcs_sanity_max_median_residual_pixels_input,
+            self._wcs_sanity_match_tolerance_pixels_input,
+            self._wcs_sanity_isolation_fwhm_multiplier_input,
             self._wcs_sanity_subtract_coherent_shift_input,
             self._wcs_sanity_soft_accept_enabled_input,
-            self._wcs_sanity_gaia_min_magnitude_input,
+            self._wcs_sanity_ccvals_max_disagreement_pixels_input,
             self._wcs_sanity_gaia_max_magnitude_input,
             self._wcs_sanity_ccvals_repair_enabled_input,
         ):
             widget.setEnabled(enabled)
         for widget in (
             self._wcs_sanity_soft_approval_percent_input,
-            self._wcs_sanity_soft_max_median_residual_arcsec_input,
-            self._wcs_sanity_soft_max_coherent_shift_arcsec_input,
+            self._wcs_sanity_soft_max_median_residual_pixels_input,
+            self._wcs_sanity_soft_max_coherent_shift_pixels_input,
         ):
             widget.setEnabled(soft_enabled)
 

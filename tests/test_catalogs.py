@@ -13,11 +13,13 @@ from astropy import units as u
 
 from photometry_app.core.catalogs import (
     CatalogService,
+    DEFAULT_GAIA_TILE_OPTIONS,
     GaiaTileOptions,
     _GAIA_DR3_VIZIER_COLUMNS,
     _GaiaQueryTile,
     _solved_field_celestial_wcs,
     build_gaia_query_tiles,
+    capped_solved_field,
     fetch_catalog_target_details,
     fetch_catalog_targets_at_coordinate,
     gaia_field_needs_tiles,
@@ -577,3 +579,12 @@ class GaiaQueryTilesTest(unittest.TestCase):
         self.assertNotIn("gaia-tiles", small_key)
         self.assertIn("gaia-tiles", wide_key)
         self.assertTrue(limited_key.endswith("_tiles.json"))
+
+    def test_capped_solved_field_keeps_narrow_fields_and_caps_wide_fields(self) -> None:
+        narrow = self._small_field()
+        self.assertIs(capped_solved_field(narrow, DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg), narrow)
+        wide = self._wide_field()
+        capped = capped_solved_field(wide, DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg)
+        self.assertAlmostEqual(capped.radius_deg, DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg)
+        self.assertEqual(capped.center_ra_deg, wide.center_ra_deg)
+        self.assertFalse(gaia_field_needs_tiles(capped))

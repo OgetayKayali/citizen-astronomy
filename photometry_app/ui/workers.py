@@ -25,10 +25,16 @@ from photometry_app.core.catalogs import CatalogService, CatalogTargetAtCoordina
 from photometry_app.core.discovery import DiscoveryCancelledError, MovingObjectDiscoveryResult, MovingObjectRecoveryResult, _detection_within_estimated_limit, discover_unmatched_moving_candidates, export_discovery_residual_debug_outputs, recover_known_moving_objects
 from photometry_app.core.exporters import AnimatedLightCurveExportCanceled, ScienceExportMetadata, export_light_curve_animated_gif
 from photometry_app.core.target_field_animation import (
-    DEFAULT_TARGET_FIELD_ALIGN,
-    DEFAULT_TARGET_FIELD_FPS,
+    DEFAULT_TARGET_FIELD_ALIGN_MODE,
+    DEFAULT_TARGET_FIELD_DURATION_SECONDS,
+    DEFAULT_TARGET_FIELD_LOOP_COUNT,
+    DEFAULT_TARGET_FIELD_SCALE_PERCENT,
     DEFAULT_TARGET_FIELD_STRETCH_MODE,
     export_target_field_animation,
+)
+from photometry_app.core.target_markers import (
+    DEFAULT_TARGET_FIELD_MARKER_STYLE,
+    TargetMarkerAppearance,
 )
 from photometry_app.core.matching import apply_differential_photometry, apply_measurement_quality_analysis, build_light_curve_series, measurement_has_usable_value, select_reference_stars
 from photometry_app.core.models import CatalogStar, FileScanResult, LightCurveSeries, ManualPhotometryConfig, ObservationMetadata, PhotometryMeasurement, ProcessingReport, ScanReport, VariableSelectionPreview
@@ -60,7 +66,7 @@ from photometry_app.core.survey_tiles import (
 )
 from photometry_app.core.distance_map import build_distance_map
 from photometry_app.core.sky_explorer import explore_sky_image
-from photometry_app.core.settings import AppSettings, SkyAtlasCustomOverlayRecord
+from photometry_app.core.settings import AppSettings, SkyAtlasCustomOverlayRecord, resolve_shared_parallel_workers
 from photometry_app.core.sky_atlas_custom_overlay import import_sky_overlay
 from photometry_app.core.solar_system import KnownObjectHeliocentricContext, SolarSystemDetection, SolarSystemDetectionResult, SolarSystemFrameMeasurement, SolarSystemVisibilityEstimateResult, build_known_object_heliocentric_context, build_multi_known_object_heliocentric_context, detect_known_solar_system_objects, estimate_visible_magnitude_limit, measure_detections_in_frame
 
@@ -2767,7 +2773,7 @@ class TargetFieldAnimationExportWorker(QThread):
 
     export_cancelled = Signal(str)
 
-    progress_updated = Signal(int, int, str)
+    progress_updated = Signal(object)
 
     def __init__(
         self,
@@ -2776,9 +2782,14 @@ class TargetFieldAnimationExportWorker(QThread):
         output_path: Path,
         *,
         fov_px: int,
-        align: bool = DEFAULT_TARGET_FIELD_ALIGN,
-        fps: float = DEFAULT_TARGET_FIELD_FPS,
+        align_mode: str = DEFAULT_TARGET_FIELD_ALIGN_MODE,
+        duration_seconds: float = DEFAULT_TARGET_FIELD_DURATION_SECONDS,
+        loop_count: int = DEFAULT_TARGET_FIELD_LOOP_COUNT,
+        scale_percent: int = DEFAULT_TARGET_FIELD_SCALE_PERCENT,
         stretch_mode: str = DEFAULT_TARGET_FIELD_STRETCH_MODE,
+        export_format: str = "gif",
+        marker_style: str = DEFAULT_TARGET_FIELD_MARKER_STYLE,
+        marker_appearance: TargetMarkerAppearance | None = None,
         filter_name: str | None = None,
         cache_dir: Path | None = None,
         series: LightCurveSeries | None = None,
@@ -2789,6 +2800,7 @@ class TargetFieldAnimationExportWorker(QThread):
         phase_anchor_mode: str = "first_observation",
         plot_theme: str = "normal",
         custom_theme_colors: dict[str, str] | None = None,
+        max_workers: int | None = None,
         parent: object | None = None,
     ) -> None:
         super().__init__(parent)
@@ -2796,9 +2808,14 @@ class TargetFieldAnimationExportWorker(QThread):
         self._source_id = source_id
         self._output_path = output_path
         self._fov_px = fov_px
-        self._align = bool(align)
-        self._fps = fps
+        self._align_mode = align_mode
+        self._duration_seconds = duration_seconds
+        self._loop_count = loop_count
+        self._scale_percent = scale_percent
         self._stretch_mode = stretch_mode
+        self._export_format = export_format
+        self._marker_style = marker_style
+        self._marker_appearance = marker_appearance
         self._filter_name = filter_name
         self._cache_dir = cache_dir
         self._series = series
@@ -2809,6 +2826,7 @@ class TargetFieldAnimationExportWorker(QThread):
         self._phase_anchor_mode = phase_anchor_mode
         self._plot_theme = plot_theme
         self._custom_theme_colors = None if custom_theme_colors is None else dict(custom_theme_colors)
+        self._max_workers = max_workers
         self._cancel_requested = Event()
 
     def request_cancel(self) -> None:
@@ -2821,9 +2839,14 @@ class TargetFieldAnimationExportWorker(QThread):
                 self._source_id,
                 self._output_path,
                 fov_px=self._fov_px,
-                align=self._align,
-                fps=self._fps,
+                align_mode=self._align_mode,
+                duration_seconds=self._duration_seconds,
+                loop_count=self._loop_count,
+                scale_percent=self._scale_percent,
                 stretch_mode=self._stretch_mode,
+                export_format=self._export_format,
+                marker_style=self._marker_style,
+                marker_appearance=self._marker_appearance,
                 filter_name=self._filter_name,
                 cache_dir=self._cache_dir,
                 series=self._series,
@@ -2834,6 +2857,7 @@ class TargetFieldAnimationExportWorker(QThread):
                 phase_anchor_mode=self._phase_anchor_mode,
                 plot_theme=self._plot_theme,
                 custom_theme_colors=self._custom_theme_colors,
+                max_workers=self._max_workers,
                 progress_callback=self.progress_updated.emit,
                 is_cancelled=self._cancel_requested.is_set,
             )
@@ -7282,7 +7306,13 @@ class DiscoverSourcesWorker(QThread):
 
             try:
 
-                field_catalog = self._pipeline._best_field_catalog_for_solved_results(catalog_service, solved_results, self._emit_progress)
+                field_catalog = self._pipeline._best_field_catalog_for_solved_results(
+                    catalog_service,
+                    solved_results,
+                    self._emit_progress,
+                    aavso_chart_id=self._settings.aavso_chart_id,
+                    gaia_max_magnitude=self._settings.reference_star_max_magnitude,
+                )
 
             except Exception as exc:
 

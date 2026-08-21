@@ -31,7 +31,7 @@ from astropy.io.fits import Header
 
 
 
-from photometry_app.core.catalogs import CatalogService
+from photometry_app.core.catalogs import CatalogService, DEFAULT_GAIA_TILE_OPTIONS, capped_solved_field
 
 from photometry_app.core.catalog_filters import filter_variable_stars, format_designation_family_labels
 
@@ -123,6 +123,12 @@ _PROCESSING_REPORT_CACHE_MISS_REASON = "Cache miss: workflow files or settings c
 _AAVSO_ANALYZE_BEST_MIN_PEAK_ABOVE_SKY_ADU = 1000.0
 
 _AAVSO_ANALYZE_BEST_MAX_SATURATION_FRACTION = 0.80
+
+_PHOTOMETRY_CATALOG_MAX_RADIUS_DEG = float(DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg)
+
+_PHOTOMETRY_GAIA_MAX_MAGNITUDE = 16.0
+
+_PHOTOMETRY_GAIA_ROW_LIMIT = 5000
 
 
 
@@ -619,7 +625,13 @@ class PhotometryPipeline:
 
         catalog_service = CatalogService(settings.cache_dir / "catalogs")
 
-        field_catalog = self._best_field_catalog_for_solved_results(catalog_service, solved_results, progress_callback)
+        field_catalog = self._best_field_catalog_for_solved_results(
+            catalog_service,
+            solved_results,
+            progress_callback,
+            aavso_chart_id=settings.aavso_chart_id,
+            gaia_max_magnitude=settings.reference_star_max_magnitude,
+        )
 
         total_variable_stars_found = len(field_catalog.variable_stars)
 
@@ -922,6 +934,7 @@ class PhotometryPipeline:
                 solved_results,
                 progress_callback,
                 aavso_chart_id=settings.aavso_chart_id,
+                gaia_max_magnitude=settings.reference_star_max_magnitude,
             )
 
         except Exception as exc:
@@ -1954,7 +1967,10 @@ class PhotometryPipeline:
         )
         options = options_from_settings(settings)
         valid, reasons = validate_wcs(header, probe_file.path)
-        keyword_result = evaluate_ccvals_keyword_sanity(header)
+        keyword_result = evaluate_ccvals_keyword_sanity(
+            header,
+            max_disagreement_pixels=options.ccvals_max_disagreement_pixels,
+        )
         if keyword_result is not None:
             reasons = [*reasons, *keyword_result.reasons]
             for reason in keyword_result.reasons:
@@ -2006,6 +2022,7 @@ class PhotometryPipeline:
                     height,
                     policy=policy,
                     cache_dir=settings.cache_dir / "astrometry" / "wcs-sanity",
+                    max_disagreement_pixels=options_from_settings(settings).ccvals_max_disagreement_pixels,
                 )
                 if policy_resolution.accepted and policy_resolution.solved_field is not None:
                     return (
@@ -2628,6 +2645,8 @@ class PhotometryPipeline:
 
         aavso_chart_id: str | None = None,
 
+        gaia_max_magnitude: float | None = None,
+
     ) -> FieldCatalog:
 
         solved_fields = [result.solved_field for _, result in solved_results if result.solved_field is not None]
@@ -2646,9 +2665,17 @@ class PhotometryPipeline:
 
         seen_keys: set[tuple[float, float, float]] = set()
 
+        magnitude_limit = _photometry_gaia_magnitude_limit(gaia_max_magnitude)
+
         for index, solved_field in enumerate(solved_fields, start=1):
 
-            key = (round(solved_field.center_ra_deg, 5), round(solved_field.center_dec_deg, 5), round(solved_field.radius_deg, 5))
+            catalog_field = capped_solved_field(solved_field, _PHOTOMETRY_CATALOG_MAX_RADIUS_DEG)
+
+            key = (
+                round(catalog_field.center_ra_deg, 5),
+                round(catalog_field.center_dec_deg, 5),
+                round(catalog_field.radius_deg, 5),
+            )
 
             if key in seen_keys:
 
@@ -2656,10 +2683,27 @@ class PhotometryPipeline:
 
             seen_keys.add(key)
 
-            catalog = catalog_service.query_field_catalog(
-                solved_field,
+            if float(catalog_field.radius_deg) + 1e-12 < float(solved_field.radius_deg):
+
+                _emit_progress(
+
+                    progress_callback,
+
+                    (
+                        f"Photometry catalog uses the central {catalog_field.radius_deg:.4f} deg "
+                        f"(field radius is {float(solved_field.radius_deg):.4f} deg); "
+                        f"Gaia G <= {magnitude_limit:.1f}."
+                    ),
+
+                )
+
+            catalog = _query_photometry_field_catalog(
+                catalog_service,
+                catalog_field,
                 aavso_chart_id=aavso_chart_id,
                 progress_callback=progress_callback,
+                gaia_max_magnitude=magnitude_limit,
+                gaia_row_cap=_PHOTOMETRY_GAIA_ROW_LIMIT,
             )
 
             score = len(catalog.variable_stars) * 100000 + len(catalog.gaia_stars)
@@ -3044,6 +3088,22 @@ def _aligned_frame_reuse_key(
 
 
 
+
+
+def _photometry_gaia_magnitude_limit(reference_star_max_magnitude: float | None) -> float:
+    if reference_star_max_magnitude is None:
+        return _PHOTOMETRY_GAIA_MAX_MAGNITUDE
+    return max(_PHOTOMETRY_GAIA_MAX_MAGNITUDE, float(reference_star_max_magnitude))
+
+
+def _query_photometry_field_catalog(catalog_service: CatalogService, solved_field: SolvedField, **kwargs):
+    try:
+        return catalog_service.query_field_catalog(solved_field, **kwargs)
+    except TypeError as exc:
+        message = str(exc)
+        if "unexpected keyword" not in message and "positional argument" not in message:
+            raise
+        return catalog_service.query_field_catalog(solved_field)
 
 
 def _deduplicate(items: list[str]) -> list[str]:

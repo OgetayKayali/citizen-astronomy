@@ -9,8 +9,10 @@ from astropy.io import fits
 import numpy as np
 
 from photometry_app.core.observation_map import (
+    ObservationMapResult,
     build_observation_map,
     contribution_level,
+    contribution_span_bounds,
     format_duration,
     frame_type_is_calibration,
     frame_type_is_light,
@@ -82,6 +84,23 @@ class ObservationMapBuildTest(unittest.TestCase):
             self.assertEqual(day_map[date(2024, 6, 1)].frame_count, 2)
             self.assertEqual(day_map[date(2024, 6, 2)].exposure_seconds, 300.0)
             self.assertAlmostEqual(result.total_exposure_hours, 600.0 / 3600.0)
+            start, end = contribution_span_bounds(result)
+            self.assertEqual(start, date(2024, 6, 1))
+            self.assertEqual(end, date(2024, 6, 2))
+
+    def test_contribution_span_clamps_corrupt_ancient_dates(self) -> None:
+        result = ObservationMapResult(
+            root_path=Path("/offline-nas"),
+            days=(),
+            included_frames=0,
+            skipped_files=0,
+            total_exposure_seconds=0.0,
+            first_date=date(1, 1, 1),
+            last_date=date(2024, 6, 1),
+        )
+        start, end = contribution_span_bounds(result)
+        self.assertEqual(start, date(1990, 1, 1))
+        self.assertEqual(end, date(2024, 6, 1))
 
     def test_inspect_rejects_calibration_imagetyp(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

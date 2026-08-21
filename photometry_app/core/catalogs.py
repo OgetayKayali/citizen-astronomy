@@ -108,6 +108,22 @@ def gaia_field_needs_tiles(
     return float(solved_field.radius_deg) > float(tile_options.max_radius_deg)
 
 
+def capped_solved_field(solved_field: SolvedField, max_radius_deg: float) -> SolvedField:
+    """Return *solved_field* unchanged, or a copy whose radius fits one Gaia cone."""
+    field_radius = max(1.0e-6, float(solved_field.radius_deg))
+    capped_radius = min(field_radius, max(1.0e-6, float(max_radius_deg)))
+    if capped_radius >= field_radius - 1e-12:
+        return solved_field
+    return SolvedField(
+        center_ra_deg=float(solved_field.center_ra_deg),
+        center_dec_deg=float(solved_field.center_dec_deg),
+        radius_deg=capped_radius,
+        width=solved_field.width,
+        height=solved_field.height,
+        wcs_path=solved_field.wcs_path,
+    )
+
+
 def _gaia_row_limit_progress_suffix(
     solved_field: SolvedField,
     row_limit: int | None,
@@ -685,11 +701,17 @@ class CatalogService:
 
         progress_callback: Callable[[str], None] | None = None,
 
+        *,
+
+        progress_label: str = "transient-veto field",
+
     ) -> list[CatalogStar]:
 
         magnitude_limit = max(-5.0, min(30.0, float(maximum_magnitude)))
 
         normalized_row_limit = None if row_limit is None else max(1, int(row_limit))
+
+        label = str(progress_label or "transient-veto field").strip() or "transient-veto field"
 
         cache_path = self._cache_dir / self._gaia_filtered_cache_key(
             solved_field,
@@ -707,7 +729,7 @@ class CatalogService:
 
                     progress_callback(
 
-                        "Loaded cached Gaia transient-veto stars: "
+                        f"Loaded cached Gaia {label} stars: "
 
                         f"{len(cached_catalog.gaia_stars)} source(s) at G <= {magnitude_limit:.1f}"
                         f"{'' if normalized_row_limit is None else f' with a {normalized_row_limit}-row cap'}"
@@ -727,7 +749,7 @@ class CatalogService:
 
             progress_callback(
 
-                f"Querying Gaia DR3 for the transient-veto field at RA {solved_field.center_ra_deg:.5f} deg, "
+                f"Querying Gaia DR3 for the {label} at RA {solved_field.center_ra_deg:.5f} deg, "
 
                 f"Dec {solved_field.center_dec_deg:.5f} deg, radius {solved_field.radius_deg:.4f} deg, "
 
@@ -763,7 +785,7 @@ class CatalogService:
 
             progress_callback(
 
-                f"Gaia DR3 transient-veto lookup complete: {len(gaia_stars)} star(s) returned at G <= {magnitude_limit:.1f}."
+                f"Gaia DR3 {label} lookup complete: {len(gaia_stars)} star(s) returned at G <= {magnitude_limit:.1f}."
 
             )
 

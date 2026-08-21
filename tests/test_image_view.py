@@ -2150,6 +2150,62 @@ class ImageViewInfoPanelTest(unittest.TestCase):
             self.assertGreaterEqual(len(painter.line_calls), 8)
             self.assertEqual(len(painter.ellipse_calls), 0)
 
+    def test_draw_overlay_pointer_draws_left_and_top_arms_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "synthetic_pointer.fit"
+            image_path.write_text("placeholder", encoding="utf-8")
+            view = AnnotatedImageView()
+            view.set_content(
+                build_annotated_image_display_from_array(np.ones((80, 80), dtype=np.float32), image_path=image_path),
+                overlays=[],
+                grid_overlays=[],
+                editor_enabled=False,
+            )
+
+            class _FakePainter:
+                def __init__(self) -> None:
+                    self.line_calls: list[object] = []
+
+                def setPen(self, _pen: object) -> None:
+                    return None
+
+                def setBrush(self, _brush: object) -> None:
+                    return None
+
+                def drawLine(self, *args: object) -> None:
+                    self.line_calls.append(args)
+
+            painter = _FakePainter()
+            view._draw_overlay(
+                painter,
+                ImageOverlay(
+                    source_id="asteroid:selected",
+                    name="Pointer Target",
+                    x=40.0,
+                    y=40.0,
+                    aperture_radius=8.0,
+                    annulus_inner_radius=8.0,
+                    annulus_outer_radius=8.0,
+                    color="#ef4444",
+                    show_annulus=False,
+                    marker_style="pointer",
+                    show_center_dot=False,
+                    outline_color="#ffffff",
+                    outline_width=3.0,
+                ),
+            )
+            self.assertEqual(len(painter.line_calls), 4)
+            for call in painter.line_calls:
+                start, end = call
+                x1, y1, x2, y2 = start.x(), start.y(), end.x(), end.y()
+                horizontal = abs(y1 - 40.0) < 1e-6 and abs(y2 - 40.0) < 1e-6
+                vertical = abs(x1 - 40.0) < 1e-6 and abs(x2 - 40.0) < 1e-6
+                self.assertTrue(horizontal or vertical)
+                if horizontal:
+                    self.assertLess(max(x1, x2), 40.0)
+                else:
+                    self.assertLess(max(y1, y2), 40.0)
+
     def test_grid_overlay_label_point_tracks_visible_line_segment_when_zoomed(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:

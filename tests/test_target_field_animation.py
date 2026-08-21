@@ -17,13 +17,27 @@ from photometry_app.core.models import (
     PhotometryMeasurement,
     ProcessingReport,
 )
+from photometry_app.core.target_markers import TargetMarkerAppearance
 from photometry_app.core.target_field_animation import (
+    DEFAULT_TARGET_FIELD_ALIGN_MODE,
+    DEFAULT_TARGET_FIELD_DURATION_SECONDS,
     DEFAULT_TARGET_FIELD_FOV_PX,
     DEFAULT_TARGET_FIELD_FPS,
+    DEFAULT_TARGET_FIELD_SCALE_PERCENT,
     DEFAULT_TARGET_FIELD_STRETCH_MODE,
+    TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+    TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
+    TARGET_FIELD_ALIGN_NONE,
+    TARGET_FIELD_PROGRESS_COMPOSE,
+    TARGET_FIELD_PROGRESS_ENCODE,
+    TARGET_FIELD_PROGRESS_NORMALIZE,
+    TARGET_FIELD_PROGRESS_PREPARE,
+    TargetFieldAnimationExportOptions,
+    TargetFieldAnimationProgress,
     TargetFieldFrame,
     TargetFieldAnimationError,
     align_target_stamps,
+    apply_target_field_marker,
     collect_target_field_frames,
     crop_comparison_scale_factors,
     crop_image_aligned_stamp,
@@ -34,15 +48,33 @@ from photometry_app.core.target_field_animation import (
     estimate_stamp_alignment,
     estimate_stamp_alignments,
     estimate_stamp_background,
+    export_target_field_animation,
+    load_or_create_align_then_crop_stamp,
     load_or_create_full_aligned_stamp,
     load_or_create_target_stamp,
+    _load_target_field_stamps_parallel,
+    _prepare_target_field_frame,
     local_comparison_scale_factors,
     match_stamp_backgrounds,
+    normalize_target_field_align_mode,
+    normalize_target_field_duration_seconds,
+    normalize_target_field_export_format,
     normalize_target_field_fov_px,
     normalize_target_field_fps,
+    normalize_target_field_loop_count,
+    normalize_target_field_marker_length_percent,
+    normalize_target_field_marker_line_color,
+    normalize_target_field_marker_line_width,
+    normalize_target_field_marker_style,
+    normalize_target_field_scale_percent,
     normalize_target_field_stretch_mode,
+    render_target_field_marker_preview,
+    resolve_target_field_parallel_workers,
     stretch_stamps_to_shared_display,
+    target_field_duration_frame_ms,
     target_field_frame_duration_ms,
+    target_field_marker_extents,
+    target_field_progress_stage_title,
 )
 
 
@@ -81,6 +113,66 @@ class TargetFieldAnimationTest(unittest.TestCase):
         self.assertEqual(normalize_target_field_fps(80), 30.0)
         self.assertEqual(target_field_frame_duration_ms(12), 83)
         self.assertEqual(target_field_frame_duration_ms(30), 33)
+
+    def test_normalize_duration_scale_align_and_format(self) -> None:
+        self.assertEqual(normalize_target_field_duration_seconds(None), DEFAULT_TARGET_FIELD_DURATION_SECONDS)
+        self.assertEqual(normalize_target_field_duration_seconds(8), 8.0)
+        self.assertEqual(normalize_target_field_duration_seconds(0.1), 0.5)
+        self.assertEqual(normalize_target_field_duration_seconds(400), 120.0)
+        self.assertEqual(normalize_target_field_loop_count(None), 1)
+        self.assertEqual(normalize_target_field_loop_count(3), 3)
+        self.assertEqual(normalize_target_field_loop_count(0), 1)
+        self.assertEqual(normalize_target_field_loop_count(99), 20)
+        self.assertEqual(TargetFieldAnimationExportOptions().normalized().loop_count, 1)
+        self.assertEqual(normalize_target_field_scale_percent(None), DEFAULT_TARGET_FIELD_SCALE_PERCENT)
+        self.assertEqual(normalize_target_field_scale_percent(150), 150)
+        self.assertEqual(normalize_target_field_scale_percent(5), 10)
+        self.assertEqual(normalize_target_field_scale_percent(500), 200)
+        self.assertEqual(normalize_target_field_align_mode(None), DEFAULT_TARGET_FIELD_ALIGN_MODE)
+        self.assertEqual(normalize_target_field_align_mode(True), TARGET_FIELD_ALIGN_CROP_THEN_ALIGN)
+        self.assertEqual(normalize_target_field_align_mode(False), TARGET_FIELD_ALIGN_NONE)
+        self.assertEqual(normalize_target_field_align_mode("align_then_crop"), TARGET_FIELD_ALIGN_ALIGN_THEN_CROP)
+        self.assertEqual(normalize_target_field_export_format(".mp4"), "mp4")
+        self.assertEqual(normalize_target_field_export_format("nope"), "gif")
+        self.assertEqual(normalize_target_field_marker_style(None), "none")
+        self.assertEqual(normalize_target_field_marker_style("pointer"), "pointer")
+        self.assertEqual(normalize_target_field_marker_style("nope"), "none")
+        self.assertEqual(normalize_target_field_marker_length_percent(None), 36)
+        self.assertEqual(normalize_target_field_marker_length_percent(12), 12)
+        self.assertEqual(normalize_target_field_marker_length_percent(3), 10)
+        self.assertEqual(normalize_target_field_marker_line_width(2.5), 2.5)
+        self.assertEqual(normalize_target_field_marker_line_color("#00ff00"), "#00ff00")
+        self.assertEqual(TargetFieldAnimationExportOptions().normalized().marker_style, "none")
+        self.assertEqual(TargetFieldAnimationExportOptions().normalized().marker_length_percent, 36)
+        self.assertEqual(target_field_duration_frame_ms(8.0, 10, gif=False), 800)
+        self.assertEqual(target_field_duration_frame_ms(0.5, 100, gif=True), 20)
+        self.assertEqual(
+            TargetFieldAnimationExportOptions().normalized().align_mode,
+            TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
+        )
+
+    def test_progress_stage_titles_follow_align_mode_and_format(self) -> None:
+        self.assertEqual(
+            target_field_progress_stage_title(TARGET_FIELD_PROGRESS_PREPARE),
+            "Crop, then align",
+        )
+        self.assertEqual(
+            target_field_progress_stage_title(
+                TARGET_FIELD_PROGRESS_PREPARE,
+                align_mode=TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+            ),
+            "Align, then crop",
+        )
+        self.assertEqual(
+            target_field_progress_stage_title(
+                TARGET_FIELD_PROGRESS_PREPARE,
+                align_mode=TARGET_FIELD_ALIGN_NONE,
+            ),
+            "Crop frames",
+        )
+        self.assertEqual(target_field_progress_stage_title(TARGET_FIELD_PROGRESS_NORMALIZE), "Normalize & stretch")
+        self.assertEqual(target_field_progress_stage_title(TARGET_FIELD_PROGRESS_COMPOSE), "Compose frames")
+        self.assertEqual(target_field_progress_stage_title(TARGET_FIELD_PROGRESS_ENCODE, export_format="mp4"), "Encode MP4")
 
     def test_align_locks_shifted_star_to_reference(self) -> None:
         reference = np.zeros((40, 40), dtype=float)
@@ -447,6 +539,150 @@ class TargetFieldAnimationTest(unittest.TestCase):
         self.assertEqual(stamp.shape, (81, 81))
         self.assertEqual(orientation, "rot180")
 
+    def test_align_then_crop_path_aligns_full_frames_before_crop(self) -> None:
+        reference = np.full((100, 100), 8.0)
+        reference[49:52, 59:62] = 40.0
+        reference[50, 60] = 90.0
+        reference[29:32, 74:77] = 25.0
+        reference[30, 75] = 70.0
+        reference[69:72, 34:37] = 22.0
+        reference[70, 35] = 60.0
+        flipped = np.rot90(reference, 2)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            reference_path = root / "reference.fits"
+            flipped_path = root / "flipped.fits"
+            fits.PrimaryHDU(reference).writeto(reference_path)
+            fits.PrimaryHDU(flipped).writeto(flipped_path)
+            reference_measurement = self._measurement(file_path=reference_path, x=60.0, y=50.0, index=0)
+            flipped_measurement = self._measurement(file_path=flipped_path, x=39.0, y=49.0, index=1)
+
+            with mock.patch(
+                "photometry_app.core.target_field_animation.estimate_full_frame_alignment",
+                wraps=estimate_full_frame_alignment,
+            ) as alignment:
+                stamp, orientation = load_or_create_align_then_crop_stamp(
+                    flipped_measurement,
+                    reference_measurement=reference_measurement,
+                    reference_image=reference,
+                    fov_px=81,
+                    cache_dir=None,
+                    source_id="vsx-demo",
+                )
+
+        alignment.assert_called_once()
+        aligned_reference, aligned_source = alignment.call_args.args[:2]
+        self.assertEqual(aligned_reference.shape, (100, 100))
+        self.assertEqual(aligned_source.shape, (100, 100))
+        self.assertEqual(stamp.shape, (81, 81))
+        self.assertEqual(orientation, "rot180")
+
+    def test_export_dispatches_gif_or_mp4_with_duration_and_scale(self) -> None:
+        from PySide6.QtGui import QImage
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is None:
+            QApplication([])
+
+        reference = np.full((40, 40), 12.0)
+        reference[18:23, 18:23] = 80.0
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "frame.fits"
+            fits.PrimaryHDU(reference).writeto(image_path)
+            measurement = self._measurement(file_path=image_path, x=20.0, y=20.0, index=0)
+            series = LightCurveSeries(
+                object_name="Demo",
+                source_id="vsx-demo",
+                source_name="Demo Var",
+                filter_name="V",
+                points=[
+                    LightCurvePoint(
+                        observation_time=measurement.observation_time,
+                        file_path=measurement.file_path,
+                        differential_magnitude=12.0,
+                        instrumental_magnitude=10.0,
+                        flux=1000.0,
+                        flux_error=5.0,
+                    )
+                ],
+            )
+            report = ProcessingReport(
+                object_name="Demo",
+                files_processed=1,
+                solved_files=1,
+                field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0),
+                measurements=[measurement],
+                light_curves=[series],
+            )
+            gif_path = root / "target_field.gif"
+            mp4_path = root / "target_field.mp4"
+            dummy = QImage(8, 8, QImage.Format.Format_RGB888)
+            dummy.fill(0)
+            progress_events: list[TargetFieldAnimationProgress] = []
+
+            with (
+                mock.patch(
+                    "photometry_app.core.target_field_animation.export_qimages_to_gif",
+                ) as gif_export,
+                mock.patch(
+                    "photometry_app.core.target_field_animation.export_qimages_to_mp4",
+                ) as mp4_export,
+                mock.patch(
+                    "photometry_app.core.target_field_animation._render_light_curve_payload_with_highlight",
+                    return_value=dummy,
+                ),
+            ):
+                export_target_field_animation(
+                    report,
+                    "vsx-demo",
+                    gif_path,
+                    fov_px=21,
+                    align_mode=TARGET_FIELD_ALIGN_NONE,
+                    duration_seconds=4.0,
+                    scale_percent=50,
+                    export_format="gif",
+                    series=series,
+                    progress_callback=progress_events.append,
+                )
+                export_target_field_animation(
+                    report,
+                    "vsx-demo",
+                    mp4_path,
+                    fov_px=21,
+                    align_mode=TARGET_FIELD_ALIGN_NONE,
+                    duration_seconds=4.0,
+                    loop_count=3,
+                    scale_percent=50,
+                    export_format="mp4",
+                    series=series,
+                )
+
+        gif_export.assert_called_once()
+        mp4_export.assert_called_once()
+        self.assertEqual(gif_export.call_args.kwargs["frame_duration_ms"], 4000)
+        self.assertEqual(gif_export.call_args.kwargs["scale_percent"], 50)
+        self.assertEqual(gif_export.call_args.kwargs["loop_count"], 0)
+        self.assertEqual(mp4_export.call_args.kwargs["frame_duration_ms"], 4000)
+        self.assertEqual(mp4_export.call_args.kwargs["scale_percent"], 50)
+        self.assertEqual(mp4_export.call_args.kwargs["repeat_count"], 3)
+        self.assertEqual(
+            [event.stage for event in progress_events],
+            [
+                TARGET_FIELD_PROGRESS_PREPARE,
+                TARGET_FIELD_PROGRESS_PREPARE,
+                TARGET_FIELD_PROGRESS_NORMALIZE,
+                TARGET_FIELD_PROGRESS_NORMALIZE,
+                TARGET_FIELD_PROGRESS_COMPOSE,
+                TARGET_FIELD_PROGRESS_COMPOSE,
+                TARGET_FIELD_PROGRESS_ENCODE,
+                TARGET_FIELD_PROGRESS_ENCODE,
+            ],
+        )
+        self.assertTrue(progress_events[-1].done)
+        self.assertIn("GIF", progress_events[-1].message)
+
     def test_wcs_align_then_crop_corrects_meridian_flip(self) -> None:
         from astropy.wcs import WCS
 
@@ -692,3 +928,298 @@ class TargetFieldAnimationTest(unittest.TestCase):
             self.assertEqual(first.shape, (11, 11))
             self.assertTrue(np.allclose(first, second, equal_nan=True))
             self.assertAlmostEqual(float(first[5, 5]), 55.0)
+
+    def test_parallel_workers_default_to_shared_auto_range(self) -> None:
+        self.assertEqual(resolve_target_field_parallel_workers(1), 1)
+        self.assertEqual(resolve_target_field_parallel_workers(12), 12)
+        self.assertGreaterEqual(resolve_target_field_parallel_workers(None), 1)
+        self.assertLessEqual(resolve_target_field_parallel_workers(0), 8)
+
+    def test_threaded_crop_matches_single_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            frames: list[TargetFieldFrame] = []
+            for index in range(3):
+                path = Path(temp_dir) / f"frame_{index}.fits"
+                data = np.full((40, 40), 8.0 + index)
+                data[20, 20] = 50.0 + index
+                fits.PrimaryHDU(data).writeto(path)
+                frames.append(TargetFieldFrame(measurement=self._measurement(file_path=path, x=20.0, y=20.0, index=index), point=None))
+            kwargs = {
+                "align_mode": TARGET_FIELD_ALIGN_NONE,
+                "fov_px": 11,
+                "cache_dir": None,
+                "source_id": "vsx-demo",
+                "reference_measurement": frames[0].measurement,
+                "reference_image": None,
+                "reference_crop": None,
+                "positions_by_file": {},
+                "progress_callback": None,
+                "is_cancelled": None,
+                "progress_message": lambda completed, total: f"{completed}/{total}",
+            }
+            sequential = _load_target_field_stamps_parallel(frames, max_workers=1, **kwargs)
+            parallel = _load_target_field_stamps_parallel(frames, max_workers=3, **kwargs)
+            self.assertEqual(len(sequential), 3)
+            for left, right in zip(sequential, parallel, strict=True):
+                self.assertTrue(np.allclose(left, right, equal_nan=True))
+
+    def test_threaded_crop_then_align_matches_single_worker(self) -> None:
+        reference = np.full((100, 100), 8.0)
+        reference[49:52, 59:62] = 40.0
+        reference[50, 60] = 90.0
+        reference[29:32, 74:77] = 25.0
+        reference[30, 75] = 70.0
+        flipped = np.rot90(reference, 2)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_path = Path(temp_dir) / "reference.fits"
+            flipped_path = Path(temp_dir) / "flipped.fits"
+            extra_path = Path(temp_dir) / "extra.fits"
+            fits.PrimaryHDU(reference).writeto(reference_path)
+            fits.PrimaryHDU(flipped).writeto(flipped_path)
+            fits.PrimaryHDU(reference).writeto(extra_path)
+            frames = [
+                TargetFieldFrame(measurement=self._measurement(file_path=reference_path, x=60.0, y=50.0, index=0), point=None),
+                TargetFieldFrame(measurement=self._measurement(file_path=flipped_path, x=39.0, y=49.0, index=1), point=None),
+                TargetFieldFrame(measurement=self._measurement(file_path=extra_path, x=60.0, y=50.0, index=2), point=None),
+            ]
+            kwargs = {
+                "align_mode": TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
+                "fov_px": 41,
+                "cache_dir": None,
+                "source_id": "vsx-demo",
+                "reference_measurement": frames[0].measurement,
+                "reference_image": reference,
+                "reference_crop": crop_target_stamp(reference, 60.0, 50.0, 41),
+                "positions_by_file": {},
+                "progress_callback": None,
+                "is_cancelled": None,
+                "progress_message": lambda completed, total: f"{completed}/{total}",
+            }
+            sequential = _load_target_field_stamps_parallel(frames, max_workers=1, **kwargs)
+            parallel = _load_target_field_stamps_parallel(frames, max_workers=3, **kwargs)
+            self.assertEqual(len(sequential), 3)
+            for left, right in zip(sequential, parallel, strict=True):
+                self.assertTrue(np.allclose(left, right, equal_nan=True))
+
+    def test_parallel_workers_leave_small_frames_uncapped(self) -> None:
+        self.assertEqual(resolve_target_field_parallel_workers(8, frame_shape=(40, 40)), 8)
+        large = resolve_target_field_parallel_workers(8, frame_shape=(4176, 6248))
+        self.assertGreaterEqual(large, 1)
+        self.assertLessEqual(large, 3)
+
+    def test_prepare_does_not_keep_full_source_frames(self) -> None:
+        reference = np.full((80, 90), 8.0)
+        reference[29:32, 39:42] = 40.0
+        reference[30, 40] = 90.0
+        reference[14:17, 54:57] = 25.0
+        reference[15, 55] = 70.0
+        flipped = np.rot90(reference, 2)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_path = Path(temp_dir) / "reference.fits"
+            flipped_path = Path(temp_dir) / "flipped.fits"
+            fits.PrimaryHDU(reference).writeto(reference_path)
+            fits.PrimaryHDU(flipped).writeto(flipped_path)
+            reference_measurement = self._measurement(file_path=reference_path, x=40.0, y=30.0, index=0)
+            flipped_measurement = self._measurement(file_path=flipped_path, x=49.0, y=49.0, index=1)
+            kwargs = {
+                "fov_px": 25,
+                "cache_dir": None,
+                "source_id": "vsx-demo",
+                "reference_measurement": reference_measurement,
+                "reference_image": reference,
+                "reference_crop": crop_target_stamp(reference, 40.0, 30.0, 25),
+                "reference_positions": None,
+                "source_positions": None,
+            }
+            crop_then_align = _prepare_target_field_frame(
+                1,
+                flipped_measurement,
+                align_mode=TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
+                **kwargs,
+            )
+            align_then_crop = _prepare_target_field_frame(
+                1,
+                flipped_measurement,
+                align_mode=TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+                **kwargs,
+            )
+        self.assertIsNone(getattr(crop_then_align, "source_image", None))
+        self.assertIsNotNone(crop_then_align.stamp)
+        self.assertIsNone(getattr(align_then_crop, "source_image", None))
+        self.assertEqual(align_then_crop.image_path, flipped_path)
+        self.assertIsNone(align_then_crop.stamp)
+
+    def test_prepare_align_then_crop_uses_star_positions_without_reading_fits(self) -> None:
+        reference = np.full((80, 90), 8.0)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_path = Path(temp_dir) / "reference.fits"
+            source_path = Path(temp_dir) / "source.fits"
+            fits.PrimaryHDU(reference).writeto(reference_path)
+            fits.PrimaryHDU(reference).writeto(source_path)
+            reference_measurement = self._measurement(file_path=reference_path, x=40.0, y=30.0, index=0)
+            source_measurement = self._measurement(file_path=source_path, x=43.0, y=32.0, index=1)
+            reference_positions = {"a": (40.0, 30.0), "b": (55.0, 15.0), "c": (22.0, 48.0)}
+            source_positions = {"a": (43.0, 32.0), "b": (58.0, 17.0), "c": (25.0, 50.0)}
+            with mock.patch(
+                "photometry_app.core.target_field_animation.read_photometry_image_data",
+            ) as reader:
+                prepared = _prepare_target_field_frame(
+                    1,
+                    source_measurement,
+                    align_mode=TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+                    fov_px=25,
+                    cache_dir=None,
+                    source_id="vsx-demo",
+                    reference_measurement=reference_measurement,
+                    reference_image=reference,
+                    reference_crop=None,
+                    reference_positions=reference_positions,
+                    source_positions=source_positions,
+                )
+        reader.assert_not_called()
+        self.assertIsNone(getattr(prepared, "source_image", None))
+        self.assertIsNotNone(prepared.candidates)
+
+    def test_threaded_align_then_crop_matches_single_worker(self) -> None:
+        reference = np.full((100, 100), 8.0)
+        reference[49:52, 59:62] = 40.0
+        reference[50, 60] = 90.0
+        reference[29:32, 74:77] = 25.0
+        reference[30, 75] = 70.0
+        flipped = np.rot90(reference, 2)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_path = Path(temp_dir) / "reference.fits"
+            flipped_path = Path(temp_dir) / "flipped.fits"
+            extra_path = Path(temp_dir) / "extra.fits"
+            fits.PrimaryHDU(reference).writeto(reference_path)
+            fits.PrimaryHDU(flipped).writeto(flipped_path)
+            fits.PrimaryHDU(reference).writeto(extra_path)
+            frames = [
+                TargetFieldFrame(measurement=self._measurement(file_path=reference_path, x=60.0, y=50.0, index=0), point=None),
+                TargetFieldFrame(measurement=self._measurement(file_path=flipped_path, x=39.0, y=49.0, index=1), point=None),
+                TargetFieldFrame(measurement=self._measurement(file_path=extra_path, x=60.0, y=50.0, index=2), point=None),
+            ]
+            kwargs = {
+                "align_mode": TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+                "fov_px": 41,
+                "cache_dir": None,
+                "source_id": "vsx-demo",
+                "reference_measurement": frames[0].measurement,
+                "reference_image": reference,
+                "reference_crop": crop_target_stamp(reference, 60.0, 50.0, 41),
+                "positions_by_file": {},
+                "progress_callback": None,
+                "is_cancelled": None,
+                "progress_message": lambda completed, total: f"{completed}/{total}",
+            }
+            sequential = _load_target_field_stamps_parallel(frames, max_workers=1, **kwargs)
+            parallel = _load_target_field_stamps_parallel(frames, max_workers=3, **kwargs)
+            self.assertEqual(len(sequential), 3)
+            for left, right in zip(sequential, parallel, strict=True):
+                self.assertTrue(np.allclose(left, right, equal_nan=True))
+
+    def test_threaded_align_then_crop_with_star_positions_matches_single_worker(self) -> None:
+        reference = np.full((80, 90), 8.0)
+        reference[29:32, 39:42] = 40.0
+        reference[30, 40] = 90.0
+        shifted = np.roll(np.roll(reference, 2, axis=0), -3, axis=1)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_path = Path(temp_dir) / "reference.fits"
+            shifted_path = Path(temp_dir) / "shifted.fits"
+            fits.PrimaryHDU(reference).writeto(reference_path)
+            fits.PrimaryHDU(shifted).writeto(shifted_path)
+            frames = [
+                TargetFieldFrame(measurement=self._measurement(file_path=reference_path, x=40.0, y=30.0, index=0), point=None),
+                TargetFieldFrame(measurement=self._measurement(file_path=shifted_path, x=37.0, y=32.0, index=1), point=None),
+            ]
+            positions_by_file = {
+                str(reference_path): {"a": (40.0, 30.0), "b": (55.0, 15.0), "c": (22.0, 48.0)},
+                str(shifted_path): {"a": (37.0, 32.0), "b": (52.0, 17.0), "c": (19.0, 50.0)},
+            }
+            kwargs = {
+                "align_mode": TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+                "fov_px": 25,
+                "cache_dir": None,
+                "source_id": "vsx-demo",
+                "reference_measurement": frames[0].measurement,
+                "reference_image": reference,
+                "reference_crop": None,
+                "positions_by_file": positions_by_file,
+                "progress_callback": None,
+                "is_cancelled": None,
+                "progress_message": lambda completed, total: f"{completed}/{total}",
+            }
+            sequential = _load_target_field_stamps_parallel(frames, max_workers=1, **kwargs)
+            parallel = _load_target_field_stamps_parallel(frames, max_workers=3, **kwargs)
+            self.assertEqual(len(sequential), 2)
+            for left, right in zip(sequential, parallel, strict=True):
+                self.assertTrue(np.allclose(left, right, equal_nan=True))
+
+    def test_pointer_marker_leaves_center_open_and_omits_right_bottom_arms(self) -> None:
+        from PySide6.QtGui import QColor, QImage
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance() or QApplication([])
+        image = QImage(80, 80, QImage.Format.Format_RGB888)
+        image.fill(QColor("#000000"))
+        marked = apply_target_field_marker(
+            image,
+            style="pointer",
+            appearance=TargetMarkerAppearance(
+                line_color="#ff0000",
+                outline_color="",
+                line_width=2.0,
+                length_percent=90.0,
+            ),
+        )
+        center = marked.pixelColor(40, 40)
+        self.assertEqual((center.red(), center.green(), center.blue()), (0, 0, 0))
+        outer, gap = target_field_marker_extents(80, 80, 90)
+        left = marked.pixelColor(int(round(40 - outer + 2)), 40)
+        self.assertGreater(left.red(), 80)
+        top = marked.pixelColor(40, int(round(40 - outer + 2)))
+        self.assertGreater(top.red(), 80)
+        right = marked.pixelColor(76, 40)
+        self.assertEqual((right.red(), right.green(), right.blue()), (0, 0, 0))
+        bottom = marked.pixelColor(40, 76)
+        self.assertEqual((bottom.red(), bottom.green(), bottom.blue()), (0, 0, 0))
+
+    def test_shorter_marker_length_keeps_arms_away_from_stamp_edges(self) -> None:
+        from PySide6.QtGui import QColor, QImage
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance() or QApplication([])
+        image = QImage(80, 80, QImage.Format.Format_RGB888)
+        image.fill(QColor("#000000"))
+        marked = apply_target_field_marker(
+            image,
+            style="pointer",
+            appearance=TargetMarkerAppearance(
+                line_color="#ff0000",
+                outline_color="",
+                line_width=2.0,
+                length_percent=30.0,
+            ),
+        )
+        self.assertEqual(marked.pixelColor(4, 40).red(), 0)
+        self.assertEqual(marked.pixelColor(40, 4).red(), 0)
+        outer, gap = target_field_marker_extents(80, 80, 30)
+        arm_x = int(round(40.0 - ((outer + gap) / 2.0)))
+        self.assertGreater(marked.pixelColor(arm_x, 40).red(), 80)
+
+    def test_preview_render_includes_pointer_on_synthetic_stamp(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance() or QApplication([])
+        preview = render_target_field_marker_preview(
+            None,
+            None,
+            None,
+            fov_px=80,
+            stretch_mode="linear",
+            marker_style="pointer",
+            appearance=TargetMarkerAppearance(line_color="#ff0000", outline_color="", line_width=2.0, length_percent=80.0),
+        )
+        self.assertFalse(preview.isNull())
+        self.assertEqual(preview.width(), 80)
+        self.assertGreater(preview.pixelColor(int(round(40 - target_field_marker_extents(80, 80, 80)[0] + 2)), 40).red(), 40)

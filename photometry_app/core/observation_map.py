@@ -10,6 +10,10 @@ import re
 from photometry_app.core.image_io import read_header
 from photometry_app.core.scanner import FILENAME_METADATA_PATTERN, parse_observation_timestamp
 
+_LOOSE_FILENAME_DATE_PATTERN = re.compile(
+    r"(?<!\d)(?P<year>20\d{2})[-_]?(?P<month>0[1-9]|1[0-2])[-_]?(?P<day>0[1-9]|[12]\d|3[01])(?!\d)"
+)
+
 FITS_SUBFRAME_SUFFIXES = {".fit", ".fits"}
 
 _EXPOSURE_HEADER_KEYS: tuple[tuple[str, float], ...] = (
@@ -197,10 +201,16 @@ def filename_exposure_seconds(path: Path) -> float | None:
 
 def filename_observation_date(path: Path) -> date | None:
     match = FILENAME_METADATA_PATTERN.search(path.stem)
-    if match is None:
+    if match is not None:
+        try:
+            return datetime.strptime(match.group("date"), "%Y%m%d").date()
+        except ValueError:
+            pass
+    loose = _LOOSE_FILENAME_DATE_PATTERN.search(path.stem)
+    if loose is None:
         return None
     try:
-        return datetime.strptime(match.group("date"), "%Y%m%d").date()
+        return date(int(loose.group("year")), int(loose.group("month")), int(loose.group("day")))
     except ValueError:
         return None
 
@@ -209,7 +219,7 @@ def header_observation_date(header: object, *, observation_timezone: str = "UTC"
     getter = getattr(header, "get", None)
     if getter is None:
         return None
-    for key in ("DATE-OBS", "DATEOBS", "DATE_OBS", "OBS-DATE"):
+    for key in ("DATE-OBS", "DATEOBS", "DATE_OBS", "OBS-DATE", "DATE-LOC", "DATE_LOC"):
         if key not in header:
             continue
         timestamp = parse_observation_timestamp(getter(key), observation_timezone=observation_timezone)
@@ -348,6 +358,21 @@ def contribution_year_bounds(result: ObservationMapResult, year: int | None = No
         today = date.today()
         return date(today.year, 1, 1), date(today.year, 12, 31)
     return date(result.first_date.year, 1, 1), date(result.last_date.year, 12, 31)
+
+
+_MIN_CONTRIBUTION_DATE = date(1990, 1, 1)
+
+
+def contribution_span_bounds(result: ObservationMapResult) -> tuple[date, date]:
+    today = date.today()
+    max_date = date(today.year + 1, 12, 31)
+    if result.first_date is None or result.last_date is None:
+        return today, today
+    start = max(result.first_date, _MIN_CONTRIBUTION_DATE)
+    end = min(result.last_date, max_date)
+    if start > end:
+        return today, today
+    return start, end
 
 
 def iter_calendar_days(start: date, end: date) -> Iterator[date]:
