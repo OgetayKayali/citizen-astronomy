@@ -28,6 +28,9 @@ from photometry_app.core.target_field_animation import (
     TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
     TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
     TARGET_FIELD_ALIGN_NONE,
+    TARGET_FIELD_OUTPUT_ASPECT_RATIO,
+    TARGET_FIELD_PLOT_ASPECT_RATIO,
+    TARGET_FIELD_STAR_ASPECT_RATIO,
     TARGET_FIELD_PROGRESS_COMPOSE,
     TARGET_FIELD_PROGRESS_ENCODE,
     TARGET_FIELD_PROGRESS_NORMALIZE,
@@ -36,9 +39,13 @@ from photometry_app.core.target_field_animation import (
     TargetFieldAnimationProgress,
     TargetFieldFrame,
     TargetFieldAnimationError,
+    TargetFieldPlotScanLayout,
     align_target_stamps,
     apply_target_field_marker,
+    apply_target_field_plot_scanner,
+    cinematic_center_crop,
     collect_target_field_frames,
+    compose_target_field_animation_frame,
     crop_comparison_scale_factors,
     crop_image_aligned_stamp,
     crop_target_centered_aligned_stamp,
@@ -59,18 +66,26 @@ from photometry_app.core.target_field_animation import (
     normalize_target_field_align_mode,
     normalize_target_field_duration_seconds,
     normalize_target_field_export_format,
+    normalize_target_field_fit_mode,
     normalize_target_field_fov_px,
     normalize_target_field_fps,
     normalize_target_field_loop_count,
+    normalize_target_field_marker_gap_percent,
     normalize_target_field_marker_length_percent,
     normalize_target_field_marker_line_color,
     normalize_target_field_marker_line_width,
     normalize_target_field_marker_style,
+    normalize_target_field_plot_aspect,
     normalize_target_field_scale_percent,
+    normalize_target_field_star_aspect,
     normalize_target_field_stretch_mode,
+    normalize_target_field_video_width,
     render_target_field_marker_preview,
     resolve_target_field_parallel_workers,
     stretch_stamps_to_shared_display,
+    target_field_animation_frame_size,
+    target_field_aspects_from_star_height_percent,
+    target_field_panel_heights,
     target_field_duration_frame_ms,
     target_field_frame_duration_ms,
     target_field_marker_extents,
@@ -140,16 +155,40 @@ class TargetFieldAnimationTest(unittest.TestCase):
         self.assertEqual(normalize_target_field_marker_length_percent(None), 36)
         self.assertEqual(normalize_target_field_marker_length_percent(12), 12)
         self.assertEqual(normalize_target_field_marker_length_percent(3), 10)
+        self.assertEqual(normalize_target_field_marker_gap_percent(None), 20)
+        self.assertEqual(normalize_target_field_marker_gap_percent(8), 8)
+        self.assertEqual(normalize_target_field_marker_gap_percent(1), 2)
         self.assertEqual(normalize_target_field_marker_line_width(2.5), 2.5)
         self.assertEqual(normalize_target_field_marker_line_color("#00ff00"), "#00ff00")
         self.assertEqual(TargetFieldAnimationExportOptions().normalized().marker_style, "none")
         self.assertEqual(TargetFieldAnimationExportOptions().normalized().marker_length_percent, 36)
+        self.assertEqual(TargetFieldAnimationExportOptions().normalized().marker_gap_percent, 20)
         self.assertEqual(target_field_duration_frame_ms(8.0, 10, gif=False), 800)
         self.assertEqual(target_field_duration_frame_ms(0.5, 100, gif=True), 20)
         self.assertEqual(
             TargetFieldAnimationExportOptions().normalized().align_mode,
             TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
         )
+        defaults = TargetFieldAnimationExportOptions().normalized()
+        self.assertEqual((defaults.video_width, defaults.video_height), (1920, 1080))
+        self.assertEqual(defaults.star_aspect, "16:5")
+        self.assertEqual(defaults.plot_aspect, "16:4")
+        self.assertEqual(defaults.star_fit, "fill")
+        self.assertEqual(defaults.plot_fit, "stretch")
+        self.assertFalse(defaults.save_star_separately)
+        self.assertFalse(defaults.save_plot_separately)
+        self.assertEqual(normalize_target_field_video_width(1919), 1920)
+        self.assertEqual(normalize_target_field_fit_mode("letterbox"), "fit")
+        self.assertEqual(normalize_target_field_star_aspect("remaining"), "remaining")
+        self.assertEqual(normalize_target_field_star_aspect("16:6"), "16:6")
+        self.assertEqual(normalize_target_field_plot_aspect("16:3.5"), "16:3.5")
+        self.assertEqual(target_field_aspects_from_star_height_percent(100.0 * 5.0 / 9.0), ("16:5", "16:4"))
+        self.assertEqual(target_field_aspects_from_star_height_percent(200.0 / 3.0), ("16:6", "16:3"))
+        star_height, plot_height = target_field_panel_heights(1920, 1080, star_aspect="16:6", plot_aspect="16:3")
+        self.assertEqual((star_height, plot_height), (720, 360))
+        _, small_gap = target_field_marker_extents(80, 80, 36, 8)
+        _, large_gap = target_field_marker_extents(80, 80, 36, 40)
+        self.assertGreater(large_gap, small_gap)
 
     def test_progress_stage_titles_follow_align_mode_and_format(self) -> None:
         self.assertEqual(
@@ -578,6 +617,410 @@ class TargetFieldAnimationTest(unittest.TestCase):
         self.assertEqual(stamp.shape, (81, 81))
         self.assertEqual(orientation, "rot180")
 
+    def test_cinematic_center_crop_trims_top_and_bottom(self) -> None:
+        from PySide6.QtGui import QColor, QImage, QPainter
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is None:
+            QApplication([])
+
+        stamp = QImage(100, 100, QImage.Format.Format_RGB888)
+        stamp.fill(QColor("#ffffff"))
+        painter = QPainter(stamp)
+        painter.fillRect(0, 0, 100, 20, QColor("#0000ff"))
+        painter.fillRect(0, 80, 100, 20, QColor("#00ff00"))
+        painter.end()
+
+        cropped = cinematic_center_crop(stamp, 200, 50)
+        self.assertEqual((cropped.width(), cropped.height()), (200, 50))
+        center = QColor(cropped.pixelColor(100, 25))
+        self.assertGreaterEqual(center.red(), 240)
+        self.assertGreaterEqual(center.green(), 240)
+        self.assertGreaterEqual(center.blue(), 240)
+        edge = QColor(cropped.pixelColor(100, 2))
+        self.assertGreaterEqual(edge.red(), 200)
+        self.assertGreaterEqual(edge.green(), 200)
+
+    def test_compose_stacks_star_field_above_plot_in_16_9(self) -> None:
+        from PySide6.QtGui import QColor, QImage
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is None:
+            QApplication([])
+
+        stamp = QImage(80, 80, QImage.Format.Format_RGB888)
+        stamp.fill(QColor("#cc3333"))
+        plot = QImage(120, 40, QImage.Format.Format_RGB888)
+        plot.fill(QColor("#33cccc"))
+
+        composed = compose_target_field_animation_frame(stamp, plot)
+        width, height = composed.width(), composed.height()
+        self.assertEqual((width, height), target_field_animation_frame_size(stamp, plot))
+        self.assertAlmostEqual(width / height, TARGET_FIELD_OUTPUT_ASPECT_RATIO, places=2)
+        star_height, plot_height = target_field_panel_heights(width, height)
+        self.assertEqual(star_height + plot_height, height)
+        self.assertAlmostEqual(width / star_height, TARGET_FIELD_STAR_ASPECT_RATIO, places=2)
+        self.assertAlmostEqual(width / plot_height, TARGET_FIELD_PLOT_ASPECT_RATIO, places=2)
+
+        top = QColor(composed.pixelColor(width // 2, 8))
+        self.assertGreater(top.red(), top.green())
+        self.assertGreater(top.red(), top.blue())
+        bottom = QColor(composed.pixelColor(width // 2, height - 8))
+        self.assertGreater(bottom.green() + bottom.blue(), bottom.red() * 2)
+
+    def test_compose_can_use_an_exact_preview_frame_size(self) -> None:
+        from PySide6.QtGui import QColor, QImage
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is None:
+            QApplication([])
+
+        stamp = QImage(40, 40, QImage.Format.Format_RGB888)
+        stamp.fill(QColor("#cc3333"))
+        plot = QImage(80, 20, QImage.Format.Format_RGB888)
+        plot.fill(QColor("#33cccc"))
+        composed = compose_target_field_animation_frame(
+            stamp,
+            plot,
+            options=TargetFieldAnimationExportOptions(plot_fit="stretch", star_fit="fill"),
+            frame_width=448,
+            frame_height=252,
+        )
+        self.assertEqual((composed.width(), composed.height()), (448, 252))
+        bottom_right = QColor(composed.pixelColor(440, 248))
+        self.assertGreater(bottom_right.green() + bottom_right.blue(), bottom_right.red() * 2)
+        from PySide6.QtGui import QColor, QImage, QPainter
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is None:
+            QApplication([])
+
+        stamp = QImage(40, 40, QImage.Format.Format_RGB888)
+        stamp.fill(QColor("#111111"))
+        plot = QImage(40, 80, QImage.Format.Format_RGB888)
+        painter = QPainter(plot)
+        painter.fillRect(0, 0, 20, 80, QColor("#33cccc"))
+        painter.fillRect(20, 0, 20, 80, QColor("#cc33cc"))
+        painter.end()
+
+        composed = compose_target_field_animation_frame(
+            stamp,
+            plot,
+            options=TargetFieldAnimationExportOptions(
+                video_width=640,
+                video_height=360,
+                plot_aspect="16:4",
+                star_aspect="16:5",
+                plot_fit="stretch",
+                star_fit="fill",
+            ),
+        )
+        width, height = composed.width(), composed.height()
+        self.assertEqual((width, height), (640, 360))
+        _, plot_height = target_field_panel_heights(width, height, plot_aspect="16:4", star_aspect="16:5")
+        y = height - max(4, plot_height // 2)
+        left = QColor(composed.pixelColor(8, y))
+        right = QColor(composed.pixelColor(width - 8, y))
+        self.assertGreater(left.green() + left.blue(), left.red() * 2)
+        self.assertGreater(right.red() + right.blue(), right.green() * 2)
+
+    def test_export_reuses_a_constant_light_curve_image(self) -> None:
+        from PySide6.QtGui import QColor, QImage
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is None:
+            QApplication([])
+
+        reference = np.full((40, 40), 12.0)
+        reference[18:23, 18:23] = 80.0
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first_path = root / "frame_a.fits"
+            second_path = root / "frame_b.fits"
+            fits.PrimaryHDU(reference).writeto(first_path)
+            fits.PrimaryHDU(reference).writeto(second_path)
+            first = self._measurement(file_path=first_path, x=20.0, y=20.0, index=0)
+            second = self._measurement(file_path=second_path, x=20.0, y=20.0, index=1)
+            points = [
+                LightCurvePoint(
+                    observation_time=item.observation_time,
+                    file_path=item.file_path,
+                    differential_magnitude=12.0 + index * 0.1,
+                    instrumental_magnitude=10.0,
+                    flux=1000.0,
+                    flux_error=5.0,
+                )
+                for index, item in enumerate((first, second))
+            ]
+            series = LightCurveSeries(
+                object_name="Demo",
+                source_id="vsx-demo",
+                source_name="Demo Var",
+                filter_name="V",
+                points=points,
+            )
+            report = ProcessingReport(
+                object_name="Demo",
+                files_processed=2,
+                solved_files=2,
+                field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0),
+                measurements=[first, second],
+                light_curves=[series],
+            )
+            dummy = QImage(24, 12, QImage.Format.Format_RGB888)
+            dummy.fill(QColor("#224466"))
+            captured = QImage(48, 16, QImage.Format.Format_RGB888)
+            captured.fill(QColor("#33cccc"))
+
+            with (
+                mock.patch(
+                    "photometry_app.core.target_field_animation.export_qimages_to_gif",
+                ) as gif_export,
+                mock.patch(
+                    "photometry_app.core.target_field_animation._render_light_curve_payload_with_highlight",
+                    return_value=dummy,
+                ) as renderer,
+            ):
+                export_target_field_animation(
+                    report,
+                    "vsx-demo",
+                    root / "target_field.gif",
+                    fov_px=21,
+                    align_mode=TARGET_FIELD_ALIGN_NONE,
+                    duration_seconds=4.0,
+                    export_format="gif",
+                    series=series,
+                    video_width=640,
+                    video_height=360,
+                )
+                renderer.assert_called_once()
+                self.assertIsNone(renderer.call_args.kwargs["highlight_x"])
+                self.assertIsNone(renderer.call_args.kwargs["highlight_y"])
+                frames = gif_export.call_args.args[0]
+                self.assertEqual(len(frames), 2)
+                self.assertAlmostEqual(
+                    frames[0].width() / frames[0].height(),
+                    TARGET_FIELD_OUTPUT_ASPECT_RATIO,
+                    places=2,
+                )
+
+                renderer.reset_mock()
+                gif_export.reset_mock()
+                export_target_field_animation(
+                    report,
+                    "vsx-demo",
+                    root / "target_field_captured.gif",
+                    fov_px=21,
+                    align_mode=TARGET_FIELD_ALIGN_NONE,
+                    duration_seconds=4.0,
+                    export_format="gif",
+                    series=series,
+                    plot_image=captured,
+                    video_width=640,
+                    video_height=360,
+                )
+                renderer.assert_not_called()
+                reused_frames = gif_export.call_args.args[0]
+                self.assertEqual(len(reused_frames), 2)
+                bottom = reused_frames[0].pixelColor(
+                    reused_frames[0].width() // 2,
+                    reused_frames[0].height() - 8,
+                )
+                self.assertGreater(bottom.green() + bottom.blue(), bottom.red() * 2)
+
+    def test_plot_scanner_tracks_the_current_frame(self) -> None:
+        from PySide6.QtGui import QColor, QImage
+        from PySide6.QtWidgets import QApplication
+
+        from photometry_app.core.plotting import build_light_curve_plot_payload
+
+        if QApplication.instance() is None:
+            QApplication([])
+
+        plot = QImage(640, 160, QImage.Format.Format_RGB888)
+        plot.fill(QColor("#33cccc"))
+        layout = TargetFieldPlotScanLayout(
+            x_min=0.0,
+            x_max=10.0,
+            y_min=0.0,
+            y_max=1.0,
+            left=80.0,
+            top=8.0,
+            right=560.0,
+            bottom=150.0,
+            invert_y=True,
+            color="#ff0000",
+        )
+        first = apply_target_field_plot_scanner(plot, 0.0, layout)
+        last = apply_target_field_plot_scanner(plot, 10.0, layout)
+        self.assertGreater(first.pixelColor(80, 80).red(), first.pixelColor(320, 80).red())
+        self.assertGreater(last.pixelColor(560, 80).red(), last.pixelColor(320, 80).red())
+
+        magnitude_layout = TargetFieldPlotScanLayout(
+            x_min=0.0,
+            x_max=10.0,
+            y_min=10.0,
+            y_max=12.0,
+            left=80.0,
+            top=8.0,
+            right=560.0,
+            bottom=150.0,
+            invert_y=True,
+            color="#ff0000",
+        )
+        bright = apply_target_field_plot_scanner(plot, 0.0, magnitude_layout, y_value=10.1)
+        faint = apply_target_field_plot_scanner(plot, 0.0, magnitude_layout, y_value=11.9)
+        self.assertGreater(bright.pixelColor(84, 15).red(), bright.pixelColor(84, 140).red())
+        self.assertGreater(faint.pixelColor(84, 140).red(), faint.pixelColor(84, 15).red())
+
+        reference = np.full((40, 40), 12.0)
+        reference[18:23, 18:23] = 80.0
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first_path = root / "frame_a.fits"
+            second_path = root / "frame_b.fits"
+            fits.PrimaryHDU(reference).writeto(first_path)
+            fits.PrimaryHDU(reference).writeto(second_path)
+            first_measurement = self._measurement(file_path=first_path, x=20.0, y=20.0, index=0)
+            second_measurement = self._measurement(file_path=second_path, x=20.0, y=20.0, index=1)
+            points = [
+                LightCurvePoint(
+                    observation_time=item.observation_time,
+                    file_path=item.file_path,
+                    differential_magnitude=12.0 + index * 0.1,
+                    instrumental_magnitude=10.0,
+                    flux=1000.0,
+                    flux_error=5.0,
+                )
+                for index, item in enumerate((first_measurement, second_measurement))
+            ]
+            series = LightCurveSeries(
+                object_name="Demo",
+                source_id="vsx-demo",
+                source_name="Demo Var",
+                filter_name="V",
+                points=points,
+            )
+            report = ProcessingReport(
+                object_name="Demo",
+                files_processed=2,
+                solved_files=2,
+                field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0),
+                measurements=[first_measurement, second_measurement],
+                light_curves=[series],
+            )
+            payload = build_light_curve_plot_payload(series, "No points.")
+            self.assertEqual(len(payload.points), 2)
+            scan_layout = TargetFieldPlotScanLayout(
+                x_min=float(payload.points[0].x),
+                x_max=float(payload.points[1].x),
+                y_min=0.0,
+                y_max=1.0,
+                left=80.0,
+                top=8.0,
+                right=560.0,
+                bottom=150.0,
+                invert_y=True,
+                color="#ff0000",
+            )
+            captured = QImage(640, 160, QImage.Format.Format_RGB888)
+            captured.fill(QColor("#33cccc"))
+            with mock.patch(
+                "photometry_app.core.target_field_animation.export_qimages_to_gif",
+            ) as gif_export:
+                export_target_field_animation(
+                    report,
+                    "vsx-demo",
+                    root / "target_field.gif",
+                    fov_px=21,
+                    align_mode=TARGET_FIELD_ALIGN_NONE,
+                    duration_seconds=4.0,
+                    export_format="gif",
+                    series=series,
+                    plot_image=captured,
+                    plot_scan_layout=scan_layout,
+                    video_width=640,
+                    video_height=360,
+                )
+            frames = gif_export.call_args.args[0]
+            self.assertEqual(len(frames), 2)
+            _star_height, plot_height = target_field_panel_heights(640, 360)
+            y = frames[0].height() - max(4, plot_height // 2)
+            self.assertGreater(frames[0].pixelColor(80, y).red(), frames[0].pixelColor(320, y).red())
+            self.assertGreater(frames[1].pixelColor(560, y).red(), frames[1].pixelColor(320, y).red())
+
+    def test_export_writes_separate_star_and_plot_files(self) -> None:
+        from PySide6.QtGui import QColor, QImage
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is None:
+            QApplication([])
+
+        reference = np.full((40, 40), 12.0)
+        reference[18:23, 18:23] = 80.0
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "frame.fits"
+            fits.PrimaryHDU(reference).writeto(image_path)
+            measurement = self._measurement(file_path=image_path, x=20.0, y=20.0, index=0)
+            series = LightCurveSeries(
+                object_name="Demo",
+                source_id="vsx-demo",
+                source_name="Demo Var",
+                filter_name="V",
+                points=[
+                    LightCurvePoint(
+                        observation_time=measurement.observation_time,
+                        file_path=measurement.file_path,
+                        differential_magnitude=12.0,
+                        instrumental_magnitude=10.0,
+                        flux=1000.0,
+                        flux_error=5.0,
+                    )
+                ],
+            )
+            report = ProcessingReport(
+                object_name="Demo",
+                files_processed=1,
+                solved_files=1,
+                field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0),
+                measurements=[measurement],
+                light_curves=[series],
+            )
+            dummy = QImage(32, 12, QImage.Format.Format_RGB888)
+            dummy.fill(QColor("#33cccc"))
+            output_path = root / "target_field.gif"
+
+            with (
+                mock.patch(
+                    "photometry_app.core.target_field_animation.export_qimages_to_gif",
+                ) as gif_export,
+                mock.patch(
+                    "photometry_app.core.target_field_animation._render_light_curve_payload_with_highlight",
+                    return_value=dummy,
+                ),
+            ):
+                export_target_field_animation(
+                    report,
+                    "vsx-demo",
+                    output_path,
+                    fov_px=21,
+                    align_mode=TARGET_FIELD_ALIGN_NONE,
+                    duration_seconds=4.0,
+                    export_format="gif",
+                    series=series,
+                    plot_image=dummy,
+                    video_width=640,
+                    video_height=360,
+                    save_star_separately=True,
+                    save_plot_separately=True,
+                )
+
+            self.assertEqual(gif_export.call_count, 2)
+            self.assertEqual(gif_export.call_args_list[0].args[1], output_path)
+            self.assertEqual(gif_export.call_args_list[1].args[1], root / "target_field_star.gif")
+            self.assertTrue((root / "target_field_plot.png").exists())
+
     def test_export_dispatches_gif_or_mp4_with_duration_and_scale(self) -> None:
         from PySide6.QtGui import QImage
         from PySide6.QtWidgets import QApplication
@@ -645,6 +1088,8 @@ class TargetFieldAnimationTest(unittest.TestCase):
                     export_format="gif",
                     series=series,
                     progress_callback=progress_events.append,
+                    video_width=640,
+                    video_height=360,
                 )
                 export_target_field_animation(
                     report,
@@ -657,6 +1102,8 @@ class TargetFieldAnimationTest(unittest.TestCase):
                     scale_percent=50,
                     export_format="mp4",
                     series=series,
+                    video_width=640,
+                    video_height=360,
                 )
 
         gif_export.assert_called_once()

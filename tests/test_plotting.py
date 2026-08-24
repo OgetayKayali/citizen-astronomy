@@ -718,6 +718,7 @@ class LightCurvePlotPayloadTest(unittest.TestCase):
 
         self.assertEqual(len(differential_payload.layers), 1)
         self.assertEqual(differential_payload.layers[0].label, "DY Her [V]")
+        self.assertEqual(differential_payload.x_axis_label, "Observation Time (UTC)")
         self.assertEqual(len(differential_payload.points), 2)
         self.assertEqual([point.y for point in differential_payload.points], [0.10, 0.20])
         self.assertEqual(payload.layers[0].style_key, "target:target-1:V")

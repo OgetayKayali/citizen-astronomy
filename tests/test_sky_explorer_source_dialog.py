@@ -12,34 +12,32 @@ class SkyExplorerSourceDialogTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._app = QApplication.instance() or QApplication([])
 
-    def test_dialog_defaults_to_upload_choice(self) -> None:
+    def test_dialog_defaults_to_first_survey_choice(self) -> None:
         dialog = SkyExplorerSourceDialog(
-            title="Open Sky Explorer Source",
-            intro="Choose a source.",
+            title="Open Sky Explorer Survey",
+            intro="Choose a survey.",
             survey_options=(("dss2_blue", "DSS2 Blue"), ("panstarrs", "PanSTARRS")),
         )
 
         choice = dialog.choice()
 
-        self.assertEqual(choice.kind, "upload")
-        self.assertTrue(dialog._upload_radio.isChecked())
-        self.assertFalse(dialog._survey_box.isVisible())
+        self.assertEqual(choice.kind, "survey")
+        self.assertEqual(choice.survey_key, "dss2_blue")
+        self.assertTrue(dialog._survey_combo.isEnabled())
 
     def test_dialog_returns_selected_survey_choice(self) -> None:
         dialog = SkyExplorerSourceDialog(
-            title="Comparison",
-            intro="Choose a comparison source.",
+            title="Choose Sky Explorer Survey",
+            intro="Choose a comparison survey.",
             survey_options=(("dss2_blue", "DSS2 Blue"), ("panstarrs", "PanSTARRS")),
             initial_survey_key="panstarrs",
             field_hint="Survey tiles follow the image WCS.",
         )
-        dialog._survey_radio.setChecked(True)
 
         choice = dialog.choice()
 
         self.assertEqual(choice.kind, "survey")
         self.assertEqual(choice.survey_key, "panstarrs")
-        self.assertTrue(dialog._survey_combo.isEnabled())
         self.assertTrue(dialog._field_hint.isVisibleTo(dialog))
         self.assertIn("WCS", dialog._field_hint.text())
 

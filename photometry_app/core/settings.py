@@ -512,7 +512,7 @@ class AppSettings:
 
     sky_explorer_simbad_search_radius_arcsec: float = 10.0
 
-    # Initial survey-field window when Open → Sky survey (Trifid Nebula).
+    # Initial survey-field window when Survey loads a field (Trifid Nebula).
     sky_explorer_survey_field_ra_deg: float = 270.63
 
     sky_explorer_survey_field_dec_deg: float = -23.03

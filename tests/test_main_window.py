@@ -9843,6 +9843,9 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertEqual(worker_class.call_args.kwargs["stretch_mode"], "asinh")
             self.assertEqual(worker_class.call_args.kwargs["export_format"], "gif")
             self.assertEqual(worker_class.call_args.kwargs["marker_style"], "none")
+            plot_image = worker_class.call_args.kwargs["plot_image"]
+            self.assertIsNotNone(plot_image)
+            self.assertFalse(plot_image.isNull())
             worker.start.assert_called_once()
 
     def test_target_field_animation_dialog_defaults_and_mp4_options(self) -> None:
@@ -9864,25 +9867,101 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(options.scale_percent, DEFAULT_TARGET_FIELD_SCALE_PERCENT)
         self.assertEqual(options.export_format, "gif")
         self.assertEqual(options.marker_style, "none")
+        self.assertEqual(options.video_width, 1920)
+        self.assertEqual(options.video_height, 1080)
+        self.assertEqual(options.star_aspect, "16:5")
+        self.assertEqual(options.plot_aspect, "16:4")
+        self.assertEqual(options.star_fit, "fill")
+        self.assertEqual(options.plot_fit, "stretch")
+        self.assertFalse(options.save_star_separately)
+        self.assertFalse(options.save_plot_separately)
         self.assertEqual(options.marker_length_percent, 36)
+        self.assertEqual(options.marker_gap_percent, 20)
         self.assertEqual(options.marker_line_width, 2.0)
-        self.assertFalse(dialog._marker_length_input.isEnabled())
+        self.assertTrue(dialog._marker_length_input.isHidden())
+        self.assertTrue(dialog._marker_gap_input.isHidden())
+        self.assertTrue(dialog._marker_color_button.isHidden())
         self.assertFalse(dialog._loop_input.isEnabled())
+        self.assertTrue(dialog._resolution_input.isEnabled())
+        self.assertEqual(dialog._resolution_label.text(), "Resolution")
+        self.assertFalse(hasattr(dialog, "_scale_input"))
+        self.assertFalse(hasattr(dialog, "_star_aspect_value"))
+        self.assertEqual(dialog._preview_mode, "combined")
+        self.assertTrue(dialog._advanced_body.isHidden())
+        self.assertEqual(dialog._export_button.text(), "Export Animation")
         self.assertFalse(dialog._preview_label.pixmap().isNull())
+        self.assertGreaterEqual(dialog._preview_label.width(), 640)
+        self.assertGreaterEqual(dialog._preview_label.height(), 360)
+        preview = dialog._preview_label.pixmap()
+        ratio = max(1.0, float(preview.devicePixelRatio()))
+        self.assertGreaterEqual(round(preview.width() / ratio), 640)
+        self.assertGreaterEqual(round(preview.height() / ratio), 360)
         self.assertEqual(dialog._marker_input.itemText(0), "None")
         self.assertGreaterEqual(dialog._marker_input.findData("pointer"), 0)
-        self.assertIn(
-            "slower",
-            dialog._align_input.itemText(dialog._align_input.findData(TARGET_FIELD_ALIGN_ALIGN_THEN_CROP)),
+        self.assertEqual(
+            dialog._align_input.itemText(dialog._align_input.findData(TARGET_FIELD_ALIGN_CROP_THEN_ALIGN)),
+            "Crop + Align",
         )
+        self.assertEqual(
+            dialog._align_input.itemText(dialog._align_input.findData(TARGET_FIELD_ALIGN_ALIGN_THEN_CROP)),
+            "Align + Crop",
+        )
+        self.assertIn("slower", dialog._align_input.toolTip())
+        self.assertIn("Star field", dialog._split_value.text())
+        self.assertIn("Light curve", dialog._split_value.text())
+        self.assertFalse(hasattr(dialog, "_split_caption"))
+        self.assertIn("1 loop", dialog._summary_label.text())
+        self.assertIn("s total", dialog._summary_label.text())
+
+        dialog._preview_host.resize(900, 720)
+        dialog._refresh_preview()
+        host_width = max(1, dialog._preview_host.width())
+        host_height = max(1, dialog._preview_host.height())
+        label_width = max(1, dialog._preview_label.width())
+        label_height = max(1, dialog._preview_label.height())
+        self.assertLessEqual(label_width, host_width)
+        self.assertLessEqual(label_height, host_height)
+        self.assertAlmostEqual(label_width / label_height, 16.0 / 9.0, delta=0.03)
+        resized_preview = dialog._preview_label.pixmap()
+        resized_ratio = max(1.0, float(resized_preview.devicePixelRatio()))
+        self.assertAlmostEqual(
+            (resized_preview.width() / resized_ratio) / (resized_preview.height() / resized_ratio),
+            16.0 / 9.0,
+            delta=0.03,
+        )
+
+        plot_calls: list[tuple[int, int]] = []
+
+        def _counting_renderer(width: int, height: int):
+            plot_calls.append((width, height))
+            image = QImage(max(2, width), max(2, height), QImage.Format.Format_RGB888)
+            image.fill(QColor("#1b1d23"))
+            return image
+
+        dialog._plot_renderer = _counting_renderer
+        dialog._preview_plot_cache = None
+        star_button = next(
+            button
+            for button in dialog._preview_mode_group.buttons()
+            if button.property("previewMode") == "star"
+        )
+        star_button.click()
+        self.assertEqual(dialog._preview_mode, "star")
+        self.assertEqual(plot_calls, [])
 
         dialog._align_input.setCurrentIndex(dialog._align_input.findData(TARGET_FIELD_ALIGN_ALIGN_THEN_CROP))
         dialog._format_input.setCurrentIndex(dialog._format_input.findData("mp4"))
         dialog._duration_input.setValue(12.0)
         dialog._loop_input.setValue(4)
-        dialog._scale_input.setValue(150)
+        dialog._resolution_input.setCurrentIndex(dialog._resolution_input.findData("1280x720"))
+        dialog._split_slider.setValue(667)
+        dialog._star_fit_input.setCurrentIndex(dialog._star_fit_input.findData("stretch"))
+        dialog._plot_fit_input.setCurrentIndex(dialog._plot_fit_input.findData("stretch"))
+        dialog._save_star_checkbox.setChecked(True)
+        dialog._save_plot_checkbox.setChecked(True)
         dialog._marker_input.setCurrentIndex(dialog._marker_input.findData("pointer"))
         dialog._marker_length_input.setValue(24)
+        dialog._marker_gap_input.setValue(12)
         dialog._marker_width_input.setValue(3.0)
         dialog._marker_line_color = "#22c55e"
         dialog._update_marker_color_button()
@@ -9892,16 +9971,41 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(options.export_format, "mp4")
         self.assertEqual(options.duration_seconds, 12.0)
         self.assertEqual(options.loop_count, 4)
-        self.assertEqual(options.scale_percent, 150)
+        self.assertEqual(options.scale_percent, 100)
+        self.assertEqual((options.video_width, options.video_height), (1280, 720))
+        self.assertEqual(options.star_aspect, "16:6")
+        self.assertEqual(options.plot_aspect, "16:3")
+        self.assertEqual(options.star_fit, "stretch")
+        self.assertEqual(options.plot_fit, "stretch")
+        self.assertTrue(options.save_star_separately)
+        self.assertTrue(options.save_plot_separately)
         self.assertEqual(options.marker_style, "pointer")
         self.assertEqual(options.marker_length_percent, 24)
+        self.assertEqual(options.marker_gap_percent, 12)
         self.assertEqual(options.marker_line_width, 3.0)
         self.assertEqual(options.marker_line_color, "#22c55e")
-        self.assertTrue(dialog._marker_length_input.isEnabled())
+        self.assertFalse(dialog._marker_length_input.isHidden())
+        self.assertFalse(dialog._marker_gap_input.isHidden())
+        self.assertFalse(dialog._marker_color_button.isHidden())
         self.assertTrue(dialog._loop_input.isEnabled())
+        self.assertTrue(dialog._resolution_input.isEnabled())
+        self.assertEqual(dialog._resolution_label.text(), "Resolution")
         self.assertFalse(dialog._preview_label.pixmap().isNull())
         self.assertIn("MP4", dialog._summary_label.text())
         self.assertIn("4 loops", dialog._summary_label.text())
+        self.assertIn("s total", dialog._summary_label.text())
+        self.assertIn(" · ", dialog._summary_label.text())
+
+        combined_options = dialog.selected_options()
+        plot_button = next(
+            button
+            for button in dialog._preview_mode_group.buttons()
+            if button.property("previewMode") == "plot"
+        )
+        plot_button.click()
+        self.assertEqual(dialog._preview_mode, "plot")
+        self.assertEqual(dialog.selected_options(), combined_options)
+        self.assertFalse(dialog._preview_label.pixmap().isNull())
 
     def test_target_field_animation_progress_dialog_shows_pipeline_and_green_finished_text(self) -> None:
         from photometry_app.core.target_field_animation import (
@@ -24535,43 +24639,190 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-    def test_open_file_action_routes_to_sky_explorer_browser(self) -> None:
+    def test_open_file_action_routes_to_sky_explorer_image(self) -> None:
 
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
 
-        browse_calls: list[str] = []
+        image_calls: list[str] = []
 
-        self.window._open_sky_explorer_source_picker = lambda *, as_comparison: browse_calls.append(
-            "comparison" if as_comparison else "sky"
-        )
+        self.window._handle_sky_explorer_image_action = lambda: image_calls.append("image")
 
         self.window._handle_open_file_action()
 
-        self.assertEqual(browse_calls, ["sky"])
+        self.assertEqual(image_calls, ["image"])
 
-    def test_sky_explorer_open_button_uses_source_picker_when_no_image_loaded(self) -> None:
+    def test_sky_explorer_explore_requires_loaded_source(self) -> None:
 
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
         picker_calls: list[bool] = []
-        self.window._open_sky_explorer_source_picker = lambda *, as_comparison: picker_calls.append(as_comparison)
+        self.window._open_sky_explorer_survey_picker = lambda *, as_comparison: picker_calls.append(as_comparison)
+
+        with (
+            patch.object(self.window, "_start_sky_explorer_exploration") as start_explore,
+            patch("photometry_app.ui.main_window.QMessageBox.information") as information,
+        ):
+            self.window._handle_sky_explorer_primary_action()
+
+        self.assertEqual(picker_calls, [])
+        start_explore.assert_not_called()
+        information.assert_called_once()
+        self.assertEqual(self.window._sky_explorer_primary_button.text(), "Explore")
+        self.assertFalse(self.window._sky_explorer_primary_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_image_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_survey_button.isEnabled())
+
+    def test_sky_explorer_primary_button_shows_terminate_while_querying(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        class _RunningWorker:
+            def isRunning(self) -> bool:
+                return True
+
+            def request_cancel(self) -> None:
+                return None
+
+            def requestInterruption(self) -> None:
+                return None
+
+            def blockSignals(self, _value: bool) -> None:
+                return None
+
+            def wait(self, _ms: int) -> bool:
+                return True
+
+        self.window._sky_explorer_worker = _RunningWorker()
+        self.window._sync_sky_explorer_primary_button()
+        self.assertEqual(self.window._sky_explorer_primary_button.text(), "Terminate")
+        self.assertTrue(self.window._sky_explorer_primary_button.isEnabled())
 
         self.window._handle_sky_explorer_primary_action()
 
+        self.assertIsNone(self.window._sky_explorer_worker)
+        self.assertEqual(self.window._sky_explorer_primary_button.text(), "Explore")
+        self.assertFalse(self.window._sky_explorer_primary_button.isEnabled())
+
+    def test_sky_explorer_terminated_failure_skips_warning_dialog(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        with patch("photometry_app.ui.main_window.QMessageBox.warning") as warning:
+            self.window._handle_sky_explorer_failed("Sky Explorer query was terminated.")
+        warning.assert_not_called()
+        self.assertEqual(self.window._sky_explorer_primary_button.text(), "Explore")
+
+    def test_sky_explorer_image_first_use_opens_file_picker(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        browse_calls: list[bool] = []
+        self.window._browse_for_sky_explorer_source_image = lambda **kwargs: browse_calls.append(True) or None
+
+        self.window._handle_sky_explorer_image_action()
+
+        self.assertEqual(browse_calls, [True])
+
+    def test_sky_explorer_image_second_use_prompts_replace_or_comparison(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "sky_explorer_primary.fits"
+            source_path.write_bytes(b"test")
+            with (
+                patch.object(self.window, "_preload_annotated_image_display_with_loading_dialog"),
+                patch.object(self.window, "_apply_recommended_stretch_mode_for_loaded_image"),
+                patch.object(self.window, "_refresh_sky_explorer_image_view"),
+            ):
+                self.window._set_sky_explorer_source_image_path(source_path)
+
+            comparison_calls: list[str] = []
+            self.window._open_sky_explorer_uploaded_comparison = lambda: comparison_calls.append("comparison")
+            browse_calls: list[str] = []
+            self.window._browse_for_sky_explorer_source_image = lambda **kwargs: browse_calls.append("replace") or source_path
+            self.window._prompt_sky_explorer_replace_or_comparison = lambda **kwargs: "comparison"
+
+            self.window._handle_sky_explorer_image_action()
+
+            self.assertEqual(comparison_calls, ["comparison"])
+            self.assertEqual(browse_calls, [])
+
+            self.window._prompt_sky_explorer_replace_or_comparison = lambda **kwargs: "replace"
+            self.window._handle_sky_explorer_image_action()
+
+            self.assertEqual(browse_calls, ["replace"])
+
+    def test_sky_explorer_survey_first_use_opens_primary_picker(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        picker_calls: list[bool] = []
+        self.window._open_sky_explorer_survey_picker = lambda *, as_comparison: picker_calls.append(as_comparison)
+
+        self.window._handle_sky_explorer_survey_action()
+
         self.assertEqual(picker_calls, [False])
+
+    def test_sky_explorer_survey_first_use_with_image_opens_comparison_picker(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "sky_explorer_primary.fits"
+            source_path.write_bytes(b"test")
+            with (
+                patch.object(self.window, "_preload_annotated_image_display_with_loading_dialog"),
+                patch.object(self.window, "_apply_recommended_stretch_mode_for_loaded_image"),
+                patch.object(self.window, "_refresh_sky_explorer_image_view"),
+            ):
+                self.window._set_sky_explorer_source_image_path(source_path)
+
+            picker_calls: list[bool] = []
+            self.window._open_sky_explorer_survey_picker = lambda *, as_comparison: picker_calls.append(as_comparison)
+
+            self.window._handle_sky_explorer_survey_action()
+
+            self.assertEqual(picker_calls, [True])
+
+    def test_sky_explorer_survey_second_use_prompts_replace_or_comparison(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        cache_dir = self.window._sky_explorer_survey_field_cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        canvas_path = cache_dir / "survey_primary_canvas.fits"
+        canvas_path.write_bytes(b"wcs-canvas")
+        self.window._sky_explorer_primary_survey_key = "dss2_blue"
+        self.window._current_sky_explorer_source_image = canvas_path
+
+        picker_calls: list[bool] = []
+        self.window._open_sky_explorer_survey_picker = lambda *, as_comparison: picker_calls.append(as_comparison)
+        self.window._prompt_sky_explorer_replace_or_comparison = lambda **kwargs: "comparison"
+        self.window._handle_sky_explorer_survey_action()
+        self.assertEqual(picker_calls, [True])
+
+        self.window._prompt_sky_explorer_replace_or_comparison = lambda **kwargs: "replace"
+        self.window._handle_sky_explorer_survey_action()
+        self.assertEqual(picker_calls, [True, False])
 
     def test_sky_explorer_image_toolbar_uses_display_menu_and_right_aligned_export(self) -> None:
 
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
 
         workflow_layout = self.window._sky_explorer_workflow_row
+        source_layout = self.window._sky_explorer_source_group.layout()
+        self.assertIsNotNone(source_layout)
+        assert source_layout is not None
+        self.assertLess(
+            source_layout.indexOf(self.window._sky_explorer_image_button),
+            source_layout.indexOf(self.window._sky_explorer_survey_button),
+        )
+        self.assertLess(
+            workflow_layout.indexOf(self.window._sky_explorer_source_group),
+            workflow_layout.indexOf(self.window._sky_explorer_primary_button),
+        )
         self.assertLess(
             workflow_layout.indexOf(self.window._sky_explorer_primary_button),
-            workflow_layout.indexOf(self.window._sky_explorer_comparison_button),
-        )
-        self.assertLess(
-            workflow_layout.indexOf(self.window._sky_explorer_comparison_button),
             workflow_layout.indexOf(self.window._sky_explorer_object_type_mode_button),
         )
+        self.assertFalse(hasattr(self.window, "_sky_explorer_comparison_button"))
+        self.assertEqual(self.window._sky_explorer_image_button.text(), "Image")
+        self.assertEqual(self.window._sky_explorer_survey_button.text(), "Survey")
+        self.assertEqual(self.window._sky_explorer_primary_button.text(), "Explore")
+        self.assertIn("background-color:", self.window._sky_explorer_image_button.styleSheet())
+        self.assertIn(":hover", self.window._sky_explorer_image_button.styleSheet())
+        self.assertEqual(
+            self.window._sky_explorer_image_button.styleSheet(),
+            self.window._sky_explorer_survey_button.styleSheet(),
+        )
+        self.assertIn("skyExplorerSourceGroup", self.window._sky_explorer_source_group.styleSheet())
 
         controls_layout = self.window._sky_explorer_image_controls_layout
         self.assertGreaterEqual(controls_layout.indexOf(self.window._sky_explorer_display_section_label), 0)
@@ -24632,10 +24883,12 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         comparison_stretch_row = cast(QHBoxLayout, comparison_controls_layout.itemAt(0).layout())
         self.assertGreaterEqual(comparison_stretch_row.indexOf(self.window._sky_explorer_survey_stretch_combo), 0)
 
-    def test_sky_explorer_comparison_button_enables_only_with_primary_image(self) -> None:
+    def test_sky_explorer_image_and_survey_stay_enabled_without_primary_image(self) -> None:
 
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
-        self.assertFalse(self.window._sky_explorer_comparison_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_image_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_survey_button.isEnabled())
+        self.assertFalse(self.window._sky_explorer_primary_button.isEnabled())
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root_path = Path(temp_dir)
@@ -24650,7 +24903,96 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             ):
                 self.window._set_sky_explorer_source_image_path(source_path)
 
-        self.assertTrue(self.window._sky_explorer_comparison_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_image_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_survey_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_primary_button.isEnabled())
+
+    def test_sky_explorer_shift_drag_defines_explore_roi(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        self.window._handle_sky_explorer_image_pressed(
+            10.0, 20.0, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier
+        )
+        self.window._handle_sky_explorer_image_moved(
+            80.0, 90.0, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier
+        )
+        self.window._handle_sky_explorer_image_released(Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier)
+
+        roi = self.window._sky_explorer_committed_pixel_roi()
+        self.assertIsNotNone(roi)
+        assert roi is not None
+        self.assertEqual(roi, (10.0, 20.0, 80.0, 90.0))
+        self.assertTrue(self.window._sky_explorer_roi_contains_point(40.0, 50.0))
+        self.assertFalse(self.window._sky_explorer_roi_contains_point(5.0, 5.0))
+        overlays = self.window._current_sky_explorer_selection_overlays()
+        self.assertEqual(len(overlays), 1)
+        self.assertEqual(overlays[0].shape, "rectangle")
+
+    def test_sky_explorer_remove_roi_from_committed_region(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        self.window._handle_sky_explorer_image_pressed(
+            10.0, 20.0, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier
+        )
+        self.window._handle_sky_explorer_image_moved(
+            80.0, 90.0, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier
+        )
+        self.window._handle_sky_explorer_image_released(Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier)
+        self.window._clear_sky_explorer_roi(refresh=True)
+        self.assertIsNone(self.window._sky_explorer_committed_pixel_roi())
+        self.assertEqual(self.window._current_sky_explorer_selection_overlays(), [])
+
+    def test_sky_explorer_worker_receives_committed_roi(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        self.window._sky_explorer_roi_selection = _HrRoiSelection("rectangle", 12.0, 18.0, 40.0, 55.0)
+        captured: dict[str, object] = {}
+
+        class _FakeWorker:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.progress_updated = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.exploration_completed = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.exploration_failed = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+
+            def start(self) -> None:
+                return None
+
+            def isRunning(self) -> bool:
+                return False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "field.fits"
+            source_path.write_bytes(b"test")
+            self.window._current_sky_explorer_source_image = source_path
+            self.window._sky_explorer_image_input.setText(str(source_path))
+            with (
+                patch("photometry_app.ui.main_window.SkyExplorerWorker", _FakeWorker),
+                patch.object(self.window, "_selected_sky_explorer_object_type_keys", return_value=("galaxy",)),
+                patch.object(self.window, "_selected_sky_explorer_query_layers", return_value=("deep_sky",)),
+                patch.object(self.window, "_set_sky_explorer_busy"),
+            ):
+                self.window._start_sky_explorer_exploration()
+
+        self.assertEqual(captured.get("pixel_roi"), (12.0, 18.0, 40.0, 55.0))
+
+    def test_sky_explorer_context_menu_offers_remove_roi_inside_region(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        self.window._sky_explorer_roi_selection = _HrRoiSelection("rectangle", 10.0, 20.0, 80.0, 90.0)
+        search_action = QAction("Search", self.window)
+        detect_action = QAction("Detect", self.window)
+        remove_action = QAction("Remove ROI", self.window)
+        fake_menu = MagicMock()
+        fake_menu.addAction.side_effect = [search_action, detect_action, remove_action]
+        fake_menu.exec.return_value = remove_action
+        with (
+            patch.object(self.window, "_sky_explorer_world_coordinates_for_image_point", return_value=(75.0, -8.0)),
+            patch.object(self.window, "_sky_explorer_detected_objects_for_current_image", return_value=[]),
+            patch.object(self.window, "_sky_explorer_detected_object_identities_for_current_image", return_value=set()),
+            patch("photometry_app.ui.main_window.QMenu", return_value=fake_menu),
+        ):
+            self.window._handle_sky_explorer_image_context_requested(
+                40.0, 50.0, QPoint(30, 40), Qt.KeyboardModifier.NoModifier
+            )
+        fake_menu.addAction.assert_any_call("Remove ROI")
+        self.assertIsNone(self.window._sky_explorer_committed_pixel_roi())
 
     def test_sky_explorer_comparison_available_for_survey_primary(self) -> None:
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
@@ -24664,15 +25006,17 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.window._sky_explorer_active_survey_key = None
         self.window._sync_sky_explorer_image_controls()
         self.window._sync_sky_explorer_comparison_divider_visibility()
+        self.window._sync_sky_explorer_primary_button()
 
-        self.assertTrue(self.window._sky_explorer_comparison_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_image_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_survey_button.isEnabled())
+        self.assertTrue(self.window._sky_explorer_primary_button.isEnabled())
         self.assertFalse(self.window._sky_explorer_image_view.comparison_divider_visible())
 
         self.window._sky_explorer_active_survey_key = "panstarrs"
         self.window._sync_sky_explorer_image_controls()
         self.window._sync_sky_explorer_comparison_divider_visibility()
 
-        self.assertTrue(self.window._sky_explorer_comparison_button.isEnabled())
         self.assertTrue(self.window._sky_explorer_survey_display_controls.isEnabled())
         self.assertTrue(self.window._sky_explorer_image_view.comparison_divider_visible())
 
@@ -49594,6 +49938,45 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertRegex(log_text, r"\[\d{2}:\d{2}:\d{2}\]")
 
+    def test_asteroid_detection_progress_logs_multiline_skybot_diagnostic(self) -> None:
+
+        self.window._handle_asteroid_detection_progress(
+            "SkyBoT query returned an unreadable response (HTTP 200, 39 bytes).\n"
+            "Parse error: ValueError: no table found\n"
+            'Body: <?xml version="1.0" encoding="UTF-8" ?>'
+        )
+
+        self.assertEqual(
+            self.window._asteroid_status_label.text(),
+            "SkyBoT query returned an unreadable response (HTTP 200, 39 bytes).",
+        )
+        log_text = self.window._asteroid_steps_output.toPlainText()
+        self.assertIn("Parse error: ValueError: no table found", log_text)
+        self.assertIn('Body: <?xml version="1.0" encoding="UTF-8" ?>', log_text)
+
+    def test_asteroid_detection_failed_logs_multiline_diagnostic(self) -> None:
+
+        message = (
+            "SkyBoT returned an unreadable response after 3 attempts. "
+            "The upstream IMCCE service is currently failing for this query; please try again shortly.\n"
+            "Parse error: ValueError: no table found\n"
+            'Body: <?xml version="1.0" encoding="UTF-8" ?>'
+        )
+        with patch("photometry_app.ui.main_window.QMessageBox.warning") as warning:
+            self.window._handle_asteroid_detection_failed(message)
+
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[1], "Asteroid/comet detection failed")
+        self.assertEqual(warning.call_args.args[2], message)
+        self.assertTrue(
+            self.window._asteroid_status_label.text().startswith(
+                "SkyBoT returned an unreadable response after 3 attempts."
+            )
+        )
+        log_text = self.window._asteroid_steps_output.toPlainText()
+        self.assertIn("Detection failed:", log_text)
+        self.assertIn("Parse error: ValueError: no table found", log_text)
+        self.assertIn('Body: <?xml version="1.0" encoding="UTF-8" ?>', log_text)
 
 
     def test_loading_folder_settings_preserves_current_app_mode(self) -> None:

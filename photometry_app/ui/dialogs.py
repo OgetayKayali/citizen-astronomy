@@ -22,6 +22,7 @@ from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QImage, QPai
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QColorDialog,
@@ -51,6 +52,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSplitter,
     QSpinBox,
+    QSizePolicy,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -68,44 +70,62 @@ from photometry_app.core.animation_export import (
     resolve_astrostack_stack_export_frame_indices,
 )
 from photometry_app.core.target_field_animation import (
+    DEFAULT_TARGET_FIELD_SCALE_PERCENT,
     MAX_TARGET_FIELD_DURATION_SECONDS,
     MAX_TARGET_FIELD_FOV_PX,
     MAX_TARGET_FIELD_LOOP_COUNT,
+    MAX_TARGET_FIELD_MARKER_GAP_PERCENT,
     MAX_TARGET_FIELD_MARKER_LENGTH_PERCENT,
     MAX_TARGET_FIELD_MARKER_LINE_WIDTH,
-    MAX_TARGET_FIELD_SCALE_PERCENT,
+    MAX_TARGET_FIELD_STAR_HEIGHT_PERCENT,
     MIN_TARGET_FIELD_DURATION_SECONDS,
     MIN_TARGET_FIELD_FOV_PX,
     MIN_TARGET_FIELD_LOOP_COUNT,
+    MIN_TARGET_FIELD_MARKER_GAP_PERCENT,
     MIN_TARGET_FIELD_MARKER_LENGTH_PERCENT,
     MIN_TARGET_FIELD_MARKER_LINE_WIDTH,
-    MIN_TARGET_FIELD_SCALE_PERCENT,
+    MIN_TARGET_FIELD_STAR_HEIGHT_PERCENT,
+    TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
+    TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
     TARGET_FIELD_ALIGN_MODE_LABELS,
     TARGET_FIELD_ALIGN_MODES,
+    TARGET_FIELD_ALIGN_NONE,
     TARGET_FIELD_EXPORT_FORMAT_LABELS,
     TARGET_FIELD_EXPORT_FORMATS,
+    TARGET_FIELD_FIT_MODE_LABELS,
+    TARGET_FIELD_FIT_MODES,
     TARGET_FIELD_MARKER_NONE,
+    TARGET_FIELD_OUTPUT_ASPECT_RATIO,
     TARGET_FIELD_PROGRESS_COMPOSE,
     TARGET_FIELD_PROGRESS_PREPARE,
     TARGET_FIELD_PROGRESS_STAGES,
     TARGET_FIELD_STRETCH_MODE_LABELS,
     TARGET_FIELD_STRETCH_MODES,
+    TARGET_FIELD_VIDEO_RESOLUTIONS,
     TargetFieldAnimationExportOptions,
     TargetFieldAnimationProgress,
+    compose_target_field_animation_frame,
+    fit_image_to_panel,
     normalize_target_field_align_mode,
     normalize_target_field_duration_seconds,
     normalize_target_field_export_format,
+    normalize_target_field_fit_mode,
     normalize_target_field_fov_px,
     normalize_target_field_loop_count,
+    normalize_target_field_marker_gap_percent,
     normalize_target_field_marker_length_percent,
     normalize_target_field_marker_line_color,
     normalize_target_field_marker_line_width,
     normalize_target_field_marker_style,
-    normalize_target_field_scale_percent,
     normalize_target_field_stretch_mode,
+    normalize_target_field_video_height,
+    normalize_target_field_video_width,
     render_target_field_marker_preview,
+    target_field_aspects_from_star_height_percent,
     target_field_duration_frame_ms,
+    target_field_panel_heights,
     target_field_progress_stage_title,
+    target_field_star_height_percent,
 )
 from photometry_app.core.target_markers import (
     ASTEROID_VISUAL_MARKER_STYLE_LABELS,
@@ -468,8 +488,64 @@ class AstrostackGifExportDialog(QDialog):
         )
 
 
+class _TargetFieldPreviewHost(QWidget):
+    resized = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(640, 360)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setStyleSheet("background-color: #111111;")
+        self.label = QLabel(self)
+        self.label.setObjectName("targetFieldAnimationPreview")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setStyleSheet("background-color: #111111; border: none;")
+        self.label.setGeometry(0, 0, 720, 405)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return max(360, int(round(max(1, int(width)) / TARGET_FIELD_OUTPUT_ASPECT_RATIO)))
+
+    def sizeHint(self) -> QSize:
+        return QSize(720, 405)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(640, 360)
+
+    def resizeEvent(self, event: object) -> None:
+        super().resizeEvent(event)
+        width = max(1, self.width())
+        height = max(1, self.height())
+        aspect = TARGET_FIELD_OUTPUT_ASPECT_RATIO
+        if width / height > aspect:
+            preview_height = height
+            preview_width = max(1, int(round(height * aspect)))
+            left = (width - preview_width) // 2
+            top = 0
+        else:
+            preview_width = width
+            preview_height = max(1, int(round(width / aspect)))
+            left = 0
+            top = 0
+        self.label.setGeometry(left, top, preview_width, preview_height)
+        self.resized.emit()
+
+
 class TargetFieldAnimationExportDialog(QDialog):
-    _PREVIEW_SIZE = 280
+    _PREVIEW_WIDTH = 720
+    _PREVIEW_HEIGHT = 405
+    _ALIGN_SHORT_LABELS = {
+        TARGET_FIELD_ALIGN_CROP_THEN_ALIGN: "Crop + Align",
+        TARGET_FIELD_ALIGN_ALIGN_THEN_CROP: "Align + Crop",
+        TARGET_FIELD_ALIGN_NONE: "Crop only",
+    }
+    _ALIGN_TOOLTIPS = {
+        TARGET_FIELD_ALIGN_CROP_THEN_ALIGN: "Crop, then align is faster and keeps the target centered.",
+        TARGET_FIELD_ALIGN_ALIGN_THEN_CROP: "Align, then crop registers the full frame first, then cuts the field. Slower, but can recover more drift.",
+        TARGET_FIELD_ALIGN_NONE: "Crop only, with no alignment between frames.",
+    }
 
     def __init__(
         self,
@@ -479,15 +555,22 @@ class TargetFieldAnimationExportDialog(QDialog):
         preview_image: np.ndarray | None = None,
         preview_x: float | None = None,
         preview_y: float | None = None,
+        preview_plot_image: QImage | None = None,
+        plot_renderer: Callable[[int, int], QImage | None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Target Field Animation")
-        self.setMinimumWidth(720)
+        self.setObjectName("targetFieldAnimationExportDialog")
+        self.setMinimumSize(1080, 520)
         self._frame_count = max(1, int(frame_count))
         self._preview_image = None if preview_image is None else np.asarray(preview_image)
         self._preview_x = None if preview_x is None else float(preview_x)
         self._preview_y = None if preview_y is None else float(preview_y)
+        self._preview_plot_image = None if preview_plot_image is None or preview_plot_image.isNull() else preview_plot_image.copy()
+        self._plot_renderer = plot_renderer
+        self._preview_mode = "combined"
+        self._preview_plot_cache: tuple[tuple[int, int], QImage] | None = None
         options = (initial_options or TargetFieldAnimationExportOptions()).normalized()
 
         self._fov_input = QSpinBox(self)
@@ -499,12 +582,12 @@ class TargetFieldAnimationExportDialog(QDialog):
 
         self._align_input = QComboBox(self)
         for mode in TARGET_FIELD_ALIGN_MODES:
-            self._align_input.addItem(TARGET_FIELD_ALIGN_MODE_LABELS.get(mode, mode), mode)
+            self._align_input.addItem(self._ALIGN_SHORT_LABELS.get(mode, TARGET_FIELD_ALIGN_MODE_LABELS.get(mode, mode)), mode)
         align_index = self._align_input.findData(options.align_mode)
         self._align_input.setCurrentIndex(0 if align_index < 0 else align_index)
         self._align_input.setToolTip(
-            "Crop, then align is faster and keeps the target centered. "
-            "Align, then crop registers the full frame first, then cuts the field; it is slower."
+            "Crop + Align is faster and keeps the target centered. "
+            "Align + Crop registers the full frame first, then cuts the field; it is slower."
         )
 
         self._stretch_input = QComboBox(self)
@@ -539,12 +622,55 @@ class TargetFieldAnimationExportDialog(QDialog):
             "Total length is loop duration times this count. GIF already loops forever in the player."
         )
 
-        self._scale_input = QSpinBox(self)
-        self._scale_input.setRange(MIN_TARGET_FIELD_SCALE_PERCENT, MAX_TARGET_FIELD_SCALE_PERCENT)
-        self._scale_input.setSingleStep(5)
-        self._scale_input.setSuffix(" %")
-        self._scale_input.setValue(options.scale_percent)
-        self._scale_input.setToolTip("Output size as a percentage of the composed animation.")
+        self._resolution_input = QComboBox(self)
+        for width, height in TARGET_FIELD_VIDEO_RESOLUTIONS:
+            self._resolution_input.addItem(f"{width}×{height}", f"{width}x{height}")
+        selected_resolution = f"{options.video_width}x{options.video_height}"
+        resolution_index = self._resolution_input.findData(selected_resolution)
+        if resolution_index < 0:
+            self._resolution_input.addItem(f"{options.video_width}×{options.video_height}", selected_resolution)
+            resolution_index = self._resolution_input.count() - 1
+        self._resolution_input.setCurrentIndex(max(0, resolution_index))
+        self._resolution_input.setToolTip("Pixel size of the exported GIF or MP4.")
+        self._resolution_label = QLabel("Resolution")
+
+        self._split_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self._split_slider.setRange(
+            int(round(MIN_TARGET_FIELD_STAR_HEIGHT_PERCENT * 10.0)),
+            int(round(MAX_TARGET_FIELD_STAR_HEIGHT_PERCENT * 10.0)),
+        )
+        self._split_slider.setPageStep(10)
+        self._split_slider.setSingleStep(1)
+        split_percent = target_field_star_height_percent(options.star_aspect, options.plot_aspect)
+        self._split_slider.setValue(int(round(split_percent * 10.0)))
+        self._split_slider.setToolTip("Give more height to the star field or the light curve.")
+        self._split_slider.setMinimumWidth(168)
+        self._split_slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._split_value = QLabel(self)
+        self._split_value.setObjectName("inspectorHint")
+        self._sync_split_labels()
+
+        self._star_fit_input = QComboBox(self)
+        for mode in TARGET_FIELD_FIT_MODES:
+            self._star_fit_input.addItem(TARGET_FIELD_FIT_MODE_LABELS.get(mode, mode), mode)
+        star_fit_index = self._star_fit_input.findData(options.star_fit)
+        self._star_fit_input.setCurrentIndex(0 if star_fit_index < 0 else star_fit_index)
+        self._star_fit_input.setToolTip("How the star crop is placed in its panel: stretch, letterbox, or center-crop.")
+
+        self._plot_fit_input = QComboBox(self)
+        for mode in TARGET_FIELD_FIT_MODES:
+            self._plot_fit_input.addItem(TARGET_FIELD_FIT_MODE_LABELS.get(mode, mode), mode)
+        plot_fit_index = self._plot_fit_input.findData(options.plot_fit)
+        self._plot_fit_input.setCurrentIndex(0 if plot_fit_index < 0 else plot_fit_index)
+        self._plot_fit_input.setToolTip("How the light curve is placed in its panel. Stretch to fit fills the full width.")
+
+        self._save_star_checkbox = QCheckBox("Save star field separately", self)
+        self._save_star_checkbox.setChecked(bool(options.save_star_separately))
+        self._save_star_checkbox.setToolTip("Also write a star-only animation next to the combined file.")
+
+        self._save_plot_checkbox = QCheckBox("Save light curve separately", self)
+        self._save_plot_checkbox.setChecked(bool(options.save_plot_separately))
+        self._save_plot_checkbox.setToolTip("Also write a PNG of the light-curve panel next to the combined file.")
 
         self._marker_input = QComboBox(self)
         for style in TARGET_FIELD_MARKER_STYLES:
@@ -558,7 +684,14 @@ class TargetFieldAnimationExportDialog(QDialog):
         self._marker_length_input.setSingleStep(2)
         self._marker_length_input.setSuffix(" %")
         self._marker_length_input.setValue(options.marker_length_percent)
-        self._marker_length_input.setToolTip("Marker reach as a percentage of the field radius. Lower values keep shorter arms around the star.")
+        self._marker_length_input.setToolTip("Marker reach as a percentage of the field radius.")
+
+        self._marker_gap_input = QSpinBox(self)
+        self._marker_gap_input.setRange(MIN_TARGET_FIELD_MARKER_GAP_PERCENT, MAX_TARGET_FIELD_MARKER_GAP_PERCENT)
+        self._marker_gap_input.setSingleStep(2)
+        self._marker_gap_input.setSuffix(" %")
+        self._marker_gap_input.setValue(options.marker_gap_percent)
+        self._marker_gap_input.setToolTip("Open space around the star as a percentage of the field radius.")
 
         self._marker_width_input = QDoubleSpinBox(self)
         self._marker_width_input.setRange(MIN_TARGET_FIELD_MARKER_LINE_WIDTH, MAX_TARGET_FIELD_MARKER_LINE_WIDTH)
@@ -574,83 +707,293 @@ class TargetFieldAnimationExportDialog(QDialog):
         self._marker_color_button.clicked.connect(self._choose_marker_color)
         self._update_marker_color_button()
 
-        self._preview_label = QLabel(self)
-        self._preview_label.setObjectName("targetFieldAnimationPreview")
-        self._preview_label.setFixedSize(self._PREVIEW_SIZE, self._PREVIEW_SIZE)
-        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setFrameShape(QFrame.Shape.StyledPanel)
-        self._preview_label.setStyleSheet("background-color: #111111;")
+        for field in (
+            self._fov_input,
+            self._align_input,
+            self._stretch_input,
+            self._format_input,
+            self._duration_input,
+            self._loop_input,
+            self._resolution_input,
+            self._star_fit_input,
+            self._plot_fit_input,
+            self._marker_input,
+            self._marker_length_input,
+            self._marker_gap_input,
+            self._marker_width_input,
+            self._marker_color_button,
+        ):
+            field.setMinimumWidth(176)
+            field.setMaximumWidth(236)
+
+        self._preview_host = _TargetFieldPreviewHost(self)
+        self._preview_label = self._preview_host.label
+        self._preview_mode_group = QButtonGroup(self)
+        self._preview_mode_group.setExclusive(True)
+        preview_mode_row = QHBoxLayout()
+        preview_mode_row.setContentsMargins(0, 0, 0, 0)
+        preview_mode_row.setSpacing(0)
+        for mode, title in (("combined", "Combined"), ("star", "Star Field"), ("plot", "Light Curve")):
+            button = QToolButton(self)
+            button.setObjectName("previewModeButton")
+            button.setText(title)
+            button.setCheckable(True)
+            button.setAutoRaise(True)
+            button.setProperty("previewMode", mode)
+            self._preview_mode_group.addButton(button)
+            preview_mode_row.addWidget(button)
+            if mode == "combined":
+                button.setChecked(True)
+        preview_mode_row.addStretch(1)
+        self._preview_mode_group.buttonClicked.connect(self._handle_preview_mode_changed)
+
+        preview_column = QWidget(self)
+        preview_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        preview_layout = QVBoxLayout(preview_column)
+        preview_layout.setContentsMargins(0, 0, 8, 0)
+        preview_layout.setSpacing(0)
+        preview_title = QLabel("Preview")
+        preview_title.setObjectName("inspectorSectionTitle")
+        preview_layout.addWidget(preview_title)
+        preview_layout.addSpacing(4)
+        preview_layout.addLayout(preview_mode_row)
+        preview_layout.addSpacing(16)
+        preview_layout.addWidget(self._preview_host, stretch=0)
+
+        inspector = QWidget(self)
+        inspector_layout = QVBoxLayout(inspector)
+        inspector_layout.setContentsMargins(4, 0, 4, 0)
+        inspector_layout.setSpacing(0)
+        inspector_form = self._inspector_form()
+        self._marker_form = inspector_form
+        inspector_form.addRow(self._section_title("Composition"))
+        inspector_form.addRow("Star field size", self._fov_input)
+        inspector_form.addRow("Alignment mode", self._align_input)
+        inspector_form.addRow("Stretch preset", self._stretch_input)
+        split_field = QWidget(self)
+        split_layout = QVBoxLayout(split_field)
+        split_layout.setContentsMargins(0, 2, 0, 0)
+        split_layout.setSpacing(2)
+        split_layout.addWidget(self._split_slider)
+        split_layout.addWidget(self._split_value)
+        inspector_form.addRow("Panel split", split_field)
+
+        inspector_form.addRow(self._section_title("Target Marker", padded=True))
+        inspector_form.addRow("Marker style", self._marker_input)
+        inspector_form.addRow("Marker color", self._marker_color_button)
+        inspector_form.addRow("Marker size", self._marker_length_input)
+        inspector_form.addRow("Marker spacing", self._marker_gap_input)
+        inspector_form.addRow("Marker thickness", self._marker_width_input)
+
+        inspector_form.addRow(self._section_title("Export", padded=True))
+        inspector_form.addRow("Format", self._format_input)
+        inspector_form.addRow(self._resolution_label, self._resolution_input)
+        inspector_form.addRow("Loop duration", self._duration_input)
+        inspector_form.addRow("Number of loops", self._loop_input)
+        inspector_layout.addLayout(inspector_form)
+
+        self._advanced_toggle = QToolButton(self)
+        self._advanced_toggle.setObjectName("advancedToggle")
+        self._advanced_toggle.setText("Advanced")
+        self._advanced_toggle.setCheckable(True)
+        self._advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._advanced_toggle.setAutoRaise(True)
+        self._advanced_body = QWidget(self)
+        advanced_layout = QVBoxLayout(self._advanced_body)
+        advanced_layout.setContentsMargins(0, 6, 0, 0)
+        advanced_layout.setSpacing(6)
+        advanced_form = self._inspector_form()
+        advanced_form.addRow("Star field fit", self._star_fit_input)
+        advanced_form.addRow("Light curve fit", self._plot_fit_input)
+        advanced_layout.addLayout(advanced_form)
+        advanced_layout.addWidget(self._save_star_checkbox)
+        advanced_layout.addWidget(self._save_plot_checkbox)
+        self._advanced_body.hide()
+        self._advanced_toggle.toggled.connect(self._handle_advanced_toggled)
+        inspector_layout.addSpacing(4)
+        inspector_layout.addWidget(self._advanced_toggle)
+        inspector_layout.addWidget(self._advanced_body)
+
+        inspector_scroll = QScrollArea(self)
+        inspector_scroll.setWidgetResizable(True)
+        inspector_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inspector_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inspector_scroll.setWidget(inspector)
+        inspector_scroll.setMinimumWidth(360)
+        inspector_scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+
+        content = QWidget(self)
+        content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        content_layout = QHBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+        content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        content_layout.addWidget(preview_column, stretch=65)
+        content_layout.addWidget(inspector_scroll, stretch=35)
 
         self._summary_label = QLabel(self)
+        self._summary_label.setObjectName("outputSummary")
         self._summary_label.setWordWrap(True)
+
+        self._cancel_button = QPushButton("Cancel", self)
+        self._cancel_button.setAutoDefault(False)
+        self._cancel_button.clicked.connect(self.reject)
+        self._export_button = QPushButton("Export Animation", self)
+        self._export_button.setObjectName("primaryAction")
+        self._export_button.setDefault(True)
+        self._export_button.setAutoDefault(True)
+        self._export_button.clicked.connect(self.accept)
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 8, 0, 0)
+        footer.setSpacing(12)
+        footer.addWidget(self._summary_label, stretch=1)
+        footer.addWidget(self._cancel_button)
+        footer.addWidget(self._export_button)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(10)
+        layout.addWidget(content, stretch=0)
+        layout.addLayout(footer)
+        self.setLayout(layout)
+        secondary = self._secondary_text_color().name()
+        self.setStyleSheet(
+            f"""
+            QDialog#targetFieldAnimationExportDialog QLabel#inspectorSectionTitle {{
+                font-weight: 700;
+                color: palette(window-text);
+                padding: 0;
+            }}
+            QDialog#targetFieldAnimationExportDialog QLabel#inspectorHint,
+            QDialog#targetFieldAnimationExportDialog QLabel#outputSummary {{
+                color: {secondary};
+            }}
+            QDialog#targetFieldAnimationExportDialog QToolButton#previewModeButton {{
+                padding: 3px 10px 6px 10px;
+                border: none;
+                border-bottom: 2px solid transparent;
+            }}
+            QDialog#targetFieldAnimationExportDialog QToolButton#previewModeButton:checked {{
+                border-bottom: 2px solid palette(highlight);
+                font-weight: 600;
+            }}
+            QDialog#targetFieldAnimationExportDialog QToolButton#advancedToggle {{
+                padding: 0;
+                font-weight: 700;
+                color: palette(window-text);
+            }}
+            QDialog#targetFieldAnimationExportDialog QPushButton#primaryAction {{
+                font-weight: 600;
+                min-width: 148px;
+                padding: 6px 16px;
+            }}
+            """
+        )
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
-        self._preview_timer.setInterval(50)
+        self._preview_timer.setInterval(40)
         self._preview_timer.timeout.connect(self._refresh_preview)
+        self._preview_host.resized.connect(self._schedule_preview)
 
         self._duration_input.valueChanged.connect(lambda _value: self._update_summary())
         self._loop_input.valueChanged.connect(lambda _value: self._update_summary())
         self._format_input.currentIndexChanged.connect(lambda _index: self._handle_format_changed())
-        self._scale_input.valueChanged.connect(lambda _index: self._update_summary())
+        self._resolution_input.currentIndexChanged.connect(lambda _index: self._update_summary())
         self._fov_input.valueChanged.connect(lambda _value: self._schedule_preview())
         self._stretch_input.currentIndexChanged.connect(lambda _index: self._schedule_preview())
+        self._split_slider.valueChanged.connect(lambda _value: self._handle_split_changed())
+        self._star_fit_input.currentIndexChanged.connect(lambda _index: self._schedule_preview())
+        self._plot_fit_input.currentIndexChanged.connect(lambda _index: self._schedule_preview())
         self._marker_input.currentIndexChanged.connect(lambda _index: self._handle_marker_changed())
         self._marker_length_input.valueChanged.connect(lambda _value: self._schedule_preview())
+        self._marker_gap_input.valueChanged.connect(lambda _value: self._schedule_preview())
         self._marker_width_input.valueChanged.connect(lambda _value: self._schedule_preview())
 
-        form_layout = QFormLayout()
-        form_layout.addRow("Field of view", self._fov_input)
-        form_layout.addRow("Align", self._align_input)
-        form_layout.addRow("Stretch", self._stretch_input)
-        form_layout.addRow("Format", self._format_input)
-        form_layout.addRow("Loop duration", self._duration_input)
-        form_layout.addRow("MP4 loops", self._loop_input)
-        form_layout.addRow("Output size", self._scale_input)
-        form_layout.addRow("Target marker", self._marker_input)
-        form_layout.addRow("Marker length", self._marker_length_input)
-        form_layout.addRow("Marker thickness", self._marker_width_input)
-        form_layout.addRow("Marker color", self._marker_color_button)
-
-        preview_group = QGroupBox("Preview")
-        preview_layout = QVBoxLayout(preview_group)
-        preview_layout.addWidget(self._preview_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        preview_layout.addStretch(1)
-
-        content_layout = QHBoxLayout()
-        content_layout.addWidget(preview_group)
-        content_layout.addLayout(form_layout, stretch=1)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
-        ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_button is not None:
-            ok_button.setText("Export")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout()
-        layout.addLayout(content_layout)
-        layout.addWidget(self._summary_label)
-        layout.addWidget(buttons)
-        self.setLayout(layout)
         self._sync_marker_controls()
         self._sync_loop_controls()
         self._update_summary()
         self._refresh_preview()
+        self.resize(self.sizeHint())
+
+    def sizeHint(self) -> QSize:
+        width = 1120
+        available = max(640, width - 48)
+        preview_width = int(round(available * 0.65))
+        preview_height = max(360, int(round(preview_width / TARGET_FIELD_OUTPUT_ASPECT_RATIO)))
+        header_and_footer = 128
+        inspector_height = 0
+        inspector = self._advanced_toggle.parentWidget()
+        if inspector is not None:
+            inspector_height = int(inspector.sizeHint().height())
+        height = header_and_footer + max(preview_height, inspector_height)
+        return QSize(width, max(self.minimumHeight(), height))
+
+    def _section_title(self, text: str, *, padded: bool = False) -> QLabel:
+        label = QLabel(text, self)
+        label.setObjectName("inspectorSectionTitle")
+        if padded:
+            label.setContentsMargins(0, 8, 0, 0)
+        return label
+
+    def _inspector_form(self) -> QFormLayout:
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(6)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        return form
+
+    def _secondary_text_color(self) -> QColor:
+        text = self.palette().color(QPalette.ColorRole.WindowText)
+        window = self.palette().color(QPalette.ColorRole.Window)
+        return QColor(
+            round(text.red() * 0.82 + window.red() * 0.18),
+            round(text.green() * 0.82 + window.green() * 0.18),
+            round(text.blue() * 0.82 + window.blue() * 0.18),
+        )
+
+    def _set_form_rows_visible(self, form: QFormLayout, fields: tuple[QWidget, ...], visible: bool) -> None:
+        for field in fields:
+            set_row_visible = getattr(form, "setRowVisible", None)
+            if callable(set_row_visible):
+                set_row_visible(field, visible)
+                continue
+            label = form.labelForField(field)
+            field.setVisible(visible)
+            if label is not None:
+                label.setVisible(visible)
 
     def selected_options(self) -> TargetFieldAnimationExportOptions:
+        resolution = str(self._resolution_input.currentData() or "1920x1080")
+        width_text, separator, height_text = resolution.partition("x")
+        video_width = int(width_text) if separator else 1920
+        video_height = int(height_text) if separator else 1080
+        star_aspect, plot_aspect = target_field_aspects_from_star_height_percent(self._split_slider.value() / 10.0)
         return TargetFieldAnimationExportOptions(
             fov_px=normalize_target_field_fov_px(self._fov_input.value()),
             align_mode=normalize_target_field_align_mode(self._align_input.currentData()),
             duration_seconds=normalize_target_field_duration_seconds(self._duration_input.value()),
             loop_count=normalize_target_field_loop_count(self._loop_input.value()),
-            scale_percent=normalize_target_field_scale_percent(self._scale_input.value()),
+            scale_percent=DEFAULT_TARGET_FIELD_SCALE_PERCENT,
             stretch_mode=normalize_target_field_stretch_mode(self._stretch_input.currentData()),
             export_format=normalize_target_field_export_format(self._format_input.currentData()),
             marker_style=normalize_target_field_marker_style(self._marker_input.currentData()),
             marker_length_percent=normalize_target_field_marker_length_percent(self._marker_length_input.value()),
+            marker_gap_percent=normalize_target_field_marker_gap_percent(self._marker_gap_input.value()),
             marker_line_width=normalize_target_field_marker_line_width(self._marker_width_input.value()),
             marker_line_color=normalize_target_field_marker_line_color(self._marker_line_color),
+            video_width=normalize_target_field_video_width(video_width),
+            video_height=normalize_target_field_video_height(video_height),
+            star_aspect=star_aspect,
+            plot_aspect=plot_aspect,
+            star_fit=normalize_target_field_fit_mode(self._star_fit_input.currentData()),
+            plot_fit=normalize_target_field_fit_mode(self._plot_fit_input.currentData()),
+            save_star_separately=self._save_star_checkbox.isChecked(),
+            save_plot_separately=self._save_plot_checkbox.isChecked(),
         ).normalized()
 
     def _update_summary(self) -> None:
@@ -662,32 +1005,49 @@ class TargetFieldAnimationExportDialog(QDialog):
         )
         playback_seconds = self._frame_count * duration_ms / 1000.0
         format_label = TARGET_FIELD_EXPORT_FORMAT_LABELS.get(options.export_format, options.export_format.upper())
-        note = ""
+        loop_count = max(1, int(options.loop_count)) if options.export_format == "mp4" else 1
+        loop_word = "loop" if loop_count == 1 else "loops"
+        parts = [
+            f"{self._frame_count} frames",
+            f"{playback_seconds:.1f} s/loop",
+            f"{loop_count} {loop_word}",
+            f"{playback_seconds * loop_count:.1f} s total",
+            f"{options.video_width}×{options.video_height}",
+            format_label,
+        ]
+        self._summary_label.setText(" · ".join(parts))
         if options.export_format == "gif" and playback_seconds > options.duration_seconds + 0.05:
-            note = " GIF frames cannot be shorter than 20 ms, so playback may run a little longer."
-        if options.export_format == "mp4" and options.loop_count > 1:
-            total_seconds = playback_seconds * options.loop_count
-            timing_text = (
-                f"{self._frame_count} frame(s) over {playback_seconds:.1f} s per loop "
-                f"× {options.loop_count} loops ({total_seconds:.1f} s total, {duration_ms} ms each)"
-            )
+            self._summary_label.setToolTip("GIF frames cannot be shorter than 20 ms, so playback may run a little longer.")
         else:
-            timing_text = (
-                f"{self._frame_count} frame(s) over {playback_seconds:.1f} s "
-                f"({duration_ms} ms each)"
-            )
-        self._summary_label.setText(
-            f"{timing_text}, {options.scale_percent}% {format_label}.{note}"
-        )
+            self._summary_label.setToolTip("")
 
     def _handle_format_changed(self) -> None:
         self._sync_loop_controls()
         self._update_summary()
 
+    def _handle_split_changed(self) -> None:
+        self._sync_split_labels()
+        self._schedule_preview()
+
+    def _handle_preview_mode_changed(self, button: QToolButton) -> None:
+        mode = str(button.property("previewMode") or "combined")
+        if mode not in {"combined", "star", "plot"}:
+            mode = "combined"
+        self._preview_mode = mode
+        self._refresh_preview()
+
+    def _handle_advanced_toggled(self, expanded: bool) -> None:
+        self._advanced_toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self._advanced_body.setVisible(bool(expanded))
+
+    def _sync_split_labels(self) -> None:
+        star_percent = int(round(self._split_slider.value() / 10.0))
+        plot_percent = max(0, 100 - star_percent)
+        self._split_value.setText(f"Star field {star_percent}% · Light curve {plot_percent}%")
+
     def _sync_loop_controls(self) -> None:
-        self._loop_input.setEnabled(
-            normalize_target_field_export_format(self._format_input.currentData()) == "mp4"
-        )
+        is_video = normalize_target_field_export_format(self._format_input.currentData()) == "mp4"
+        self._loop_input.setEnabled(is_video)
 
     def _handle_marker_changed(self) -> None:
         self._sync_marker_controls()
@@ -695,16 +1055,60 @@ class TargetFieldAnimationExportDialog(QDialog):
 
     def _sync_marker_controls(self) -> None:
         enabled = normalize_target_field_marker_style(self._marker_input.currentData()) != TARGET_FIELD_MARKER_NONE
-        self._marker_length_input.setEnabled(enabled)
-        self._marker_width_input.setEnabled(enabled)
-        self._marker_color_button.setEnabled(enabled)
+        self._set_form_rows_visible(
+            self._marker_form,
+            (
+                self._marker_color_button,
+                self._marker_length_input,
+                self._marker_gap_input,
+                self._marker_width_input,
+            ),
+            enabled,
+        )
 
     def _schedule_preview(self) -> None:
         self._preview_timer.start()
 
+    def _preview_pixel_size(self) -> tuple[int, int, float]:
+        pixel_ratio = max(1.0, float(self._preview_label.devicePixelRatioF()))
+        width = max(2, int(self._preview_label.width()))
+        height = max(2, int(self._preview_label.height()))
+        if width < 64 or height < 36:
+            width, height = self._PREVIEW_WIDTH, self._PREVIEW_HEIGHT
+        aspect = TARGET_FIELD_OUTPUT_ASPECT_RATIO
+        if abs((width / height) - aspect) > 0.01:
+            if width / height > aspect:
+                width = max(2, int(round(height * aspect)))
+            else:
+                height = max(2, int(round(width / aspect)))
+        return (
+            max(2, int(round(width * pixel_ratio))),
+            max(2, int(round(height * pixel_ratio))),
+            pixel_ratio,
+        )
+
+    def _render_preview_plot(self, width: int, height: int) -> QImage:
+        key = (max(2, int(width)), max(2, int(height)))
+        cached = self._preview_plot_cache
+        if cached is not None and cached[0] == key and not cached[1].isNull():
+            return cached[1]
+        plot = None
+        if self._plot_renderer is not None:
+            try:
+                plot = self._plot_renderer(key[0], key[1])
+            except Exception:
+                plot = None
+        if plot is None or plot.isNull():
+            plot = self._preview_plot_image
+        if plot is None or plot.isNull():
+            plot = QImage(key[0], key[1], QImage.Format.Format_RGB888)
+            plot.fill(QColor("#1b1d23"))
+        self._preview_plot_cache = (key, plot)
+        return plot
+
     def _refresh_preview(self) -> None:
         options = self.selected_options()
-        image = render_target_field_marker_preview(
+        stamp = render_target_field_marker_preview(
             self._preview_image,
             self._preview_x,
             self._preview_y,
@@ -713,14 +1117,53 @@ class TargetFieldAnimationExportDialog(QDialog):
             marker_style=options.marker_style,
             appearance=options.marker_appearance(),
         )
-        pixmap = QPixmap.fromImage(image)
-        self._preview_label.setPixmap(
-            pixmap.scaled(
-                self._preview_label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
+        frame_width, frame_height, pixel_ratio = self._preview_pixel_size()
+        if self._preview_mode == "star":
+            image = fit_image_to_panel(
+                stamp,
+                frame_width,
+                frame_height,
+                fit_mode=options.star_fit,
+                fill=QColor("#111111"),
             )
-        )
+        elif self._preview_mode == "plot":
+            plot = self._render_preview_plot(frame_width, frame_height)
+            image = fit_image_to_panel(
+                plot,
+                frame_width,
+                frame_height,
+                fit_mode=options.plot_fit,
+                fill=QColor("#1b1d23"),
+            )
+        else:
+            _star_height, plot_height = target_field_panel_heights(
+                frame_width,
+                frame_height,
+                star_aspect=options.star_aspect,
+                plot_aspect=options.plot_aspect,
+            )
+            plot = self._render_preview_plot(frame_width, max(2, plot_height))
+            image = compose_target_field_animation_frame(
+                stamp,
+                plot,
+                options=TargetFieldAnimationExportOptions(
+                    star_aspect=options.star_aspect,
+                    plot_aspect=options.plot_aspect,
+                    star_fit=options.star_fit,
+                    plot_fit=options.plot_fit,
+                    stretch_mode=options.stretch_mode,
+                    marker_style=options.marker_style,
+                    marker_length_percent=options.marker_length_percent,
+                    marker_gap_percent=options.marker_gap_percent,
+                    marker_line_width=options.marker_line_width,
+                    marker_line_color=options.marker_line_color,
+                ),
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
+        pixmap = QPixmap.fromImage(image)
+        pixmap.setDevicePixelRatio(pixel_ratio)
+        self._preview_label.setPixmap(pixmap)
 
     def _choose_marker_color(self) -> None:
         selected = QColorDialog.getColor(QColor(self._marker_line_color), self, "Target Marker Color")
@@ -13502,13 +13945,13 @@ class SettingsDialog(QDialog):
             sky_explorer_general_form_layout,
             "Survey Field RA",
             self._sky_explorer_survey_field_ra_deg_input,
-            "Right ascension used when Open starts from a sky survey with no user image yet. Default centers on the Trifid Nebula (M20). Panning later recenters the survey beyond this initial field.",
+            "Right ascension used when Survey loads a field with no user image yet. Default centers on the Trifid Nebula (M20). Panning later recenters the survey beyond this initial field.",
         )
         self._add_tooltip_form_row(
             sky_explorer_general_form_layout,
             "Survey Field Dec",
             self._sky_explorer_survey_field_dec_deg_input,
-            "Declination used when Open starts from a sky survey with no user image yet. Default centers on the Trifid Nebula (M20).",
+            "Declination used when Survey loads a field with no user image yet. Default centers on the Trifid Nebula (M20).",
         )
         self._add_tooltip_form_row(
             sky_explorer_general_form_layout,

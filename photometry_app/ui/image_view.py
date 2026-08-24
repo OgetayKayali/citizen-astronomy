@@ -2533,6 +2533,36 @@ class AnnotatedImageView(QWidget):
 
             return
 
+        if (
+
+            self._gesture_roi_enabled
+
+            and event.button() == Qt.MouseButton.LeftButton
+
+            and (
+
+                not self._gesture_roi_shift_required
+
+                or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+
+            )
+
+        ):
+
+            self._gesture_roi_active = True
+
+            self._pan_anchor = None
+
+            self._pan_center_start = None
+
+            self._pan_drag_active = False
+
+            self._pending_overlay_click = None
+
+            self.imagePressed.emit(image_point.x(), image_point.y(), event.button(), event.modifiers())
+
+            return
+
         if self._direct_edit_enabled and event.button() == Qt.MouseButton.LeftButton:
 
             modifiers = event.modifiers()
@@ -2620,36 +2650,6 @@ class AnnotatedImageView(QWidget):
             self._pending_overlay_click = None
 
             self.imageContextRequested.emit(image_point.x(), image_point.y(), global_position, event.modifiers())
-
-            return
-
-        if (
-
-            self._gesture_roi_enabled
-
-            and event.button() == Qt.MouseButton.LeftButton
-
-            and (
-
-                not self._gesture_roi_shift_required
-
-                or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-
-            )
-
-        ):
-
-            self._gesture_roi_active = True
-
-            self._pan_anchor = None
-
-            self._pan_center_start = None
-
-            self._pan_drag_active = False
-
-            self._pending_overlay_click = None
-
-            self.imagePressed.emit(image_point.x(), image_point.y(), event.button(), event.modifiers())
 
             return
 

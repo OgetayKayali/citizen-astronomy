@@ -594,6 +594,239 @@ class SolarSystemTest(unittest.TestCase):
 
         self.assertEqual(request_mock.call_count, 2)
 
+    def test_skybot_query_service_retries_unreadable_votable_and_succeeds(self) -> None:
+
+        solved_field = SolvedField(
+
+            center_ra_deg=10.0,
+
+            center_dec_deg=20.0,
+
+            radius_deg=0.2,
+
+            width=200,
+
+            height=120,
+
+            wcs_path=Path("demo.fits"),
+
+        )
+
+        empty_results = Table(
+
+            names=("num", "name", "ra", "de", "class"),
+
+            dtype=("U8", "U32", "U16", "f8", "U16"),
+
+        )
+
+        votable = BytesIO()
+
+        empty_results.write(votable, format="votable")
+
+        failed_response = unittest.mock.Mock()
+
+        failed_response.status_code = 200
+
+        failed_response.content = b'<?xml version="1.0" encoding="UTF-8" ?>\n'
+
+        failed_response.text = failed_response.content.decode("utf-8")
+
+        failed_response.headers = {"Content-Type": "text/xml"}
+
+        failed_response.url = "https://ssp.imcce.fr/webservices/skybot/api/conesearch.php"
+
+        failed_response.raise_for_status.return_value = None
+
+        success_response = unittest.mock.Mock()
+
+        success_response.status_code = 200
+
+        success_response.content = votable.getvalue()
+
+        success_response.text = success_response.content.decode("utf-8")
+
+        success_response.headers = {"Content-Type": "text/xml"}
+
+        success_response.raise_for_status.return_value = None
+
+        notes: list[str] = []
+
+        with (
+
+            patch("photometry_app.core.solar_system.requests.get", side_effect=[failed_response, success_response]) as request_mock,
+
+            patch("photometry_app.core.solar_system._query_known_interstellar_prediction", return_value=None),
+
+        ):
+
+            predictions = SkybotQueryService(progress_callback=notes.append).query_predictions(
+
+                solved_field,
+
+                datetime(2025, 1, 14, 21, 12, tzinfo=UTC),
+
+                observatory_code="807",
+
+                magnitude_limit=18.0,
+
+            )
+
+        self.assertEqual(predictions, [])
+
+        self.assertEqual(request_mock.call_count, 2)
+
+        joined_notes = "\n".join(notes)
+
+        self.assertIn("SkyBoT cone search:", joined_notes)
+
+        self.assertIn("loc=807", joined_notes)
+
+        self.assertIn("unreadable response; retrying.", joined_notes)
+
+        self.assertIn("Parse error:", joined_notes)
+
+        self.assertIn('Body: <?xml version="1.0" encoding="UTF-8" ?>', joined_notes)
+
+    def test_skybot_query_service_unreadable_votable_reports_parse_error_after_retries(self) -> None:
+
+        solved_field = SolvedField(
+
+            center_ra_deg=10.0,
+
+            center_dec_deg=20.0,
+
+            radius_deg=0.2,
+
+            width=200,
+
+            height=120,
+
+            wcs_path=Path("demo.fits"),
+
+        )
+
+        failed_response = unittest.mock.Mock()
+
+        failed_response.status_code = 200
+
+        failed_response.content = b'<?xml version="1.0" encoding="UTF-8" ?>\n'
+
+        failed_response.text = failed_response.content.decode("utf-8")
+
+        failed_response.headers = {"Content-Type": "text/xml"}
+
+        failed_response.url = "https://ssp.imcce.fr/webservices/skybot/api/conesearch.php"
+
+        failed_response.raise_for_status.return_value = None
+
+        notes: list[str] = []
+
+        with (
+
+            patch("photometry_app.core.solar_system.requests.get", return_value=failed_response) as request_mock,
+
+            patch("photometry_app.core.solar_system._query_known_interstellar_prediction", return_value=None),
+
+        ):
+
+            with self.assertRaises(RuntimeError) as raised:
+
+                SkybotQueryService(progress_callback=notes.append).query_predictions(
+
+                    solved_field,
+
+                    datetime(2025, 1, 14, 21, 12, tzinfo=UTC),
+
+                    observatory_code="807",
+
+                    magnitude_limit=18.0,
+
+                )
+
+        self.assertEqual(request_mock.call_count, 3)
+
+        message = str(raised.exception)
+
+        self.assertIn("after 3 attempts", message)
+
+        self.assertIn("Parse error:", message)
+
+        self.assertIn('Body: <?xml version="1.0" encoding="UTF-8" ?>', message)
+
+        self.assertNotEqual(message.strip(), 'SkyBoT query returned an unreadable response: <?xml version="1.0" encoding="UTF-8" ?>')
+
+        joined_notes = "\n".join(notes)
+
+        self.assertIn("Parse error:", joined_notes)
+
+        self.assertIn("SkyBoT attempt 3/3: unreadable response.", joined_notes)
+
+    def test_skybot_query_service_reports_query_status_from_error_votable(self) -> None:
+
+        solved_field = SolvedField(
+
+            center_ra_deg=10.0,
+
+            center_dec_deg=20.0,
+
+            radius_deg=0.2,
+
+            width=200,
+
+            height=120,
+
+            wcs_path=Path("demo.fits"),
+
+        )
+
+        error_body = (
+            '<?xml version="1.0" encoding="UTF-8" ?>\n'
+            '<VOTABLE version="1.3">\n'
+            '<INFO name="QUERY_STATUS" value="ERROR">Invalid epoch</INFO>\n'
+            "</VOTABLE>\n"
+        )
+
+        failed_response = unittest.mock.Mock()
+
+        failed_response.status_code = 200
+
+        failed_response.content = error_body.encode("utf-8")
+
+        failed_response.text = error_body
+
+        failed_response.headers = {"Content-Type": "text/xml"}
+
+        failed_response.raise_for_status.return_value = None
+
+        with (
+
+            patch("photometry_app.core.solar_system.requests.get", return_value=failed_response),
+
+            patch("photometry_app.core.solar_system._query_known_interstellar_prediction", return_value=None),
+
+        ):
+
+            with self.assertRaises(RuntimeError) as raised:
+
+                SkybotQueryService().query_predictions(
+
+                    solved_field,
+
+                    datetime(2025, 1, 14, 21, 12, tzinfo=UTC),
+
+                    observatory_code="807",
+
+                    magnitude_limit=18.0,
+
+                )
+
+        message = str(raised.exception)
+
+        self.assertIn("QUERY_STATUS: ERROR: Invalid epoch", message)
+
+        self.assertIn("after 3 attempts", message)
+
     def test_skybot_query_service_accepts_votable_with_leading_whitespace(self) -> None:
 
         solved_field = SolvedField(

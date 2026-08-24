@@ -34,6 +34,9 @@ from photometry_app.core.models import LightCurvePoint, LightCurveSeries, Photom
 from photometry_app.core.settings import default_custom_theme_colors
 
 
+LIGHT_CURVE_DATETIME_AXIS_LABEL = "Observation Time (UTC)"
+
+
 
 
 
@@ -1676,7 +1679,7 @@ def build_light_curve_plot_payload(
 
             y_axis_label=y_axis_label,
 
-            x_axis_label="Phase" if phase_mode else ("Julian Date (JD)" if x_axis_mode == "jd" else "Observation Time"),
+            x_axis_label="Phase" if phase_mode else ("Julian Date (JD)" if x_axis_mode == "jd" else LIGHT_CURVE_DATETIME_AXIS_LABEL),
 
             x_axis_mode="phase" if phase_mode else ("jd" if x_axis_mode == "jd" else "datetime"),
 
@@ -1972,7 +1975,7 @@ def build_overview_light_curve_plot_payload(
 
             y_axis_label=y_axis_label,
 
-            x_axis_label="Julian Date (JD)" if resolved_x_axis_mode == "jd" else "Observation Time",
+            x_axis_label="Julian Date (JD)" if resolved_x_axis_mode == "jd" else LIGHT_CURVE_DATETIME_AXIS_LABEL,
 
             x_axis_mode="jd" if resolved_x_axis_mode == "jd" else "datetime",
 
@@ -1992,7 +1995,7 @@ def build_overview_light_curve_plot_payload(
 
         y_axis_label=y_axis_label,
 
-        x_axis_label="Julian Date (JD)" if resolved_x_axis_mode == "jd" else "Observation Time",
+        x_axis_label="Julian Date (JD)" if resolved_x_axis_mode == "jd" else LIGHT_CURVE_DATETIME_AXIS_LABEL,
 
         x_axis_mode="jd" if resolved_x_axis_mode == "jd" else "datetime",
 

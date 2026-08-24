@@ -61,6 +61,12 @@ DEFAULT_TARGET_FIELD_MARKER_LINE_WIDTH = 2.0
 MIN_TARGET_FIELD_MARKER_LINE_WIDTH = 0.5
 MAX_TARGET_FIELD_MARKER_LINE_WIDTH = 12.0
 DEFAULT_TARGET_FIELD_MARKER_LINE_COLOR = "#ef4444"
+DEFAULT_TARGET_FIELD_MARKER_GAP_PERCENT = 20
+MIN_TARGET_FIELD_MARKER_GAP_PERCENT = 2
+MAX_TARGET_FIELD_MARKER_GAP_PERCENT = 80
+MIN_TARGET_FIELD_STAR_HEIGHT_PERCENT = 20.0
+MAX_TARGET_FIELD_STAR_HEIGHT_PERCENT = 80.0
+DEFAULT_TARGET_FIELD_STAR_HEIGHT_PERCENT = 100.0 * 5.0 / 9.0
 DEFAULT_TARGET_FIELD_ALIGN = True
 TARGET_FIELD_ALIGN_CROP_THEN_ALIGN = "crop_then_align"
 TARGET_FIELD_ALIGN_ALIGN_THEN_CROP = "align_then_crop"
@@ -105,6 +111,57 @@ _TARGET_FIELD_AUTO_MAX_WORKERS = 8
 _WORKING_IMAGE_DTYPE = np.float32
 _FULL_FRAME_WORKER_BUDGET_BYTES = 512 * 1024 * 1024
 _SMALL_FRAME_WORKER_BYTES = 8 * 1024 * 1024
+TARGET_FIELD_OUTPUT_ASPECT_RATIO = 16.0 / 9.0
+TARGET_FIELD_PLOT_SEPARATOR_PX = 5
+TARGET_FIELD_STAR_ASPECT_RATIO = 16.0 / 5.0
+TARGET_FIELD_PLOT_ASPECT_RATIO = 16.0 / 4.0
+TARGET_FIELD_ASPECT_REMAINING = "remaining"
+TARGET_FIELD_ASPECT_RATIOS = {
+    "16:9": 16.0 / 9.0,
+    "16:5": 16.0 / 5.0,
+    "16:4": 16.0 / 4.0,
+    "16:3": 16.0 / 3.0,
+    "2:1": 2.0,
+    "1:1": 1.0,
+}
+TARGET_FIELD_STAR_ASPECTS = ("16:5", "16:9", "16:4", "1:1", TARGET_FIELD_ASPECT_REMAINING)
+TARGET_FIELD_PLOT_ASPECTS = ("16:4", "16:3", "16:5", "16:9", "2:1")
+TARGET_FIELD_ASPECT_LABELS = {
+    "16:9": "16:9",
+    "16:5": "16:5",
+    "16:4": "16:4",
+    "16:3": "16:3",
+    "2:1": "2:1",
+    "1:1": "1:1",
+    TARGET_FIELD_ASPECT_REMAINING: "Remaining",
+}
+TARGET_FIELD_FIT_STRETCH = "stretch"
+TARGET_FIELD_FIT_FIT = "fit"
+TARGET_FIELD_FIT_FILL = "fill"
+TARGET_FIELD_FIT_MODES = (TARGET_FIELD_FIT_STRETCH, TARGET_FIELD_FIT_FIT, TARGET_FIELD_FIT_FILL)
+TARGET_FIELD_FIT_MODE_LABELS = {
+    TARGET_FIELD_FIT_STRETCH: "Stretch to fit",
+    TARGET_FIELD_FIT_FIT: "Fit (letterbox)",
+    TARGET_FIELD_FIT_FILL: "Fill (crop)",
+}
+DEFAULT_TARGET_FIELD_STAR_ASPECT = "16:5"
+DEFAULT_TARGET_FIELD_PLOT_ASPECT = "16:4"
+DEFAULT_TARGET_FIELD_STAR_FIT = TARGET_FIELD_FIT_FILL
+DEFAULT_TARGET_FIELD_PLOT_FIT = TARGET_FIELD_FIT_STRETCH
+DEFAULT_TARGET_FIELD_VIDEO_WIDTH = 1920
+DEFAULT_TARGET_FIELD_VIDEO_HEIGHT = 1080
+MIN_TARGET_FIELD_VIDEO_WIDTH = 640
+MAX_TARGET_FIELD_VIDEO_WIDTH = 3840
+MIN_TARGET_FIELD_VIDEO_HEIGHT = 360
+MAX_TARGET_FIELD_VIDEO_HEIGHT = 2160
+TARGET_FIELD_VIDEO_RESOLUTIONS = (
+    (1280, 720),
+    (1920, 1080),
+    (2560, 1440),
+    (3840, 2160),
+)
+_TARGET_FIELD_MIN_FRAME_WIDTH = 640
+_TARGET_FIELD_MAX_FRAME_WIDTH = 3840
 
 
 class TargetFieldAnimationError(ValueError):
@@ -136,8 +193,17 @@ class TargetFieldAnimationExportOptions:
     export_format: str = "gif"
     marker_style: str = DEFAULT_TARGET_FIELD_MARKER_STYLE
     marker_length_percent: int = DEFAULT_TARGET_FIELD_MARKER_LENGTH_PERCENT
+    marker_gap_percent: int = DEFAULT_TARGET_FIELD_MARKER_GAP_PERCENT
     marker_line_width: float = DEFAULT_TARGET_FIELD_MARKER_LINE_WIDTH
     marker_line_color: str = DEFAULT_TARGET_FIELD_MARKER_LINE_COLOR
+    video_width: int = DEFAULT_TARGET_FIELD_VIDEO_WIDTH
+    video_height: int = DEFAULT_TARGET_FIELD_VIDEO_HEIGHT
+    star_aspect: str = DEFAULT_TARGET_FIELD_STAR_ASPECT
+    plot_aspect: str = DEFAULT_TARGET_FIELD_PLOT_ASPECT
+    star_fit: str = DEFAULT_TARGET_FIELD_STAR_FIT
+    plot_fit: str = DEFAULT_TARGET_FIELD_PLOT_FIT
+    save_star_separately: bool = False
+    save_plot_separately: bool = False
 
     def normalized(self) -> TargetFieldAnimationExportOptions:
         return TargetFieldAnimationExportOptions(
@@ -150,8 +216,17 @@ class TargetFieldAnimationExportOptions:
             export_format=normalize_target_field_export_format(self.export_format),
             marker_style=normalize_target_field_marker_style(self.marker_style),
             marker_length_percent=normalize_target_field_marker_length_percent(self.marker_length_percent),
+            marker_gap_percent=normalize_target_field_marker_gap_percent(self.marker_gap_percent),
             marker_line_width=normalize_target_field_marker_line_width(self.marker_line_width),
             marker_line_color=normalize_target_field_marker_line_color(self.marker_line_color),
+            video_width=normalize_target_field_video_width(self.video_width),
+            video_height=normalize_target_field_video_height(self.video_height),
+            star_aspect=normalize_target_field_star_aspect(self.star_aspect),
+            plot_aspect=normalize_target_field_plot_aspect(self.plot_aspect),
+            star_fit=normalize_target_field_fit_mode(self.star_fit, default=DEFAULT_TARGET_FIELD_STAR_FIT),
+            plot_fit=normalize_target_field_fit_mode(self.plot_fit, default=DEFAULT_TARGET_FIELD_PLOT_FIT),
+            save_star_separately=bool(self.save_star_separately),
+            save_plot_separately=bool(self.save_plot_separately),
         )
 
     def marker_appearance(self) -> TargetMarkerAppearance:
@@ -161,11 +236,26 @@ class TargetFieldAnimationExportOptions:
             outline_color="",
             line_width=options.marker_line_width,
             length_percent=float(options.marker_length_percent),
+            gap_percent=float(options.marker_gap_percent),
         )
 
     @property
     def align(self) -> bool:
         return self.align_mode != TARGET_FIELD_ALIGN_NONE
+
+
+@dataclass(frozen=True, slots=True)
+class TargetFieldPlotScanLayout:
+    x_min: float
+    x_max: float
+    y_min: float
+    y_max: float
+    left: float
+    top: float
+    right: float
+    bottom: float
+    invert_y: bool = True
+    color: str = "#f4d35e"
 
 
 TARGET_FIELD_PROGRESS_PREPARE = "prepare"
@@ -266,6 +356,84 @@ def normalize_target_field_scale_percent(
     return min(MAX_TARGET_FIELD_SCALE_PERCENT, max(MIN_TARGET_FIELD_SCALE_PERCENT, percent))
 
 
+def normalize_target_field_video_width(
+    value: object,
+    default: int = DEFAULT_TARGET_FIELD_VIDEO_WIDTH,
+) -> int:
+    try:
+        width = int(round(float(value)))
+    except (TypeError, ValueError):
+        width = int(default)
+    return _even_dimension(
+        min(MAX_TARGET_FIELD_VIDEO_WIDTH, max(MIN_TARGET_FIELD_VIDEO_WIDTH, width)),
+        minimum=MIN_TARGET_FIELD_VIDEO_WIDTH,
+    )
+
+
+def normalize_target_field_video_height(
+    value: object,
+    default: int = DEFAULT_TARGET_FIELD_VIDEO_HEIGHT,
+) -> int:
+    try:
+        height = int(round(float(value)))
+    except (TypeError, ValueError):
+        height = int(default)
+    return _even_dimension(
+        min(MAX_TARGET_FIELD_VIDEO_HEIGHT, max(MIN_TARGET_FIELD_VIDEO_HEIGHT, height)),
+        minimum=MIN_TARGET_FIELD_VIDEO_HEIGHT,
+    )
+
+
+def normalize_target_field_star_aspect(
+    value: object,
+    default: str = DEFAULT_TARGET_FIELD_STAR_ASPECT,
+) -> str:
+    key = str(value or default).strip().lower().replace(" ", "")
+    if key in {"remaining", "rest", "fill-remaining", "fillremaining"}:
+        return TARGET_FIELD_ASPECT_REMAINING
+    canonical = _canonical_aspect_key(key)
+    if canonical is not None:
+        return canonical
+    fallback = _canonical_aspect_key(str(default).strip().lower().replace(" ", ""))
+    return fallback or DEFAULT_TARGET_FIELD_STAR_ASPECT
+
+
+def normalize_target_field_plot_aspect(
+    value: object,
+    default: str = DEFAULT_TARGET_FIELD_PLOT_ASPECT,
+) -> str:
+    key = str(value or default).strip().lower().replace(" ", "")
+    canonical = _canonical_aspect_key(key)
+    if canonical is not None and canonical != TARGET_FIELD_ASPECT_REMAINING:
+        return canonical
+    fallback = _canonical_aspect_key(str(default).strip().lower().replace(" ", ""))
+    if fallback is not None and fallback != TARGET_FIELD_ASPECT_REMAINING:
+        return fallback
+    return DEFAULT_TARGET_FIELD_PLOT_ASPECT
+
+
+def normalize_target_field_fit_mode(
+    value: object,
+    default: str = TARGET_FIELD_FIT_STRETCH,
+) -> str:
+    mode = str(value or default).strip().lower()
+    aliases = {
+        "stretch": TARGET_FIELD_FIT_STRETCH,
+        "stretch-to-fit": TARGET_FIELD_FIT_STRETCH,
+        "ignore": TARGET_FIELD_FIT_STRETCH,
+        "fit": TARGET_FIELD_FIT_FIT,
+        "letterbox": TARGET_FIELD_FIT_FIT,
+        "contain": TARGET_FIELD_FIT_FIT,
+        "fill": TARGET_FIELD_FIT_FILL,
+        "crop": TARGET_FIELD_FIT_FILL,
+        "cover": TARGET_FIELD_FIT_FILL,
+    }
+    resolved = aliases.get(mode, mode)
+    if resolved in TARGET_FIELD_FIT_MODES:
+        return resolved
+    return default if default in TARGET_FIELD_FIT_MODES else TARGET_FIELD_FIT_STRETCH
+
+
 def normalize_target_field_align_mode(
     value: object,
     default: str = DEFAULT_TARGET_FIELD_ALIGN_MODE,
@@ -307,6 +475,17 @@ def normalize_target_field_marker_length_percent(
     except (TypeError, ValueError):
         length = int(default)
     return min(MAX_TARGET_FIELD_MARKER_LENGTH_PERCENT, max(MIN_TARGET_FIELD_MARKER_LENGTH_PERCENT, length))
+
+
+def normalize_target_field_marker_gap_percent(
+    value: object,
+    default: int = DEFAULT_TARGET_FIELD_MARKER_GAP_PERCENT,
+) -> int:
+    try:
+        gap = int(round(float(value)))
+    except (TypeError, ValueError):
+        gap = int(default)
+    return min(MAX_TARGET_FIELD_MARKER_GAP_PERCENT, max(MIN_TARGET_FIELD_MARKER_GAP_PERCENT, gap))
 
 
 def normalize_target_field_marker_line_width(
@@ -1655,12 +1834,15 @@ def target_field_marker_extents(
     width: float,
     height: float,
     length_percent: object = DEFAULT_TARGET_FIELD_MARKER_LENGTH_PERCENT,
+    gap_percent: object = DEFAULT_TARGET_FIELD_MARKER_GAP_PERCENT,
 ) -> tuple[float, float]:
     size = max(1.0, min(float(width), float(height)))
-    outer = max(8.0, (size * 0.5) * (normalize_target_field_marker_length_percent(length_percent) / 100.0))
-    gap = min(outer - 3.0, max(8.0, size * 0.10))
+    radius = size * 0.5
+    outer = max(8.0, radius * (normalize_target_field_marker_length_percent(length_percent) / 100.0))
+    gap = radius * (normalize_target_field_marker_gap_percent(gap_percent) / 100.0)
+    gap = min(outer - 3.0, max(2.0, gap))
     if gap >= outer - 2.0:
-        gap = max(3.0, outer * 0.45)
+        gap = max(2.0, outer * 0.45)
     return outer, gap
 
 
@@ -1673,8 +1855,9 @@ def _paint_stamp_marker_shape(
     width: float,
     height: float,
     length_percent: object = DEFAULT_TARGET_FIELD_MARKER_LENGTH_PERCENT,
+    gap_percent: object = DEFAULT_TARGET_FIELD_MARKER_GAP_PERCENT,
 ) -> None:
-    outer, gap = target_field_marker_extents(width, height, length_percent)
+    outer, gap = target_field_marker_extents(width, height, length_percent, gap_percent)
     left = center_x - outer
     top = center_y - outer
     right = center_x + outer
@@ -1744,6 +1927,7 @@ def apply_target_field_marker(
             "width": float(marked.width()),
             "height": float(marked.height()),
             "length_percent": resolved_appearance.length_percent,
+            "gap_percent": resolved_appearance.gap_percent,
         }
         if outline_pen is not None:
             painter.setPen(outline_pen)
@@ -1799,16 +1983,342 @@ def load_target_field_preview_source(frame: TargetFieldFrame) -> tuple[np.ndarra
     return image, x, y
 
 
-def compose_target_field_animation_frame(stamp_image: QImage, plot_image: QImage) -> QImage:
-    height = max(1, stamp_image.height(), plot_image.height())
-    stamp_scaled = stamp_image if stamp_image.height() == height else stamp_image.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
-    plot_scaled = plot_image if plot_image.height() == height else plot_image.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
-    composed = QImage(max(1, stamp_scaled.width() + plot_scaled.width()), height, QImage.Format.Format_RGB888)
-    composed.fill(QColor("#111111"))
+def _even_dimension(value: int, *, minimum: int = 2) -> int:
+    size = max(minimum, int(value))
+    if size % 2:
+        size += 1
+    return size
+
+
+def target_field_output_size(
+    options: TargetFieldAnimationExportOptions | None = None,
+    *,
+    stamp_image: QImage | None = None,
+    plot_image: QImage | None = None,
+) -> tuple[int, int]:
+    if options is not None:
+        resolved = options.normalized()
+        return resolved.video_width, resolved.video_height
+    stamp = stamp_image if stamp_image is not None else QImage()
+    plot = plot_image if plot_image is not None else QImage()
+    return target_field_animation_frame_size(stamp, plot)
+
+
+def target_field_animation_frame_size(stamp_image: QImage, plot_image: QImage) -> tuple[int, int]:
+    width = max(int(plot_image.width()), int(stamp_image.width()), _TARGET_FIELD_MIN_FRAME_WIDTH)
+    width = min(_TARGET_FIELD_MAX_FRAME_WIDTH, width)
+    width = _even_dimension(width, minimum=_TARGET_FIELD_MIN_FRAME_WIDTH)
+    height = _even_dimension(int(round(width / TARGET_FIELD_OUTPUT_ASPECT_RATIO)))
+    return width, height
+
+
+def _parse_numeric_aspect(aspect: str) -> float | None:
+    if ":" not in aspect:
+        return None
+    left, right = aspect.split(":", 1)
+    try:
+        width = float(left)
+        height = float(right)
+    except ValueError:
+        return None
+    if width <= 0.0 or height <= 0.0 or not math.isfinite(width) or not math.isfinite(height):
+        return None
+    return width / height
+
+
+def _format_aspect_part(value: float) -> str:
+    if abs(value - round(value)) < 0.05:
+        return str(int(round(value)))
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
+def _canonical_aspect_key(aspect: str) -> str | None:
+    key = str(aspect or "").strip().lower().replace(" ", "")
+    if key in {"remaining", "rest", "fill-remaining", "fillremaining"}:
+        return TARGET_FIELD_ASPECT_REMAINING
+    if key in TARGET_FIELD_ASPECT_RATIOS:
+        return key
+    ratio = _parse_numeric_aspect(key)
+    if ratio is None:
+        return None
+    for name, known in TARGET_FIELD_ASPECT_RATIOS.items():
+        if abs(ratio - known) <= 0.02:
+            return name
+    left, right = key.split(":", 1)
+    return f"{_format_aspect_part(float(left))}:{_format_aspect_part(float(right))}"
+
+
+def _aspect_ratio_value(aspect: str) -> float | None:
+    if aspect == TARGET_FIELD_ASPECT_REMAINING:
+        return None
+    if aspect in TARGET_FIELD_ASPECT_RATIOS:
+        return TARGET_FIELD_ASPECT_RATIOS[aspect]
+    return _parse_numeric_aspect(aspect)
+
+
+def target_field_star_height_percent(
+    star_aspect: str = DEFAULT_TARGET_FIELD_STAR_ASPECT,
+    plot_aspect: str = DEFAULT_TARGET_FIELD_PLOT_ASPECT,
+) -> float:
+    star_ratio = _aspect_ratio_value(normalize_target_field_star_aspect(star_aspect))
+    plot_ratio = _aspect_ratio_value(normalize_target_field_plot_aspect(plot_aspect)) or TARGET_FIELD_PLOT_ASPECT_RATIO
+    if star_ratio is None or star_ratio <= 0.0:
+        plot_fraction = min(0.8, max(0.2, (16.0 / 9.0) / plot_ratio))
+        percent = (1.0 - plot_fraction) * 100.0
+    else:
+        percent = (plot_ratio / (star_ratio + plot_ratio)) * 100.0
+    return min(MAX_TARGET_FIELD_STAR_HEIGHT_PERCENT, max(MIN_TARGET_FIELD_STAR_HEIGHT_PERCENT, percent))
+
+
+def target_field_aspects_from_star_height_percent(percent: object) -> tuple[str, str]:
+    try:
+        value = float(percent)
+    except (TypeError, ValueError):
+        value = DEFAULT_TARGET_FIELD_STAR_HEIGHT_PERCENT
+    if not math.isfinite(value):
+        value = DEFAULT_TARGET_FIELD_STAR_HEIGHT_PERCENT
+    fraction = min(MAX_TARGET_FIELD_STAR_HEIGHT_PERCENT, max(MIN_TARGET_FIELD_STAR_HEIGHT_PERCENT, value)) / 100.0
+    star_height_units = 9.0 * fraction
+    plot_height_units = 9.0 * (1.0 - fraction)
+    return (
+        normalize_target_field_star_aspect(f"16:{star_height_units:.3f}"),
+        normalize_target_field_plot_aspect(f"16:{plot_height_units:.3f}"),
+    )
+
+
+def target_field_panel_heights(
+    frame_width: int,
+    frame_height: int,
+    *,
+    star_aspect: str = DEFAULT_TARGET_FIELD_STAR_ASPECT,
+    plot_aspect: str = DEFAULT_TARGET_FIELD_PLOT_ASPECT,
+) -> tuple[int, int]:
+    width = max(2, int(frame_width))
+    height = max(4, int(frame_height))
+    plot_ratio = _aspect_ratio_value(normalize_target_field_plot_aspect(plot_aspect)) or TARGET_FIELD_PLOT_ASPECT_RATIO
+    plot_height = _even_dimension(max(2, int(round(width / plot_ratio))))
+    star_key = normalize_target_field_star_aspect(star_aspect)
+    star_ratio = _aspect_ratio_value(star_key)
+    if star_ratio is None:
+        plot_height = min(plot_height, height - 2)
+        return max(2, height - plot_height), plot_height
+    star_height = _even_dimension(max(2, int(round(width / star_ratio))))
+    total = star_height + plot_height
+    if total != height and total > 0:
+        scale = height / total
+        star_height = _even_dimension(max(2, int(round(star_height * scale))))
+        plot_height = max(2, height - star_height)
+    else:
+        plot_height = min(plot_height, height - 2)
+        star_height = height - plot_height
+    return star_height, plot_height
+
+
+def cinematic_center_crop(image: QImage, dest_width: int, dest_height: int) -> QImage:
+    source = image.convertToFormat(QImage.Format.Format_RGB888)
+    dest_width = max(1, int(dest_width))
+    dest_height = max(1, int(dest_height))
+    source_width = max(1, source.width())
+    source_height = max(1, source.height())
+    dest_aspect = dest_width / dest_height
+    source_aspect = source_width / source_height
+    if source_aspect < dest_aspect:
+        crop_height = max(1, min(source_height, int(round(source_width / dest_aspect))))
+        top = (source_height - crop_height) // 2
+        cropped = source.copy(0, top, source_width, crop_height)
+    elif source_aspect > dest_aspect:
+        crop_width = max(1, min(source_width, int(round(source_height * dest_aspect))))
+        left = (source_width - crop_width) // 2
+        cropped = source.copy(left, 0, crop_width, source_height)
+    else:
+        cropped = source
+    return cropped.scaled(
+        dest_width,
+        dest_height,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
+def _plot_panel_fill_color(plot_image: QImage) -> QColor:
+    if plot_image.isNull() or plot_image.width() <= 0 or plot_image.height() <= 0:
+        return QColor("#111111")
+    color = QColor(plot_image.pixelColor(0, 0))
+    return color if color.isValid() else QColor("#111111")
+
+
+def fit_image_to_panel(
+    image: QImage,
+    dest_width: int,
+    dest_height: int,
+    *,
+    fit_mode: str = TARGET_FIELD_FIT_STRETCH,
+    fill: QColor | None = None,
+) -> QImage:
+    panel_width = max(1, int(dest_width))
+    panel_height = max(1, int(dest_height))
+    background = fill if fill is not None and fill.isValid() else QColor("#000000")
+    mode = normalize_target_field_fit_mode(fit_mode)
+    source = image.convertToFormat(QImage.Format.Format_RGB888)
+    if source.isNull() or source.width() <= 0 or source.height() <= 0:
+        panel = QImage(panel_width, panel_height, QImage.Format.Format_RGB888)
+        panel.fill(background)
+        return panel
+    if mode == TARGET_FIELD_FIT_FILL:
+        return cinematic_center_crop(source, panel_width, panel_height)
+    if mode == TARGET_FIELD_FIT_STRETCH:
+        return source.scaled(
+            panel_width,
+            panel_height,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    panel = QImage(panel_width, panel_height, QImage.Format.Format_RGB888)
+    panel.fill(background)
+    fitted = source.scaled(
+        panel_width,
+        panel_height,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    painter = QPainter(panel)
+    try:
+        painter.drawImage(
+            (panel_width - fitted.width()) // 2,
+            (panel_height - fitted.height()) // 2,
+            fitted,
+        )
+    finally:
+        painter.end()
+    return panel
+
+
+def scale_plot_scan_layout(
+    layout: TargetFieldPlotScanLayout,
+    source_width: int,
+    source_height: int,
+    dest_width: int,
+    dest_height: int,
+) -> TargetFieldPlotScanLayout:
+    scale_x = dest_width / max(1.0, float(source_width))
+    scale_y = dest_height / max(1.0, float(source_height))
+    return TargetFieldPlotScanLayout(
+        x_min=layout.x_min,
+        x_max=layout.x_max,
+        y_min=layout.y_min,
+        y_max=layout.y_max,
+        left=layout.left * scale_x,
+        top=layout.top * scale_y,
+        right=layout.right * scale_x,
+        bottom=layout.bottom * scale_y,
+        invert_y=layout.invert_y,
+        color=layout.color,
+    )
+
+
+def apply_target_field_plot_scanner(
+    plot_image: QImage,
+    x_value: float | None,
+    layout: TargetFieldPlotScanLayout,
+    *,
+    y_value: float | None = None,
+) -> QImage:
+    if x_value is None or not math.isfinite(x_value) or layout.x_max == layout.x_min:
+        return plot_image
+    span = layout.x_max - layout.x_min
+    fraction = (float(x_value) - layout.x_min) / span
+    if not math.isfinite(fraction):
+        return plot_image
+    fraction = min(1.0, max(0.0, fraction))
+    x = layout.left + fraction * (layout.right - layout.left)
+    result = plot_image.copy()
+    color = QColor(layout.color)
+    if not color.isValid():
+        color = QColor("#f4d35e")
+    color.setAlpha(220)
+    pen = QPen(color, max(2.0, plot_image.width() / 480.0))
+    pen.setCosmetic(True)
+    painter = QPainter(result)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(x, layout.top), QPointF(x, layout.bottom))
+        if y_value is not None and math.isfinite(y_value) and layout.y_max != layout.y_min:
+            y_low = min(layout.y_min, layout.y_max)
+            y_high = max(layout.y_min, layout.y_max)
+            y_span = y_high - y_low
+            y_fraction = (float(y_value) - y_low) / y_span
+            if not math.isfinite(y_fraction):
+                y_fraction = 0.0
+            y_fraction = min(1.0, max(0.0, y_fraction))
+            if not layout.invert_y:
+                y_fraction = 1.0 - y_fraction
+            y = layout.top + y_fraction * (layout.bottom - layout.top)
+            radius = max(4.0, plot_image.width() / 160.0)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(x, y), radius, radius)
+    finally:
+        painter.end()
+    return result
+
+
+def compose_target_field_animation_frame(
+    stamp_image: QImage,
+    plot_image: QImage,
+    *,
+    options: TargetFieldAnimationExportOptions | None = None,
+    frame_width: int | None = None,
+    frame_height: int | None = None,
+) -> QImage:
+    resolved = None if options is None else options.normalized()
+    if frame_width is not None and frame_height is not None:
+        width = max(2, int(frame_width))
+        height = max(2, int(frame_height))
+    elif resolved is None:
+        width, height = target_field_animation_frame_size(stamp_image, plot_image)
+    else:
+        width, height = resolved.video_width, resolved.video_height
+    if resolved is None:
+        star_aspect = DEFAULT_TARGET_FIELD_STAR_ASPECT
+        plot_aspect = DEFAULT_TARGET_FIELD_PLOT_ASPECT
+        star_fit = DEFAULT_TARGET_FIELD_STAR_FIT
+        plot_fit = DEFAULT_TARGET_FIELD_PLOT_FIT
+    else:
+        star_aspect = resolved.star_aspect
+        plot_aspect = resolved.plot_aspect
+        star_fit = resolved.star_fit
+        plot_fit = resolved.plot_fit
+    star_height, plot_height = target_field_panel_heights(
+        width,
+        height,
+        star_aspect=star_aspect,
+        plot_aspect=plot_aspect,
+    )
+    fill = _plot_panel_fill_color(plot_image)
+    composed = QImage(width, height, QImage.Format.Format_RGB888)
+    composed.fill(QColor("#000000"))
+    separator = min(TARGET_FIELD_PLOT_SEPARATOR_PX, max(0, plot_height - 2))
+    plot_draw_height = max(2, plot_height - separator)
+    star_panel = fit_image_to_panel(
+        stamp_image,
+        width,
+        star_height,
+        fit_mode=star_fit,
+        fill=QColor("#000000"),
+    )
+    plot_panel = fit_image_to_panel(
+        plot_image,
+        width,
+        plot_draw_height,
+        fit_mode=plot_fit,
+        fill=fill,
+    )
     painter = QPainter(composed)
     try:
-        painter.drawImage(0, 0, stamp_scaled.convertToFormat(QImage.Format.Format_RGB888))
-        painter.drawImage(stamp_scaled.width(), 0, plot_scaled.convertToFormat(QImage.Format.Format_RGB888))
+        painter.drawImage(0, 0, star_panel)
+        if separator > 0:
+            painter.fillRect(0, star_height, width, separator, fill)
+        painter.drawImage(0, star_height + separator, plot_panel)
     finally:
         painter.end()
     return composed
@@ -1840,6 +2350,17 @@ def export_target_field_animation(
     phase_anchor_mode: str = "first_observation",
     plot_theme: str = "normal",
     custom_theme_colors: dict[str, str] | None = None,
+    plot_image: QImage | None = None,
+    plot_scan_layout: TargetFieldPlotScanLayout | None = None,
+    video_width: int = DEFAULT_TARGET_FIELD_VIDEO_WIDTH,
+    video_height: int = DEFAULT_TARGET_FIELD_VIDEO_HEIGHT,
+    star_aspect: str = DEFAULT_TARGET_FIELD_STAR_ASPECT,
+    plot_aspect: str = DEFAULT_TARGET_FIELD_PLOT_ASPECT,
+    star_fit: str = DEFAULT_TARGET_FIELD_STAR_FIT,
+    plot_fit: str = DEFAULT_TARGET_FIELD_PLOT_FIT,
+    save_star_separately: bool = False,
+    save_plot_separately: bool = False,
+    layout_options: TargetFieldAnimationExportOptions | None = None,
     frame_duration_ms: int | None = None,
     max_workers: int | None = None,
     progress_callback: Callable[[TargetFieldAnimationProgress], None] | None = None,
@@ -1960,7 +2481,64 @@ def export_target_field_animation(
         total=1,
         message="Normalized local comparison stars and stretched frames.",
     )
+    constant_plot = plot_image.copy() if plot_image is not None and not plot_image.isNull() else None
+    layout = (
+        layout_options.normalized()
+        if layout_options is not None
+        else TargetFieldAnimationExportOptions(
+            video_width=video_width,
+            video_height=video_height,
+            star_aspect=star_aspect,
+            plot_aspect=plot_aspect,
+            star_fit=star_fit,
+            plot_fit=plot_fit,
+            save_star_separately=save_star_separately,
+            save_plot_separately=save_plot_separately,
+            export_format=resolved_format,
+            scale_percent=resolved_scale,
+        ).normalized()
+    )
+    star_height, plot_height = target_field_panel_heights(
+        layout.video_width,
+        layout.video_height,
+        star_aspect=layout.star_aspect,
+        plot_aspect=layout.plot_aspect,
+    )
+    if constant_plot is None:
+        dpi = 150.0
+        rendered = _render_light_curve_payload_with_highlight(
+            payload,
+            highlight_x=None,
+            highlight_y=None,
+            plot_theme=plot_theme,
+            custom_theme_colors=custom_theme_colors,
+            figure_size_inches=(max(1.0, layout.video_width / dpi), max(1.0, plot_height / dpi)),
+            dpi=int(dpi),
+            return_scan_layout=True,
+        )
+        if isinstance(rendered, tuple):
+            constant_plot, inferred_layout = rendered
+        else:
+            constant_plot, inferred_layout = rendered, None
+        if plot_scan_layout is None:
+            plot_scan_layout = inferred_layout
     composed_frames: list[QImage] = []
+    star_frames: list[QImage] = []
+    plot_panel = fit_image_to_panel(
+        constant_plot,
+        layout.video_width,
+        plot_height,
+        fit_mode=layout.plot_fit,
+        fill=_plot_panel_fill_color(constant_plot),
+    )
+    if plot_scan_layout is not None:
+        plot_scan_layout = scale_plot_scan_layout(
+            plot_scan_layout,
+            constant_plot.width(),
+            constant_plot.height(),
+            plot_panel.width(),
+            plot_panel.height(),
+        )
     _emit_progress(
         progress_callback,
         stage=TARGET_FIELD_PROGRESS_COMPOSE,
@@ -1970,14 +2548,6 @@ def export_target_field_animation(
     )
     for index, (frame, stamp) in enumerate(zip(frames, display_stamps, strict=True), start=1):
         _raise_if_canceled(is_cancelled)
-        highlight = _highlight_for_frame(payload, frame)
-        plot_image = _render_light_curve_payload_with_highlight(
-            payload,
-            highlight_x=None if highlight is None else highlight[0],
-            highlight_y=None if highlight is None else highlight[1],
-            plot_theme=plot_theme,
-            custom_theme_colors=custom_theme_colors,
-        )
         stamp_image = stamp_to_qimage(stamp)
         if resolved_marker_style != TARGET_FIELD_MARKER_NONE:
             stamp_image = apply_target_field_marker(
@@ -1985,7 +2555,25 @@ def export_target_field_animation(
                 style=resolved_marker_style,
                 appearance=resolved_marker_appearance,
             )
-        composed_frames.append(compose_target_field_animation_frame(stamp_image, plot_image))
+        star_panel = fit_image_to_panel(
+            stamp_image,
+            layout.video_width,
+            star_height,
+            fit_mode=layout.star_fit,
+            fill=QColor("#000000"),
+        )
+        plot_for_frame = plot_panel
+        if plot_scan_layout is not None:
+            highlight = _highlight_for_frame(payload, frame)
+            plot_for_frame = apply_target_field_plot_scanner(
+                plot_panel,
+                None if highlight is None else highlight[0],
+                plot_scan_layout,
+                y_value=None if highlight is None else highlight[1],
+            )
+        composed_frames.append(compose_target_field_animation_frame(stamp_image, plot_for_frame, options=layout))
+        if layout.save_star_separately:
+            star_frames.append(star_panel)
         _emit_progress(
             progress_callback,
             stage=TARGET_FIELD_PROGRESS_COMPOSE,
@@ -2018,6 +2606,28 @@ def export_target_field_animation(
             loop_count=0,
             scale_percent=resolved_scale,
         )
+    if layout.save_star_separately and star_frames:
+        star_path = Path(output_path).with_name(f"{Path(output_path).stem}_star{Path(output_path).suffix}")
+        if resolved_format == "mp4":
+            export_qimages_to_mp4(
+                star_frames,
+                star_path,
+                frame_duration_ms=duration_ms,
+                scale_percent=resolved_scale,
+                repeat_count=resolved_loop_count,
+            )
+        else:
+            export_qimages_to_gif(
+                star_frames,
+                star_path,
+                frame_duration_ms=max(20, duration_ms),
+                loop_count=0,
+                scale_percent=resolved_scale,
+            )
+    if layout.save_plot_separately:
+        plot_path = Path(output_path).with_name(f"{Path(output_path).stem}_plot.png")
+        if not plot_panel.save(str(plot_path)):
+            raise OSError(f"Unable to save the target-field light curve to {plot_path}")
     _emit_progress(
         progress_callback,
         stage=TARGET_FIELD_PROGRESS_ENCODE,
@@ -2087,7 +2697,8 @@ def _render_light_curve_payload_with_highlight(
     custom_theme_colors: dict[str, str] | None,
     figure_size_inches: tuple[float, float] = (8.4, 4.8),
     dpi: int = 120,
-) -> QImage:
+    return_scan_layout: bool = False,
+) -> QImage | tuple[QImage, TargetFieldPlotScanLayout | None]:
     figure = Figure(figsize=figure_size_inches, dpi=dpi)
     axis = figure.add_subplot(111)
     try:
@@ -2112,11 +2723,25 @@ def _render_light_curve_payload_with_highlight(
                 zorder=9,
             )
         figure.tight_layout()
+        scan_layout = TargetFieldPlotScanLayout(
+            x_min=float(min(axis.get_xlim())),
+            x_max=float(max(axis.get_xlim())),
+            y_min=float(min(axis.get_ylim())),
+            y_max=float(max(axis.get_ylim())),
+            left=float(axis.get_position().x0) * figure.get_size_inches()[0] * dpi,
+            top=(1.0 - float(axis.get_position().y1)) * figure.get_size_inches()[1] * dpi,
+            right=float(axis.get_position().x1) * figure.get_size_inches()[0] * dpi,
+            bottom=(1.0 - float(axis.get_position().y0)) * figure.get_size_inches()[1] * dpi,
+            invert_y=bool(payload.invert_y or axis.get_ylim()[1] < axis.get_ylim()[0]),
+            color="#f4d35e",
+        )
         buffer = BytesIO()
         figure.savefig(buffer, format="png", dpi=dpi, facecolor=figure.get_facecolor())
         image = QImage()
         if not image.loadFromData(buffer.getvalue(), "PNG"):
             raise OSError("Unable to render the target-field light-curve frame.")
+        if return_scan_layout:
+            return image, scan_layout
         return image
     finally:
         figure.clear()

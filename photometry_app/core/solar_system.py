@@ -121,6 +121,18 @@ _SKYBOT_MAX_HTTP_ATTEMPTS = 3
 
 _SKYBOT_RETRYABLE_STATUS_CODES = frozenset({500, 502, 503, 504})
 
+_SKYBOT_BODY_PREVIEW_CHARS = 400
+
+_SKYBOT_QUERY_STATUS_VALUE_PATTERN = re.compile(
+    r'name\s*=\s*"QUERY_STATUS"[^>]*value\s*=\s*"([^"]*)"',
+    re.IGNORECASE,
+)
+
+_SKYBOT_QUERY_STATUS_TEXT_PATTERN = re.compile(
+    r'name\s*=\s*"QUERY_STATUS"[^>]*>([^<]*)',
+    re.IGNORECASE,
+)
+
 _TARGETED_INTERSTELLAR_FALLBACK_OBJECTS = (("3I/ATLAS", "3I"),)
 
 _HORIZONS_VECTOR_QUERY_MAX_EPOCHS = 32
@@ -572,7 +584,14 @@ class SolarSystemQueryService(Protocol):
 
 
 
+class SkybotUnreadableResponseError(RuntimeError):
+    """SkyBoT returned HTTP 200, but the body could not be read as a VOTable."""
+
+
 class SkybotQueryService:
+
+    def __init__(self, progress_callback: Callable[[str], None] | None = None) -> None:
+        self._progress_callback = progress_callback
 
     def query_predictions(
 
@@ -619,6 +638,8 @@ class SkybotQueryService:
             find_asteroids=True,
 
             find_comets=True,
+
+            progress_callback=self._progress_callback,
 
         )
 
@@ -676,7 +697,7 @@ def detect_known_solar_system_objects(
 
 ) -> SolarSystemDetectionResult:
 
-    query_service = query_service or SkybotQueryService()
+    query_service = query_service or SkybotQueryService(progress_callback=progress_callback)
 
     solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=progress_callback)
 
@@ -2841,6 +2862,8 @@ def _skybot_cone_search_table(
 
     find_comets: bool,
 
+    progress_callback: Callable[[str], None] | None = None,
+
 ) -> Table:
 
     payload = _skybot_query_payload(
@@ -2867,54 +2890,83 @@ def _skybot_cone_search_table(
 
     timeout_seconds = float(skybot_conf.timeout)
 
+    _emit_skybot_progress(
+        progress_callback,
+        (
+            "SkyBoT cone search: "
+            f"RA={float(payload['-ra']):.6f} deg, Dec={float(payload['-dec']):.6f} deg, "
+            f"radius={float(payload['-rd']):.4f} deg, epoch JD={payload['-ep']}, loc={payload['-loc']}"
+        ),
+    )
+
+    last_unreadable: SkybotUnreadableResponseError | None = None
     for attempt_index in range(_SKYBOT_MAX_HTTP_ATTEMPTS):
-
+        attempt_number = attempt_index + 1
         try:
-
             response = requests.get(
-
                 request_url,
-
                 params=payload,
-
                 timeout=timeout_seconds,
-
             )
-
             response.raise_for_status()
-
-            return _parse_skybot_votable(response.content, response_text=response.text)
-
-        except requests.HTTPError as exc:
-
-            status_code = exc.response.status_code if exc.response is not None else None
-
-            if status_code in _SKYBOT_RETRYABLE_STATUS_CODES and attempt_index + 1 < _SKYBOT_MAX_HTTP_ATTEMPTS:
-
+            return _parse_skybot_votable(
+                response.content,
+                response_text=getattr(response, "text", None) if isinstance(getattr(response, "text", None), str) else None,
+                http_status=_skybot_http_status(response),
+                content_type=_skybot_header_text(response, "Content-Type"),
+                url=_skybot_response_url(response) or request_url,
+            )
+        except SkybotUnreadableResponseError as exc:
+            last_unreadable = exc
+            remaining = attempt_index + 1 < _SKYBOT_MAX_HTTP_ATTEMPTS
+            for diagnostic_line in str(exc).splitlines():
+                _emit_skybot_progress(progress_callback, diagnostic_line)
+            _emit_skybot_progress(
+                progress_callback,
+                f"SkyBoT attempt {attempt_number}/{_SKYBOT_MAX_HTTP_ATTEMPTS}: unreadable response"
+                + ("; retrying." if remaining else "."),
+            )
+            if remaining:
                 continue
-
-            if status_code in _SKYBOT_RETRYABLE_STATUS_CODES:
-
-                raise RuntimeError(
-
-                    f"SkyBoT service returned HTTP {status_code} after {_SKYBOT_MAX_HTTP_ATTEMPTS} attempts. The upstream IMCCE service is currently failing for this query; please try again shortly."
-
-                ) from exc
-
-            raise RuntimeError(f"SkyBoT request failed with HTTP {status_code}: {exc}") from exc
-
-        except requests.RequestException as exc:
-
-            if attempt_index + 1 < _SKYBOT_MAX_HTTP_ATTEMPTS:
-
-                continue
-
             raise RuntimeError(
-
+                f"SkyBoT returned an unreadable response after {_SKYBOT_MAX_HTTP_ATTEMPTS} attempts. "
+                "The upstream IMCCE service is currently failing for this query; please try again shortly.\n"
+                f"{exc}"
+            ) from exc
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            remaining = status_code in _SKYBOT_RETRYABLE_STATUS_CODES and attempt_index + 1 < _SKYBOT_MAX_HTTP_ATTEMPTS
+            _emit_skybot_progress(
+                progress_callback,
+                f"SkyBoT attempt {attempt_number}/{_SKYBOT_MAX_HTTP_ATTEMPTS}: HTTP {status_code}"
+                + ("; retrying." if remaining else "."),
+            )
+            if remaining:
+                continue
+            if status_code in _SKYBOT_RETRYABLE_STATUS_CODES:
+                raise RuntimeError(
+                    f"SkyBoT service returned HTTP {status_code} after {_SKYBOT_MAX_HTTP_ATTEMPTS} attempts. The upstream IMCCE service is currently failing for this query; please try again shortly."
+                ) from exc
+            raise RuntimeError(f"SkyBoT request failed with HTTP {status_code}: {exc}") from exc
+        except requests.RequestException as exc:
+            remaining = attempt_index + 1 < _SKYBOT_MAX_HTTP_ATTEMPTS
+            _emit_skybot_progress(
+                progress_callback,
+                f"SkyBoT attempt {attempt_number}/{_SKYBOT_MAX_HTTP_ATTEMPTS}: request failed ({exc})"
+                + ("; retrying." if remaining else "."),
+            )
+            if remaining:
+                continue
+            raise RuntimeError(
                 f"SkyBoT request failed after {_SKYBOT_MAX_HTTP_ATTEMPTS} attempts: {exc}"
-
             ) from exc
 
+    if last_unreadable is not None:
+        raise RuntimeError(
+            f"SkyBoT returned an unreadable response after {_SKYBOT_MAX_HTTP_ATTEMPTS} attempts. "
+            "The upstream IMCCE service is currently failing for this query; please try again shortly.\n"
+            f"{last_unreadable}"
+        ) from last_unreadable
     raise RuntimeError("SkyBoT request failed without returning a response.")
 
 
@@ -2993,131 +3045,200 @@ def _skybot_server_url() -> str:
 
 
 
-def _parse_skybot_votable(content: bytes, *, response_text: str | None = None) -> Table:
-
+def _parse_skybot_votable(
+    content: bytes,
+    *,
+    response_text: str | None = None,
+    http_status: int | None = None,
+    content_type: str = "",
+    url: str = "",
+) -> Table:
+    body_text = _skybot_response_text(content, response_text)
+    query_status = _extract_skybot_query_status(body_text)
     normalized_content = _extract_votable_document_bytes(content)
-
-    fallback_text_content = _extract_votable_document_bytes(response_text.encode("utf-8")) if response_text else None
-
+    fallback_text_content = _extract_votable_document_bytes(body_text.encode("utf-8")) if body_text else None
+    parse_error: Exception | None = None
+    results: Table | None = None
     try:
-
         with warnings.catch_warnings():
-
             warnings.filterwarnings(
-
                 "ignore",
-
                 category=AstropyUserWarning,
-
                 message=r"column ra|(column de) has a unit but is kept as a MaskedColumn",
-
             )
-
             try:
-
                 results = QTable.read(BytesIO(normalized_content), format="votable")
-
             except Exception:
-
                 if fallback_text_content is None:
-
                     raise
-
                 results = QTable.read(BytesIO(fallback_text_content), format="votable")
-
     except Exception as exc:
+        parse_error = exc
 
-        detail = ""
+    if parse_error is not None or _skybot_query_status_is_error(query_status):
+        raise SkybotUnreadableResponseError(
+            _format_skybot_unreadable_message(
+                parse_error=parse_error,
+                query_status=query_status,
+                content=content,
+                body_text=body_text,
+                http_status=http_status,
+                content_type=content_type,
+                url=url,
+            )
+        ) from parse_error
 
-        if response_text:
-
-            detail = response_text.strip().splitlines()[0][:200]
-
-        if detail:
-
-            raise RuntimeError(f"SkyBoT query returned an unreadable response: {detail}") from exc
-
-        raise RuntimeError("SkyBoT query returned an unreadable response.") from exc
-
-
-
-    if len(results) == 0:
-
-        return results
-
-
-
-    if "ra" in results.colnames and "de" in results.colnames:
-
-        coordinates = SkyCoord(ra=results["ra"], dec=results["de"], unit=(u.hourangle, u.deg), frame="icrs")
-
-        results["ra"] = coordinates.ra.deg
-
-        results["ra"].unit = u.deg
-
-        results["de"] = coordinates.dec.deg
-
-        results["de"].unit = u.deg
-
-
-
-    for field_name in list(results.colnames):
-
-        mapped_name = skybot_conf.field_names.get(field_name)
-
-        if mapped_name and mapped_name != field_name:
-
-            results.rename_column(field_name, mapped_name)
-
-
-
-    if "Number" in results.colnames:
-
-        unnumbered_mask = [not str(value).isdigit() for value in results["Number"]]
-
-        numbers = [int(value) if str(value).isdigit() else 0 for value in results["Number"]]
-
-        results.replace_column(
-
-            "Number",
-
-            MaskedColumn(numbers, name="Number", mask=unnumbered_mask),
-
+    if results is None:
+        raise SkybotUnreadableResponseError(
+            _format_skybot_unreadable_message(
+                parse_error=None,
+                query_status=query_status,
+                content=content,
+                body_text=body_text,
+                http_status=http_status,
+                content_type=content_type,
+                url=url,
+            )
         )
 
+    if len(results) == 0:
+        return results
 
+    if "ra" in results.colnames and "de" in results.colnames:
+        coordinates = SkyCoord(ra=results["ra"], dec=results["de"], unit=(u.hourangle, u.deg), frame="icrs")
+        results["ra"] = coordinates.ra.deg
+        results["ra"].unit = u.deg
+        results["de"] = coordinates.dec.deg
+        results["de"].unit = u.deg
+
+    for field_name in list(results.colnames):
+        mapped_name = skybot_conf.field_names.get(field_name)
+        if mapped_name and mapped_name != field_name:
+            results.rename_column(field_name, mapped_name)
+
+    if "Number" in results.colnames:
+        unnumbered_mask = [not str(value).isdigit() for value in results["Number"]]
+        numbers = [int(value) if str(value).isdigit() else 0 for value in results["Number"]]
+        results.replace_column(
+            "Number",
+            MaskedColumn(numbers, name="Number", mask=unnumbered_mask),
+        )
 
     return results
 
 
-
 def _extract_votable_document_bytes(content: bytes) -> bytes:
-
     normalized_content = content.lstrip()
-
     lower_content = normalized_content.lower()
-
     marker_indices = [
-
         index
-
         for index in (
-
             lower_content.find(b"<?xml"),
-
             lower_content.find(b"<votable"),
-
+            lower_content.find(b":votable"),
         )
-
         if index >= 0
-
     ]
-
     if not marker_indices:
-
         return normalized_content
+    start = min(marker_indices)
+    if lower_content.startswith(b":votable", start):
+        lt_index = lower_content.rfind(b"<", 0, start + 1)
+        if lt_index >= 0:
+            start = lt_index
+    return normalized_content[start:]
 
-    return normalized_content[min(marker_indices) :]
+
+def _emit_skybot_progress(progress_callback: Callable[[str], None] | None, message: str) -> None:
+    if progress_callback is not None and message:
+        progress_callback(message)
+
+
+def _skybot_http_status(response: object) -> int | None:
+    status_code = getattr(response, "status_code", None)
+    return status_code if isinstance(status_code, int) else None
+
+
+def _skybot_response_url(response: object) -> str:
+    url = getattr(response, "url", "")
+    return url.strip() if isinstance(url, str) else ""
+
+
+def _skybot_header_text(response: object, header_name: str) -> str:
+    headers = getattr(response, "headers", None)
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return ""
+    try:
+        raw_value = getter(header_name)
+        if raw_value is None:
+            raw_value = getter(header_name.lower())
+    except Exception:
+        return ""
+    return raw_value.strip() if isinstance(raw_value, str) else ""
+
+
+def _skybot_response_text(content: bytes, response_text: str | None) -> str:
+    if isinstance(response_text, str) and response_text.strip():
+        return response_text
+    for encoding in ("utf-8", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
+def _extract_skybot_query_status(body_text: str) -> str:
+    if not body_text:
+        return ""
+    value_match = _SKYBOT_QUERY_STATUS_VALUE_PATTERN.search(body_text)
+    text_match = _SKYBOT_QUERY_STATUS_TEXT_PATTERN.search(body_text)
+    status_value = value_match.group(1).strip() if value_match else ""
+    status_text = text_match.group(1).strip() if text_match else ""
+    if status_value and status_text:
+        return f"{status_value}: {status_text}"
+    return status_value or status_text
+
+
+def _skybot_query_status_is_error(query_status: str) -> bool:
+    return query_status.upper().startswith("ERROR")
+
+
+def _skybot_body_preview(body_text: str) -> str:
+    collapsed = " ".join(body_text.split())
+    if not collapsed:
+        return "<empty>"
+    if len(collapsed) > _SKYBOT_BODY_PREVIEW_CHARS:
+        return collapsed[:_SKYBOT_BODY_PREVIEW_CHARS] + "..."
+    return collapsed
+
+
+def _format_skybot_unreadable_message(
+    *,
+    parse_error: BaseException | None,
+    query_status: str,
+    content: bytes,
+    body_text: str,
+    http_status: int | None,
+    content_type: str,
+    url: str,
+) -> str:
+    details: list[str] = []
+    if http_status is not None:
+        details.append(f"HTTP {http_status}")
+    details.append(f"{len(content)} bytes")
+    if content_type:
+        details.append(f"content-type={content_type}")
+    lines = [f"SkyBoT query returned an unreadable response ({', '.join(details)})."]
+    if url:
+        lines.append(f"URL: {url}")
+    if parse_error is not None:
+        lines.append(f"Parse error: {type(parse_error).__name__}: {parse_error}")
+    if query_status:
+        lines.append(f"QUERY_STATUS: {query_status}")
+    lines.append(f"Body: {_skybot_body_preview(body_text)}")
+    return "\n".join(lines)
 
 
 

@@ -28,8 +28,14 @@ from photometry_app.core.target_field_animation import (
     DEFAULT_TARGET_FIELD_ALIGN_MODE,
     DEFAULT_TARGET_FIELD_DURATION_SECONDS,
     DEFAULT_TARGET_FIELD_LOOP_COUNT,
+    DEFAULT_TARGET_FIELD_PLOT_ASPECT,
+    DEFAULT_TARGET_FIELD_PLOT_FIT,
     DEFAULT_TARGET_FIELD_SCALE_PERCENT,
+    DEFAULT_TARGET_FIELD_STAR_ASPECT,
+    DEFAULT_TARGET_FIELD_STAR_FIT,
     DEFAULT_TARGET_FIELD_STRETCH_MODE,
+    DEFAULT_TARGET_FIELD_VIDEO_HEIGHT,
+    DEFAULT_TARGET_FIELD_VIDEO_WIDTH,
     export_target_field_animation,
 )
 from photometry_app.core.target_markers import (
@@ -65,7 +71,7 @@ from photometry_app.core.survey_tiles import (
     survey_tile_sky_center,
 )
 from photometry_app.core.distance_map import build_distance_map
-from photometry_app.core.sky_explorer import explore_sky_image
+from photometry_app.core.sky_explorer import SkyExplorerCancelled, explore_sky_image
 from photometry_app.core.settings import AppSettings, SkyAtlasCustomOverlayRecord, resolve_shared_parallel_workers
 from photometry_app.core.sky_atlas_custom_overlay import import_sky_overlay
 from photometry_app.core.solar_system import KnownObjectHeliocentricContext, SolarSystemDetection, SolarSystemDetectionResult, SolarSystemFrameMeasurement, SolarSystemVisibilityEstimateResult, build_known_object_heliocentric_context, build_multi_known_object_heliocentric_context, detect_known_solar_system_objects, estimate_visible_magnitude_limit, measure_detections_in_frame
@@ -2800,6 +2806,16 @@ class TargetFieldAnimationExportWorker(QThread):
         phase_anchor_mode: str = "first_observation",
         plot_theme: str = "normal",
         custom_theme_colors: dict[str, str] | None = None,
+        plot_image: QImage | None = None,
+        plot_scan_layout: object | None = None,
+        video_width: int = DEFAULT_TARGET_FIELD_VIDEO_WIDTH,
+        video_height: int = DEFAULT_TARGET_FIELD_VIDEO_HEIGHT,
+        star_aspect: str = DEFAULT_TARGET_FIELD_STAR_ASPECT,
+        plot_aspect: str = DEFAULT_TARGET_FIELD_PLOT_ASPECT,
+        star_fit: str = DEFAULT_TARGET_FIELD_STAR_FIT,
+        plot_fit: str = DEFAULT_TARGET_FIELD_PLOT_FIT,
+        save_star_separately: bool = False,
+        save_plot_separately: bool = False,
         max_workers: int | None = None,
         parent: object | None = None,
     ) -> None:
@@ -2826,6 +2842,16 @@ class TargetFieldAnimationExportWorker(QThread):
         self._phase_anchor_mode = phase_anchor_mode
         self._plot_theme = plot_theme
         self._custom_theme_colors = None if custom_theme_colors is None else dict(custom_theme_colors)
+        self._plot_image = None if plot_image is None or plot_image.isNull() else plot_image.copy()
+        self._plot_scan_layout = plot_scan_layout
+        self._video_width = video_width
+        self._video_height = video_height
+        self._star_aspect = star_aspect
+        self._plot_aspect = plot_aspect
+        self._star_fit = star_fit
+        self._plot_fit = plot_fit
+        self._save_star_separately = bool(save_star_separately)
+        self._save_plot_separately = bool(save_plot_separately)
         self._max_workers = max_workers
         self._cancel_requested = Event()
 
@@ -2857,6 +2883,16 @@ class TargetFieldAnimationExportWorker(QThread):
                 phase_anchor_mode=self._phase_anchor_mode,
                 plot_theme=self._plot_theme,
                 custom_theme_colors=self._custom_theme_colors,
+                plot_image=self._plot_image,
+                plot_scan_layout=self._plot_scan_layout,
+                video_width=self._video_width,
+                video_height=self._video_height,
+                star_aspect=self._star_aspect,
+                plot_aspect=self._plot_aspect,
+                star_fit=self._star_fit,
+                plot_fit=self._plot_fit,
+                save_star_separately=self._save_star_separately,
+                save_plot_separately=self._save_plot_separately,
                 max_workers=self._max_workers,
                 progress_callback=self.progress_updated.emit,
                 is_cancelled=self._cancel_requested.is_set,
@@ -2937,6 +2973,8 @@ class SkyExplorerWorker(QThread):
 
         ignore_gaia_hard_cap: bool = False,
 
+        pixel_roi: Sequence[float] | None = None,
+
         parent: object | None = None,
 
     ) -> None:
@@ -2956,10 +2994,22 @@ class SkyExplorerWorker(QThread):
         self._include_dense_galaxy_catalog = bool(include_dense_galaxy_catalog)
 
         self._ignore_gaia_hard_cap = bool(ignore_gaia_hard_cap)
+        self._pixel_roi = None if pixel_roi is None else tuple(float(value) for value in pixel_roi)
+        self._cancel_requested = Event()
 
+    def request_cancel(self) -> None:
+        self._cancel_requested.set()
+        self.requestInterruption()
 
+    def cancellation_requested(self) -> bool:
+        return self._cancel_requested.is_set() or self.isInterruptionRequested()
 
     def run(self) -> None:
+
+        def progress_callback(message: str) -> None:
+            if self.cancellation_requested():
+                raise SkyExplorerCancelled("Sky Explorer query was terminated.")
+            self.progress_updated.emit(message)
 
         try:
 
@@ -2979,9 +3029,19 @@ class SkyExplorerWorker(QThread):
 
                 ignore_gaia_hard_cap=self._ignore_gaia_hard_cap,
 
-                progress_callback=self.progress_updated.emit,
+                pixel_roi=self._pixel_roi,
+
+                progress_callback=progress_callback,
+
+                cancel_callback=self.cancellation_requested,
 
             )
+
+        except SkyExplorerCancelled as exc:
+
+            self.exploration_failed.emit(str(exc))
+
+            return
 
         except Exception as exc:
 

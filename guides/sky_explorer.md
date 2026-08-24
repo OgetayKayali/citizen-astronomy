@@ -10,7 +10,7 @@ Every deep image is denser than it looks. Behind the obvious bright star or the 
 
 - **Identify what is in your field.** Deep-sky objects, stars, variables, exoplanet hosts, Gaia sources, and known solar-system bodies are matched to your WCS footprint and drawn on the image.
 - **Choose how deep the census goes.** Cycle object-type modes from **Simple** (six common deep-sky classes) through **Advanced** and **Scientific** (SIMBAD-style type codes) to **Catalog** (NGC, IC, LDN, VdB, LBN, and similar, labeled with catalog names only).
-- **Compare with survey imaging.** Overlay DSS2 Blue, SHS Hα, PanSTARRS, or IPHAS Hα cutouts with an interactive divider so you can compare your frame to public survey data.
+- **Compare with survey imaging.** Overlay DSS2, PanSTARRS, SDSS, 2MASS, WISE, GALEX, SHS, IPHAS, or NSNS DR0.2 cutouts with an interactive divider so you can compare your frame to public survey data.
 - **Annotate by hand.** Draw circles, ellipses, rulers, and text labels; edit stroke, fill, weight, opacity, and fonts; keep automatic catalog overlays on or off.
 - **Probe magnitude reach.** Use **Tools → Estimate magnitude limit...** to mark a Gaia magnitude ladder or estimate the actual detection limit from SNR probing.
 - **Export the view.** Save still images of the annotated field at the original image resolution, with overlay text and strokes sized to match the on-screen view (not a window screenshot), GIF/MP4 comparison animations when a survey layer is loaded, or **Tools → Create collage** for catalog objects that have usable angular-size metadata.
@@ -23,14 +23,14 @@ Catalog pages and planetarium software know the sky in the abstract. Sky Explore
 
 ## How It Works
 
-### Step 1: Switch Mode and Open an Image
+### Step 1: Switch Mode and Load a Source
 
 Enter **Sky Explorer** from the mode launcher or the mode menu.
 
-Click **Open** (or use `File > Open File`) to choose how to start:
+Use **Image** or **Survey** (or `File > Open File` for an image) to choose how to start. Those two source buttons sit together on the left of the workflow row with accent styling.
 
-- **Upload image** opens the usual file picker for a FITS, XISF, TIFF, PNG, JPEG, or camera RAW source image.
-- **Sky survey** downloads a survey field as the primary image using the initial RA, Dec, FOV, and pixel size from **Settings → Sky Explorer** (default center: Trifid Nebula / M20). The center tile loads as a low-res preview, then its detail refine starts before surrounding tiles; neighbors follow with the same preview→detail pattern. Each tile keeps its own stretch, so brightness does not jump when neighbors arrive. Loaded tiles stay available when you pan away and return; empty survey coverage shows a hatched “No survey coverage” tile instead of a black square. Panning stays responsive because network and stretch work run off the UI thread. **Explore** catalogs the full visible mosaic (not only the center cell), and markers are not clipped at tile edges. **Comparison** stays available so you can wipe against another survey (or swap in an uploaded image); the wipe bar spans the full view, and a comparison survey loads with the same center-first tiled path as the primary field.
+- **Image** opens the usual file picker for a FITS, XISF, TIFF, PNG, JPEG, or camera RAW source image. If an image is already loaded, you can **Replace** it or add a new file as a **Comparison**.
+- **Survey** asks you to pick a public sky survey, then downloads that field as the primary image using the initial RA, Dec, FOV, and pixel size from **Settings → Sky Explorer** (default center: Trifid Nebula / M20). The center tile loads as a low-res preview, then its detail refine starts before surrounding tiles; neighbors follow with the same preview→detail pattern. Each tile keeps its own stretch, so brightness does not jump when neighbors arrive. Loaded tiles stay available when you pan away and return; empty survey coverage shows a hatched “No survey coverage” tile instead of a black square. Panning stays responsive because network and stretch work run off the UI thread. **Explore** catalogs the full visible mosaic (not only the center cell), and markers are not clipped at tile edges. If a survey is already loaded, you can **Replace** it or add another survey as a **Comparison**; the wipe bar spans the full view, and a comparison survey loads with the same center-first tiled path as the primary field. If an image is already loaded, the first **Survey** click overlays that survey as the comparison.
 
 Supported upload formats:
 
@@ -41,7 +41,9 @@ Supported upload formats:
 - `.jpg` / `.jpeg`
 - camera RAW (for example `.dng`, `.cr2` / `.cr3`, `.nef`, `.arw`, `.orf`, `.rw2`, `.raf`, `.pef`)
 
-The image preview loads into the panel. The primary button switches from **Open** to **Explore**. After a successful Explore, selecting additional object types changes that button to **Update** so only the newly enabled layers are queried.
+The image preview loads into the panel. **Explore** stays on the workflow row and becomes active once a source is loaded. After a successful Explore, selecting additional object types changes that button to **Update** so only the newly enabled layers are queried.
+
+**Shift+left-drag** on the image draws a rectangular ROI. While an ROI is present, **Explore** queries only that region. Right-click inside the ROI and choose **Remove ROI** to search the full field again. Loading a new image or survey clears the ROI.
 
 Sky Explorer works on **one image at a time** (not a time-series folder). Prefer a frame with a valid celestial WCS already written into the headers. If WCS is missing, configure an **astrometry.net API key** in Settings so CAst can solve the frame before catalog queries.
 
@@ -66,9 +68,9 @@ Click a stroke/fill/text cell to customize how that type is drawn. Those three c
 
 ### Step 3: Explore
 
-Click **Explore**. The button shows **Exploring...** while CAst:
+Click **Explore**. The button shows **Terminate** while CAst is querying catalogs, so you can abort a long search. When the query finishes or is terminated, the button returns to **Explore** (or **Update** if extra types were selected after a previous run). While it runs, CAst:
 
-1. Validates (or solves) WCS and computes the field footprint
+1. Validates (or solves) WCS and computes the field footprint (or the drawn ROI, if one is present)
 2. Queries each enabled catalog layer for objects inside that footprint
 3. Filters and sorts results
 4. Builds automatic overlays and fills the results table
@@ -99,7 +101,7 @@ Sky Explorer’s core call is `explore_sky_image` in the application core. Conce
 
 ### 1. Resolve WCS and footprint
 
-CAst validates embedded celestial WCS keywords. If they are missing or unusable and an astrometry.net key is available, it solves the image (cached under the Sky Explorer WCS cache). From the solved frame it derives center, search radius, and corner sky coordinates for catalog queries.
+CAst validates embedded celestial WCS keywords. If they are missing or unusable and an astrometry.net key is available, it solves the image (cached under the Sky Explorer WCS cache). From the solved frame it derives center, search radius, and corner sky coordinates for catalog queries. A drawn ROI shrinks that footprint to the selected rectangle.
 
 ### 2. Query catalog layers
 
@@ -175,10 +177,12 @@ Also available: **Curves**, **Invert**, **Feather** (0–100% soft-blend using o
 
 ### Comparison
 
-Click **Comparison** after a primary image is loaded (including a survey field opened via **Open → Sky survey**):
+**Image** and **Survey** also add comparison layers after a source is already loaded:
 
-- **Upload image** loads a second image as a full-frame comparison overlay. If the current primary image was opened from a survey field, the upload becomes the new primary image and the original survey is reloaded as the comparison layer.
-- **Sky survey** loads a HiPS survey cutout aligned to your source-image WCS and lazy-loads tiles as you pan (no fixed field lock). On a survey primary, comparison uses the same tiled center→refine→neighbors loader as the primary field, and the wipe bar divides the full view left-to-right across the mosaic (not only the central cell).
+- A later **Image** click can **Replace** the current image or upload a new file as a full-frame comparison overlay. If the current primary image was opened from a survey field, the first image upload becomes the new primary image and the original survey is reloaded as the comparison layer.
+- A later **Survey** click can **Replace** the current survey or add another survey as a comparison. Survey comparison loads a HiPS cutout aligned to your source-image WCS and lazy-loads tiles as you pan (no fixed field lock). On a survey primary, comparison uses the same tiled center→refine→neighbors loader as the primary field, and the wipe bar divides the full view left-to-right across the mosaic (not only the central cell).
+
+Available surveys include DSS2 (Blue/Red/IR), PanSTARRS, SDSS, 2MASS, WISE, GALEX, SHS Hα, IPHAS Hα, and NSNS DR0.2 (Hα, [OIII], [SII]).
 
 When a comparison is active, an interactive divider lets you wipe between the primary image and the comparison layer. The **Display** menu now contains both **Image** and **Comparison** sections so each side can be stretched independently. Survey downloads are cached only for the current session (to keep pans and refinements fast) and are deleted when CAst closes.
 
@@ -275,13 +279,13 @@ Save as GIF or MP4 (`{stem}_sky_explorer_comparison.gif` by default). MP4 needs 
 
 Open **Settings → Sky Explorer**. Settings are split into **General** and **Visuals** tabs.
 
-Intro text in the dialog: *Sky Explorer settings control the initial Open → Sky survey field (default: Trifid Nebula), the manual SIMBAD lookup radius, and which background search sources are allowed when Explore resolves a field.*
+Intro text in the dialog: *Sky Explorer settings are split into General (field/query defaults and catalog sources) and Visuals (marker colors, opacities, and Mag Limit styling).*
 
 ### General
 
 | Setting | What it does |
 |---------|----------------|
-| **Survey Field RA / Dec** | Initial center when Open starts from a sky survey (default: Trifid Nebula / M20) |
+| **Survey Field RA / Dec** | Initial center when Survey loads a field with no user image yet (default: Trifid Nebula / M20) |
 | **Survey Field FOV** | Field of view for the survey-as-primary WCS canvas cell (default 45′). About 10× this area is available to pan while the survey overlay loads asynchronously. |
 | **Survey Field Width / Height** | Pixel size used for the survey-as-primary WCS canvas grid (default 1024×1024) |
 | **Search Radius** | Cone radius (arcseconds) for right-click **Search** / **Detect** (default 10″) |
@@ -338,7 +342,7 @@ Results and plate-solves are cached under Sky Explorer catalog / WCS directories
 3. Collapse groups you do not need; click interesting rows and use **Center Object**.
 4. Switch to **Advanced** or **Scientific** and re-Explore if you need stars, variables, AGN, or SSO.
 5. Use **Tools → Estimate magnitude limit...** to judge depth; switch to **Manual** and delete individual catalog marks if overlays clutter a presentation frame.
-6. Click **Comparison** to load **DSS2 Blue**, an H-alpha survey, or a second uploaded image, then scrub the divider for a before/after comparison.
+6. Click **Survey** to load **DSS2 Blue**, NSNS DR0.2 Hα, or another public survey, or **Image** for a second uploaded frame, then scrub the divider for a before/after comparison.
 7. Add a few manual labels for teaching slides; **Export → Image...** or **Animation...**. Use **Tools → Create collage** when you want a multi-object size-aware figure of galaxies/nebulae from the same frame.
 
 ---

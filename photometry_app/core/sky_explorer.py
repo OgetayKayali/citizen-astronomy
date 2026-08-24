@@ -1586,6 +1586,15 @@ def _sky_explorer_type_matches(compact_type: str, raw_type: str, *candidates: st
     return False
 
 
+class SkyExplorerCancelled(Exception):
+    """Raised when the user terminates a Sky Explorer catalog query."""
+
+
+def _raise_if_sky_explorer_cancelled(cancel_callback: Callable[[], bool] | None) -> None:
+    if cancel_callback is not None and cancel_callback():
+        raise SkyExplorerCancelled("Sky Explorer query was terminated.")
+
+
 def explore_sky_image(
     source_path: Path,
     *,
@@ -1596,33 +1605,55 @@ def explore_sky_image(
     include_dense_galaxy_catalog: bool = False,
     ignore_gaia_hard_cap: bool = False,
     progress_callback: Callable[[str], None] | None = None,
+    pixel_roi: Sequence[float] | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> SkyExplorerResult:
     normalized_layers = _normalize_layers(selected_layers)
     selected_type_keys = sky_explorer_normalized_object_type_keys(selected_object_type_keys)
 
-    if progress_callback is not None:
-        progress_callback("Checking the image WCS and field footprint.")
-    solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=progress_callback)
-    survey_mosaic = _is_sky_explorer_survey_tile_wcs_canvas(source_path)
-    if survey_mosaic:
-        solved_field = _expand_solved_field_for_survey_mosaic(solved_field)
+    def emit_progress(message: str) -> None:
+        _raise_if_sky_explorer_cancelled(cancel_callback)
         if progress_callback is not None:
-            progress_callback(
-                f"Survey mosaic Explore covers ~{solved_field.radius_deg:.3f} deg "
-                f"({2 * SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS + 1}×"
-                f"{2 * SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS + 1} tiles)."
-            )
-    footprint = _build_field_footprint(solved_field, survey_mosaic=survey_mosaic)
+            progress_callback(message)
+
+    emit_progress("Checking the image WCS and field footprint.")
+    solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=emit_progress)
+    survey_mosaic = _is_sky_explorer_survey_tile_wcs_canvas(source_path)
+    normalized_pixel_roi = _normalize_sky_explorer_pixel_roi(pixel_roi)
+    if survey_mosaic and normalized_pixel_roi is None:
+        solved_field = _expand_solved_field_for_survey_mosaic(solved_field)
+        emit_progress(
+            f"Survey mosaic Explore covers ~{solved_field.radius_deg:.3f} deg "
+            f"({2 * SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS + 1}×"
+            f"{2 * SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS + 1} tiles)."
+        )
     wcs = celestial_wcs(read_header(solved_field.wcs_path))
+    if normalized_pixel_roi is not None:
+        try:
+            solved_field, footprint = constrain_solved_field_to_pixel_roi(
+                solved_field, wcs, normalized_pixel_roi
+            )
+        except Exception:
+            footprint = _build_field_footprint(solved_field, survey_mosaic=survey_mosaic)
+            warning_messages_roi = "Could not apply the drawn ROI; Explore used the full field."
+        else:
+            warning_messages_roi = None
+            emit_progress(
+                f"Explore is limited to the drawn ROI ({solved_field.radius_deg:.3f} deg search radius)."
+            )
+    else:
+        footprint = _build_field_footprint(solved_field, survey_mosaic=survey_mosaic)
+        warning_messages_roi = None
     field_center = SkyCoord(footprint.center_ra_deg * u.deg, footprint.center_dec_deg * u.deg)
     objects: list[SkyExplorerObject] = []
     layer_summaries: list[SkyExplorerLayerSummary] = []
     warning_messages: list[str] = []
+    if warning_messages_roi:
+        warning_messages.append(warning_messages_roi)
 
     catalog_service = CatalogService(settings.cache_dir / "sky-explorer-catalogs")
     if "gaia_stars" in normalized_layers:
-        if progress_callback is not None:
-            progress_callback("Querying Gaia field stars with the Sky Explorer magnitude settings.")
+        emit_progress("Querying Gaia field stars with the Sky Explorer magnitude settings.")
         gaia_stars = catalog_service.query_gaia_stars_limited(
             solved_field,
             settings.sky_explorer_gaia_max_magnitude,
@@ -1635,7 +1666,7 @@ def explore_sky_image(
                     else None
                 )
             ),
-            progress_callback=progress_callback,
+            progress_callback=emit_progress,
         )
         gaia_objects, gaia_summary = _catalog_star_objects(
             gaia_stars,
@@ -1650,8 +1681,7 @@ def explore_sky_image(
 
     field_catalog = None
     if any(layer in normalized_layers for layer in ("variable_stars", "exoplanets")):
-        if progress_callback is not None:
-            progress_callback("Querying VSX and exoplanet field catalogs.")
+        emit_progress("Querying VSX and exoplanet field catalogs.")
         field_catalog = catalog_service.query_field_catalog(
             solved_field,
             include_gaia=False,
@@ -1659,7 +1689,7 @@ def explore_sky_image(
             include_exoplanets="exoplanets" in normalized_layers,
             variable_star_max_magnitude=settings.sky_explorer_gaia_max_magnitude,
             exoplanet_max_magnitude=settings.sky_explorer_gaia_max_magnitude,
-            progress_callback=progress_callback,
+            progress_callback=emit_progress,
         )
 
     if field_catalog is not None:
@@ -1687,8 +1717,7 @@ def explore_sky_image(
             layer_summaries.append(exoplanet_summary)
 
     if any(layer in normalized_layers for layer in ("deep_sky", "general_objects")):
-        if progress_callback is not None:
-            progress_callback("Querying SIMBAD for named objects in the image footprint.")
+        emit_progress("Querying SIMBAD for named objects in the image footprint.")
         simbad_objects, simbad_summaries = _query_simbad_objects(
             solved_field,
             wcs=wcs,
@@ -1697,6 +1726,7 @@ def explore_sky_image(
             selected_object_type_keys=selected_type_keys,
             include_dense_galaxy_catalog=include_dense_galaxy_catalog,
             maximum_stellar_magnitude=settings.sky_explorer_gaia_max_magnitude,
+            cancel_callback=cancel_callback,
         )
         objects.extend(simbad_objects)
         layer_summaries.extend(simbad_summaries)
@@ -1716,8 +1746,7 @@ def explore_sky_image(
                 )
             )
         else:
-            if progress_callback is not None:
-                progress_callback("Querying predicted asteroids and comets in the field.")
+            emit_progress("Querying predicted asteroids and comets in the field.")
             solar_system_results = search_nearby_known_solar_system_objects(
                 solved_field,
                 observation_time=observation_time,
@@ -1749,6 +1778,12 @@ def explore_sky_image(
             sky_object
             for sky_object in objects
             if selected_type_keys.intersection(sky_explorer_object_type_keys_for_object(sky_object))
+        ]
+    if normalized_pixel_roi is not None:
+        objects = [
+            sky_object
+            for sky_object in objects
+            if sky_explorer_object_in_pixel_roi(sky_object, normalized_pixel_roi)
         ]
     filtered_objects = _filter_sky_explorer_objects_by_magnitude(
         objects,
@@ -1952,6 +1987,87 @@ def _build_field_footprint(
     )
 
 
+def _normalize_sky_explorer_pixel_roi(pixel_roi: Sequence[float] | None) -> tuple[float, float, float, float] | None:
+    if pixel_roi is None:
+        return None
+    try:
+        x0, y0, x1, y1 = (float(pixel_roi[0]), float(pixel_roi[1]), float(pixel_roi[2]), float(pixel_roi[3]))
+    except (IndexError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (x0, y0, x1, y1)):
+        return None
+    min_x, max_x = (x0, x1) if x0 <= x1 else (x1, x0)
+    min_y, max_y = (y0, y1) if y0 <= y1 else (y1, y0)
+    if max_x - min_x <= 1.0 or max_y - min_y <= 1.0:
+        return None
+    return min_x, min_y, max_x, max_y
+
+
+def sky_explorer_object_in_pixel_roi(sky_object: SkyExplorerObject, pixel_roi: Sequence[float]) -> bool:
+    normalized = _normalize_sky_explorer_pixel_roi(pixel_roi)
+    if normalized is None:
+        return True
+    min_x, min_y, max_x, max_y = normalized
+    return min_x <= float(sky_object.pixel_x) <= max_x and min_y <= float(sky_object.pixel_y) <= max_y
+
+
+def constrain_solved_field_to_pixel_roi(
+    solved_field: SolvedField,
+    wcs: WCS,
+    pixel_roi: Sequence[float],
+) -> tuple[SolvedField, SkyExplorerFieldFootprint]:
+    normalized = _normalize_sky_explorer_pixel_roi(pixel_roi)
+    if normalized is None:
+        raise ValueError("Sky Explorer ROI is empty.")
+    min_x, min_y, max_x, max_y = normalized
+    center_x = 0.5 * (min_x + max_x)
+    center_y = 0.5 * (min_y + max_y)
+    corner_points = (
+        ("Top Left", min_x, min_y),
+        ("Top Right", max_x, min_y),
+        ("Bottom Right", max_x, max_y),
+        ("Bottom Left", min_x, max_y),
+    )
+    corners: list[SkyExplorerCorner] = []
+    for label, x_coord, y_coord in corner_points:
+        world = wcs.pixel_to_world(x_coord, y_coord)
+        corners.append(
+            SkyExplorerCorner(label=label, ra_deg=float(world.ra.deg), dec_deg=float(world.dec.deg))
+        )
+    center_world = wcs.pixel_to_world(center_x, center_y)
+    center_coord = SkyCoord(float(center_world.ra.deg) * u.deg, float(center_world.dec.deg) * u.deg)
+    radius_deg = 0.0
+    for corner in corners:
+        radius_deg = max(
+            radius_deg,
+            float(center_coord.separation(SkyCoord(corner.ra_deg * u.deg, corner.dec_deg * u.deg)).deg),
+        )
+    radius_deg = max(radius_deg * 1.05, 1.0e-6)
+    width_deg = None
+    height_deg = None
+    try:
+        scales = proj_plane_pixel_scales(wcs.celestial) * 3600.0
+        width_deg = float(scales[0] * (max_x - min_x)) / 3600.0
+        height_deg = float(scales[1] * (max_y - min_y)) / 3600.0
+    except Exception:
+        width_deg = None
+        height_deg = None
+    constrained = replace(
+        solved_field,
+        center_ra_deg=float(center_world.ra.deg) % 360.0,
+        center_dec_deg=float(center_world.dec.deg),
+        radius_deg=radius_deg,
+    )
+    return constrained, SkyExplorerFieldFootprint(
+        center_ra_deg=constrained.center_ra_deg,
+        center_dec_deg=constrained.center_dec_deg,
+        radius_deg=constrained.radius_deg,
+        width_deg=width_deg,
+        height_deg=height_deg,
+        corners=tuple(corners),
+    )
+
+
 def _catalog_star_objects(
     stars: Sequence[CatalogStar],
     *,
@@ -2023,6 +2139,7 @@ def _query_simbad_objects(
     selected_object_type_keys: Sequence[str] | None = None,
     include_dense_galaxy_catalog: bool = False,
     maximum_stellar_magnitude: float | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> tuple[list[SkyExplorerObject], list[SkyExplorerLayerSummary]]:
     layer_buckets: dict[str, list[SkyExplorerObject]] = {"deep_sky": [], "general_objects": []}
     total_counts: dict[str, int] = {"deep_sky": 0, "general_objects": 0}
@@ -2037,11 +2154,13 @@ def _query_simbad_objects(
     for layer_key in ("deep_sky", "general_objects"):
         if layer_key not in selected_layers:
             continue
+        _raise_if_sky_explorer_cancelled(cancel_callback)
         result_rows = _query_simbad_region_rows(
             center,
             radius=radius,
             layer_key=layer_key,
             selected_object_type_keys=selected_type_keys,
+            cancel_callback=cancel_callback,
         )
         if len(result_rows) == 0:
             continue
@@ -2080,6 +2199,7 @@ def _query_simbad_objects(
             for designation_key in _sky_object_designation_keys(item)
         }
         if "hyperleda" in enabled_supplements:
+            _raise_if_sky_explorer_cancelled(cancel_callback)
             hyperleda_objects, hyperleda_count = _query_hyperleda_galaxy_objects(
                 solved_field,
                 wcs=wcs,
@@ -2096,6 +2216,7 @@ def _query_simbad_objects(
                 allow_new_object=None if include_dense_galaxy_catalog else _hyperleda_object_has_named_alias,
             )
         if "sharpless" in enabled_supplements:
+            _raise_if_sky_explorer_cancelled(cancel_callback)
             sharpless_objects, sharpless_count = _query_sharpless_objects(
                 solved_field,
                 wcs=wcs,
@@ -2110,6 +2231,7 @@ def _query_simbad_objects(
                 seen_designation_keys=seen_designation_keys,
             )
         if "barnard" in enabled_supplements:
+            _raise_if_sky_explorer_cancelled(cancel_callback)
             barnard_objects, barnard_count = _query_barnard_objects(
                 solved_field,
                 wcs=wcs,
@@ -2124,6 +2246,7 @@ def _query_simbad_objects(
                 seen_designation_keys=seen_designation_keys,
             )
         if "vdb" in enabled_supplements:
+            _raise_if_sky_explorer_cancelled(cancel_callback)
             vdb_objects, vdb_count = _query_vdb_objects(
                 solved_field,
                 wcs=wcs,
@@ -2138,6 +2261,7 @@ def _query_simbad_objects(
                 seen_designation_keys=seen_designation_keys,
             )
         if "hash_pn" in enabled_supplements:
+            _raise_if_sky_explorer_cancelled(cancel_callback)
             hash_pn_objects, hash_pn_count = _query_hash_pn_objects(
                 solved_field,
                 wcs=wcs,
@@ -2152,6 +2276,7 @@ def _query_simbad_objects(
                 seen_designation_keys=seen_designation_keys,
             )
         if "ngc2000" in enabled_supplements:
+            _raise_if_sky_explorer_cancelled(cancel_callback)
             ngc2000_objects, ngc2000_count = _query_ngc2000_objects(
                 solved_field,
                 wcs=wcs,
@@ -2190,6 +2315,7 @@ def _query_simbad_region_rows(
     radius: u.Quantity,
     layer_key: str,
     selected_object_type_keys: Sequence[str] | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ):
     simbad = Simbad()
     simbad.TIMEOUT = _SIMBAD_TIMEOUT_SECONDS
@@ -2207,6 +2333,7 @@ def _query_simbad_region_rows(
         return rows
     deadline = time.monotonic() + _SIMBAD_LAYER_QUERY_BUDGET_SECONDS
     for query_center, query_radius in _simbad_query_regions(center, radius=radius, layer_key=layer_key):
+        _raise_if_sky_explorer_cancelled(cancel_callback)
         if time.monotonic() >= deadline:
             break
         query_kwargs = {"radius": query_radius}

@@ -178,6 +178,7 @@ from photometry_app.core.sky_explorer_collage import (
     save_sky_explorer_collage_image,
 )
 from photometry_app.core.survey_images import (
+    SURVEY_DEFINITIONS,
     SKY_EXPLORER_SURVEY_FIELD_CACHE_DIR_NAME,
     SKY_EXPLORER_SURVEY_FIELD_DETAIL_PREVIEW,
     SKY_EXPLORER_SURVEY_FIELD_DETAIL_REFINE,
@@ -288,11 +289,8 @@ _THEME_DRACULA = "dracula"
 _THEME_NORD = "nord"
 _THEME_TOKYO_NIGHT = "tokyo-night"
 
-_SKY_EXPLORER_SURVEY_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("dss2_blue", "DSS2 Blue"),
-    ("shs_ha", "SHS Ha"),
-    ("panstarrs", "PanSTARRS"),
-    ("iphas_dr2_ha", "IPHAS DR2 Ha"),
+_SKY_EXPLORER_SURVEY_OPTIONS: tuple[tuple[str, str], ...] = tuple(
+    (definition.key, definition.title) for definition in SURVEY_DEFINITIONS
 )
 _SKY_EXPLORER_SURVEY_FETCH_MARGIN_FRACTION = 0.4
 _SKY_EXPLORER_SURVEY_PREVIEW_MAX_OUTPUT = 512
@@ -28065,6 +28063,9 @@ class MainWindow(QMainWindow):
         self._sky_explorer_mag_limit_auto_objects: tuple[SkyExplorerObject, ...] = ()
 
         self._current_sky_explorer_source_image: Path | None = None
+        self._sky_explorer_roi_selection: _HrRoiSelection | None = None
+        self._sky_explorer_active_roi_selection: _HrRoiSelection | None = None
+        self._sky_explorer_roi_drag_origin: tuple[float, float] | None = None
         self._sky_explorer_primary_survey_key: str | None = None
         self._sky_explorer_comparison_image_path: Path | None = None
         self._sky_explorer_survey_field_origin_ra_deg: float | None = None
@@ -38374,23 +38375,39 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_input.hide()
 
-        self._sky_explorer_primary_button = QPushButton("Open")
+        self._sky_explorer_image_button = QPushButton("Image")
 
-        self._sky_explorer_primary_button.setToolTip("Open a source image for Sky Explorer, then explore the solved field.")
+        self._sky_explorer_image_button.setToolTip(
+            "Load a local image. If an image is already loaded, replace it or add a comparison."
+        )
+
+        self._sky_explorer_image_button.clicked.connect(self._handle_sky_explorer_image_action)
+
+        self._sky_explorer_survey_button = QPushButton("Survey")
+
+        self._sky_explorer_survey_button.setToolTip(
+            "Load a sky survey. If a survey is already loaded, replace it or add a comparison."
+        )
+
+        self._sky_explorer_survey_button.clicked.connect(self._handle_sky_explorer_survey_action)
+
+        self._sky_explorer_source_group = QFrame()
+        self._sky_explorer_source_group.setObjectName("skyExplorerSourceGroup")
+        source_group_layout = QHBoxLayout(self._sky_explorer_source_group)
+        source_group_layout.setContentsMargins(3, 3, 3, 3)
+        source_group_layout.setSpacing(4)
+        source_group_layout.addWidget(self._sky_explorer_image_button)
+        source_group_layout.addWidget(self._sky_explorer_survey_button)
+
+        self._sky_explorer_primary_button = QPushButton("Explore")
+
+        self._sky_explorer_primary_button.setToolTip("Plate-solve if needed and identify what is in the field.")
 
         self._sky_explorer_primary_button.clicked.connect(self._handle_sky_explorer_primary_action)
 
-        self._sky_explorer_comparison_button = QPushButton("Comparison")
-
-        self._sky_explorer_comparison_button.setToolTip(
-            "Choose a survey or uploaded image to compare with the current Sky Explorer source."
-        )
-
-        self._sky_explorer_comparison_button.clicked.connect(self._handle_sky_explorer_comparison_action)
-
         self._sky_explorer_status_label = QLabel(
 
-            "Load an image, then click Explore to plate-solve if needed and identify what is in the field."
+            "Load an image or survey, then click Explore to plate-solve if needed and identify what is in the field."
 
         )
 
@@ -38906,6 +38923,9 @@ class MainWindow(QMainWindow):
         self._sky_explorer_image_view = AnnotatedImageView(self)
 
         self._sky_explorer_image_view.set_message("Open a source image to explore the field.")
+        self._sky_explorer_image_view.setToolTip(
+            "Shift+left-drag to limit Explore to a region. Right-click that ROI to remove it."
+        )
         self._apply_sky_explorer_tile_feather()
 
         self._sky_explorer_image_view.imagePressed.connect(self._handle_sky_explorer_image_pressed)
@@ -38950,9 +38970,9 @@ class MainWindow(QMainWindow):
 
         workflow_row.setSpacing(8)
 
-        workflow_row.addWidget(self._sky_explorer_primary_button)
+        workflow_row.addWidget(self._sky_explorer_source_group)
 
-        workflow_row.addWidget(self._sky_explorer_comparison_button)
+        workflow_row.addWidget(self._sky_explorer_primary_button)
 
         workflow_row.addWidget(self._sky_explorer_object_type_mode_button)
 
@@ -39342,9 +39362,9 @@ class MainWindow(QMainWindow):
 
     def _handle_sky_explorer_primary_action(self) -> None:
 
-        if self._sky_explorer_primary_button.text().strip().lower() == "open":
+        if self._sky_explorer_exploration_is_running():
 
-            self._open_sky_explorer_source_picker(as_comparison=False)
+            self._terminate_sky_explorer_exploration()
 
             return
 
@@ -39352,7 +39372,11 @@ class MainWindow(QMainWindow):
 
         if source_path is None or not source_path.exists():
 
-            self._open_sky_explorer_source_picker(as_comparison=False)
+            QMessageBox.information(
+                self,
+                "No source image",
+                "Load an image or survey first, then click Explore.",
+            )
 
             return
 
@@ -39366,15 +39390,137 @@ class MainWindow(QMainWindow):
 
         self._start_sky_explorer_exploration()
 
-    def _handle_sky_explorer_comparison_action(self) -> None:
+    def _sky_explorer_has_loaded_user_image(self) -> bool:
 
-        source_path = self._current_sky_explorer_source_image
+        if self._sky_explorer_active_survey_key == _SKY_EXPLORER_IMAGE_COMPARISON_KEY:
 
-        if source_path is None or not source_path.exists():
+            return True
+
+        source_path = getattr(self, "_current_sky_explorer_source_image", None)
+
+        if source_path is None or not Path(source_path).exists():
+
+            return False
+
+        return not self._sky_explorer_path_in_survey_field_cache(Path(source_path))
+
+    def _sky_explorer_has_loaded_survey(self) -> bool:
+
+        if self._sky_explorer_primary_survey_key:
+
+            return True
+
+        survey_key = self._sky_explorer_active_survey_key
+
+        return bool(survey_key) and survey_key != _SKY_EXPLORER_IMAGE_COMPARISON_KEY
+
+    def _prompt_sky_explorer_replace_or_comparison(self, *, title: str, text: str) -> str | None:
+
+        box = QMessageBox(self)
+
+        box.setWindowTitle(title)
+
+        box.setIcon(QMessageBox.Icon.Question)
+
+        box.setText(text)
+
+        replace_button = box.addButton("Replace", QMessageBox.ButtonRole.AcceptRole)
+
+        comparison_button = box.addButton("Comparison", QMessageBox.ButtonRole.ActionRole)
+
+        box.addButton(QMessageBox.StandardButton.Cancel)
+
+        box.setDefaultButton(replace_button)
+
+        box.exec()
+
+        clicked = box.clickedButton()
+
+        if clicked is replace_button:
+
+            return "replace"
+
+        if clicked is comparison_button:
+
+            return "comparison"
+
+        return None
+
+    def _handle_sky_explorer_image_action(self) -> None:
+
+        if self._sky_explorer_has_loaded_user_image():
+
+            choice = self._prompt_sky_explorer_replace_or_comparison(
+
+                title="Image already loaded",
+
+                text="Replace the current image, or upload a new image as a comparison?",
+
+            )
+
+            if choice is None:
+
+                return
+
+            if choice == "comparison":
+
+                self._open_sky_explorer_uploaded_comparison()
+
+                return
+
+            survey_key = self._sky_explorer_active_survey_key
+
+            if survey_key == _SKY_EXPLORER_IMAGE_COMPARISON_KEY:
+
+                survey_key = None
+
+            source_path = self._browse_for_sky_explorer_source_image()
+
+            if source_path is not None and survey_key:
+
+                self._select_sky_explorer_survey(survey_key)
 
             return
 
-        self._open_sky_explorer_source_picker(as_comparison=True)
+        if self._sky_explorer_primary_survey_key:
+
+            self._open_sky_explorer_uploaded_comparison()
+
+            return
+
+        self._browse_for_sky_explorer_source_image()
+
+    def _handle_sky_explorer_survey_action(self) -> None:
+
+        as_comparison = False
+
+        if self._sky_explorer_has_loaded_survey():
+
+            choice = self._prompt_sky_explorer_replace_or_comparison(
+
+                title="Survey already loaded",
+
+                text="Replace the current survey, or add a new survey as a comparison?",
+
+            )
+
+            if choice is None:
+
+                return
+
+            if choice == "comparison":
+
+                as_comparison = True
+
+            else:
+
+                as_comparison = self._sky_explorer_has_loaded_user_image()
+
+        elif self._sky_explorer_has_loaded_user_image():
+
+            as_comparison = True
+
+        self._open_sky_explorer_survey_picker(as_comparison=as_comparison)
 
     def _browse_for_sky_explorer_source_image(self, *, set_as_source: bool = True) -> Path | None:
 
@@ -39382,7 +39528,7 @@ class MainWindow(QMainWindow):
 
             self,
 
-            "Select source image for Sky Explorer",
+            "Select comparison image for Sky Explorer" if not set_as_source else "Select source image for Sky Explorer",
 
             self._sky_explorer_image_input.text() or self._root_path_input.text(),
 
@@ -39423,12 +39569,12 @@ class MainWindow(QMainWindow):
 
         return self._sky_explorer_primary_survey_key
 
-    def _open_sky_explorer_source_picker(self, *, as_comparison: bool) -> None:
+    def _open_sky_explorer_survey_picker(self, *, as_comparison: bool) -> None:
 
         if as_comparison:
             dialog = SkyExplorerSourceDialog(
-                title="Choose Sky Explorer Comparison",
-                intro="Compare the current source image with a local upload or one of the built-in surveys.",
+                title="Choose Sky Explorer Survey",
+                intro="Select a survey to compare with the current Sky Explorer source.",
                 survey_options=_SKY_EXPLORER_SURVEY_OPTIONS,
                 initial_survey_key=self._sky_explorer_source_dialog_initial_survey_key(),
                 field_hint=(
@@ -39440,8 +39586,8 @@ class MainWindow(QMainWindow):
         else:
             settings = self._ensure_settings()
             dialog = SkyExplorerSourceDialog(
-                title="Open Sky Explorer Source",
-                intro="Open a local image or build a survey field as the primary Sky Explorer source image.",
+                title="Open Sky Explorer Survey",
+                intro="Choose a survey to load as the Sky Explorer field.",
                 survey_options=_SKY_EXPLORER_SURVEY_OPTIONS,
                 initial_survey_key=self._sky_explorer_source_dialog_initial_survey_key(),
                 field_hint=(
@@ -39449,7 +39595,7 @@ class MainWindow(QMainWindow):
                     f"(RA {settings.sky_explorer_survey_field_ra_deg:.2f}°, "
                     f"Dec {settings.sky_explorer_survey_field_dec_deg:.2f}°, "
                     f"FOV {settings.sky_explorer_survey_field_fov_arcmin:.0f}′). "
-                    "A fast preview loads first, then detail refines while you pan—same path as Comparison."
+                    "A fast preview loads first, then detail refines while you pan."
                 ),
                 parent=self,
             )
@@ -39459,15 +39605,12 @@ class MainWindow(QMainWindow):
             return
 
         choice = dialog.choice()
-        if choice.kind == "upload":
-            if as_comparison:
-                self._open_sky_explorer_uploaded_comparison()
-            else:
-                self._browse_for_sky_explorer_source_image()
+        survey_key = str(choice.survey_key or "").strip().lower() or None
+        if not survey_key:
+            QMessageBox.warning(self, "Survey missing", "Choose a survey before continuing.")
             return
 
         if as_comparison:
-            survey_key = str(choice.survey_key or "").strip().lower() or None
             self._select_sky_explorer_survey(survey_key)
             return
 
@@ -39504,6 +39647,7 @@ class MainWindow(QMainWindow):
         if not survey_key:
             QMessageBox.warning(self, "Survey missing", "Choose a survey before opening a survey field.")
             return
+        self._clear_sky_explorer_roi(refresh=False)
         ra_deg, dec_deg, fov_arcmin, width_px, height_px = self._sky_explorer_survey_field_settings()
         self._sky_explorer_survey_field_session_id += 1
         self._sky_explorer_survey_field_request_generation += 1
@@ -39549,6 +39693,8 @@ class MainWindow(QMainWindow):
                 display, overlays=[], grid_overlays=[], editor_enabled=False,
                 reset_view=True, safe_margin_fraction=0.0,
                 render_settings=AnnotatedImageRenderSettings(stretch_mode="linear"),
+                gesture_roi_enabled=True,
+                selection_overlays=self._current_sky_explorer_selection_overlays(),
             )
             self._sky_explorer_image_view.focus_on(float(width_px) / 2.0, float(height_px) / 2.0)
         self._sky_explorer_image_view.set_unbounded_pan(True)
@@ -40589,6 +40735,7 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_image_input.setText(str(source_image))
 
+        self._clear_sky_explorer_roi(refresh=False)
         self._clear_sky_explorer_survey_comparison(reset_selection=True)
         self._sky_explorer_comparison_image_path = None
         if not self._sky_explorer_path_in_survey_field_cache(source_image):
@@ -40777,9 +40924,11 @@ class MainWindow(QMainWindow):
 
         action_label = "Updating" if merge_with_existing else "Started"
 
+        roi_note = " (ROI)" if self._sky_explorer_committed_pixel_roi() is not None else ""
+
         self._append_sky_explorer_workflow_note(
 
-            f"{action_label} Sky Explorer for {source_path.name} with object types: {', '.join(selected_titles)}."
+            f"{action_label} Sky Explorer{roi_note} for {source_path.name} with object types: {', '.join(selected_titles)}."
 
         )
 
@@ -40790,8 +40939,6 @@ class MainWindow(QMainWindow):
         )
 
         self.statusBar().showMessage("Sky Explorer update started." if merge_with_existing else "Sky Explorer started.", 5000)
-
-        self._set_sky_explorer_busy(True)
 
         self._pending_sky_explorer_result_gaia_query_signature = (
             self._current_sky_explorer_gaia_query_signature() if "gaia_stars" in selected_layers else None
@@ -40813,6 +40960,8 @@ class MainWindow(QMainWindow):
                 self._selected_sky_explorer_object_type_keys()
             ),
 
+            pixel_roi=self._sky_explorer_committed_pixel_roi(),
+
             parent=self,
 
         )
@@ -40825,9 +40974,15 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_worker.start()
 
+        self._set_sky_explorer_busy(True)
+
     def _set_sky_explorer_busy(self, is_busy: bool) -> None:
 
-        self._sky_explorer_primary_button.setEnabled(not is_busy)
+        if hasattr(self, "_sky_explorer_image_button"):
+
+            self._sky_explorer_image_button.setEnabled(not is_busy)
+
+            self._sky_explorer_survey_button.setEnabled(not is_busy)
 
         self._sky_explorer_object_type_mode_button.setEnabled(not is_busy)
 
@@ -40843,17 +40998,47 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_primary_button()
 
+        if is_busy and not self._sky_explorer_exploration_is_running():
+
+            self._sky_explorer_primary_button.setEnabled(False)
+
         self._sync_tools_menu_actions()
+
+    def _sky_explorer_exploration_is_running(self) -> bool:
+
+        worker = getattr(self, "_sky_explorer_worker", None)
+
+        return worker is not None and bool(worker.isRunning())
+
+    def _terminate_sky_explorer_exploration(self) -> None:
+
+        if not self._sky_explorer_exploration_is_running():
+
+            return
+
+        self._pending_sky_explorer_result_gaia_query_signature = None
+
+        self._sky_explorer_pending_update_object_type_keys = ()
+
+        self._interrupt_and_drop_worker("_sky_explorer_worker")
+
+        self._set_sky_explorer_busy(False)
+
+        self._sky_explorer_status_label.setText("Sky Explorer query terminated.")
+
+        self._append_sky_explorer_workflow_note("Terminated Sky Explorer query.")
+
+        self.statusBar().showMessage("Sky Explorer query terminated.", 5000)
 
     def _sync_sky_explorer_primary_button(self) -> None:
 
-        if self._sky_explorer_worker is not None and self._sky_explorer_worker.isRunning():
+        if self._sky_explorer_exploration_is_running():
 
-            pending_update = bool(self._sky_explorer_pending_update_object_type_keys) and bool(
-                self._sky_explorer_queried_object_type_keys
-            )
+            self._sky_explorer_primary_button.setText("Terminate")
 
-            self._sky_explorer_primary_button.setText("Updating..." if pending_update else "Exploring...")
+            self._sky_explorer_primary_button.setEnabled(True)
+
+            self._sky_explorer_primary_button.setToolTip("Stop the current Sky Explorer query.")
 
             self._sync_sky_explorer_header_buttons()
 
@@ -40861,23 +41046,21 @@ class MainWindow(QMainWindow):
 
         image_path = getattr(self, "_current_sky_explorer_source_image", None)
 
-        if image_path is None or not image_path.exists():
-
-            self._sky_explorer_primary_button.setText("Open")
-
-            self._sync_sky_explorer_header_buttons()
-
-            return
+        has_image = image_path is not None and image_path.exists()
 
         if self._current_sky_explorer_result is not None and self._sky_explorer_pending_object_type_keys():
 
             self._sky_explorer_primary_button.setText("Update")
 
-            self._sync_sky_explorer_header_buttons()
+            self._sky_explorer_primary_button.setToolTip("Query the newly selected object types and add them to the current results.")
 
-            return
+        else:
 
-        self._sky_explorer_primary_button.setText("Explore")
+            self._sky_explorer_primary_button.setText("Explore")
+
+            self._sky_explorer_primary_button.setToolTip("Plate-solve if needed and identify what is in the field.")
+
+        self._sky_explorer_primary_button.setEnabled(has_image)
 
         self._sync_sky_explorer_header_buttons()
 
@@ -41121,9 +41304,23 @@ class MainWindow(QMainWindow):
 
         self._set_sky_explorer_busy(False)
 
-        self._sky_explorer_status_label.setText(f"Sky Explorer failed: {message}")
+        terminated = "terminated" in str(message).lower()
 
-        self._append_sky_explorer_workflow_note(f"Sky Explorer failed: {message}")
+        self._sky_explorer_status_label.setText(
+            "Sky Explorer query terminated." if terminated else f"Sky Explorer failed: {message}"
+        )
+
+        self._append_sky_explorer_workflow_note(
+            "Terminated Sky Explorer query." if terminated else f"Sky Explorer failed: {message}"
+        )
+
+        if terminated:
+
+            self.statusBar().showMessage("Sky Explorer query terminated.", 5000)
+
+            return
+
+        self.statusBar().showMessage(f"Sky Explorer failed: {message}", 7000)
 
         QMessageBox.warning(self, "Sky Explorer failed", message)
 
@@ -41266,7 +41463,7 @@ class MainWindow(QMainWindow):
 
         disabled_border = QColor(colors.get("gridline", colors.get("menu_bg", "#555555"))).darker(118).name().lower()
 
-        self._sky_explorer_primary_button.setStyleSheet(
+        accent_button_style = (
 
             "QPushButton {"
 
@@ -41299,6 +41496,28 @@ class MainWindow(QMainWindow):
             "}"
 
         )
+
+        self._sky_explorer_primary_button.setStyleSheet(accent_button_style)
+
+        self._sky_explorer_image_button.setStyleSheet(accent_button_style)
+
+        self._sky_explorer_survey_button.setStyleSheet(accent_button_style)
+
+        if hasattr(self, "_sky_explorer_source_group"):
+
+            self._sky_explorer_source_group.setStyleSheet(
+
+                "QFrame#skyExplorerSourceGroup {"
+
+                f"background-color: {accent_color.darker(135).name().lower()};"
+
+                f"border: 1px solid {border_color};"
+
+                "border-radius: 6px;"
+
+                "}"
+
+            )
 
         secondary_base = QColor(colors.get("panel_bg", "#2b2b2b")).lighter(108).name().lower()
 
@@ -41395,8 +41614,6 @@ class MainWindow(QMainWindow):
         self._sky_explorer_select_all_button.setStyleSheet(secondary_style)
 
         self._sky_explorer_filter_button.setStyleSheet(secondary_style)
-
-        self._sky_explorer_comparison_button.setStyleSheet(secondary_style)
 
         self._sky_explorer_center_object_button.setStyleSheet(secondary_style)
 
@@ -41549,7 +41766,7 @@ class MainWindow(QMainWindow):
 
             self.fontMetrics().horizontalAdvance(label)
 
-            for label in ("Open", "Explore", "Exploring...", "Update", "Updating...")
+            for label in ("Explore", "Update", "Terminate")
 
         ) + button_padding_px
 
@@ -41571,7 +41788,9 @@ class MainWindow(QMainWindow):
 
         filter_width = self.fontMetrics().horizontalAdvance("Filter") + button_padding_px + 12
 
-        comparison_width = self.fontMetrics().horizontalAdvance("Comparison") + button_padding_px
+        image_width = self.fontMetrics().horizontalAdvance("Image") + button_padding_px
+
+        survey_width = self.fontMetrics().horizontalAdvance("Survey") + button_padding_px
 
         auto_width = max(
 
@@ -41607,7 +41826,9 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_filter_button.setFixedWidth(filter_width)
 
-        self._sky_explorer_comparison_button.setFixedWidth(comparison_width)
+        self._sky_explorer_image_button.setFixedWidth(image_width)
+
+        self._sky_explorer_survey_button.setFixedWidth(survey_width)
 
         self._sky_explorer_show_auto_annotations_button.setFixedWidth(auto_width)
 
@@ -41621,7 +41842,9 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_filter_button.setFixedHeight(header_control_height)
 
-        self._sky_explorer_comparison_button.setFixedHeight(header_control_height)
+        self._sky_explorer_image_button.setFixedHeight(header_control_height)
+
+        self._sky_explorer_survey_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_center_object_button.setFixedHeight(header_control_height)
 
@@ -43980,8 +44203,6 @@ class MainWindow(QMainWindow):
             self._sky_explorer_tile_feather_row.setEnabled(has_image)
 
         self._sky_explorer_image_reset_display_button.setEnabled(has_image)
-
-        self._sky_explorer_comparison_button.setEnabled(has_image)
 
         self._sky_explorer_survey_display_controls.setEnabled(has_image and has_comparison)
 
@@ -47709,6 +47930,10 @@ class MainWindow(QMainWindow):
 
             direct_edit_draw_enabled=self._sky_explorer_annotation_tool in {"circle", "ellipse", "ruler", "text"},
 
+            gesture_roi_enabled=True,
+
+            selection_overlays=self._current_sky_explorer_selection_overlays(),
+
             static_overlay_count=len(automatic_overlays),
 
         )
@@ -47720,6 +47945,100 @@ class MainWindow(QMainWindow):
             if sky_object is not None:
 
                 self._sky_explorer_image_view.focus_on(float(sky_object.pixel_x), float(sky_object.pixel_y), minimum_zoom_scale=3.0)
+
+    def _sky_explorer_roi_color(self) -> str:
+        return str(self._resolved_theme_editor_colors().get("accent", "#3d8bfd"))
+
+    def _sky_explorer_roi_drag_color(self) -> str:
+        accent = QColor(self._sky_explorer_roi_color())
+        return accent.lighter(130).name().lower()
+
+    def _sky_explorer_roi_selection_has_area(self, selection: _HrRoiSelection | None) -> bool:
+        if selection is None:
+            return False
+        return abs(selection.x1 - selection.x0) > 2.0 and abs(selection.y1 - selection.y0) > 2.0
+
+    def _sky_explorer_committed_pixel_roi(self) -> tuple[float, float, float, float] | None:
+        selection = self._sky_explorer_roi_selection
+        if not self._sky_explorer_roi_selection_has_area(selection) or selection is None:
+            return None
+        return (
+            float(selection.x0),
+            float(selection.y0),
+            float(selection.x1),
+            float(selection.y1),
+        )
+
+    def _sky_explorer_roi_contains_point(self, image_x: float, image_y: float) -> bool:
+        selection = self._sky_explorer_roi_selection
+        if not self._sky_explorer_roi_selection_has_area(selection) or selection is None:
+            return False
+        min_x, max_x = sorted((float(selection.x0), float(selection.x1)))
+        min_y, max_y = sorted((float(selection.y0), float(selection.y1)))
+        return min_x <= float(image_x) <= max_x and min_y <= float(image_y) <= max_y
+
+    def _current_sky_explorer_selection_overlays(self) -> list[SelectionOverlay]:
+        overlays: list[SelectionOverlay] = []
+        if self._sky_explorer_roi_selection is not None:
+            overlays.append(
+                self._sky_explorer_selection_overlay_for(self._sky_explorer_roi_selection, active=False)
+            )
+        if self._sky_explorer_active_roi_selection is not None:
+            overlays.append(
+                self._sky_explorer_selection_overlay_for(self._sky_explorer_active_roi_selection, active=True)
+            )
+        return overlays
+
+    def _sky_explorer_selection_overlay_for(
+        self, selection: _HrRoiSelection, *, active: bool = False
+    ) -> SelectionOverlay:
+        return SelectionOverlay(
+            shape="rectangle",
+            x0=selection.x0,
+            y0=selection.y0,
+            x1=selection.x1,
+            y1=selection.y1,
+            color=self._sky_explorer_roi_drag_color() if active else self._sky_explorer_roi_color(),
+        )
+
+    def _sync_sky_explorer_roi_overlays(self) -> None:
+        if hasattr(self, "_sky_explorer_image_view"):
+            self._sky_explorer_image_view.set_selection_overlays(self._current_sky_explorer_selection_overlays())
+
+    def _start_sky_explorer_roi(self, image_x: float, image_y: float) -> None:
+        self._sky_explorer_manual_annotation_drag = None
+        self._sky_explorer_roi_selection = None
+        self._sky_explorer_roi_drag_origin = (float(image_x), float(image_y))
+        self._sky_explorer_active_roi_selection = _HrRoiSelection(
+            "rectangle",
+            float(image_x),
+            float(image_y),
+            float(image_x),
+            float(image_y),
+            mode="include",
+        )
+        self._sync_sky_explorer_roi_overlays()
+
+    def _finish_sky_explorer_roi(self) -> None:
+        draft = self._sky_explorer_active_roi_selection
+        self._sky_explorer_roi_drag_origin = None
+        self._sky_explorer_active_roi_selection = None
+        if self._sky_explorer_roi_selection_has_area(draft) and draft is not None:
+            self._sky_explorer_roi_selection = draft
+            self.statusBar().showMessage("Explore will use the drawn ROI. Right-click the ROI to remove it.", 5000)
+            self._append_sky_explorer_workflow_note("Drew an Explore ROI.")
+        self._sync_sky_explorer_roi_overlays()
+
+    def _clear_sky_explorer_roi(self, *, refresh: bool) -> None:
+        had_roi = self._sky_explorer_roi_selection is not None or self._sky_explorer_active_roi_selection is not None
+        self._sky_explorer_roi_selection = None
+        self._sky_explorer_active_roi_selection = None
+        self._sky_explorer_roi_drag_origin = None
+        if refresh:
+            self._sync_sky_explorer_roi_overlays()
+            if had_roi:
+                self.statusBar().showMessage("Removed the Explore ROI.", 4000)
+                self._append_sky_explorer_workflow_note("Removed the Explore ROI.")
 
     def _sky_explorer_current_manual_annotation_key(self) -> str | None:
 
@@ -48386,6 +48705,12 @@ class MainWindow(QMainWindow):
 
             return
 
+        if bool(self._coerce_keyboard_modifiers(modifiers) & Qt.KeyboardModifier.ShiftModifier):
+
+            self._start_sky_explorer_roi(image_x, image_y)
+
+            return
+
         selected_annotation = self._sky_explorer_manual_annotation_by_id(self._selected_sky_explorer_manual_annotation_id)
 
         target_annotation = selected_annotation
@@ -48457,6 +48782,30 @@ class MainWindow(QMainWindow):
     def _handle_sky_explorer_image_moved(self, image_x: float, image_y: float, buttons: object, _modifiers: object) -> None:
 
         if not bool(self._coerce_mouse_buttons(buttons) & Qt.MouseButton.LeftButton):
+
+            return
+
+        if self._sky_explorer_roi_drag_origin is not None:
+
+            origin_x, origin_y = self._sky_explorer_roi_drag_origin
+
+            self._sky_explorer_active_roi_selection = _HrRoiSelection(
+
+                "rectangle",
+
+                origin_x,
+
+                origin_y,
+
+                float(image_x),
+
+                float(image_y),
+
+                mode="include",
+
+            )
+
+            self._sync_sky_explorer_roi_overlays()
 
             return
 
@@ -48621,6 +48970,12 @@ class MainWindow(QMainWindow):
     def _handle_sky_explorer_image_released(self, button: object, _modifiers: object) -> None:
 
         if self._coerce_mouse_button(button) != Qt.MouseButton.LeftButton:
+
+            return
+
+        if self._sky_explorer_roi_drag_origin is not None:
+
+            self._finish_sky_explorer_roi()
 
             return
 
@@ -49439,6 +49794,14 @@ class MainWindow(QMainWindow):
 
         detect_action.setEnabled(world_coordinates is not None)
 
+        remove_roi_action = None
+
+        if self._sky_explorer_roi_contains_point(image_x, image_y):
+
+            menu.addSeparator()
+
+            remove_roi_action = menu.addAction("Remove ROI")
+
         edit_annotation_action = None
 
         delete_annotation_action = None
@@ -49506,6 +49869,10 @@ class MainWindow(QMainWindow):
         elif selected_action is detect_action:
 
             self._detect_sky_explorer_targets_at_image_point(image_x, image_y)
+
+        elif remove_roi_action is not None and selected_action is remove_roi_action:
+
+            self._clear_sky_explorer_roi(refresh=True)
 
         elif selected_action is edit_annotation_action and target_annotation is not None:
 
@@ -58073,7 +58440,7 @@ class MainWindow(QMainWindow):
 
         if self._current_app_mode() == AppMode.SKY_EXPLORER:
 
-            self._open_sky_explorer_source_picker(as_comparison=False)
+            self._handle_sky_explorer_image_action()
 
             return
 
@@ -60629,9 +60996,11 @@ class MainWindow(QMainWindow):
 
     def _handle_asteroid_detection_progress(self, message: str) -> None:
 
-        self._asteroid_status_label.setText(message)
+        status_text = str(message).splitlines()[0] if str(message).strip() else ""
 
-        self.statusBar().showMessage(message)
+        self._asteroid_status_label.setText(status_text)
+
+        self.statusBar().showMessage(status_text)
 
         self._append_asteroid_workflow_note(message)
 
@@ -60721,9 +61090,11 @@ class MainWindow(QMainWindow):
 
         self._asteroid_detection_worker = None
 
-        self._asteroid_status_label.setText(message)
+        status_text = str(message).splitlines()[0] if str(message).strip() else ""
 
-        self.statusBar().showMessage(message, 5000)
+        self._asteroid_status_label.setText(status_text)
+
+        self.statusBar().showMessage(status_text, 5000)
 
         self._set_asteroid_generate_button_attention(False)
 
@@ -80825,7 +81196,7 @@ class MainWindow(QMainWindow):
 
     def _export_series_current_view_style(self, series: LightCurveSeries, output_path: Path) -> None:
 
-        export_widget = LightCurvePlotWidget(self)
+        export_widget = LightCurvePlotWidget.for_offscreen_export()
 
         try:
 
@@ -83874,12 +84245,110 @@ class MainWindow(QMainWindow):
         _catalog, separator, source_id = keys[0].partition(":")
         return source_id if separator and source_id else keys[0]
 
+    def _capture_target_field_light_curve_image(self) -> QImage | None:
+        try:
+            QApplication.processEvents()
+            captured = self._light_curve_widget.current_view_image(scale_factor=1.0)
+        except Exception:
+            return None
+        if captured is None or captured.isNull():
+            return None
+        return captured.copy()
+
+    def _render_target_field_plot_image(self, options: object) -> QImage | None:
+        from photometry_app.core.target_field_animation import (
+            TargetFieldAnimationExportOptions,
+            target_field_panel_heights,
+        )
+
+        resolved = options.normalized() if isinstance(options, TargetFieldAnimationExportOptions) else TargetFieldAnimationExportOptions().normalized()
+        _star_height, plot_height = target_field_panel_heights(
+            resolved.video_width,
+            resolved.video_height,
+            star_aspect=resolved.star_aspect,
+            plot_aspect=resolved.plot_aspect,
+        )
+        image, _layout = self._render_target_field_plot_bundle(resolved.video_width, plot_height)
+        return image
+
+    def _render_target_field_plot_at_size(self, width: int, height: int) -> QImage | None:
+        image, layout = self._render_target_field_plot_bundle(width, height)
+        if image is None:
+            return None
+        payload = self._light_curve_widget.current_payload()
+        scanner_x = None if payload is None or not payload.points else float(payload.points[0].x)
+        if layout is not None and scanner_x is not None:
+            from photometry_app.core.target_field_animation import apply_target_field_plot_scanner
+
+            return apply_target_field_plot_scanner(image, scanner_x, layout)
+        return image
+
+    def _render_target_field_plot_bundle(
+        self,
+        width: int,
+        height: int,
+    ) -> tuple[QImage | None, object | None]:
+        from photometry_app.core.plotting import resolve_light_curve_theme_colors
+        from photometry_app.core.target_field_animation import TargetFieldPlotScanLayout
+        from photometry_app.ui.light_curve_widget import LightCurvePlotWidget
+
+        payload = self._light_curve_widget.current_payload()
+        if payload is None:
+            captured = self._capture_target_field_light_curve_image()
+            return captured, None
+        export_widget = LightCurvePlotWidget.for_offscreen_export()
+        try:
+            export_widget.set_theme(self._current_theme_name(), self._current_custom_theme_colors())
+            export_widget.set_series_style_overrides(self._light_curve_widget.series_style_overrides())
+            export_widget.set_fit_period_badge_text(self._light_curve_widget.fit_period_badge_text())
+            export_widget.show_payload(
+                payload,
+                phase_opacity_floor=float(self._phase_opacity_floor_spin.value()),
+                recent_period_error_bars_only=self._phase_recent_error_bars_only_checkbox.isChecked(),
+                series=self._light_curve_widget.current_series(),
+            )
+            view_ranges = self._light_curve_widget.current_view_ranges()
+            rendered = export_widget.render_at_size(
+                max(2, int(width)),
+                max(2, int(height)),
+                x_limits=None if view_ranges is None else view_ranges[0],
+                y_limits=None if view_ranges is None else view_ranges[1],
+            )
+            if rendered is None or rendered.isNull():
+                return self._capture_target_field_light_curve_image(), None
+            geometry = export_widget.last_render_data_view_geometry() or export_widget.data_view_geometry()
+            layout = None
+            if geometry is not None:
+                x_limits, y_limits, pixel_rect, invert_y = geometry
+                theme_colors = resolve_light_curve_theme_colors(
+                    self._current_theme_name(),
+                    self._current_custom_theme_colors(),
+                )
+                layout = TargetFieldPlotScanLayout(
+                    x_min=float(x_limits[0]),
+                    x_max=float(x_limits[1]),
+                    y_min=float(y_limits[0]),
+                    y_max=float(y_limits[1]),
+                    left=float(pixel_rect.left()),
+                    top=float(pixel_rect.top()),
+                    right=float(pixel_rect.right()),
+                    bottom=float(pixel_rect.bottom()),
+                    invert_y=bool(invert_y),
+                    color=str(theme_colors.get("selection_color", "#f4d35e")),
+                )
+            return rendered.copy(), layout
+        except Exception:
+            return self._capture_target_field_light_curve_image(), None
+        finally:
+            export_widget.close()
+
     def _export_target_field_animation(self) -> None:
         from photometry_app.core.target_field_animation import (
             TargetFieldAnimationError,
             TargetFieldAnimationExportOptions,
             collect_target_field_frames,
             load_target_field_preview_source,
+            target_field_panel_heights,
         )
 
         if self._current_processing_report is None:
@@ -83925,6 +84394,8 @@ class MainWindow(QMainWindow):
             preview_image=preview_image,
             preview_x=preview_x,
             preview_y=preview_y,
+            preview_plot_image=self._capture_target_field_light_curve_image(),
+            plot_renderer=self._render_target_field_plot_at_size,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -83971,6 +84442,13 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage("Exporting target-field animation...")
         settings = self._ensure_settings()
+        _star_height, plot_height = target_field_panel_heights(
+            options.video_width,
+            options.video_height,
+            star_aspect=options.star_aspect,
+            plot_aspect=options.plot_aspect,
+        )
+        plot_image, plot_scan_layout = self._render_target_field_plot_bundle(options.video_width, plot_height)
         worker = TargetFieldAnimationExportWorker(
             self._current_processing_report,
             source_id,
@@ -83994,6 +84472,16 @@ class MainWindow(QMainWindow):
             phase_anchor_mode=self._current_phase_anchor_mode(),
             plot_theme=self._current_theme_name(),
             custom_theme_colors=self._current_custom_theme_colors(),
+            plot_image=plot_image,
+            plot_scan_layout=plot_scan_layout,
+            video_width=options.video_width,
+            video_height=options.video_height,
+            star_aspect=options.star_aspect,
+            plot_aspect=options.plot_aspect,
+            star_fit=options.star_fit,
+            plot_fit=options.plot_fit,
+            save_star_separately=options.save_star_separately,
+            save_plot_separately=options.save_plot_separately,
             max_workers=resolve_shared_parallel_workers(settings),
             parent=self,
         )
@@ -84162,7 +84650,7 @@ class MainWindow(QMainWindow):
 
     ) -> list[QImage] | None:
 
-        export_widget = LightCurvePlotWidget(self)
+        export_widget = LightCurvePlotWidget.for_offscreen_export()
         frames: list[QImage] = []
 
         try:

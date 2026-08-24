@@ -42,6 +42,7 @@ class TargetMarkerAppearance:
     outline_color: str = "#ffffff"
     line_width: float = 2.0
     length_percent: float = 36.0
+    gap_percent: float = 20.0
 
 
 def coerce_asteroid_visual_marker_style(value: object) -> str:

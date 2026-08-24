@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel
 
 from photometry_app.core.models import LightCurvePoint, LightCurveSeries
@@ -571,6 +572,140 @@ class LightCurvePlotWidgetTest(unittest.TestCase):
         assert expected_y_range is not None
         self.assertAlmostEqual(actual_y_range[0], expected_y_range[0], places=3)
         self.assertAlmostEqual(actual_y_range[1], expected_y_range[1], places=3)
+
+    def test_render_at_size_uses_requested_width_and_height(self) -> None:
+        start = datetime(2025, 1, 1, 0, 0, 0)
+        series = LightCurveSeries(
+            object_name="Demo",
+            source_id="target-1",
+            source_name="Target",
+            filter_name="V",
+            points=[
+                LightCurvePoint(
+                    observation_time=start,
+                    file_path=Path("frame_01.fits"),
+                    differential_magnitude=12.10,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.05,
+                ),
+                LightCurvePoint(
+                    observation_time=start + timedelta(minutes=15),
+                    file_path=Path("frame_02.fits"),
+                    differential_magnitude=12.35,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.04,
+                ),
+            ],
+        )
+        self.widget.plot_series(series, empty_message="No data available.")
+        image = self.widget.render_at_size(640, 120)
+        self.assertEqual((image.width(), image.height()), (640, 120))
+        geometry = self.widget.last_render_data_view_geometry()
+        self.assertIsNotNone(geometry)
+        x_limits, y_limits, pixel_rect, invert_y = geometry
+        self.assertLess(x_limits[0], x_limits[1])
+        self.assertLess(y_limits[0], y_limits[1])
+        self.assertGreater(pixel_rect.width(), 200)
+        self.assertGreater(pixel_rect.height(), 20)
+        self.assertGreaterEqual(pixel_rect.left(), 0)
+        self.assertLessEqual(pixel_rect.right(), 640)
+        self.assertGreaterEqual(pixel_rect.top(), 0)
+        self.assertLessEqual(pixel_rect.bottom(), 120)
+        self.assertTrue(invert_y)
+
+    def test_offscreen_render_at_size_does_not_leave_widget_visible(self) -> None:
+        start = datetime(2025, 1, 1, 0, 0, 0)
+        series = LightCurveSeries(
+            object_name="Demo",
+            source_id="target-1",
+            source_name="Target",
+            filter_name="V",
+            points=[
+                LightCurvePoint(
+                    observation_time=start,
+                    file_path=Path("frame_01.fits"),
+                    differential_magnitude=12.10,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.05,
+                ),
+                LightCurvePoint(
+                    observation_time=start + timedelta(minutes=15),
+                    file_path=Path("frame_02.fits"),
+                    differential_magnitude=12.35,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.04,
+                ),
+            ],
+        )
+        widget = LightCurvePlotWidget.for_offscreen_export()
+        try:
+            self.assertIsNone(widget.parent())
+            self.assertTrue(widget.testAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen))
+            widget.plot_series(series, empty_message="No data available.")
+            image = widget.render_at_size(320, 80)
+            self.assertEqual((image.width(), image.height()), (320, 80))
+            self.assertFalse(widget.isVisible())
+            self.assertTrue(widget.testAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen))
+        finally:
+            widget.close()
+
+    def test_show_payload_keeps_custom_icon_and_color(self) -> None:
+        from PySide6.QtGui import QColor
+
+        start = datetime(2025, 1, 1, 0, 0, 0)
+        series = LightCurveSeries(
+            object_name="Demo",
+            source_id="target-1",
+            source_name="Target",
+            filter_name="V",
+            points=[
+                LightCurvePoint(
+                    observation_time=start,
+                    file_path=Path("frame_01.fits"),
+                    differential_magnitude=12.10,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.05,
+                ),
+                LightCurvePoint(
+                    observation_time=start + timedelta(minutes=15),
+                    file_path=Path("frame_02.fits"),
+                    differential_magnitude=12.35,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.04,
+                ),
+            ],
+        )
+        self.widget.plot_series(series, empty_message="No data available.")
+        style_key = self.widget._current_series_style_key()
+        self.assertIsNotNone(style_key)
+        self.widget._set_series_symbol(style_key, "+")
+        self.widget._series_style_overrides[style_key]["color"] = "#00e5ff"
+        self.widget._render_payload(self.widget.current_payload())
+        export_widget = LightCurvePlotWidget()
+        try:
+            export_widget.set_series_style_overrides(self.widget.series_style_overrides())
+            export_widget.show_payload(
+                self.widget.current_payload(),
+                series=self.widget.current_series(),
+            )
+            self.assertEqual(export_widget._scatter_item.opts["symbol"], "+")
+            brush = export_widget._scatter_item.opts["brush"]
+            color = brush.color() if hasattr(brush, "color") else QColor(brush)
+            self.assertEqual(color.name(QColor.NameFormat.HexRgb).lower(), "#00e5ff")
+        finally:
+            export_widget.close()
 
 
 if __name__ == "__main__":

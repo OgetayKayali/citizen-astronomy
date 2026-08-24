@@ -1326,6 +1326,61 @@ class ImageViewInfoPanelTest(unittest.TestCase):
 
             self.assertEqual(released, [Qt.MouseButton.LeftButton])
 
+    def test_shift_drag_starts_roi_even_when_direct_edit_is_enabled(self) -> None:
+
+        view = AnnotatedImageView()
+        view.resize(900, 600)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "demo.fit"
+            image_path.write_text("placeholder", encoding="utf-8")
+            data = np.arange(400, dtype=float).reshape(20, 20)
+            with patch("photometry_app.core.plotting.read_image_data", return_value=data):
+                display = build_annotated_image_display(image_path)
+
+            pressed: list[tuple[float, float]] = []
+            view.imagePressed.connect(lambda x, y, _button, _mods: pressed.append((x, y)))
+            view.set_content(
+                display,
+                [],
+                [],
+                False,
+                gesture_roi_enabled=True,
+                direct_edit_enabled=True,
+                direct_edit_draw_enabled=True,
+            )
+
+            class _FakeMouseEvent:
+                def __init__(self, x: float, y: float, button: object, buttons: object, modifiers: object) -> None:
+                    self._point = QPointF(x, y)
+                    self._button = button
+                    self._buttons = buttons
+                    self._modifiers = modifiers
+
+                def position(self) -> QPointF:
+                    return self._point
+
+                def button(self) -> object:
+                    return self._button
+
+                def buttons(self) -> object:
+                    return self._buttons
+
+                def modifiers(self) -> object:
+                    return self._modifiers
+
+            view.mousePressEvent(
+                _FakeMouseEvent(
+                    200.0,
+                    180.0,
+                    Qt.MouseButton.LeftButton,
+                    Qt.MouseButton.LeftButton,
+                    Qt.KeyboardModifier.ShiftModifier,
+                )
+            )
+            self.assertEqual(len(pressed), 1)
+            self.assertTrue(view._gesture_roi_active)
+
     def test_selection_overlay_refresh_invalidates_only_changed_region(self) -> None:
 
         class TrackingImageView(AnnotatedImageView):

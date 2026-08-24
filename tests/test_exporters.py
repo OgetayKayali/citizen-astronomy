@@ -1729,7 +1729,7 @@ class ExportersTest(unittest.TestCase):
         short_gap = x_values[1] - x_values[0]
         long_gap = x_values[2] - x_values[1]
         self.assertGreater(long_gap, short_gap * 10)
-        self.assertEqual(axis.get_xlabel(), "Observation Time")
+        self.assertEqual(axis.get_xlabel(), "Observation Time (UTC)")
         self.assertIn(axis.lines[0].get_linestyle(), {"None", "none", ""})
         self.assertEqual(axis.lines[0].get_markersize(), 3)
         self.assertGreater(len(axis.collections), 0)
@@ -1765,7 +1765,7 @@ class ExportersTest(unittest.TestCase):
         payload = build_light_curve_plot_payload(series, "No valid values.")
 
         self.assertEqual(payload.x_axis_mode, "datetime")
-        self.assertEqual(payload.x_axis_label, "Observation Time")
+        self.assertEqual(payload.x_axis_label, "Observation Time (UTC)")
         self.assertAlmostEqual(payload.points[1].x - payload.points[0].x, 2.0 / 24.0)
 
     def test_build_light_curve_plot_payload_can_use_julian_date_axis(self) -> None:

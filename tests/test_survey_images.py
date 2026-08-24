@@ -51,12 +51,37 @@ class SurveyImagesTest(unittest.TestCase):
             [(definition.key, definition.title, definition.hips_id) for definition in SURVEY_DEFINITIONS],
             [
                 ("dss2_blue", "DSS2 Blue", "CDS/P/DSS2/blue"),
-                ("shs_ha", "SHS Ha", "CDS/P/SHS"),
+                ("dss2_red", "DSS2 Red", "CDS/P/DSS2/red"),
+                ("dss2_ir", "DSS2 IR", "CDS/P/DSS2/NIR"),
                 ("panstarrs", "PanSTARRS", "CDS/P/PanSTARRS/DR1/color-i-r-g"),
+                ("panstarrs_g", "PanSTARRS g", "CDS/P/PanSTARRS/DR1/g"),
+                ("panstarrs_r", "PanSTARRS r", "CDS/P/PanSTARRS/DR1/r"),
+                ("panstarrs_i", "PanSTARRS i", "CDS/P/PanSTARRS/DR1/i"),
+                ("panstarrs_z", "PanSTARRS z", "CDS/P/PanSTARRS/DR1/z"),
+                ("panstarrs_y", "PanSTARRS y", "CDS/P/PanSTARRS/DR1/y"),
+                ("sdss_u", "SDSS u", "CDS/P/SDSS9/u"),
+                ("sdss_g", "SDSS g", "CDS/P/SDSS9/g"),
+                ("sdss_r", "SDSS r", "CDS/P/SDSS9/r"),
+                ("sdss_i", "SDSS i", "CDS/P/SDSS9/i"),
+                ("sdss_z", "SDSS z", "CDS/P/SDSS9/z"),
+                ("twomass_j", "2MASS J", "CDS/P/2MASS/J"),
+                ("twomass_h", "2MASS H", "CDS/P/2MASS/H"),
+                ("twomass_k", "2MASS K", "CDS/P/2MASS/K"),
+                ("wise_w1", "WISE W1", "CDS/P/allWISE/W1"),
+                ("wise_w2", "WISE W2", "CDS/P/allWISE/W2"),
+                ("wise_w3", "WISE W3", "CDS/P/allWISE/W3"),
+                ("wise_w4", "WISE W4", "CDS/P/allWISE/W4"),
+                ("galex_fuv", "GALEX FUV", "CDS/P/GALEXGR6/AIS/FUV"),
+                ("galex_nuv", "GALEX NUV", "CDS/P/GALEXGR6/AIS/NUV"),
+                ("shs_ha", "SHS Ha", "CDS/P/SHS"),
                 ("iphas_dr2_ha", "IPHAS DR2 Ha", "CDS/P/IPHAS/DR2/Ha"),
+                ("nsns_dr0_2_halpha", "NSNS DR0.2 Hα", "simg.de/P/NSNS/DR0_2/halpha"),
+                ("nsns_dr0_2_oiii", "NSNS DR0.2 [OIII]", "simg.de/P/NSNS/DR0_2/oiii"),
+                ("nsns_dr0_2_sii", "NSNS DR0.2 [SII]", "simg.de/P/NSNS/DR0_2/sii"),
             ],
         )
-        self.assertIs(survey_definition_for_key("SHS-HA"), SURVEY_DEFINITIONS[1])
+        self.assertEqual(survey_definition_for_key("SHS-HA").key, "shs_ha")
+        self.assertEqual(survey_definition_for_key("nsns_dr0_2_halpha").hips_id, "simg.de/P/NSNS/DR0_2/halpha")
         with self.assertRaises(FrozenInstanceError):
             SURVEY_DEFINITIONS[0].title = "Changed"  # type: ignore[misc]
         with self.assertRaisesRegex(ValueError, "Unknown survey key"):

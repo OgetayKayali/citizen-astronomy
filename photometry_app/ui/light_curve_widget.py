@@ -14,11 +14,11 @@ import numpy as np
 
 import pyqtgraph as pg
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, Signal
+from PySide6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRectF, Qt, Signal
 
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QImage, QMouseEvent, QPainter, QPen, QPixmap
 
-from PySide6.QtWidgets import QColorDialog, QLabel, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QColorDialog, QLabel, QMenu, QVBoxLayout, QWidget
 
 
 
@@ -142,6 +142,19 @@ class LightCurvePlotWidget(QWidget):
 
 
 
+    @classmethod
+    def for_offscreen_export(cls) -> LightCurvePlotWidget:
+        widget = cls()
+        widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        widget.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        widget.setWindowFlags(
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        widget.move(-20000, -20000)
+        return widget
+
     def __init__(self, parent: QWidget | None = None) -> None:
 
         super().__init__(parent)
@@ -185,6 +198,8 @@ class LightCurvePlotWidget(QWidget):
 
 
         self._payload: LightCurvePlotPayload | None = None
+
+        self._last_render_data_view_geometry: tuple[tuple[float, float], tuple[float, float], QRectF, bool] | None = None
 
         self._series: LightCurveSeries | None = None
 
@@ -311,6 +326,18 @@ class LightCurvePlotWidget(QWidget):
         self._fit_period_badge_text = normalized or None
 
         self._update_fit_period_badge()
+
+    def fit_period_badge_text(self) -> str | None:
+
+        return self._fit_period_badge_text
+
+    def current_payload(self):
+
+        return self._payload
+
+    def current_series(self) -> LightCurveSeries | None:
+
+        return self._series
 
     def resizeEvent(self, event: object) -> None:
 
@@ -560,6 +587,14 @@ class LightCurvePlotWidget(QWidget):
 
         return {key: dict(value) for key, value in self._series_style_overrides.items()}
 
+    def set_series_style_overrides(self, overrides: dict[str, dict[str, str]] | None) -> None:
+
+        self._series_style_overrides = {
+            str(key): dict(value)
+            for key, value in dict(overrides or {}).items()
+            if isinstance(value, dict)
+        }
+
 
 
     def plot_series(
@@ -750,6 +785,40 @@ class LightCurvePlotWidget(QWidget):
 
         )
 
+    def data_view_geometry(self) -> tuple[tuple[float, float], tuple[float, float], QRectF, bool] | None:
+
+        ranges = self.current_view_ranges()
+
+        if ranges is None:
+
+            return None
+
+        view_box = self._plot_item.getViewBox()
+
+        scene_rect = view_box.sceneBoundingRect()
+
+        if scene_rect.isNull() or scene_rect.width() <= 1 or scene_rect.height() <= 1:
+
+            return None
+
+        top_left = self._plot_widget.mapFromScene(scene_rect.topLeft())
+
+        bottom_right = self._plot_widget.mapFromScene(scene_rect.bottomRight())
+
+        pixel_rect = QRectF(top_left, bottom_right).normalized()
+
+        if pixel_rect.width() <= 1 or pixel_rect.height() <= 1:
+
+            return None
+
+        invert_y = True if self._payload is None else bool(self._payload.invert_y)
+
+        return ranges[0], ranges[1], pixel_rect, invert_y
+
+    def last_render_data_view_geometry(self) -> tuple[tuple[float, float], tuple[float, float], QRectF, bool] | None:
+
+        return self._last_render_data_view_geometry
+
 
 
     def current_plot_aspect_ratio(self) -> float:
@@ -775,9 +844,11 @@ class LightCurvePlotWidget(QWidget):
 
         recent_period_error_bars_only: bool | None = None,
 
+        series: LightCurveSeries | None = None,
+
     ) -> None:
 
-        self._series = None
+        self._series = series
 
         if phase_opacity_floor is not None:
 
@@ -826,6 +897,60 @@ class LightCurvePlotWidget(QWidget):
         export_height = max(1, int(round(source_height * resolved_scale)))
 
         return self._render_current_view_image(source_width, source_height, export_width, export_height)
+
+    def render_at_size(
+        self,
+        width: int,
+        height: int,
+        *,
+        x_limits: tuple[float, float] | None = None,
+        y_limits: tuple[float, float] | None = None,
+    ) -> QImage:
+
+        target_width = max(2, int(width))
+
+        target_height = max(2, int(height))
+
+        previous_min_height = self._plot_widget.minimumHeight()
+        was_visible = self.isVisible()
+        try:
+            if not was_visible:
+                self.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+                self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+                self.setWindowFlags(
+                    Qt.WindowType.Tool
+                    | Qt.WindowType.FramelessWindowHint
+                    | Qt.WindowType.WindowDoesNotAcceptFocus
+                )
+                self.move(-20000, -20000)
+            self._plot_widget.setMinimumSize(1, 1)
+            self.setMinimumSize(1, 1)
+            self.setFixedSize(target_width, target_height)
+            self._plot_widget.setFixedSize(target_width, target_height)
+            self.show()
+            QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+            if x_limits is not None or y_limits is not None:
+                self.set_view_ranges(x_limits=x_limits, y_limits=y_limits)
+                QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+            image = QImage(target_width, target_height, QImage.Format.Format_RGB888)
+            background = QColor(self._theme_colors.get("background_color", "#111111"))
+            image.fill(background if background.isValid() else QColor("#111111"))
+            painter = QPainter(image)
+            try:
+                self._plot_widget.render(painter)
+            finally:
+                painter.end()
+            self._last_render_data_view_geometry = self.data_view_geometry()
+            if image.isNull():
+                raise OSError("Unable to render the light curve at the requested size")
+            return image
+        finally:
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(16777215, 16777215)
+            self._plot_widget.setMinimumSize(0, previous_min_height)
+            self._plot_widget.setMaximumSize(16777215, 16777215)
+            if not was_visible:
+                self.hide()
 
 
 

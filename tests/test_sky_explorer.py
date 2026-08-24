@@ -26,6 +26,9 @@ from photometry_app.core.sky_explorer import (
     _expand_solved_field_for_survey_mosaic,
     _is_sky_explorer_survey_tile_wcs_canvas,
     _pixel_position_for_coordinates,
+    constrain_solved_field_to_pixel_roi,
+    sky_explorer_object_in_pixel_roi,
+    SkyExplorerCancelled,
     _query_hyperleda_galaxy_objects,
     _query_simbad_objects,
     _filter_sky_explorer_objects_by_magnitude,
@@ -2980,4 +2983,58 @@ class SkyExplorerObjectTypeColorTest(unittest.TestCase):
             self.assertLessEqual(fill_hue, 0.16, key)
             self.assertLessEqual(fill_saturation, 0.70, key)
             self.assertGreaterEqual(fill_value, 0.90, key)
+
+
+class SkyExplorerRoiExploreTest(unittest.TestCase):
+    def test_pixel_roi_contains_points_inside_normalized_rectangle(self) -> None:
+        sky_object = SkyExplorerObject(
+            layer_key="deep_sky",
+            catalog="simbad",
+            source_id="n1",
+            name="Inside",
+            object_type="Galaxy",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            pixel_x=25.0,
+            pixel_y=40.0,
+            magnitude=12.0,
+            angular_distance_arcmin=1.0,
+            short_label="Inside",
+        )
+        self.assertTrue(sky_explorer_object_in_pixel_roi(sky_object, (10.0, 20.0, 50.0, 60.0)))
+        self.assertTrue(sky_explorer_object_in_pixel_roi(sky_object, (50.0, 60.0, 10.0, 20.0)))
+        self.assertFalse(sky_explorer_object_in_pixel_roi(sky_object, (80.0, 80.0, 90.0, 90.0)))
+
+    def test_constrain_solved_field_uses_roi_center_and_covering_radius(self) -> None:
+        from astropy.wcs import WCS
+
+        wcs = WCS(naxis=2)
+        wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        wcs.wcs.crval = [150.0, 2.0]
+        wcs.wcs.crpix = [50.5, 40.5]
+        wcs.wcs.cdelt = [-0.001, 0.001]
+        wcs.wcs.cunit = ["deg", "deg"]
+        field = SolvedField(
+            center_ra_deg=150.0,
+            center_dec_deg=2.0,
+            radius_deg=1.0,
+            width=100,
+            height=80,
+            wcs_path=Path("field.fits"),
+        )
+
+        constrained, footprint = constrain_solved_field_to_pixel_roi(field, wcs, (20.0, 10.0, 40.0, 30.0))
+
+        self.assertLess(constrained.radius_deg, field.radius_deg)
+        self.assertEqual(len(footprint.corners), 4)
+        self.assertAlmostEqual(constrained.center_ra_deg, footprint.center_ra_deg, places=6)
+        self.assertAlmostEqual(constrained.center_dec_deg, footprint.center_dec_deg, places=6)
+        self.assertGreater(constrained.radius_deg, 0.0)
+
+
+class SkyExplorerCancelTest(unittest.TestCase):
+    def test_explore_sky_image_raises_when_cancel_callback_is_true(self) -> None:
+        settings = AppSettings.from_root(Path("."))
+        with self.assertRaises(SkyExplorerCancelled):
+            explore_sky_image(Path("unused.fits"), settings=settings, cancel_callback=lambda: True)
 
