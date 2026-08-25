@@ -1221,6 +1221,8 @@ class PipelineIntegrationTest(unittest.TestCase):
 
             settings = AppSettings.from_root(root)
 
+            settings.assume_aligned_images = True
+
             RecordingAstrometryClient.calls = []
 
 
@@ -1278,6 +1280,8 @@ class PipelineIntegrationTest(unittest.TestCase):
             report = pipeline.scan_workspace(root)
 
             settings = AppSettings.from_root(root)
+
+            settings.astrometry_api_key = "demo"
 
             RecordingAstrometryClient.calls = []
 
@@ -1593,6 +1597,8 @@ class PipelineIntegrationTest(unittest.TestCase):
             report = pipeline.scan_workspace(root)
 
             settings = AppSettings.from_root(root)
+
+            settings.astrometry_api_key = None
 
             solved_field = SolvedField(
 
@@ -3486,7 +3492,12 @@ class PipelineIntegrationTest(unittest.TestCase):
 
             self.assertEqual(len(report.measurements), 0)
 
-            self.assertTrue(any("WCS resolution failed" in note for note in report.notes))
+            self.assertTrue(
+                any(
+                    "WCS resolution failed" in note or "Astrometry.net solve failed" in note
+                    for note in report.notes
+                )
+            )
 
 
 

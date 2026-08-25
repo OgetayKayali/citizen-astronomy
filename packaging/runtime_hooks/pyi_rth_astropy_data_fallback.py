@@ -19,6 +19,7 @@ def _install() -> None:
 
     from pathlib import Path
     import importlib.util
+    import json
     import sys
     import tempfile
 
@@ -28,8 +29,10 @@ def _install() -> None:
         "crossdomain.xml",
         "clientaccesspolicy.xml",
     )
+    votable_refframe_json = "ivoa-vocalubary_refframe-v20220222.json"
     local_package_files = {
         "query_criteria_fields.json": "astroquery.simbad",
+        votable_refframe_json: "astropy.io.votable",
     }
     min_png = (
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
@@ -39,6 +42,37 @@ def _install() -> None:
     fallback_text = {
         "crossdomain.xml": '<?xml version="1.0"?>\n<cross-domain-policy>\n</cross-domain-policy>\n',
         "clientaccesspolicy.xml": '<?xml version="1.0"?>\n<access-policy></access-policy>\n',
+        votable_refframe_json: json.dumps(
+            {
+                "terms": {
+                    name: {}
+                    for name in (
+                        "AZ_EL",
+                        "BODY",
+                        "ECLIPTIC",
+                        "EQUATORIAL",
+                        "FK4",
+                        "FK5",
+                        "GALACTIC",
+                        "GALACTIC_I",
+                        "GENERIC_GALACTIC",
+                        "ICRS",
+                        "SUPER_GALACTIC",
+                        "UNKNOWN",
+                        "barycentric",
+                        "ecl_FK4",
+                        "ecl_FK5",
+                        "eq_FK4",
+                        "eq_FK5",
+                        "galactic",
+                        "geo_app",
+                        "supergalactic",
+                        "xy",
+                    )
+                }
+            },
+            separators=(",", ":"),
+        ),
     }
 
     def normalize_data_name(data_name: object) -> str:
@@ -49,7 +83,7 @@ def _install() -> None:
 
     def is_optional_failure(text: object) -> bool:
         hay = str(text).lower()
-        if "query_criteria_fields.json" in hay:
+        if ".json" in hay:
             return False
         if any(marker in str(text) for marker in known_optional):
             return True
@@ -59,7 +93,20 @@ def _install() -> None:
             or "unable to open any source" in hay
         )
 
+    def json_stub_marker(data_name: object) -> str | None:
+        haystack = normalize_data_name(data_name).lower()
+        for name in fallback_text:
+            if name.endswith(".json") and name in haystack:
+                return name
+        name = basename(data_name)
+        if name.endswith(".json") and name in fallback_text:
+            return name
+        return None
+
     def marker_from_text(text: object) -> str:
+        json_marker = json_stub_marker(text)
+        if json_marker is not None:
+            return json_marker
         raw = str(text)
         for marker in known_optional:
             if marker in raw:
@@ -133,6 +180,7 @@ def _install() -> None:
                     "astropy.utils.data",
                     "contextlib",
                     "pyi_rth_astropy_data_fallback",
+                    "photometry_app.core.astropy_runtime",
                 ],
             )
         except Exception:
@@ -179,6 +227,9 @@ def _install() -> None:
             local_retry = resolve_local_package_data_file(normalized, resolved_package)
             if local_retry is not None:
                 return local_retry
+            json_marker = json_stub_marker(normalized)
+            if json_marker is not None:
+                return str(fallback_path(json_marker))
             detail = f"{normalized} {exc}"
             if not is_optional_failure(detail):
                 raise
@@ -226,6 +277,9 @@ def _install() -> None:
                 if encoding is None or encoding == "binary":
                     return data
                 return data.decode(encoding)
+            json_marker = json_stub_marker(normalized)
+            if json_marker is not None:
+                return fallback_contents(json_marker, encoding)
             detail = f"{normalized} {exc}"
             if not is_optional_failure(detail):
                 raise
@@ -244,6 +298,9 @@ def _install() -> None:
         try:
             return original_download(remote_url, *args, **kwargs)
         except Exception as exc:
+            json_marker = json_stub_marker(remote_url)
+            if json_marker is not None:
+                return str(fallback_path(json_marker))
             detail = f"{remote_url} {exc}"
             if not is_optional_failure(detail):
                 raise

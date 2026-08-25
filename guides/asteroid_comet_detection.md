@@ -56,7 +56,7 @@ The mode is organized around:
 
 **Generate** is the heart of known-object recovery. It:
 
-1. Resolves usable WCS for each frame (header → local Gaia fallback → optional astrometry.net).
+1. Resolves usable WCS for each frame (header, then local Gaia matching and astrometry.net together when a key is set).
 2. Queries predicted solar-system objects inside the field.
 3. Projects those predictions into the current frame.
 4. Measures local peaks near each prediction.
@@ -486,13 +486,7 @@ Blink export uses the configured blink cadence and GIF scale. Default save names
 
 ## WCS and Plate Solving
 
-Every frame needs celestial WCS. Resolution order:
-
-1. **Embedded celestial WCS** in the header (including some incomplete headers that can be normalized).
-2. **Local Gaia fallback** -- if pointing / optical metadata exist but celestial WCS keywords do not, CAst can solve rotation and parity by matching detected stars to Gaia (`local_wcs.py`). Typical acceptance needs enough matches with low residual RMS.
-3. **astrometry.net** -- if an API key is configured, unsolved frames can be submitted and cached.
-
-Without WCS, predictions cannot be projected and Discover cannot link sky-consistent movers.
+Every frame needs celestial WCS. If the header already has a usable celestial solution and it agrees with the mount/optics pointing, CAst uses it. Otherwise it recovers a plate solution by running **local Gaia matching** and **astrometry.net** together when an API key is configured, and keeps whichever finishes first. The other solver is stopped. If no API key is set, only local Gaia matching is used. If every solver fails, the frame stays unsolved.
 
 ---
 

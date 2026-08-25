@@ -48,11 +48,11 @@ For a multi-frame folder, CAst picks one **folder WCS reading method** from the 
 
 - **Accept embedded CRVAL/WCS** when the header sky solution already matches Gaia.
 - **Repair CRVAL from CCVALS** when the pointing keywords disagree with the WCS (common on some NINA headers with non-standard float cards).
-- **Re-solve each frame** through **astrometry.net** when neither embedded nor repaired WCS is trustworthy.
+- **Re-solve each frame** by running **local Gaia matching** and **astrometry.net** together when a key is set, keeping whichever solution finishes first.
 
 **Settings → Advanced** exposes the bin thresholds and approval fraction; the Work Log records per-bin pass/fail so you can see why a method was chosen. Generate/Apply reuse the chosen method and skip repeating the full Gaia probe when you are only re-measuring with preserved views.
 
-If a frame still lacks a usable WCS, CAst can solve it through the **astrometry.net** API. The solver uploads the image with hints (center coordinates, scale bounds, parity) and retrieves the solved WCS. For large images (6000+ pixels), a 4x downsample is used to speed up the solve. Frames sharing the same alignment (e.g., PixInsight StarAlignment outputs) can share a single solved WCS.
+If a frame still lacks a usable WCS, CAst recovers one from metadata-seeded Gaia matching and, when configured, the **astrometry.net** API at the same time. The solver that succeeds first is used; the other is stopped. Astrometry uploads the image with hints (center coordinates, scale bounds, parity) and caches the solved WCS. For large images (6000+ pixels), a 4x downsample is used. Frames sharing the same alignment (e.g., PixInsight StarAlignment outputs) can share a single solved WCS.
 
 ### Step 3: Catalog Queries
 

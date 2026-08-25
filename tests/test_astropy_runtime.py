@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -29,6 +30,57 @@ class AstropyRuntimeTest(unittest.TestCase):
                 "http://data.astropy.org/data/astropy_icon.png HTTP Error 404"
             )
         )
+
+    def test_optional_failure_skips_votable_refframe_json(self) -> None:
+        self.assertFalse(
+            astropy_runtime._is_optional_astropy_data_failure(
+                "data/ivoa-vocalubary_refframe-v20220222.json unable to open any source"
+            )
+        )
+
+    def test_resolve_local_votable_refframe_json(self) -> None:
+        path = astropy_runtime._resolve_local_package_data_file(
+            str(Path("data") / astropy_runtime._VOTABLE_REFFRAME_JSON_NAME)
+        )
+        self.assertIsNotNone(path)
+        assert path is not None
+        self.assertTrue(Path(path).is_file())
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertIn("eq_FK5", payload["terms"])
+
+    def test_refframe_json_fallback_is_json_not_xml(self) -> None:
+        path = astropy_runtime._fallback_path(astropy_runtime._VOTABLE_REFFRAME_JSON_NAME)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIn("eq_FK5", payload["terms"])
+        self.assertNotIn("<?xml", path.read_text(encoding="utf-8"))
+
+    def test_missing_refframe_json_uses_json_stub_instead_of_xml(self) -> None:
+        from astropy.utils import data as astropy_data
+
+        original_filename = astropy_data.get_pkg_data_filename
+        original_flag = getattr(astropy_data, "_citizen_astronomy_pkgdata_fallback", None)
+        if hasattr(astropy_data, "_citizen_astronomy_pkgdata_fallback"):
+            delattr(astropy_data, "_citizen_astronomy_pkgdata_fallback")
+
+        def fail_filename(data_name, package=None, show_progress=True, remote_timeout=None):
+            raise OSError(f"unable to open any source: {data_name}")
+
+        astropy_data.get_pkg_data_filename = fail_filename  # type: ignore[assignment]
+        try:
+            astropy_runtime.install_astropy_pkgdata_fallback()
+            with patch.object(astropy_runtime, "_resolve_local_package_data_file", return_value=None):
+                path = astropy_data.get_pkg_data_filename(
+                    str(Path("data") / astropy_runtime._VOTABLE_REFFRAME_JSON_NAME)
+                )
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            self.assertIn("eq_FK5", payload["terms"])
+        finally:
+            astropy_data.get_pkg_data_filename = original_filename  # type: ignore[assignment]
+            if original_flag:
+                astropy_data._citizen_astronomy_pkgdata_fallback = original_flag  # type: ignore[attr-defined]
+            elif hasattr(astropy_data, "_citizen_astronomy_pkgdata_fallback"):
+                delattr(astropy_data, "_citizen_astronomy_pkgdata_fallback")
+                astropy_runtime.install_astropy_pkgdata_fallback()
 
     def test_resolve_local_simbad_criteria_json(self) -> None:
         path = astropy_runtime._resolve_local_package_data_file(

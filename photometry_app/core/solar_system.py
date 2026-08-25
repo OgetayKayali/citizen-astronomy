@@ -42,7 +42,9 @@ from astropy import units as u
 
 from astropy.coordinates import AltAz, Angle, EarthLocation, SkyCoord
 
-from astropy.table import MaskedColumn, QTable, Row, Table
+from astropy.io.votable import parse_single_table
+
+from astropy.table import MaskedColumn, Row, Table
 
 from astropy.time import Time
 
@@ -62,7 +64,7 @@ from photometry_app.core.catalogs import CatalogService
 
 from photometry_app.core.image_io import read_header, read_header_and_shape, read_photometry_image_data
 
-from photometry_app.core.local_wcs import solve_wcs_from_metadata_and_gaia
+from photometry_app.core.local_wcs import recover_wcs_racing_available_solvers, solve_wcs_from_metadata_and_gaia
 
 from photometry_app.core.models import CatalogStar, SolvedField
 
@@ -2042,76 +2044,23 @@ def _resolve_source_field(
 
     api_key = str(settings.astrometry_api_key or "").strip()
     hints = infer_astrometry_solve_hints(header, width, height, source_path)
-    try_astrometry_first = bool(api_key) and (
-        assessment.prefer_astrometry_first or not valid_wcs
-    )
-
-    if try_astrometry_first:
-        if progress_callback is not None:
-            progress_callback(
-                "Embedded WCS was unusable or inconsistent; submitting the image to astrometry.net first."
-            )
-        try:
-            result = AstrometryNetClient(api_key).solve_file(
-                source_path,
-                settings.cache_dir / "solar-system-wcs",
-                hints=hints,
-                timeout_seconds=resolve_astrometry_timeout_seconds(settings),
-                progress_callback=progress_callback,
-            )
-        except Exception as exc:
-            result = None
-            reasons = _dedupe_strings([*reasons, f"Astrometry.net solve failed: {exc}"])
-            if progress_callback is not None:
-                progress_callback(f"Astrometry.net solve failed ({exc}); trying metadata-seeded Gaia matching.")
-        else:
-            if result.solved_field is not None:
-                if progress_callback is not None:
-                    progress_callback("Recovered a usable WCS for solar-system mode via astrometry.net.")
-                return result.solved_field, True
-            reasons = _dedupe_strings([*reasons, *result.reasons])
-            if progress_callback is not None:
-                progress_callback(
-                    "Astrometry.net did not recover a WCS; trying metadata-seeded Gaia matching."
-                )
-
-    local_result = solve_wcs_from_metadata_and_gaia(
+    result = recover_wcs_racing_available_solvers(
         source_path,
         settings.cache_dir / "solar-system-wcs",
-        progress_callback=progress_callback,
-    )
-    if local_result.solved_field is not None:
-        return local_result.solved_field, True
-    reasons = _dedupe_strings([*reasons, *local_result.reasons])
-
-    if not api_key:
-        reason_text = " ".join(reason.strip() for reason in reasons if reason.strip()) or "The selected image does not contain a usable celestial WCS."
-        raise ValueError(f"Selected source image does not contain a usable celestial WCS. {reason_text}")
-
-    if try_astrometry_first:
-        # Already attempted nova above.
-        reason_text = " ".join(reason.strip() for reason in reasons if reason.strip()) or "Astrometry fallback did not return a valid WCS."
-        raise ValueError(f"Could not recover a usable celestial WCS. {reason_text}")
-
-    if progress_callback is not None:
-        progress_callback("Embedded WCS was unusable; attempting astrometry.net fallback for the solar-system mode.")
-
-    result = AstrometryNetClient(api_key).solve_file(
-        source_path,
-        settings.cache_dir / "solar-system-wcs",
+        api_key=api_key,
         hints=hints,
         timeout_seconds=resolve_astrometry_timeout_seconds(settings),
         progress_callback=progress_callback,
+        local_solver=solve_wcs_from_metadata_and_gaia,
+        astrometry_client_cls=AstrometryNetClient,
     )
-
-    if result.solved_field is None:
-        reason_text = " ".join(reason.strip() for reason in [*reasons, *result.reasons] if reason.strip()) or "Astrometry fallback did not return a valid WCS."
+    if result.solved_field is not None:
+        return result.solved_field, True
+    reasons = _dedupe_strings([*reasons, *result.reasons])
+    reason_text = " ".join(reason.strip() for reason in reasons if reason.strip()) or "The selected image does not contain a usable celestial WCS."
+    if api_key:
         raise ValueError(f"Could not recover a usable celestial WCS. {reason_text}")
-
-    if progress_callback is not None:
-        progress_callback("Recovered a usable WCS for solar-system mode via astrometry.net fallback.")
-
-    return result.solved_field, True
+    raise ValueError(f"Selected source image does not contain a usable celestial WCS. {reason_text}")
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
@@ -3067,11 +3016,11 @@ def _parse_skybot_votable(
                 message=r"column ra|(column de) has a unit but is kept as a MaskedColumn",
             )
             try:
-                results = QTable.read(BytesIO(normalized_content), format="votable")
+                results = _read_skybot_votable_table(normalized_content)
             except Exception:
                 if fallback_text_content is None:
                     raise
-                results = QTable.read(BytesIO(fallback_text_content), format="votable")
+                results = _read_skybot_votable_table(fallback_text_content)
     except Exception as exc:
         parse_error = exc
 
@@ -3125,6 +3074,11 @@ def _parse_skybot_votable(
         )
 
     return results
+
+
+def _read_skybot_votable_table(content: bytes) -> Table:
+    parsed = parse_single_table(BytesIO(content), verify="ignore")
+    return parsed.to_table()
 
 
 def _extract_votable_document_bytes(content: bytes) -> bytes:

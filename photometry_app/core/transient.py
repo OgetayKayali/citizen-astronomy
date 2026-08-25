@@ -15,10 +15,11 @@ from photutils.detection import DAOStarFinder
 
 from photometry_app.core.catalogs import CatalogService, summarize_catalog_service_error
 from photometry_app.core.image_io import read_header, read_header_and_shape, read_photometry_image_data
-from photometry_app.core.models import CatalogStar, FileScanResult, ObservationMetadata, PlateSolveResult, SolvedField, WcsStatus
+from photometry_app.core.local_wcs import recover_wcs_racing_available_solvers
+from photometry_app.core.models import CatalogStar, FileScanResult, ObservationMetadata, SolvedField, WcsStatus
 from photometry_app.core.scanner import scan_fits_tree
 from photometry_app.core.settings import AppSettings, resolve_astrometry_timeout_seconds
-from photometry_app.core.wcs import AstrometryNetClient, extract_solved_field, infer_astrometry_solve_hints, validate_wcs
+from photometry_app.core.wcs import extract_solved_field, infer_astrometry_solve_hints, validate_wcs
 
 
 _TRANSIENT_ASTROMETRY_CACHE_NAME = "transient-wcs"
@@ -145,7 +146,7 @@ def search_transients_in_folder(
     max_frame_detections: int = _DEFAULT_MAX_FRAME_DETECTIONS,
     max_candidate_count: int = _DEFAULT_MAX_CANDIDATE_COUNT,
     catalog_service: CatalogService | None = None,
-    astrometry_client_factory: Callable[[str], AstrometryNetClient] | None = None,
+    astrometry_client_factory: Callable[[str], object] | None = None,
     progress_callback: Callable[[str], None] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> TransientSearchResult:
@@ -268,7 +269,7 @@ def _resolve_frame_wcs(
     file_result: FileScanResult,
     settings: AppSettings,
     *,
-    astrometry_client_factory: Callable[[str], AstrometryNetClient] | None,
+    astrometry_client_factory: Callable[[str], object] | None,
     progress_callback: Callable[[str], None] | None,
 ) -> TransientFrameResult:
     if file_result.wcs_status == WcsStatus.INVALID:
@@ -307,56 +308,41 @@ def _resolve_frame_wcs(
                 reasons=reasons,
             )
 
-    if not settings.astrometry_api_key and astrometry_client_factory is None:
-        return TransientFrameResult(
-            source_path=file_result.path,
-            metadata=file_result.metadata,
-            status=WcsStatus.UNSOLVED,
-            solved_field=None,
-            wcs_path=None,
-            reasons=[*reasons, "Astrometry.net API key not configured; unsolved file skipped."],
-        )
-
-    api_key = settings.astrometry_api_key or ""
-    client = astrometry_client_factory(api_key) if astrometry_client_factory is not None else AstrometryNetClient(api_key)
     hints = infer_astrometry_solve_hints(header, width, height, file_result.path)
-    try:
-        plate_result: PlateSolveResult = client.solve_file(
-            file_result.path,
-            settings.cache_dir / _TRANSIENT_ASTROMETRY_CACHE_NAME,
-            hints=hints,
-            timeout_seconds=resolve_astrometry_timeout_seconds(settings),
-        )
-    except Exception as exc:
-        return TransientFrameResult(
-            source_path=file_result.path,
-            metadata=file_result.metadata,
-            status=WcsStatus.UNSOLVED,
-            solved_field=None,
-            wcs_path=None,
-            reasons=[*reasons, f"Astrometry.net solve failed: {exc}"],
-        )
-
-    solved_field = plate_result.solved_field
+    recovered = recover_wcs_racing_available_solvers(
+        file_result.path,
+        settings.cache_dir / _TRANSIENT_ASTROMETRY_CACHE_NAME,
+        api_key=str(settings.astrometry_api_key or "").strip(),
+        hints=hints,
+        timeout_seconds=resolve_astrometry_timeout_seconds(settings),
+        progress_callback=progress_callback,
+        astrometry_client_factory=astrometry_client_factory,
+    )
+    solved_field = recovered.solved_field
     if solved_field is None:
         return TransientFrameResult(
             source_path=file_result.path,
             metadata=file_result.metadata,
-            status=plate_result.status,
+            status=recovered.status,
             solved_field=None,
             wcs_path=None,
-            reasons=[*reasons, *plate_result.reasons],
+            reasons=[*reasons, *recovered.reasons],
         )
 
-    _emit(progress_callback, f"Solved {file_result.path.name} with astrometry.net; solved FITS saved to {solved_field.wcs_path}.")
+    solved_via_astrometry = any("astrometry.net" in reason.casefold() for reason in recovered.reasons)
+    method = "astrometry.net" if solved_via_astrometry else "metadata-seeded Gaia matching"
+    _emit(
+        progress_callback,
+        f"Solved {file_result.path.name} via {method}; solved FITS saved to {solved_field.wcs_path}.",
+    )
     return TransientFrameResult(
         source_path=file_result.path,
         metadata=file_result.metadata,
         status=WcsStatus.SOLVED,
         solved_field=solved_field,
         wcs_path=solved_field.wcs_path,
-        solved_via_astrometry=True,
-        reasons=[*reasons, *plate_result.reasons],
+        solved_via_astrometry=solved_via_astrometry,
+        reasons=[*reasons, *recovered.reasons],
     )
 
 

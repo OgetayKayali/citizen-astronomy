@@ -13,7 +13,7 @@ This is not asteroid hunting. Moving objects belong in Asteroid/Comet Detection.
 ### What you can do with this mode
 
 - **Search a night (or nights) of repeated frames** for positions that brighten, fade, appear, or disappear.
-- **Solve unsolved frames** through astrometry.net when an API key is configured, caching solved WCS for reuse.
+- **Solve unsolved frames** by racing local Gaia matching with astrometry.net when a key is set, caching solved WCS for reuse.
 - **Use one shared Gaia DR3 veto catalog** for the whole sequence instead of pulling a deep catalog for every frame.
 - **Review candidates visually** with Center Candidate, Blink, stretch/curves controls, and an Inspector summary.
 - **Export blink animations** (GIF/MP4) for teaching, sharing, or follow-up discussion.
@@ -58,11 +58,11 @@ Click **Search**. The button shows **Searching...** while a background worker ru
 | Formats | `.fit`, `.fits`, `.xisf` |
 | Layout | A folder tree of repeated frames of roughly the same field |
 | WCS | Embedded celestial WCS preferred |
-| Astrometry fallback | If a frame is unsolved and an astrometry.net API key is set, CAst solves it and caches the result |
+| WCS recovery | If a frame is unsolved, CAst races local Gaia matching with astrometry.net (when a key is set) and keeps the first success |
 | WCS cache | Under the app cache directory as `transient-wcs/` |
 | Minimum solved frames | Default 2 (configurable) |
 
-Without an API key, unsolved frames are skipped. Observation timestamps come from image headers (with the configured observation timezone for naive values).
+Without an API key, unsolved frames still try local Gaia matching. Observation timestamps come from image headers (with the configured observation timezone for naive values).
 
 ---
 
@@ -73,7 +73,7 @@ Without an API key, unsolved frames are skipped. Observation timestamps come fro
 CAst recursively scans the folder for supported images, then for each frame:
 
 1. Validates embedded WCS.
-2. If unusable and an API key is available, solves via **astrometry.net**, writing solved products into the `transient-wcs` cache.
+2. If unusable, races **local Gaia matching** with **astrometry.net** when a key is set, writing solved products into the `transient-wcs` cache and keeping whichever finishes first.
 3. Frames that still lack WCS are skipped with a Work Log note.
 
 ### 2. Shared Gaia Veto Catalog

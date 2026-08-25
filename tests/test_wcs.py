@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -20,9 +21,10 @@ from photometry_app.core.local_wcs import (
     _select_wcs_match_sources,
     _should_retry_gaia_wcs_catalog_query,
     infer_metadata_wcs_seed,
+    recover_wcs_racing_available_solvers,
 )
 from photometry_app.core.models import CatalogStar, PlateSolveResult, SolvedField, WcsStatus
-from photometry_app.core.wcs import AstrometryNetClient, _prepare_plate_solve_input, celestial_wcs, scale_wcs_pixel_grid, validate_wcs
+from photometry_app.core.wcs import AstrometryNetClient, WcsSolveCancelled, _prepare_plate_solve_input, celestial_wcs, infer_astrometry_solve_hints, scale_wcs_pixel_grid, validate_wcs
 
 
 class AstrometryNetClientTest(unittest.TestCase):
@@ -528,5 +530,105 @@ class AstrometryNetClientTest(unittest.TestCase):
         self.assertIsNotNone(result.solved_field)
         login_mock.assert_called_once_with()
         upload_mock.assert_called_once()
-        wait_mock.assert_called_once_with(123, timeout_seconds=300, progress_callback=None)
+        wait_mock.assert_called_once_with(123, timeout_seconds=300, progress_callback=None, cancel_event=None)
         download_mock.assert_called_once()
+
+    def test_infer_astrometry_solve_hints_keeps_staralignment_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "aligned.xisf"
+            source_path.write_bytes(b"placeholder")
+            source_path.with_suffix(".xdrz").write_text("sidecar", encoding="utf-8")
+            header = Header()
+            header["CTYPE1"] = "RA---TAN"
+            header["CTYPE2"] = "DEC--TAN"
+            header["CRVAL1"] = 83.822
+            header["CRVAL2"] = -5.391
+            header["CRPIX1"] = 16.0
+            header["CRPIX2"] = 16.0
+            header["CD1_1"] = -0.00028
+            header["CD1_2"] = 0.0
+            header["CD2_1"] = 0.0
+            header["CD2_2"] = 0.00028
+
+            self.assertFalse(validate_wcs(header, source_path)[0])
+            hints = infer_astrometry_solve_hints(header, 32, 32, source_path)
+
+        self.assertIsNotNone(hints)
+        assert hints is not None
+        self.assertAlmostEqual(hints.center_ra_deg, 83.822, places=3)
+        self.assertAlmostEqual(hints.center_dec_deg, -5.391, places=3)
+        self.assertGreaterEqual(float(hints.radius_deg or 0.0), 0.25)
+
+
+class WcsRecoveryRaceTest(unittest.TestCase):
+    def test_race_uses_first_successful_solver_and_cancels_the_other(self) -> None:
+        source_path = Path("demo.fits")
+        cache_dir = Path("cache")
+        local_field = SolvedField(10.0, 20.0, 0.5, 100, 80, Path("local.fits"))
+        nova_field = SolvedField(1.0, 2.0, 0.5, 100, 80, Path("nova.fits"))
+        astrometry_started = threading.Event()
+        astrometry_cancelled = threading.Event()
+
+        def local_solver(path, cache, **kwargs):
+            astrometry_started.wait(timeout=1.0)
+            return PlateSolveResult(source_path=path, status=WcsStatus.SOLVED, solved_field=local_field, reasons=[])
+
+        class FakeClient:
+            def __init__(self, api_key: str) -> None:
+                self.api_key = api_key
+
+            def solve_file(self, path, cache, cancel_event=None, **kwargs):
+                astrometry_started.set()
+                if cancel_event is not None:
+                    cancel_event.wait(timeout=2.0)
+                    if cancel_event.is_set():
+                        astrometry_cancelled.set()
+                        raise WcsSolveCancelled()
+                return PlateSolveResult(source_path=path, status=WcsStatus.SOLVED, solved_field=nova_field, reasons=[])
+
+        result = recover_wcs_racing_available_solvers(
+            source_path,
+            cache_dir,
+            api_key="demo",
+            local_solver=local_solver,
+            astrometry_client_cls=FakeClient,
+        )
+
+        self.assertEqual(result.solved_field, local_field)
+        self.assertIn("metadata-seeded Gaia matching", " ".join(result.reasons))
+        self.assertTrue(astrometry_cancelled.wait(timeout=1.0))
+
+    def test_race_keeps_astrometry_when_local_is_slower(self) -> None:
+        source_path = Path("demo.fits")
+        nova_field = SolvedField(1.0, 2.0, 0.5, 100, 80, Path("nova.fits"))
+        local_field = SolvedField(10.0, 20.0, 0.5, 100, 80, Path("local.fits"))
+
+        def slow_local(path, cache, cancel_event=None, **kwargs):
+            if cancel_event is not None:
+                cancel_event.wait(timeout=2.0)
+            return PlateSolveResult(source_path=path, status=WcsStatus.SOLVED, solved_field=local_field, reasons=[])
+
+        class FastClient:
+            def __init__(self, api_key: str) -> None:
+                self.api_key = api_key
+
+            def solve_file(self, path, cache, **kwargs):
+                return PlateSolveResult(source_path=path, status=WcsStatus.SOLVED, solved_field=nova_field, reasons=[])
+
+        result = recover_wcs_racing_available_solvers(
+            source_path,
+            Path("cache"),
+            api_key="demo",
+            local_solver=slow_local,
+            astrometry_client_cls=FastClient,
+        )
+
+        self.assertEqual(result.solved_field, nova_field)
+        self.assertIn("astrometry.net", " ".join(result.reasons).casefold())
+
+    def test_wait_for_job_stops_when_cancelled(self) -> None:
+        client = AstrometryNetClient("demo")
+        cancel_event = threading.Event()
+        cancel_event.set()
+        with self.assertRaises(WcsSolveCancelled):
+            client._wait_for_job(1, timeout_seconds=30, cancel_event=cancel_event)

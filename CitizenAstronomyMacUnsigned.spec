@@ -70,6 +70,7 @@ datas += collect_data_files("astroquery", includes=["CITATION"])
 datas += collect_data_files("astroquery.simbad", includes=["data/query_criteria_fields.json"])
 datas += collect_data_files("photutils", includes=["CITATION.rst"])
 datas += collect_data_files("astropy")
+datas += collect_data_files("astropy.io.votable")
 datas += collect_data_files("pyvo")
 datas += copy_metadata("photutils")
 datas += copy_metadata("astropy")
@@ -106,6 +107,9 @@ hiddenimports = [
     "astroquery.ipac.nexsci.nasa_exoplanet_archive",
     "astropy.tests",
     "astropy.tests.runner",
+    "astropy.io.votable",
+    "astropy.io.votable.tree",
+    "astropy.io.votable.table",
     "scipy.special._cdflib",
     "photutils.geometry.core",
     "sklearn.cluster",

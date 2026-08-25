@@ -2,11 +2,21 @@
 
 Version history for Citizen Astronomy (CAst), newest first. Installer releases and delta updates are published on the [Releases](https://github.com/OgetayKayali/citizen-astronomy/releases) page.
 
-Current app version: **0.1.1-alpha.12**
+Current app version: **0.1.1-alpha.13**
 
 This log also tracks finished fixes and features staged for the next published update. Group notes by mode (or App/Display). Prefer one short bullet per change—not intermediate debugging steps.
 
-## Pending for next release (after 0.1.1-alpha.12)
+## Pending for next release (after 0.1.1-alpha.13)
+
+## 0.1.1-alpha.13
+
+### Asteroid / Comet
+
+- Fix asteroid/comet detection failing on valid SkyBoT results: namespaced IMCCE VOTables are parsed as XML, and a missing Astropy coordinate-frame file no longer makes the packaged app treat that XML as JSON.
+
+### App
+
+- Recover missing WCS by running astrometry.net and local Gaia matching together and using the first success.
 
 ## 0.1.1-alpha.12
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import importlib.util
+import json
 import sys
 import tempfile
 
@@ -22,9 +23,36 @@ _KNOWN_OPTIONAL_MARKERS = (
     "clientaccesspolicy.xml",
 )
 
+_VOTABLE_REFFRAME_JSON_NAME = "ivoa-vocalubary_refframe-v20220222.json"
+
 _LOCAL_PACKAGE_DATA_FILES = {
     "query_criteria_fields.json": "astroquery.simbad",
+    _VOTABLE_REFFRAME_JSON_NAME: "astropy.io.votable",
 }
+
+_VOTABLE_REFFRAME_TERMS = (
+    "AZ_EL",
+    "BODY",
+    "ECLIPTIC",
+    "EQUATORIAL",
+    "FK4",
+    "FK5",
+    "GALACTIC",
+    "GALACTIC_I",
+    "GENERIC_GALACTIC",
+    "ICRS",
+    "SUPER_GALACTIC",
+    "UNKNOWN",
+    "barycentric",
+    "ecl_FK4",
+    "ecl_FK5",
+    "eq_FK4",
+    "eq_FK5",
+    "galactic",
+    "geo_app",
+    "supergalactic",
+    "xy",
+)
 
 _MIN_PNG = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
@@ -42,6 +70,10 @@ _FALLBACK_TEXT = {
         '<?xml version="1.0" encoding="utf-8"?>\n'
         "<access-policy></access-policy>\n"
     ),
+    _VOTABLE_REFFRAME_JSON_NAME: json.dumps(
+        {"terms": {name: {} for name in _VOTABLE_REFFRAME_TERMS}},
+        separators=(",", ":"),
+    ),
 }
 
 
@@ -55,7 +87,7 @@ def _basename(data_name: object) -> str:
 
 def _is_optional_astropy_data_failure(text: object) -> bool:
     haystack = str(text).lower()
-    if "query_criteria_fields.json" in haystack:
+    if ".json" in haystack:
         return False
     if any(marker in str(text) for marker in _KNOWN_OPTIONAL_MARKERS):
         return True
@@ -66,7 +98,21 @@ def _is_optional_astropy_data_failure(text: object) -> bool:
     )
 
 
+def _json_stub_marker(data_name: object) -> str | None:
+    haystack = _normalize_data_name(data_name).lower()
+    for name in _FALLBACK_TEXT:
+        if name.endswith(".json") and name in haystack:
+            return name
+    name = _basename(data_name)
+    if name.endswith(".json") and name in _FALLBACK_TEXT:
+        return name
+    return None
+
+
 def _marker_from_text(text: object) -> str:
+    json_marker = _json_stub_marker(text)
+    if json_marker is not None:
+        return json_marker
     raw = str(text)
     for marker in _KNOWN_OPTIONAL_MARKERS:
         if marker in raw:
@@ -151,6 +197,7 @@ def _caller_package(explicit_package: str | None) -> str | None:
                 "astropy.utils.data",
                 "contextlib",
                 "photometry_app.core.astropy_runtime",
+                "pyi_rth_astropy_data_fallback",
             ],
         )
     except Exception:
@@ -211,6 +258,9 @@ def install_astropy_pkgdata_fallback() -> None:
             local_retry = _resolve_local_package_data_file(normalized, resolved_package)
             if local_retry is not None:
                 return local_retry
+            json_marker = _json_stub_marker(normalized)
+            if json_marker is not None:
+                return str(_fallback_path(json_marker))
             if not _is_optional_astropy_data_failure(f"{normalized} {exc}"):
                 raise
             return str(_fallback_path(_marker_from_text(f"{normalized} {exc}")))
@@ -258,6 +308,9 @@ def install_astropy_pkgdata_fallback() -> None:
                 if encoding is None or encoding == "binary":
                     return data
                 return data.decode(encoding)
+            json_marker = _json_stub_marker(normalized)
+            if json_marker is not None:
+                return _fallback_contents(json_marker, encoding=encoding)
             if not _is_optional_astropy_data_failure(f"{normalized} {exc}"):
                 raise
             return _fallback_contents(_marker_from_text(f"{normalized} {exc}"), encoding=encoding)
@@ -275,6 +328,8 @@ def install_astropy_pkgdata_fallback() -> None:
         try:
             return original_download(remote_url, *args, **kwargs)
         except Exception as exc:
+            if _json_stub_marker(remote_url) is not None:
+                return str(_fallback_path(_json_stub_marker(remote_url)))
             if not _is_optional_astropy_data_failure(f"{remote_url} {exc}"):
                 raise
             return str(_fallback_path(_marker_from_text(f"{remote_url} {exc}")))

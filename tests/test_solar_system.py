@@ -8,6 +8,8 @@ import math
 
 import tempfile
 
+import threading
+
 import unittest
 
 from datetime import UTC, datetime, timedelta
@@ -69,6 +71,8 @@ from photometry_app.core.solar_system import (
     build_multi_known_object_heliocentric_context,
 
     _predictions_from_skybot_table,
+
+    _parse_skybot_votable,
 
     _query_horizons_ephemeris_magnitude_samples_chunk,
 
@@ -207,104 +211,101 @@ class SolarSystemTest(unittest.TestCase):
 
         self.assertTrue(used_fallback)
 
-        local_solver.assert_called_once_with(
-
-            source_path,
-
-            settings.cache_dir / "solar-system-wcs",
-
-            progress_callback=None,
-
-        )
+        local_solver.assert_called_once()
+        called_path, called_cache = local_solver.call_args.args[:2]
+        self.assertEqual(called_path, source_path)
+        self.assertEqual(called_cache, settings.cache_dir / "solar-system-wcs")
 
         astrometry_client.assert_not_called()
 
 
 
-    def test_resolve_source_field_prefers_astrometry_before_local_gaia_when_keyed(self) -> None:
-
+    def test_resolve_source_field_uses_local_gaia_when_astrometry_is_slower(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-
             root_path = Path(temp_dir)
-
             source_path = root_path / "unsolved.fits"
-
             source_path.write_bytes(b"demo")
-
             settings = AppSettings.from_root(root_path)
-
             settings.astrometry_api_key = "demo-key"
-
-            solved_path = root_path / "nova-solved.fits"
-
-            solved_field = SolvedField(329.5, 48.9, 1.0, 100, 80, solved_path)
-
-            nova_result = PlateSolveResult(
-
-                source_path=source_path,
-
-                status=WcsStatus.SOLVED,
-
-                solved_field=solved_field,
-
-                reasons=[],
-
-            )
-
+            local_field = SolvedField(10.0, 20.0, 1.0, 100, 80, root_path / "local-gaia-solved.fits")
+            nova_field = SolvedField(329.5, 48.9, 1.0, 100, 80, root_path / "nova-solved.fits")
+            local_result = PlateSolveResult(source_path=source_path, status=WcsStatus.SOLVED, solved_field=local_field, reasons=[])
+            nova_result = PlateSolveResult(source_path=source_path, status=WcsStatus.SOLVED, solved_field=nova_field, reasons=[])
             header = Header()
-
             header["CTYPE1"] = "RA---TAN"
-
             header["CTYPE2"] = "DEC--TAN"
-
             header["RA"] = 329.5
-
             header["DEC"] = 48.9
-
             header["FOCALLEN"] = 530.0
-
             header["XPIXSZ"] = 3.76
+            progress = []
+            astrometry_started = threading.Event()
 
-            progress: list[str] = []
+            def fast_local(*args, **kwargs):
+                astrometry_started.wait(timeout=1.0)
+                return local_result
+
+            def slow_astrometry(*args, cancel_event=None, **kwargs):
+                astrometry_started.set()
+                if cancel_event is not None:
+                    cancel_event.wait(timeout=2.0)
+                return nova_result
 
             with (
-
                 patch("photometry_app.core.solar_system.read_header_and_shape", return_value=(header, 100, 80)),
-
                 patch("photometry_app.core.solar_system.validate_wcs", return_value=(False, ["Missing CRVAL1 WCS keyword."])),
-
-                patch("photometry_app.core.solar_system.solve_wcs_from_metadata_and_gaia") as local_solver,
-
+                patch("photometry_app.core.solar_system.solve_wcs_from_metadata_and_gaia", side_effect=fast_local) as local_solver,
                 patch("photometry_app.core.solar_system.AstrometryNetClient") as astrometry_client,
-
             ):
+                astrometry_client.return_value.solve_file.side_effect = slow_astrometry
+                resolved_field, used_fallback = _resolve_source_field(source_path, settings, progress_callback=progress.append)
 
-                astrometry_client.return_value.solve_file.return_value = nova_result
-
-                resolved_field, used_fallback = _resolve_source_field(
-
-                    source_path,
-
-                    settings,
-
-                    progress_callback=progress.append,
-
-                )
-
-        self.assertEqual(resolved_field, solved_field)
-
+        self.assertEqual(resolved_field, local_field)
         self.assertTrue(used_fallback)
-
+        local_solver.assert_called_once()
         astrometry_client.assert_called_once_with("demo-key")
+        self.assertTrue(astrometry_started.wait(timeout=1.0))
+        self.assertTrue(any("together" in message.lower() for message in progress))
+        self.assertTrue(any("Gaia matching" in message for message in progress))
 
-        astrometry_client.return_value.solve_file.assert_called_once()
+    def test_resolve_source_field_uses_astrometry_when_it_finishes_first(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root_path = Path(temp_dir)
+            source_path = root_path / "unsolved.fits"
+            source_path.write_bytes(b"demo")
+            settings = AppSettings.from_root(root_path)
+            settings.astrometry_api_key = "demo-key"
+            local_field = SolvedField(10.0, 20.0, 1.0, 100, 80, root_path / "local-gaia-solved.fits")
+            nova_field = SolvedField(329.5, 48.9, 1.0, 100, 80, root_path / "nova-solved.fits")
+            local_result = PlateSolveResult(source_path=source_path, status=WcsStatus.SOLVED, solved_field=local_field, reasons=[])
+            nova_result = PlateSolveResult(source_path=source_path, status=WcsStatus.SOLVED, solved_field=nova_field, reasons=[])
+            header = Header()
+            header["CTYPE1"] = "RA---TAN"
+            header["CTYPE2"] = "DEC--TAN"
+            header["RA"] = 329.5
+            header["DEC"] = 48.9
+            header["FOCALLEN"] = 530.0
+            header["XPIXSZ"] = 3.76
+            progress = []
 
-        local_solver.assert_not_called()
+            def slow_local(*args, cancel_event=None, **kwargs):
+                if cancel_event is not None:
+                    cancel_event.wait(timeout=2.0)
+                return local_result
 
-        self.assertTrue(any("astrometry.net first" in message.lower() for message in progress))
+            with (
+                patch("photometry_app.core.solar_system.read_header_and_shape", return_value=(header, 100, 80)),
+                patch("photometry_app.core.solar_system.validate_wcs", return_value=(False, ["Missing CRVAL1 WCS keyword."])),
+                patch("photometry_app.core.solar_system.solve_wcs_from_metadata_and_gaia", side_effect=slow_local),
+                patch("photometry_app.core.solar_system.AstrometryNetClient") as astrometry_client,
+            ):
+                astrometry_client.return_value.solve_file.return_value = nova_result
+                resolved_field, used_fallback = _resolve_source_field(source_path, settings, progress_callback=progress.append)
 
-        self.assertTrue(any("Mount/header pointing" in message for message in progress))
-
+        self.assertEqual(resolved_field, nova_field)
+        self.assertTrue(used_fallback)
+        self.assertTrue(any("together" in message.lower() for message in progress))
+        self.assertTrue(any("astrometry.net" in message.lower() for message in progress))
 
 
     def test_parse_observation_time_uses_fallback_timezone_for_naive_input(self) -> None:
@@ -886,6 +887,146 @@ class SolarSystemTest(unittest.TestCase):
             )
 
         self.assertEqual(predictions, [])
+
+    def test_skybot_query_service_accepts_namespaced_imcce_votable(self) -> None:
+
+        solved_field = SolvedField(
+
+            center_ra_deg=10.0,
+
+            center_dec_deg=20.0,
+
+            radius_deg=0.2,
+
+            width=200,
+
+            height=120,
+
+            wcs_path=Path("demo.fits"),
+
+        )
+
+        body = (
+            '<?xml version="1.0" encoding="UTF-8" ?>\n'
+            '<vot:VOTABLE version="1.3" xmlns:vot="http://www.ivoa.net/xml/VOTable/v1.3">\n'
+            '<vot:COOSYS ID="J2000" equinox="J2000" epoch="J2000" system="eq_FK5"/>\n'
+            '<vot:RESOURCE>\n'
+            '<vot:INFO ID="QUERY_STATUS" name="QUERY_STATUS" value="OK"/>\n'
+            '<vot:TABLE ID="SkybotConeSearch_results">\n'
+            '<vot:FIELD name="num" datatype="char" arraysize="*"/>\n'
+            '<vot:FIELD name="name" datatype="char" arraysize="*"/>\n'
+            '<vot:FIELD name="ra" datatype="char" arraysize="*" unit="h:m:s"/>\n'
+            '<vot:FIELD name="de" datatype="char" arraysize="*" unit="d:m:s"/>\n'
+            '<vot:FIELD name="class" datatype="char" arraysize="*"/>\n'
+            '<vot:FIELD name="magV" datatype="double"/>\n'
+            '<vot:DATA><vot:TABLEDATA>\n'
+            '<vot:TR><vot:TD>1</vot:TD><vot:TD>Ceres</vot:TD>'
+            '<vot:TD>00 40 00.00</vot:TD><vot:TD>+20 00 00.0</vot:TD>'
+            '<vot:TD>MB</vot:TD><vot:TD>8.1</vot:TD></vot:TR>\n'
+            '</vot:TABLEDATA></vot:DATA>\n'
+            '</vot:TABLE>\n'
+            '</vot:RESOURCE>\n'
+            '</vot:VOTABLE>\n'
+        )
+
+        response = unittest.mock.Mock()
+
+        response.status_code = 200
+
+        response.content = body.encode("utf-8")
+
+        response.text = body
+
+        response.headers = {"Content-Type": "text/xml;content=x-votable;charset=UTF-8"}
+
+        response.url = "https://ssp.imcce.fr/webservices/skybot/api/conesearch.php"
+
+        response.raise_for_status.return_value = None
+
+        with (
+
+            patch("photometry_app.core.solar_system.requests.get", return_value=response),
+
+            patch("photometry_app.core.solar_system._query_known_interstellar_prediction", return_value=None),
+
+        ):
+
+            predictions = SkybotQueryService().query_predictions(
+
+                solved_field,
+
+                datetime(2025, 1, 14, 21, 12, tzinfo=UTC),
+
+                observatory_code="807",
+
+                magnitude_limit=18.0,
+
+            )
+
+        self.assertEqual(len(predictions), 1)
+
+        self.assertIn("Ceres", predictions[0].name)
+
+        self.assertAlmostEqual(predictions[0].ra_deg, 10.0, places=3)
+
+        self.assertAlmostEqual(predictions[0].dec_deg, 20.0, places=3)
+
+    def test_parse_skybot_votable_accepts_namespaced_document_with_refframe_stub(self) -> None:
+
+        from astropy.io.votable.tree import CooSys
+
+        from astropy.utils import data as astropy_data
+
+        from photometry_app.core import astropy_runtime
+
+        body = (
+            '<?xml version="1.0" encoding="UTF-8" ?>\n'
+            '<vot:VOTABLE version="1.3" xmlns:vot="http://www.ivoa.net/xml/VOTable/v1.3">\n'
+            '<vot:COOSYS ID="J2000" equinox="J2000" epoch="J2000" system="eq_FK5"/>\n'
+            '<vot:RESOURCE>\n'
+            '<vot:INFO name="QUERY_STATUS" value="OK"/>\n'
+            '<vot:TABLE>\n'
+            '<vot:FIELD name="num" datatype="char" arraysize="*"/>\n'
+            '<vot:FIELD name="name" datatype="char" arraysize="*"/>\n'
+            '<vot:FIELD name="ra" datatype="char" arraysize="*" unit="h:m:s"/>\n'
+            '<vot:FIELD name="de" datatype="char" arraysize="*" unit="d:m:s"/>\n'
+            '<vot:FIELD name="class" datatype="char" arraysize="*"/>\n'
+            '<vot:FIELD name="magV" datatype="double"/>\n'
+            '<vot:DATA><vot:TABLEDATA>\n'
+            '<vot:TR><vot:TD>1</vot:TD><vot:TD>Ceres</vot:TD>'
+            '<vot:TD>00 40 00.00</vot:TD><vot:TD>+20 00 00.0</vot:TD>'
+            '<vot:TD>MB</vot:TD><vot:TD>8.1</vot:TD></vot:TR>\n'
+            '</vot:TABLEDATA></vot:DATA>\n'
+            '</vot:TABLE>\n'
+            '</vot:RESOURCE>\n'
+            '</vot:VOTABLE>\n'
+        )
+
+        original_filename = astropy_data.get_pkg_data_filename
+
+        def serve_refframe_stub(data_name, package=None, show_progress=True, remote_timeout=None):
+            if "vocalubary" in str(data_name) or "refframe" in str(data_name):
+                return str(astropy_runtime._fallback_path(astropy_runtime._VOTABLE_REFFRAME_JSON_NAME))
+            return original_filename(
+                data_name,
+                package=package,
+                show_progress=show_progress,
+                remote_timeout=remote_timeout,
+            )
+
+        CooSys._reference_frames = None
+        try:
+            with patch.object(astropy_data, "get_pkg_data_filename", side_effect=serve_refframe_stub):
+                table = _parse_skybot_votable(
+                    body.encode("utf-8"),
+                    http_status=200,
+                    content_type="text/xml;content=x-votable;charset=UTF-8",
+                )
+        finally:
+            CooSys._reference_frames = None
+
+        self.assertEqual(len(table), 1)
+        self.assertEqual(str(table["Name"][0]), "Ceres")
 
     def test_search_nearby_known_solar_system_objects_keeps_off_image_predictions(self) -> None:
 

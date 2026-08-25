@@ -38,7 +38,7 @@ HR mode expects:
 - preferably a **linear RGB** image (color-calibrated if possible)
 - network access for Gaia (and related catalog) lookups
 
-The preview can be stretched for comfortable viewing, but photometric measurement is performed on the original linear image data. If the image lacks a valid WCS, configure an astrometry.net API key so CAst can solve it first.
+The preview can be stretched for comfortable viewing, but photometric measurement is performed on the original linear image data. If the image lacks a valid WCS, CAst recovers one from metadata-seeded Gaia matching and, when configured, astrometry.net, keeping the first success.
 
 Unlike Differential Photometry, HR mode works from **one source image at a time**, not a time-series folder.
 

@@ -20,6 +20,7 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 
 from photometry_app.core.catalogs import CatalogService
 from photometry_app.core.image_io import read_header, read_header_and_shape
+from photometry_app.core.local_wcs import recover_wcs_racing_available_solvers, solve_wcs_from_metadata_and_gaia
 from photometry_app.core.models import CatalogStar, SolvedField
 from photometry_app.core.scanner import inspect_fits_file
 from photometry_app.core.settings import AppSettings, resolve_astrometry_timeout_seconds
@@ -1896,25 +1897,28 @@ def _resolve_source_field(
             raise ValueError("Could not derive an image footprint from the selected source image.")
         return solved_field, False
 
-    if not settings.astrometry_api_key:
-        reason_text = " ".join(reason.strip() for reason in reasons if reason.strip()) or "The selected image does not contain a usable celestial WCS."
-        raise ValueError(f"Selected image does not contain a usable celestial WCS. {reason_text}")
-
+    api_key = str(settings.astrometry_api_key or "").strip()
     if progress_callback is not None:
-        progress_callback("Embedded WCS was unusable; submitting the image to astrometry.net fallback.")
+        progress_callback("Embedded WCS was unusable; recovering a plate solution.")
     hints = infer_astrometry_solve_hints(header, width, height, source_path)
-    result = AstrometryNetClient(settings.astrometry_api_key).solve_file(
+    result = recover_wcs_racing_available_solvers(
         source_path,
         settings.cache_dir / "sky-explorer-wcs",
+        api_key=api_key,
         hints=hints,
         timeout_seconds=resolve_astrometry_timeout_seconds(settings),
         progress_callback=progress_callback,
+        local_solver=solve_wcs_from_metadata_and_gaia,
+        astrometry_client_cls=AstrometryNetClient,
     )
     if result.solved_field is None:
-        reason_text = " ".join(reason.strip() for reason in [*reasons, *result.reasons] if reason.strip()) or "Astrometry fallback did not return a valid WCS."
+        reason_text = " ".join(reason.strip() for reason in [*reasons, *result.reasons] if reason.strip()) or "The selected image does not contain a usable celestial WCS."
         raise ValueError(f"Could not recover a usable celestial WCS. {reason_text}")
     if progress_callback is not None:
-        progress_callback("Recovered a usable WCS via astrometry.net fallback.")
+        if any("astrometry.net" in reason.casefold() for reason in result.reasons):
+            progress_callback("Recovered a usable WCS via astrometry.net.")
+        else:
+            progress_callback("Recovered a usable WCS via metadata-seeded Gaia matching.")
     return result.solved_field, True
 
 

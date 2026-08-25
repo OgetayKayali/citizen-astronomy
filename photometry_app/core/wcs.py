@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -18,6 +19,10 @@ from astropy import units as u
 
 from photometry_app.core.image_io import write_fits_copy
 from photometry_app.core.models import PlateSolveResult, SolvedField, WcsStatus
+
+
+class WcsSolveCancelled(RuntimeError):
+    """Raised when a competing WCS solver already succeeded."""
 
 
 _ASTROMETRY_REQUEST_MAX_ATTEMPTS = 3
@@ -106,6 +111,7 @@ class AstrometryNetClient:
         timeout_seconds: int = 300,
         hints: AstrometrySolveHints | None = None,
         progress_callback: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> PlateSolveResult:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_key = _hash_file(fits_path)
@@ -115,8 +121,10 @@ class AstrometryNetClient:
         if cached is not None:
             return cached
         cache_json_path.unlink(missing_ok=True)
+        _raise_if_wcs_solve_cancelled(cancel_event)
 
         self._login()
+        _raise_if_wcs_solve_cancelled(cancel_event)
         prepared_input = _prepare_plate_solve_input(fits_path, cache_dir)
         try:
             submission_id = self._upload_file(prepared_input.path, hints=hints)
@@ -124,7 +132,9 @@ class AstrometryNetClient:
                 submission_id,
                 timeout_seconds=timeout_seconds,
                 progress_callback=progress_callback,
+                cancel_event=cancel_event,
             )
+            _raise_if_wcs_solve_cancelled(cancel_event)
             solved_path = cache_dir / f"{cache_key}_solved.fits"
             self._download_solved_fits(job_id, solved_path)
         finally:
@@ -203,9 +213,11 @@ class AstrometryNetClient:
         submission_id: int,
         timeout_seconds: int,
         progress_callback: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> int:
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
+            _raise_if_wcs_solve_cancelled(cancel_event)
             if progress_callback is not None:
                 remaining_seconds = max(0, int(deadline - time.time()))
                 progress_callback(f"Waiting for astrometry.net solve job... ({remaining_seconds}s remaining)")
@@ -219,7 +231,7 @@ class AstrometryNetClient:
                 job_id = int(jobs[0])
                 if self._job_succeeded(job_id):
                     return job_id
-            time.sleep(5)
+            _sleep_unless_wcs_solve_cancelled(5.0, cancel_event)
         raise TimeoutError("Timed out waiting for astrometry.net solve job to complete.")
 
     def _job_succeeded(self, job_id: int) -> bool:
@@ -359,7 +371,10 @@ def infer_astrometry_solve_hints(
     normalized_header = _normalize_celestial_wcs_header(header)
     try:
         wcs = celestial_wcs(normalized_header)
-        valid, _reasons = validate_wcs(header, source_path)
+        # Hint inference should keep geometric WCS even when the file is a
+        # PixInsight StarAlignment output; that path veto is for trusting the
+        # embedded solution, not for seeding nova/local recovery.
+        valid, _reasons = validate_wcs(header)
         if (not valid) or wcs.pixel_n_dim < 2 or wcs.world_n_dim < 2 or width is None or height is None:
             if downsample_factor is None:
                 return None
@@ -564,3 +579,18 @@ def _store_cached_solution(cache_json_path: Path, result: PlateSolveResult) -> N
             "wcs_path": str(result.solved_field.wcs_path),
         }
     cache_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _raise_if_wcs_solve_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise WcsSolveCancelled()
+
+
+def _sleep_unless_wcs_solve_cancelled(seconds: float, cancel_event: threading.Event | None) -> None:
+    if cancel_event is None:
+        time.sleep(seconds)
+        return
+    deadline = time.time() + max(0.0, float(seconds))
+    while time.time() < deadline:
+        _raise_if_wcs_solve_cancelled(cancel_event)
+        time.sleep(min(0.2, max(0.0, deadline - time.time())))

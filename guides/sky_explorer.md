@@ -45,7 +45,7 @@ The image preview loads into the panel. **Explore** stays on the workflow row an
 
 **Shift+left-drag** on the image draws a rectangular ROI. While an ROI is present, **Explore** queries only that region. Right-click inside the ROI and choose **Remove ROI** to search the full field again. Loading a new image or survey clears the ROI.
 
-Sky Explorer works on **one image at a time** (not a time-series folder). Prefer a frame with a valid celestial WCS already written into the headers. If WCS is missing, configure an **astrometry.net API key** in Settings so CAst can solve the frame before catalog queries.
+Sky Explorer works on **one image at a time** (not a time-series folder). Prefer a frame with a valid celestial WCS already written into the headers. If WCS is missing, CAst recovers a plate solution from local Gaia matching and, when configured, astrometry.net, keeping whichever finishes first.
 
 ### Step 2: Choose Object Types
 
@@ -85,13 +85,13 @@ You need at least one selected object type whose catalog layer is enabled under 
 
 | Requirement | Why |
 |-------------|-----|
-| Celestial WCS (or astrometry.net key) | Catalog positions must project onto image pixels |
+| Celestial WCS (or recoverable plate solution) | Catalog positions must project onto image pixels |
 | Network access | SIMBAD, VizieR, NASA Exoplanet Archive, Horizons, hips2fits |
 | Observation time in header (`DATE-OBS`) | Required for solar-system predictions |
 | Observing site in Settings | Improves Horizons geometry for SSO search |
 | Catalog Sources enabled | Layers you want must be checked in Sky Explorer settings |
 
-Without WCS and without an API key, Explore cannot place catalogs on the image.
+Without WCS, and if both local Gaia matching and astrometry.net fail (or no key is set and local matching cannot recover a solution), Explore cannot place catalogs on the image.
 
 ---
 
@@ -101,7 +101,7 @@ Sky Explorer’s core call is `explore_sky_image` in the application core. Conce
 
 ### 1. Resolve WCS and footprint
 
-CAst validates embedded celestial WCS keywords. If they are missing or unusable and an astrometry.net key is available, it solves the image (cached under the Sky Explorer WCS cache). From the solved frame it derives center, search radius, and corner sky coordinates for catalog queries. A drawn ROI shrinks that footprint to the selected rectangle.
+CAst validates embedded celestial WCS keywords. If they are missing or unusable, it recovers a plate solution from metadata-seeded Gaia matching and, when an astrometry.net key is set, from nova at the same time, keeping the first success (cached under the Sky Explorer WCS cache). From the solved frame it derives center, search radius, and corner sky coordinates for catalog queries. A drawn ROI shrinks that footprint to the selected rectangle.
 
 ### 2. Query catalog layers
 

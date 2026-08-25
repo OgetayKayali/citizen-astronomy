@@ -74400,89 +74400,40 @@ class MainWindow(QMainWindow):
 
         if progress_callback is not None:
 
-            progress_callback("Embedded WCS was unusable; attempting astrometry.net fallback for the HR source image.")
+            progress_callback("Embedded WCS was unusable; recovering a plate solution.")
 
-        solved_field = self._resolve_hr_source_field_via_astrometry(source_image, header, width, height, reasons, progress_callback)
+        from photometry_app.core.local_wcs import recover_wcs_racing_available_solvers, solve_wcs_from_metadata_and_gaia
 
-        if solved_field is not None:
+        root_path = Path(self._root_path_input.text()).expanduser()
+        api_key = ""
+        if self._settings is None and root_path.exists():
+            self._settings = AppSettings.from_root(root_path)
+        if self._settings is not None:
+            api_key = str(self._settings.astrometry_api_key or "").strip()
 
-            return solved_field
+        hints = infer_astrometry_solve_hints(header, width, height, source_image)
+        if self._settings is None:
+            raise ValueError("Selected source image does not contain a usable celestial WCS.")
+        recovered = recover_wcs_racing_available_solvers(
+            source_image,
+            self._settings.cache_dir / "hr-wcs",
+            api_key=api_key,
+            hints=hints,
+            timeout_seconds=resolve_astrometry_timeout_seconds(self._settings),
+            progress_callback=progress_callback,
+            local_solver=solve_wcs_from_metadata_and_gaia,
+            astrometry_client_cls=AstrometryNetClient,
+        )
+        if recovered.solved_field is not None:
+            return recovered.solved_field
+
+        reasons.extend(recovered.reasons)
 
 
 
         reason_text = " ".join(reason.strip() for reason in reasons if reason.strip()) or "The selected image does not contain a usable celestial WCS."
 
         raise ValueError(f"Selected source image does not contain a usable celestial WCS. {reason_text}")
-
-    def _resolve_hr_source_field_via_astrometry(
-
-        self,
-
-        source_image: Path,
-
-        header,
-
-        width: int | None,
-
-        height: int | None,
-
-        reasons: list[str],
-
-        progress_callback: Callable[[str], None] | None = None,
-
-    ) -> object | None:
-
-        root_path = Path(self._root_path_input.text()).expanduser()
-
-        if self._settings is None and root_path.exists():
-
-            self._settings = AppSettings.from_root(root_path)
-
-        if self._settings is None or not self._settings.astrometry_api_key:
-
-            return None
-
-
-
-        hints = infer_astrometry_solve_hints(header, width, height, source_image)
-
-        try:
-
-            if progress_callback is not None:
-
-                progress_callback("Submitting the HR source image to astrometry.net fallback.")
-
-            result = AstrometryNetClient(self._settings.astrometry_api_key).solve_file(
-
-                source_image,
-
-                self._settings.cache_dir / "hr-wcs",
-
-                hints=hints,
-
-                timeout_seconds=resolve_astrometry_timeout_seconds(self._settings),
-
-            )
-
-        except Exception as exc:
-
-            reasons.append(f"Astrometry fallback failed: {exc}")
-
-            return None
-
-
-
-        if result.solved_field is None:
-
-            reasons.extend(result.reasons)
-
-            return None
-
-        if progress_callback is not None:
-
-            progress_callback("Recovered a usable HR WCS via astrometry.net fallback.")
-
-        return result.solved_field
 
     def _query_hr_field_catalog(self, solved_field, progress_callback: Callable[[str], None] | None = None):
 

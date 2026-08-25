@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import hashlib
+import inspect
 import math
 from pathlib import Path
+import threading
 import warnings
 
 import numpy as np
@@ -20,7 +23,14 @@ from photometry_app.core.catalogs import CatalogService, _is_vizier_empty_parse_
 from photometry_app.core.image_io import read_header_and_shape, read_photometry_image_data
 from photometry_app.core.models import CatalogStar, PlateSolveResult, SolvedField, WcsStatus
 from photometry_app.core.pointing import assess_image_pointing
-from photometry_app.core.wcs import extract_solved_field, validate_wcs
+from photometry_app.core.wcs import (
+    AstrometryNetClient,
+    AstrometrySolveHints,
+    WcsSolveCancelled,
+    extract_solved_field,
+    validate_wcs,
+    _raise_if_wcs_solve_cancelled,
+)
 
 
 _PLATE_SCALE_ARCSEC_FACTOR = 206.26480624709636
@@ -85,6 +95,7 @@ def solve_wcs_from_metadata_and_gaia(
     *,
     progress_callback: Callable[[str], None] | None = None,
     catalog_service: CatalogService | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> PlateSolveResult:
     """Solve a metadata-seeded image by matching detected stars to Gaia DR3."""
     reasons: list[str] = []
@@ -92,6 +103,7 @@ def solve_wcs_from_metadata_and_gaia(
         header, width, height = read_header_and_shape(source_path)
     except Exception as exc:
         return _unsolved_result(source_path, f"Could not read image metadata for the Gaia WCS fallback: {exc}")
+    _raise_if_wcs_solve_cancelled(cancel_event)
 
     seed = infer_metadata_wcs_seed(header, width, height, source_path=source_path)
     if seed is None:
@@ -113,6 +125,7 @@ def solve_wcs_from_metadata_and_gaia(
             reasons=[],
         )
     solved_path.unlink(missing_ok=True)
+    _raise_if_wcs_solve_cancelled(cancel_event)
 
     assessment = assess_image_pointing(header, width, height, source_path=source_path)
     if progress_callback is not None:
@@ -134,11 +147,15 @@ def solve_wcs_from_metadata_and_gaia(
     )
     try:
         service = catalog_service or CatalogService(cache_dir / "catalogs")
+        _raise_if_wcs_solve_cancelled(cancel_event)
         gaia_stars = _query_gaia_stars_for_wcs_fallback(
             service,
             provisional_field,
             progress_callback=progress_callback,
+            cancel_event=cancel_event,
         )
+    except WcsSolveCancelled:
+        raise
     except Exception as exc:
         return _unsolved_result(source_path, f"Gaia WCS fallback catalog query failed: {exc}")
 
@@ -149,6 +166,7 @@ def solve_wcs_from_metadata_and_gaia(
             f"Gaia WCS fallback found only {len(gaia_stars)} usable catalog stars.",
         )
 
+    _raise_if_wcs_solve_cancelled(cancel_event)
     try:
         detected_sources = _detect_image_sources(source_path)
     except Exception as exc:
@@ -164,6 +182,7 @@ def solve_wcs_from_metadata_and_gaia(
             f"{len(detected_sources)} image stars and {len(gaia_stars)} catalog stars."
         )
 
+    _raise_if_wcs_solve_cancelled(cancel_event)
     try:
         fitted = _fit_gaia_wcs(detected_sources, gaia_stars, seed)
     except Exception as exc:
@@ -180,6 +199,7 @@ def solve_wcs_from_metadata_and_gaia(
     fitted_header["WCSRMS"] = (rms_pixels, "Gaia WCS fit RMS in pixels")
     fitted_header["SRCW"] = (seed.width, "Source image width in pixels")
     fitted_header["SRCH"] = (seed.height, "Source image height in pixels")
+    _raise_if_wcs_solve_cancelled(cancel_event)
     fits.PrimaryHDU(header=fitted_header).writeto(
         solved_path,
         overwrite=True,
@@ -210,11 +230,192 @@ def solve_wcs_from_metadata_and_gaia(
     )
 
 
+_LOCAL_WCS_SUCCESS_REASON = "Recovered WCS via metadata-seeded Gaia matching."
+_ASTROMETRY_WCS_SUCCESS_REASON = "Recovered WCS via astrometry.net."
+
+
+def recover_wcs_racing_available_solvers(
+    source_path: Path,
+    cache_dir: Path,
+    *,
+    api_key: str = "",
+    hints: AstrometrySolveHints | None = None,
+    timeout_seconds: int = 300,
+    progress_callback: Callable[[str], None] | None = None,
+    try_local: bool = True,
+    local_solver: Callable[..., PlateSolveResult] | None = None,
+    astrometry_client_cls: type[AstrometryNetClient] | None = None,
+    astrometry_client_factory: Callable[[str], object] | None = None,
+) -> PlateSolveResult:
+    """Run local Gaia matching and astrometry.net together; first success wins."""
+
+    resolved_api_key = str(api_key or "").strip()
+    run_astrometry = bool(resolved_api_key) or astrometry_client_factory is not None
+    run_local = bool(try_local)
+    if not run_local and not run_astrometry:
+        return _unsolved_result(source_path, "No WCS solver is available.")
+
+    local_solve = local_solver or solve_wcs_from_metadata_and_gaia
+    client_cls = astrometry_client_cls or AstrometryNetClient
+    cancel_event = threading.Event()
+    progress_lock = threading.Lock()
+
+    def emit(message: str) -> None:
+        if progress_callback is None or cancel_event.is_set():
+            return
+        text = str(message or "").strip()
+        if not text:
+            return
+        with progress_lock:
+            if cancel_event.is_set():
+                return
+            progress_callback(text)
+
+    def run_local_solver() -> PlateSolveResult:
+        return _call_solver_with_supported_kwargs(
+            local_solve,
+            source_path,
+            cache_dir,
+            progress_callback=emit,
+            cancel_event=cancel_event,
+        )
+
+    def run_astrometry_solver() -> PlateSolveResult:
+        client = (
+            astrometry_client_factory(resolved_api_key)
+            if astrometry_client_factory is not None
+            else client_cls(resolved_api_key)
+        )
+        return _call_solver_with_supported_kwargs(
+            client.solve_file,
+            source_path,
+            cache_dir,
+            hints=hints,
+            timeout_seconds=timeout_seconds,
+            progress_callback=emit,
+            cancel_event=cancel_event,
+        )
+
+    if run_local and run_astrometry:
+        emit(
+            "Trying astrometry.net and metadata-seeded Gaia matching together; "
+            "using whichever solution finishes first."
+        )
+        return _race_wcs_solvers(
+            source_path,
+            {
+                "local": run_local_solver,
+                "astrometry": run_astrometry_solver,
+            },
+            cancel_event=cancel_event,
+            emit=emit,
+        )
+    try:
+        if run_local:
+            return _annotate_wcs_solver_result(run_local_solver(), "local")
+        return _annotate_wcs_solver_result(run_astrometry_solver(), "astrometry")
+    except WcsSolveCancelled:
+        return _unsolved_result(source_path, "WCS recovery was cancelled.")
+    except Exception as exc:
+        method = "local" if run_local else "astrometry"
+        return _unsolved_result(source_path, _wcs_solver_failure_reason(method, exc))
+
+
+def _race_wcs_solvers(
+    source_path: Path,
+    solvers: dict[str, Callable[[], PlateSolveResult]],
+    *,
+    cancel_event: threading.Event,
+    emit: Callable[[str], None],
+) -> PlateSolveResult:
+    executor = ThreadPoolExecutor(max_workers=len(solvers), thread_name_prefix="wcs-race")
+    futures = {executor.submit(solver): method for method, solver in solvers.items()}
+    failures: list[str] = []
+    winner: PlateSolveResult | None = None
+    try:
+        for future in as_completed(futures):
+            method = futures[future]
+            try:
+                result = future.result()
+            except WcsSolveCancelled:
+                continue
+            except Exception as exc:
+                failures.append(_wcs_solver_failure_reason(method, exc))
+                continue
+            if result.solved_field is not None:
+                winner = _annotate_wcs_solver_result(result, method)
+                cancel_event.set()
+                emit(_wcs_solver_win_message(method))
+                break
+            failures.extend(reason for reason in result.reasons if reason)
+    finally:
+        cancel_event.set()
+        executor.shutdown(wait=False, cancel_futures=False)
+
+    if winner is not None:
+        return winner
+    if failures:
+        return PlateSolveResult(
+            source_path=source_path,
+            status=WcsStatus.UNSOLVED,
+            solved_field=None,
+            reasons=list(dict.fromkeys(failures)),
+        )
+    return _unsolved_result(source_path, "No WCS solver recovered a usable solution.")
+
+
+def _call_solver_with_supported_kwargs(func: Callable[..., PlateSolveResult], *args, **kwargs) -> PlateSolveResult:
+    try:
+        return func(*args, **kwargs)
+    except TypeError:
+        try:
+            signature = inspect.signature(func)
+        except (TypeError, ValueError):
+            raise
+        if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+            raise
+        accepted = {
+            name
+            for name, parameter in signature.parameters.items()
+            if parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        }
+        filtered = {key: value for key, value in kwargs.items() if key in accepted}
+        return func(*args, **filtered)
+
+
+def _annotate_wcs_solver_result(result: PlateSolveResult, method: str) -> PlateSolveResult:
+    if result.solved_field is None:
+        return result
+    success_reason = _LOCAL_WCS_SUCCESS_REASON if method == "local" else _ASTROMETRY_WCS_SUCCESS_REASON
+    reasons = list(result.reasons)
+    if success_reason not in reasons:
+        reasons.append(success_reason)
+    return PlateSolveResult(
+        source_path=result.source_path,
+        status=result.status,
+        solved_field=result.solved_field,
+        reasons=reasons,
+    )
+
+
+def _wcs_solver_win_message(method: str) -> str:
+    if method == "local":
+        return "Recovered a usable WCS via metadata-seeded Gaia matching; stopping astrometry.net."
+    return "Recovered a usable WCS via astrometry.net; stopping metadata-seeded Gaia matching."
+
+
+def _wcs_solver_failure_reason(method: str, exc: Exception) -> str:
+    if method == "local":
+        return f"Metadata-seeded Gaia matching failed: {exc}"
+    return f"Astrometry.net solve failed: {exc}"
+
+
 def _query_gaia_stars_for_wcs_fallback(
     service: CatalogService,
     provisional_field: SolvedField,
     *,
     progress_callback: Callable[[str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> list[CatalogStar]:
     """Query Gaia with a denser-field retry ladder for local WCS recovery.
 
@@ -234,6 +435,7 @@ def _query_gaia_stars_for_wcs_fallback(
         )
         if progress_callback is not None and index > 0:
             progress_callback(f"Gaia WCS fallback retrying with {label}.")
+        _raise_if_wcs_solve_cancelled(cancel_event)
         try:
             return service.query_gaia_stars_limited(
                 query_field,
