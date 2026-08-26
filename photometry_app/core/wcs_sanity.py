@@ -360,6 +360,7 @@ def evaluate_wcs_sanity(
     isolation_pixels = 0.0
     median_fwhm_px: float | None = None
     for probe_index, (candidate_fraction, candidate_radius_px, candidate_sources) in enumerate(probe_samples):
+        # Sample cone only — the original solved_field remains the science catalog radius.
         probe_field = capped_solved_field(
             solved_field,
             min(

@@ -2,11 +2,17 @@
 
 Version history for Citizen Astronomy (CAst), newest first. Installer releases and delta updates are published on the [Releases](https://github.com/OgetayKayali/citizen-astronomy/releases) page.
 
-Current app version: **0.1.1-alpha.13**
+Current app version: **0.1.1-alpha.14**
 
 This log also tracks finished fixes and features staged for the next published update. Group notes by mode (or App/Display). Prefer one short bullet per change—not intermediate debugging steps.
 
-## Pending for next release (after 0.1.1-alpha.13)
+## Pending for next release (after 0.1.1-alpha.14)
+
+## 0.1.1-alpha.14
+
+### Differential Photometry
+
+- Restore wide-field variable-star light curves (for example W UMa): catalogs use the actual image, not the 0.35° WCS sample cone; Gaia is tiled when the field is wider than one VizieR query. Clearing a folder cache also deletes leftover capped catalogs, and filename/OBJECT names still keep the target.
 
 ## 0.1.1-alpha.13
 

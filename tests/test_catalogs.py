@@ -44,9 +44,11 @@ class CatalogServiceTest(unittest.TestCase):
             service = CatalogService(Path(temp_dir))
             solved_field = self._solved_field()
 
-            self.assertTrue(hasattr(service, "_cache_key"))
-            self.assertEqual(service._cache_key(solved_field), "field_83.82200_m5.39100_0.25000.json")
-            self.assertEqual(service.clear_field_cache(solved_field), 0)
+        self.assertTrue(hasattr(service, "_cache_key"))
+        self.assertTrue(hasattr(service, "_field_catalog_center_prefix"))
+        self.assertEqual(service._cache_key(solved_field), "field_83.82200_m5.39100_0.25000.json")
+        self.assertEqual(service._field_catalog_center_prefix(solved_field), "field_83.82200_m5.39100_")
+        self.assertEqual(service.clear_field_cache(solved_field), 0)
 
     def test_query_field_catalog_round_trips_cache(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -66,6 +68,57 @@ class CatalogServiceTest(unittest.TestCase):
 
             self.assertEqual([star.source_id for star in catalog.gaia_stars], ["gaia-ref"])
             self.assertEqual(service.clear_field_cache(solved_field), 1)
+
+    def test_clear_field_cache_removes_capped_and_full_radius_keys_for_the_same_center(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            full_field = SolvedField(
+                center_ra_deg=145.93800,
+                center_dec_deg=55.95700,
+                radius_deg=3.2512,
+                width=6248,
+                height=4176,
+                wcs_path=Path("wuma.fits"),
+            )
+            capped_field = capped_solved_field(full_field, DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg)
+            other_field = SolvedField(
+                center_ra_deg=10.0,
+                center_dec_deg=20.0,
+                radius_deg=0.25,
+                width=100,
+                height=100,
+                wcs_path=Path("other.fits"),
+            )
+            capped_path = Path(temp_dir) / service._field_catalog_cache_key(
+                capped_field,
+                include_gaia=True,
+                include_variable_stars=False,
+                include_exoplanets=False,
+                gaia_max_magnitude=16.0,
+                gaia_row_cap=5000,
+                variable_star_max_magnitude=None,
+                exoplanet_max_magnitude=None,
+            )
+            vsx_path = Path(temp_dir) / service._field_catalog_cache_key(
+                full_field,
+                include_gaia=False,
+                include_variable_stars=True,
+                include_exoplanets=True,
+                gaia_max_magnitude=None,
+                gaia_row_cap=None,
+                variable_star_max_magnitude=None,
+                exoplanet_max_magnitude=None,
+            )
+            other_path = Path(temp_dir) / service._cache_key(other_field)
+            for path in (capped_path, vsx_path, other_path):
+                path.write_text("{}", encoding="utf-8")
+
+            removed = service.clear_field_cache(full_field)
+
+            self.assertEqual(removed, 2)
+            self.assertFalse(capped_path.exists())
+            self.assertFalse(vsx_path.exists())
+            self.assertTrue(other_path.exists())
 
     def test_query_field_catalog_can_skip_gaia_and_exoplanets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

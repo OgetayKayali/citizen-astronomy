@@ -61,7 +61,7 @@ from photometry_app.core.models import (
 
 from photometry_app.core.pipeline import PhotometryPipeline, science_export_metadata_from_settings
 
-from photometry_app.core.catalogs import CatalogService
+from photometry_app.core.catalogs import CatalogService, DEFAULT_GAIA_TILE_OPTIONS, capped_solved_field
 
 from photometry_app.core.exporters import ScienceExportMetadata
 
@@ -4964,19 +4964,47 @@ class PipelineIntegrationTest(unittest.TestCase):
 
             matching_cache.write_text("{}", encoding="utf-8")
 
+            capped_field = capped_solved_field(solved_field, DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg)
+            if capped_field is solved_field:
+                capped_field = SolvedField(
+                    center_ra_deg=solved_field.center_ra_deg,
+                    center_dec_deg=solved_field.center_dec_deg,
+                    radius_deg=DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg,
+                    width=solved_field.width,
+                    height=solved_field.height,
+                    wcs_path=solved_field.wcs_path,
+                )
+            capped_cache = catalog_dir / service._field_catalog_cache_key(
+                capped_field,
+                include_gaia=True,
+                include_variable_stars=False,
+                include_exoplanets=False,
+                gaia_max_magnitude=16.0,
+                gaia_row_cap=5000,
+                variable_star_max_magnitude=None,
+                exoplanet_max_magnitude=None,
+            )
+            capped_cache.write_text("{}", encoding="utf-8")
+
             other_cache = catalog_dir / "field_other.json"
 
             other_cache.write_text("{}", encoding="utf-8")
 
+            previous_config_path = os.environ.get("CITIZEN_PHOTOMETRY_CONFIG_PATH")
+            os.environ["CITIZEN_PHOTOMETRY_CONFIG_PATH"] = str(settings_path)
+            try:
+                removed = pipeline.clear_object_catalog_cache(root, "M42")
+            finally:
+                if previous_config_path is None:
+                    os.environ.pop("CITIZEN_PHOTOMETRY_CONFIG_PATH", None)
+                else:
+                    os.environ["CITIZEN_PHOTOMETRY_CONFIG_PATH"] = previous_config_path
 
-
-            removed = pipeline.clear_object_catalog_cache(root, "M42")
-
-
-
-            self.assertEqual(removed, 1)
+            self.assertEqual(removed, 2)
 
             self.assertFalse(matching_cache.exists())
+
+            self.assertFalse(capped_cache.exists())
 
             self.assertTrue(other_cache.exists())
 

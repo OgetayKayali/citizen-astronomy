@@ -109,7 +109,12 @@ def gaia_field_needs_tiles(
 
 
 def capped_solved_field(solved_field: SolvedField, max_radius_deg: float) -> SolvedField:
-    """Return *solved_field* unchanged, or a copy whose radius fits one Gaia cone."""
+    """Shrink *solved_field* to one Gaia cone for a WCS spot-check only.
+
+    Science catalogs (Differential Photometry, HR Diagram, Sky Explorer, Distance
+    Map, Transient Finder, Asteroid/Comet) must keep the true image radius and
+    tile Gaia when the field is wider than one VizieR cone.
+    """
     field_radius = max(1.0e-6, float(solved_field.radius_deg))
     capped_radius = min(field_radius, max(1.0e-6, float(max_radius_deg)))
     if capped_radius >= field_radius - 1e-12:
@@ -807,18 +812,21 @@ class CatalogService:
 
 
 
+    def _field_catalog_center_prefix(self, solved_field: SolvedField) -> str:
+        """Return the RA/Dec filename prefix shared by every cache radius for this field."""
+        return (
+            f"field_{float(solved_field.center_ra_deg):.5f}_"
+            f"{float(solved_field.center_dec_deg):.5f}_"
+        ).replace("-", "m")
+
     def clear_field_cache(self, solved_field: SolvedField) -> int:
-
-        cache_stem = self._cache_key(solved_field).removesuffix(".json")
-
+        # Photometry stores Gaia at a capped radius and VSX at the full field radius.
+        # Match on RA/Dec so clearing the object folder removes both.
+        prefix = self._field_catalog_center_prefix(solved_field)
         removed = 0
-
-        for cache_path in self._cache_dir.glob(f"{cache_stem}*.json"):
-
+        for cache_path in self._cache_dir.glob(f"{prefix}*.json"):
             cache_path.unlink(missing_ok=True)
-
             removed += 1
-
         return removed
 
     def _query_vizier_with_alternate_centers(

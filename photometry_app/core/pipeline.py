@@ -31,7 +31,7 @@ from astropy.io.fits import Header
 
 
 
-from photometry_app.core.catalogs import CatalogService, DEFAULT_GAIA_TILE_OPTIONS, capped_solved_field
+from photometry_app.core.catalogs import CatalogService, gaia_field_needs_tiles
 
 from photometry_app.core.catalog_filters import filter_variable_stars, format_designation_family_labels
 
@@ -123,8 +123,6 @@ _PROCESSING_REPORT_CACHE_MISS_REASON = "Cache miss: workflow files or settings c
 _AAVSO_ANALYZE_BEST_MIN_PEAK_ABOVE_SKY_ADU = 1000.0
 
 _AAVSO_ANALYZE_BEST_MAX_SATURATION_FRACTION = 0.80
-
-_PHOTOMETRY_CATALOG_MAX_RADIUS_DEG = float(DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg)
 
 _PHOTOMETRY_GAIA_MAX_MAGNITUDE = 16.0
 
@@ -636,6 +634,13 @@ class PhotometryPipeline:
         total_variable_stars_found = len(field_catalog.variable_stars)
 
         eligible_variable_stars = filter_variable_stars(field_catalog.variable_stars, settings.variable_star_designation_filters)
+        designation_matched_count = len(eligible_variable_stars)
+        eligible_variable_stars, folder_match_notes = _ensure_object_folder_variable_stars(
+            eligible_variable_stars,
+            field_catalog.variable_stars,
+            object_name,
+            name_hints=_object_target_name_hints(object_name, summary.files),
+        )
 
         _emit_progress(
 
@@ -714,12 +719,13 @@ class PhotometryPipeline:
             preselected_source_keys = [_catalog_source_key(item) for item in default_preview_variable_stars]
 
         notes: list[str] = []
+        notes.extend(folder_match_notes)
 
-        if len(eligible_variable_stars) != total_variable_stars_found:
+        if designation_matched_count != total_variable_stars_found:
 
             notes.append(
 
-                f"Designation filter kept {len(eligible_variable_stars)} of {total_variable_stars_found} variable stars using {format_designation_family_labels(settings.variable_star_designation_filters)}."
+                f"Designation filter kept {designation_matched_count} of {total_variable_stars_found} variable stars using {format_designation_family_labels(settings.variable_star_designation_filters)}."
 
             )
 
@@ -1033,8 +1039,11 @@ class PhotometryPipeline:
             selected_variable_stars,
             field_catalog.variable_stars,
             object_name,
+            name_hints=_object_target_name_hints(object_name, summary.files),
         )
-        notes.extend(folder_match_notes)
+        for folder_note in folder_match_notes:
+            notes.append(folder_note)
+            _emit_progress(progress_callback, folder_note)
 
         selected_field_catalog = FieldCatalog(
 
@@ -1151,7 +1160,7 @@ class PhotometryPipeline:
 
             _emit_progress(progress_callback, filter_note)
 
-        if len(selected_variable_stars) != len(eligible_variable_stars):
+        if eligible_variable_stars and len(selected_variable_stars) != len(eligible_variable_stars):
 
             selection_label = "Analyze Best AAVSO ADU range" if analyze_best_targets and not using_explicit_source_selection else _selection_label(settings.variable_star_limit_mode, settings.variable_star_limit_value)
 
@@ -1181,7 +1190,12 @@ class PhotometryPipeline:
 
 
 
-        if not eligible_variable_stars and not using_manual_mode and auto_manual_config is None:
+        if (
+            not eligible_variable_stars
+            and not selected_variable_stars
+            and not using_manual_mode
+            and auto_manual_config is None
+        ):
 
             if total_variable_stars_found == 0:
 
@@ -2542,18 +2556,15 @@ class PhotometryPipeline:
 
         best_field = None
 
-        seen_keys: set[tuple[float, float, float]] = set()
+        seen_keys: set[tuple[float, float]] = set()
 
         magnitude_limit = _photometry_gaia_magnitude_limit(gaia_max_magnitude)
 
         for index, solved_field in enumerate(solved_fields, start=1):
 
-            catalog_field = capped_solved_field(solved_field, _PHOTOMETRY_CATALOG_MAX_RADIUS_DEG)
-
             key = (
-                round(catalog_field.center_ra_deg, 5),
-                round(catalog_field.center_dec_deg, 5),
-                round(catalog_field.radius_deg, 5),
+                round(float(solved_field.center_ra_deg), 5),
+                round(float(solved_field.center_dec_deg), 5),
             )
 
             if key in seen_keys:
@@ -2562,23 +2573,18 @@ class PhotometryPipeline:
 
             seen_keys.add(key)
 
-            if float(catalog_field.radius_deg) + 1e-12 < float(solved_field.radius_deg):
-
+            if gaia_field_needs_tiles(solved_field):
                 _emit_progress(
-
                     progress_callback,
-
                     (
-                        f"Photometry catalog uses the central {catalog_field.radius_deg:.4f} deg "
-                        f"(field radius is {float(solved_field.radius_deg):.4f} deg); "
-                        f"Gaia G <= {magnitude_limit:.1f}."
+                        f"Photometry catalogs use the full field ({float(solved_field.radius_deg):.4f} deg); "
+                        "Gaia is queried in tiles because that is wider than one VizieR cone."
                     ),
-
                 )
 
             catalog = _query_photometry_field_catalog(
                 catalog_service,
-                catalog_field,
+                solved_field,
                 aavso_chart_id=aavso_chart_id,
                 progress_callback=progress_callback,
                 gaia_max_magnitude=magnitude_limit,
@@ -3253,16 +3259,43 @@ def _catalog_star_matches_object_folder(entry: CatalogStar, object_name: str) ->
     return False
 
 
+def _object_target_name_hints(object_name: str, files: list[FileScanResult] | None = None) -> list[str]:
+    """Folder name plus OBJECT / filename target names (e.g. W UMa from Light_W UMa_...)."""
+    hints: list[str] = []
+    seen: set[str] = set()
+
+    def add_hint(value: object) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        key = text.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        hints.append(text)
+
+    add_hint(object_name)
+    for file_result in files or []:
+        metadata = getattr(file_result, "metadata", None)
+        add_hint(getattr(metadata, "object_name", None))
+    return hints
+
+
 def _ensure_object_folder_variable_stars(
     selected: list[CatalogStar],
     field_variables: list[CatalogStar],
     object_name: str,
+    *,
+    name_hints: list[str] | None = None,
 ) -> tuple[list[CatalogStar], list[str]]:
-    """Keep folder-named targets (e.g. DY Her from 'DY Her Data') even when filters would drop them."""
+    """Keep folder/image-named targets even when designation filters would drop them."""
+    hints = [hint for hint in (name_hints or [object_name]) if str(hint or "").strip()]
+    if not hints:
+        hints = [object_name]
     selected_keys = {_catalog_source_key(entry) for entry in selected}
     extras: list[CatalogStar] = []
     for entry in field_variables:
-        if not _catalog_star_matches_object_folder(entry, object_name):
+        if not any(_catalog_star_matches_object_folder(entry, hint) for hint in hints):
             continue
         key = _catalog_source_key(entry)
         if key in selected_keys:
@@ -3272,8 +3305,12 @@ def _ensure_object_folder_variable_stars(
     if not extras:
         return list(selected), []
     names = ", ".join(str(entry.name or entry.source_id) for entry in extras[:5])
+    matched_label = next(
+        (hint for hint in hints if hint.strip() and hint.strip() != str(object_name).strip()),
+        object_name,
+    )
     note = (
-        f"Included {len(extras)} variable star(s) matching folder name '{object_name}'"
+        f"Included {len(extras)} variable star(s) matching folder or image name '{matched_label}'"
         f"{'' if len(extras) <= 5 else '…'}: {names}."
     )
     return [*extras, *selected], [note]

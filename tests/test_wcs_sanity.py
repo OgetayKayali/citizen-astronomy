@@ -10,6 +10,7 @@ from astropy.io import fits
 from astropy.io.fits import Header
 from astropy.wcs import WCS
 
+from photometry_app.core.catalogs import DEFAULT_GAIA_TILE_OPTIONS
 from photometry_app.core.local_wcs import _DetectedSource
 from photometry_app.core.models import CatalogStar, SolvedField
 from photometry_app.core.wcs import celestial_wcs
@@ -642,6 +643,8 @@ class WcsSanityTest(unittest.TestCase):
         query.assert_called_once()
         queried_field = query.call_args.args[0]
         self.assertAlmostEqual(queried_field.radius_deg, solved_field.radius_deg * 0.10)
+        self.assertLess(queried_field.radius_deg, DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg)
+        self.assertAlmostEqual(solved_field.radius_deg, 1.05)
         self.assertEqual(query.call_args.kwargs["progress_label"], "WCS sanity probe")
         self.assertEqual(result.candidate_count, 10)
         self.assertTrue(any("10% of field radius" in line for line in progress))
