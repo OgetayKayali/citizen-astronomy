@@ -25,6 +25,7 @@ class DifferentialQuickLabelDialog(QDialog):
         x_axis_mode: str = "datetime",
         phase_period_hours: float | None = None,
         phase_anchor_mode: str = "first_observation",
+        phase_anchor_jd: float | None = None,
         phase_opacity_floor: float = 0.24,
         recent_period_error_bars_only: bool = False,
         theme: str = "normal",
@@ -43,6 +44,7 @@ class DifferentialQuickLabelDialog(QDialog):
         self._x_axis_mode = str(x_axis_mode or "datetime")
         self._phase_period_hours = phase_period_hours
         self._phase_anchor_mode = str(phase_anchor_mode or "first_observation")
+        self._phase_anchor_jd = phase_anchor_jd
         self._phase_opacity_floor = float(phase_opacity_floor)
         self._recent_period_error_bars_only = bool(recent_period_error_bars_only)
         self._current_entry_index = 0
@@ -145,6 +147,7 @@ class DifferentialQuickLabelDialog(QDialog):
                 x_axis_mode=self._x_axis_mode,
                 phase_period_hours=self._phase_period_hours,
                 phase_anchor_mode=self._phase_anchor_mode,
+                phase_anchor_jd=self._phase_anchor_jd,
                 phase_opacity_floor=self._phase_opacity_floor,
                 recent_period_error_bars_only=self._recent_period_error_bars_only,
             )

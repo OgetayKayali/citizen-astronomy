@@ -1097,6 +1097,8 @@ class SettingsTest(unittest.TestCase):
 
                 aavso_chart_id="X12345ABC",
 
+                aavso_api_token="test-aavso-token",
+
                 observation_timezone="America/New_York",
 
                 time_standard="bjd_tdb",
@@ -1374,6 +1376,8 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(loaded.filter_system, "Johnson-Cousins")
 
             self.assertEqual(loaded.aavso_chart_id, "X12345ABC")
+
+            self.assertEqual(loaded.aavso_api_token, "test-aavso-token")
 
             self.assertEqual(loaded.observation_timezone, "America/New_York")
 

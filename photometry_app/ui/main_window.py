@@ -267,7 +267,16 @@ from photometry_app.ui.sky_view_star_renderer import (
 from photometry_app.ui.transient_label_dialog import TRANSIENT_QUICK_LABEL_OPTIONS, TransientQuickLabelDialog
 from photometry_app.ui.workers import *
 from photometry_app.ui.scan_comps_dialog import ScanCompsDialog, ScanCompsDialogResult
+from photometry_app.ui.oc_dialog import OcDialog
 from photometry_app.ui.variable_ephemeris_dialog import VariableEphemerisDialog
+from photometry_app.core.oc_extrema import (
+    OcSession,
+    OcStarLog,
+    make_star_key,
+    oc_log_from_payload,
+    oc_log_to_payload,
+    series_matches_star,
+)
 from photometry_app.core.scan_comps import ScanCompReferenceInput, catalog_star_bp_rp
 
 
@@ -589,6 +598,7 @@ _CALCULATE_PERIOD_BUTTON_LABEL = "Calculate Period"
 _PULL_PERIOD_BUTTON_LABEL = "Pull Period"
 _SCAN_COMPS_BUTTON_LABEL = "Scan Comps"
 _EPHEMERIS_BUTTON_LABEL = "Ephemeris"
+_OC_BUTTON_LABEL = "O–C"
 _DISCOVER_BUTTON_LABEL = "Discover"
 _INCREASE_SNR_BUTTON_LABEL = "Increase SNR"
 _RESET_SNR_BUTTON_LABEL = "Reset SNR"
@@ -26559,7 +26569,7 @@ class MainWindow(QMainWindow):
 
         self._source_table.verticalHeader().setMinimumSectionSize(18)
 
-        self._source_table.itemSelectionChanged.connect(self._handle_source_selection_changed)
+        self._source_table.itemSelectionChanged.connect(self._schedule_source_selection_changed)
 
         self._source_table.itemDoubleClicked.connect(self._handle_source_table_item_double_clicked)
 
@@ -26927,9 +26937,20 @@ class MainWindow(QMainWindow):
 
         self._fold_plot_button = QPushButton("Fold")
 
-        self._fold_plot_button.setToolTip("Fold the selected light curve by the best available period; click again to unfold")
+        self._fold_plot_button.setToolTip(
+            "Fold on the literature period and epoch when available, so later nights can shift against that fixed clock. "
+            "If no literature period is available, Fold uses the calculated period and the Anchor control. Click again to unfold."
+        )
 
         self._fold_plot_button.clicked.connect(self._toggle_fold_selected_series)
+
+        self._oc_button = QPushButton(_OC_BUTTON_LABEL)
+        self._oc_button.setToolTip(
+            "Mark times of maximum and minimum on this light curve, keep a persistable log, "
+            "and plot O–C once T₀ and period are set. Other loaded nights, imported files, "
+            "and live AAVSO AID downloads can join the same log."
+        )
+        self._oc_button.clicked.connect(self._open_oc_dialog)
 
 
 
@@ -27821,6 +27842,8 @@ class MainWindow(QMainWindow):
 
         self._light_curve_controls_layout.addWidget(self._fold_plot_button)
 
+        self._light_curve_controls_layout.addWidget(self._oc_button)
+
         self._light_curve_controls_layout.addWidget(self._light_curve_filter_button)
 
         self._light_curve_controls_layout.addWidget(self._fit_degree_label)
@@ -28559,6 +28582,8 @@ class MainWindow(QMainWindow):
 
         self._light_curve_fold_active = False
 
+        self._light_curve_fold_epoch_hjd: float | None = None
+
         self._light_curve_unfold_x_axis_mode = "jd"
 
         self._image_zoom_scale = 1.0
@@ -28631,9 +28656,21 @@ class MainWindow(QMainWindow):
 
         self._source_comparison_highlighted_rows: dict[str, set[str]] = {}
 
-        self._source_measurement_map_cache_key: tuple[int, int] | None = None
+        self._source_lookup_cache_key: tuple[int, int, int] | None = None
 
         self._source_measurement_map_cache: dict[tuple[str, str], list[PhotometryMeasurement]] = {}
+
+        self._reference_measurement_frame_index_cache: dict[str, dict[tuple[Path, str | None], PhotometryMeasurement]] = {}
+
+        self._reference_source_row_keys_cache: dict[str, str] = {}
+
+        self._source_catalog_entries_cache: list[CatalogStar] = []
+
+        self._source_entry_by_name_cache: dict[tuple[str, str], CatalogStar] = {}
+
+        self._source_candidate_scores_cache: dict[tuple[str, str], float] = {}
+
+        self._source_selection_change_active = False
 
         self._active_processing_object_name: str | None = None
 
@@ -78080,6 +78117,8 @@ class MainWindow(QMainWindow):
 
             self._fold_plot_button,
 
+            self._oc_button,
+
             self._light_curve_filter_button,
 
             self._reset_plot_button,
@@ -81170,6 +81209,7 @@ class MainWindow(QMainWindow):
                 phase_period_hours=self._fit_period_spin.value() / _MINUTES_PER_HOUR,
 
                 phase_anchor_mode=self._current_phase_anchor_mode(),
+                phase_anchor_jd=self._current_phase_anchor_jd(),
 
                 phase_opacity_floor=float(self._phase_opacity_floor_spin.value()),
 
@@ -82859,6 +82899,18 @@ class MainWindow(QMainWindow):
 
         self._phase_anchor_selector.setVisible(phase_mode)
 
+        literature_epoch_locked = phase_mode and self._current_phase_anchor_jd() is not None
+
+        self._phase_anchor_selector.setEnabled(not literature_epoch_locked)
+
+        self._phase_anchor_label.setText("Literature Epoch" if literature_epoch_locked else "Anchor")
+
+        self._phase_anchor_selector.setToolTip(
+            "Phase 0 is locked to the published literature epoch while Fold is using that ephemeris."
+            if literature_epoch_locked
+            else "Choose where phase 0 sits when Fold has no literature epoch."
+        )
+
         self._fit_degree_label.setVisible(show_polynomial_controls)
 
         self._fit_degree_spin.setVisible(show_polynomial_controls)
@@ -82900,6 +82952,8 @@ class MainWindow(QMainWindow):
         self._fit_guess_period_button.setEnabled(self._series_selector.count() > 0 and self._fit_period_worker is None)
 
         self._fold_plot_button.setEnabled(self._series_selector.count() > 0)
+
+        self._oc_button.setEnabled(self._series_selector.count() > 0)
 
         self._export_light_curve_button.setEnabled(self._series_selector.count() > 0)
 
@@ -83647,6 +83701,22 @@ class MainWindow(QMainWindow):
 
         period_hours, period_source = fold_period
 
+        literature_result = self._literature_period_result_for_series(selected_series)
+
+        fold_epoch_hjd = None
+
+        if (
+            period_source == "literature"
+            and literature_result is not None
+            and literature_result.epoch_hjd is not None
+            and np.isfinite(literature_result.epoch_hjd)
+            and float(literature_result.epoch_hjd) > 0
+        ):
+
+            fold_epoch_hjd = float(literature_result.epoch_hjd)
+
+        self._light_curve_fold_epoch_hjd = fold_epoch_hjd
+
         self._fit_period_spin.blockSignals(True)
 
         self._fit_period_spin.setValue(period_hours * _MINUTES_PER_HOUR)
@@ -83681,11 +83751,17 @@ class MainWindow(QMainWindow):
 
         self._plot_selected_series()
 
-        self.statusBar().showMessage(
-
-            f"Fold enabled for {series.source_name} [{series.filter_name}] using {period_source} period {period_hours / 24.0:.4f} d."
-
+        fold_message = self._fold_work_log_message(
+            series,
+            period_hours=period_hours,
+            period_source=period_source,
+            literature_result=literature_result,
+            epoch_hjd=fold_epoch_hjd,
         )
+
+        self.statusBar().showMessage(fold_message)
+
+        self._append_work_log(fold_message)
 
     def _unfold_selected_series(self) -> None:
 
@@ -83701,6 +83777,8 @@ class MainWindow(QMainWindow):
 
         self._light_curve_x_axis_selector.blockSignals(False)
 
+        self._light_curve_fold_epoch_hjd = None
+
         self._set_fold_active(False)
 
         self._update_fit_control_visibility()
@@ -83709,7 +83787,11 @@ class MainWindow(QMainWindow):
 
         self._plot_selected_series()
 
-        self.statusBar().showMessage("Fold disabled; restored the original light-curve view.")
+        unfold_message = "Fold disabled; restored the original time-based light-curve view."
+
+        self.statusBar().showMessage(unfold_message)
+
+        self._append_work_log(unfold_message)
 
     def _set_fold_active(self, active: bool) -> None:
 
@@ -83723,17 +83805,37 @@ class MainWindow(QMainWindow):
 
         if self._current_light_curve_x_axis_mode() != "phase" and self._light_curve_fold_active:
 
+            self._light_curve_fold_epoch_hjd = None
+
             self._set_fold_active(False)
 
     def _best_fold_period_hours(self, series: LightCurveSeries) -> tuple[float, str] | None:
+
+        literature_result = self._literature_period_result_for_series(series)
+
+        if literature_result is not None and literature_result.period_days is not None and np.isfinite(literature_result.period_days) and literature_result.period_days > 0:
+
+            return literature_result.period_days * 24.0, "literature"
+
+
+
+        calculated_result = self._calculated_period_results.get((series.source_id, series.filter_name))
+
+        if calculated_result is not None and np.isfinite(calculated_result.period_hours) and calculated_result.period_hours > 0:
+
+            return calculated_result.period_hours, "calculated"
+
+
+
+        return None
+
+    def _literature_period_result_for_series(self, series: LightCurveSeries) -> LiteraturePeriodResult | None:
 
         report = self._current_processing_report
 
         if report is None:
 
             return None
-
-
 
         measurement_catalog = next(
 
@@ -83751,25 +83853,45 @@ class MainWindow(QMainWindow):
 
         )
 
-        if measurement_catalog is not None:
+        if measurement_catalog is None:
 
-            literature_result = self._literature_period_results.get((measurement_catalog, series.source_id))
+            return None
 
-            if literature_result is not None and literature_result.period_days is not None and np.isfinite(literature_result.period_days) and literature_result.period_days > 0:
+        return self._literature_period_results.get((measurement_catalog, series.source_id))
 
-                return literature_result.period_days * 24.0, "literature"
-
-
-
-        calculated_result = self._calculated_period_results.get((series.source_id, series.filter_name))
-
-        if calculated_result is not None and np.isfinite(calculated_result.period_hours) and calculated_result.period_hours > 0:
-
-            return calculated_result.period_hours, "calculated"
-
-
-
-        return None
+    def _fold_work_log_message(
+        self,
+        series: LightCurveSeries,
+        *,
+        period_hours: float,
+        period_source: str,
+        literature_result: LiteraturePeriodResult | None,
+        epoch_hjd: float | None,
+    ) -> str:
+        period_days = period_hours / 24.0
+        catalog_source = ""
+        if literature_result is not None and literature_result.source:
+            catalog_source = f" from {literature_result.source}"
+        anchor_mode = self._current_phase_anchor_mode()
+        anchor_label = "Primary Minimum" if anchor_mode == "primary_minimum" else "First Observation"
+        aavso_note = " AAVSO export stays a time-series file in JD, not this folded phase view."
+        if period_source == "literature" and epoch_hjd is not None:
+            return (
+                f"Fold enabled for {series.source_name} [{series.filter_name}] using literature period "
+                f"{period_days:.4f} d{catalog_source}; phase 0 is locked to literature epoch HJD {epoch_hjd:.5f}."
+                f"{aavso_note}"
+            )
+        if period_source == "literature":
+            return (
+                f"Fold enabled for {series.source_name} [{series.filter_name}] using literature period "
+                f"{period_days:.4f} d{catalog_source}; no literature epoch, so phase 0 uses {anchor_label} of this series."
+                f"{aavso_note}"
+            )
+        return (
+            f"Fold enabled for {series.source_name} [{series.filter_name}] using calculated period "
+            f"{period_days:.4f} d with phase 0 at {anchor_label} of this series (no literature period)."
+            f"{aavso_note}"
+        )
 
     def _current_light_curve_y_axis_mode(self) -> str:
 
@@ -83809,11 +83931,21 @@ class MainWindow(QMainWindow):
 
             return
 
-        target_width = max(self._fold_plot_button.sizeHint().width(), self._light_curve_filter_button.sizeHint().width())
+        widths = [self._fold_plot_button.sizeHint().width(), self._light_curve_filter_button.sizeHint().width()]
+
+        if hasattr(self, "_oc_button"):
+
+            widths.append(self._oc_button.sizeHint().width())
+
+        target_width = max(widths)
 
         self._fold_plot_button.setFixedWidth(target_width)
 
         self._light_curve_filter_button.setFixedWidth(target_width)
+
+        if hasattr(self, "_oc_button"):
+
+            self._oc_button.setFixedWidth(target_width)
 
     def _update_fit_period_summary_label(self) -> None:
 
@@ -84421,6 +84553,7 @@ class MainWindow(QMainWindow):
             x_axis_mode=self._current_light_curve_x_axis_mode(),
             phase_period_hours=self._fit_period_spin.value() / _MINUTES_PER_HOUR,
             phase_anchor_mode=self._current_phase_anchor_mode(),
+            phase_anchor_jd=self._current_phase_anchor_jd(),
             plot_theme=self._current_theme_name(),
             custom_theme_colors=self._current_custom_theme_colors(),
             plot_image=plot_image,
@@ -84528,6 +84661,7 @@ class MainWindow(QMainWindow):
                 x_axis_mode=self._current_light_curve_x_axis_mode(),
                 phase_period_hours=self._fit_period_spin.value() / _MINUTES_PER_HOUR,
                 phase_anchor_mode=self._current_phase_anchor_mode(),
+                phase_anchor_jd=self._current_phase_anchor_jd(),
             )
 
         return build_light_curve_animation_frame_payloads(
@@ -84556,6 +84690,10 @@ class MainWindow(QMainWindow):
             self._overview_measurements(),
 
             series.source_id,
+
+            max_comparison_stars=self._overview_max_comparison_stars(),
+
+            preferred_comparison_source_ids=self._overview_preferred_comparison_source_ids(series.source_id),
 
         )
 
@@ -84712,6 +84850,7 @@ class MainWindow(QMainWindow):
                 phase_period_hours=self._fit_period_spin.value() / _MINUTES_PER_HOUR,
 
                 phase_anchor_mode=self._current_phase_anchor_mode(),
+                phase_anchor_jd=self._current_phase_anchor_jd(),
 
                 export_style="scientific",
 
@@ -84809,6 +84948,20 @@ class MainWindow(QMainWindow):
 
         return str(self._phase_anchor_selector.currentData() or "primary_minimum")
 
+    def _current_phase_anchor_jd(self) -> float | None:
+
+        if not getattr(self, "_light_curve_fold_active", False):
+
+            return None
+
+        epoch_hjd = getattr(self, "_light_curve_fold_epoch_hjd", None)
+
+        if epoch_hjd is None or not np.isfinite(epoch_hjd) or float(epoch_hjd) <= 0:
+
+            return None
+
+        return float(epoch_hjd)
+
     def _current_period_search_method(self) -> str:
 
         return str(self._period_search_method_selector.currentData() or "harmonic_fit")
@@ -84821,7 +84974,27 @@ class MainWindow(QMainWindow):
 
         return self._period_search_method_selector.currentText().strip() or "Harmonic Fit"
 
+    def _schedule_source_selection_changed(self) -> None:
+
+        self._handle_source_selection_changed()
+
     def _handle_source_selection_changed(self) -> None:
+
+        if self._source_selection_change_active:
+
+            return
+
+        self._source_selection_change_active = True
+
+        try:
+
+            self._apply_source_selection_changed()
+
+        finally:
+
+            self._source_selection_change_active = False
+
+    def _apply_source_selection_changed(self) -> None:
 
         if self._current_preview is not None and self._current_processing_report is None:
 
@@ -85302,7 +85475,77 @@ class MainWindow(QMainWindow):
 
         )
 
-    def _source_candidate_scores(self, report: ProcessingReport) -> dict[tuple[str, str], float]:
+    def _report_lookup_cache_key(self, report: ProcessingReport) -> tuple[int, int, int]:
+
+        return (id(report), len(report.measurements), id(report.measurements))
+
+    def _clear_source_lookup_caches(self) -> None:
+
+        self._source_lookup_cache_key = None
+
+        self._source_measurement_map_cache = {}
+
+        self._reference_measurement_frame_index_cache = {}
+
+        self._reference_source_row_keys_cache = {}
+
+        self._source_catalog_entries_cache = []
+
+        self._source_entry_by_name_cache = {}
+
+        self._source_candidate_scores_cache = {}
+
+    def _ensure_source_lookup_caches(self, report: ProcessingReport) -> None:
+
+        cache_key = self._report_lookup_cache_key(report)
+
+        if self._source_lookup_cache_key == cache_key:
+
+            return
+
+        measurement_map: dict[tuple[str, str], list[PhotometryMeasurement]] = {}
+
+        reference_frame_index: dict[str, dict[tuple[Path, str | None], PhotometryMeasurement]] = {}
+
+        reference_row_keys: dict[str, str] = {}
+
+        usable_source_keys: set[tuple[str, str]] = set()
+
+        for measurement in report.measurements:
+
+            measurement_map.setdefault((measurement.catalog, measurement.source_id), []).append(measurement)
+
+            if measurement_has_usable_value(measurement):
+
+                usable_source_keys.add((measurement.catalog, measurement.source_id))
+
+            if not measurement.is_reference:
+
+                continue
+
+            source_rows = reference_frame_index.setdefault(measurement.source_id, {})
+
+            source_rows.setdefault((measurement.file_path, measurement.filter_name), measurement)
+
+            reference_row_keys.setdefault(measurement.source_id, f"{measurement.catalog}:{measurement.source_id}")
+
+        entries: list[CatalogStar] = []
+
+        if report.field_catalog is not None:
+
+            entries.extend(
+
+                entry for entry in report.field_catalog.variable_stars if (entry.catalog, entry.source_id) in usable_source_keys
+
+            )
+
+            entries.extend(
+
+                entry for entry in report.field_catalog.exoplanets if (entry.catalog, entry.source_id) in usable_source_keys
+
+            )
+
+        entries.extend(entry for entry in report.reference_stars if (entry.catalog, entry.source_id) in usable_source_keys)
 
         scores_by_source_id: dict[str, float] = {}
 
@@ -85314,35 +85557,39 @@ class MainWindow(QMainWindow):
 
                 scores_by_source_id[series.source_id] = series.candidate_score
 
-        return {
+        self._source_lookup_cache_key = cache_key
+
+        self._source_measurement_map_cache = measurement_map
+
+        self._reference_measurement_frame_index_cache = reference_frame_index
+
+        self._reference_source_row_keys_cache = reference_row_keys
+
+        self._source_catalog_entries_cache = entries
+
+        self._source_entry_by_name_cache = {(entry.name, entry.catalog): entry for entry in entries}
+
+        self._source_candidate_scores_cache = {
 
             (entry.catalog, entry.source_id): score
 
-            for entry in self._source_catalog_entries(report)
+            for entry in entries
 
             if (score := scores_by_source_id.get(entry.source_id)) is not None
 
         }
 
+    def _source_candidate_scores(self, report: ProcessingReport) -> dict[tuple[str, str], float]:
+
+        self._ensure_source_lookup_caches(report)
+
+        return self._source_candidate_scores_cache
+
     def _source_measurement_map(self, report: ProcessingReport) -> dict[tuple[str, str], list[PhotometryMeasurement]]:
 
-        cache_key = (id(report), len(report.measurements))
+        self._ensure_source_lookup_caches(report)
 
-        if self._source_measurement_map_cache_key == cache_key:
-
-            return self._source_measurement_map_cache
-
-        measurement_map: dict[tuple[str, str], list[PhotometryMeasurement]] = {}
-
-        for measurement in report.measurements:
-
-            measurement_map.setdefault((measurement.catalog, measurement.source_id), []).append(measurement)
-
-        self._source_measurement_map_cache_key = cache_key
-
-        self._source_measurement_map_cache = measurement_map
-
-        return measurement_map
+        return self._source_measurement_map_cache
 
     def _source_table_row_payload(
 
@@ -85490,35 +85737,9 @@ class MainWindow(QMainWindow):
 
     def _source_catalog_entries(self, report: ProcessingReport) -> list[CatalogStar]:
 
-        usable_source_keys = {
+        self._ensure_source_lookup_caches(report)
 
-            (measurement.catalog, measurement.source_id)
-
-            for measurement in report.measurements
-
-            if measurement_has_usable_value(measurement)
-
-        }
-
-        entries: list[CatalogStar] = []
-
-        if report.field_catalog is not None:
-
-            entries.extend(
-
-                entry for entry in report.field_catalog.variable_stars if (entry.catalog, entry.source_id) in usable_source_keys
-
-            )
-
-            entries.extend(
-
-                entry for entry in report.field_catalog.exoplanets if (entry.catalog, entry.source_id) in usable_source_keys
-
-            )
-
-        entries.extend(entry for entry in report.reference_stars if (entry.catalog, entry.source_id) in usable_source_keys)
-
-        return entries
+        return self._source_catalog_entries_cache
 
     def _source_role(self, entry: CatalogStar) -> str:
 
@@ -86111,6 +86332,10 @@ class MainWindow(QMainWindow):
 
     def _measurement_passes_light_curve_filters(self, measurement: PhotometryMeasurement) -> bool:
 
+        if self._saturation_frames_hidden() and measurement.is_saturated:
+
+            return False
+
         settings = self._active_light_curve_filter_settings()
 
         if settings is None:
@@ -86701,7 +86926,9 @@ class MainWindow(QMainWindow):
 
             return {}
 
+        self._ensure_source_lookup_caches(report)
 
+        reference_row_keys = self._reference_source_row_keys_cache
 
         highlighted_rows: dict[str, set[str]] = {}
 
@@ -86711,15 +86938,13 @@ class MainWindow(QMainWindow):
 
                 continue
 
-            comparison_ids = set(measurement.comparison_source_ids)
+            for source_id in measurement.comparison_source_ids:
 
-            for reference_measurement in report.measurements:
+                row_key = reference_row_keys.get(source_id)
 
-                if not reference_measurement.is_reference or reference_measurement.source_id not in comparison_ids:
+                if row_key is None:
 
                     continue
-
-                row_key = f"{reference_measurement.catalog}:{reference_measurement.source_id}"
 
                 highlighted_rows.setdefault(row_key, set()).add(measurement.source_name)
 
@@ -87133,15 +87358,7 @@ class MainWindow(QMainWindow):
 
             return []
 
-        return [
-
-            measurement
-
-            for measurement in report.measurements
-
-            if measurement.catalog == entry.catalog and measurement.source_id == entry.source_id
-
-        ]
+        return list(self._source_measurement_map(report).get((entry.catalog, entry.source_id), []))
 
     def _differential_training_series_list(self, entry: CatalogStar) -> list[LightCurveSeries]:
 
@@ -87285,7 +87502,9 @@ class MainWindow(QMainWindow):
 
             return []
 
-        return [entry for entry in self._filtered_source_entries(report) if self._differential_training_measurements(entry)]
+        measurement_map = self._source_measurement_map(report)
+
+        return [entry for entry in self._filtered_source_entries(report) if measurement_map.get((entry.catalog, entry.source_id))]
 
     def _differential_review_series(self, entry: CatalogStar) -> LightCurveSeries | None:
 
@@ -87413,6 +87632,8 @@ class MainWindow(QMainWindow):
 
             phase_anchor_mode=self._current_phase_anchor_mode(),
 
+            phase_anchor_jd=self._current_phase_anchor_jd(),
+
             phase_opacity_floor=float(self._phase_opacity_floor_spin.value()),
 
             recent_period_error_bars_only=self._phase_recent_error_bars_only_checkbox.isChecked(),
@@ -87459,15 +87680,17 @@ class MainWindow(QMainWindow):
 
         has_entry = entry is not None
 
-        quick_label_entries = self._differential_quick_label_entries()
+        report = self._current_processing_report
+
+        has_labeled_sources = bool(report is not None and self._source_measurement_map(report))
 
         self._differential_training_label_combo.setEnabled(has_entry)
 
         self._differential_save_label_button.setEnabled(has_entry)
 
-        self._differential_quick_label_button.setEnabled(bool(quick_label_entries))
+        self._differential_quick_label_button.setEnabled(has_labeled_sources)
 
-        self._differential_train_model_button.setEnabled(bool(quick_label_entries))
+        self._differential_train_model_button.setEnabled(has_labeled_sources)
 
         selected_label = ""
 
@@ -87846,6 +88069,64 @@ class MainWindow(QMainWindow):
             if self._measurement_passes_light_curve_filters(measurement)
 
         ]
+
+    def _overview_max_comparison_stars(self) -> int:
+
+        settings = self._settings
+
+        if settings is None:
+
+            return 8
+
+        return max(1, int(settings.nearby_reference_count))
+
+    def _overview_preferred_comparison_source_ids(self, source_id: str | None) -> list[str]:
+
+        """Comparison IDs shown in sticky Source Results for the selected target."""
+
+        target_id = str(source_id or "").strip()
+
+        if not target_id:
+
+            return []
+
+        for measurement in self._selected_source_measurements():
+
+            if measurement.source_id != target_id:
+
+                continue
+
+            if measurement.comparison_source_ids:
+
+                return [str(item).strip() for item in measurement.comparison_source_ids if str(item).strip()]
+
+        selected_series = self._series_selector.currentData() if hasattr(self, "_series_selector") else None
+
+        if isinstance(selected_series, LightCurveSeries) and selected_series.source_id == target_id:
+
+            for measurement in self._series_measurements(selected_series):
+
+                if measurement.comparison_source_ids:
+
+                    return [str(item).strip() for item in measurement.comparison_source_ids if str(item).strip()]
+
+        report = self._current_processing_report
+
+        if report is None:
+
+            return []
+
+        for measurement in report.measurements:
+
+            if measurement.source_id != target_id or measurement.is_reference:
+
+                continue
+
+            if measurement.comparison_source_ids:
+
+                return [str(item).strip() for item in measurement.comparison_source_ids if str(item).strip()]
+
+        return []
 
     def _measurement_saturation_text(self, measurement: PhotometryMeasurement) -> str:
 
@@ -89402,6 +89683,120 @@ class MainWindow(QMainWindow):
             reference_source_magnitudes,
         )
 
+    def _open_oc_dialog(self) -> None:
+        series = self._series_selector.currentData()
+        if not isinstance(series, LightCurveSeries):
+            self.statusBar().showMessage("Select a light-curve series before opening O–C.")
+            return
+        active_series = self._active_series_for_plotting(series) or series
+        log = self._oc_log_for_series(active_series)
+        sessions = self._oc_sessions_for_series(active_series)
+        settings = self._ensure_settings()
+        dialog = OcDialog(
+            log=log,
+            sessions=sessions,
+            y_axis_mode=self._current_light_curve_y_axis_mode(),
+            spline_smoothing=float(self._fit_smoothing_spin.value()) if hasattr(self, "_fit_smoothing_spin") else 0.35,
+            theme=self._current_theme_name(),
+            custom_theme_colors=self._current_custom_theme_colors(),
+            aavso_api_token=str(getattr(settings, "aavso_api_token", "") or ""),
+            observer_code=str(getattr(settings, "observer_code", "") or ""),
+            parent=self,
+        )
+        dialog.log_changed.connect(self._handle_oc_log_changed)
+        dialog.work_log_message.connect(self._append_work_log)
+        self._append_work_log(
+            f"Opened O–C for {active_series.source_name} [{active_series.filter_name}] "
+            f"with {len(sessions)} session(s) and {len(log.records)} logged extremum row(s)."
+        )
+        dialog.exec()
+        self._persist_oc_log(dialog.current_log())
+        self._append_work_log(
+            f"O–C log for {dialog.current_log().star_name} now has {len(dialog.current_log().records)} extremum row(s). "
+            "AAVSO export stays a time-series JD file; this log is separate."
+        )
+
+    def _handle_oc_log_changed(self, log: object) -> None:
+        if isinstance(log, OcStarLog):
+            self._persist_oc_log(log)
+
+    def _oc_log_for_series(self, series: LightCurveSeries) -> OcStarLog:
+        star_key = make_star_key(series.source_id, series.source_name)
+        settings = self._ensure_settings()
+        stored = oc_log_from_payload((settings.oc_extrema_logs or {}).get(star_key))
+        literature = self._literature_period_result_for_series(series)
+        t0 = stored.t0_hjd if stored is not None else None
+        period = stored.period_days if stored is not None else None
+        if t0 is None and literature is not None:
+            t0 = literature.epoch_hjd
+        if period is None and literature is not None:
+            period = literature.period_days
+        if stored is not None:
+            stored.t0_hjd = t0
+            stored.period_days = period
+            if not stored.star_name:
+                stored.star_name = series.source_name
+            if not stored.source_id:
+                stored.source_id = series.source_id
+            return stored
+        return OcStarLog(
+            star_key=star_key,
+            star_name=series.source_name or series.object_name,
+            source_id=series.source_id,
+            t0_hjd=t0,
+            period_days=period,
+        )
+
+    def _persist_oc_log(self, log: OcStarLog) -> None:
+        settings = self._ensure_settings()
+        cache = dict(settings.oc_extrema_logs or {})
+        cache[log.star_key] = oc_log_to_payload(log)
+        settings.oc_extrema_logs = cache
+        self._save_settings_snapshot()
+
+    def _oc_sessions_for_series(self, series: LightCurveSeries) -> list[OcSession]:
+        sessions: list[OcSession] = []
+        seen: set[tuple[str, str]] = set()
+        current_report = self._current_processing_report
+        if current_report is not None:
+            for candidate in current_report.light_curves:
+                if not series_matches_star(candidate, source_id=series.source_id, star_name=series.source_name):
+                    continue
+                key = (current_report.object_name, candidate.filter_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                sessions.append(OcSession(session_name=current_report.object_name, series=candidate))
+        scan_report = self._current_report
+        root_text = self._root_path_input.text().strip()
+        root_path = Path(root_text).expanduser() if root_text else None
+        if scan_report is None or root_path is None or not root_path.exists() or self._settings is None:
+            return sessions
+        current_object = None if current_report is None else current_report.object_name
+        for summary in scan_report.object_summaries:
+            if summary.object_name == current_object:
+                continue
+            try:
+                other_report, _note = self._pipeline.load_cached_processing_report(
+                    root_path,
+                    summary.object_name,
+                    summary_files=list(summary.files),
+                    settings_override=self._settings,
+                )
+            except Exception:
+                continue
+            if other_report is None:
+                continue
+            for candidate in other_report.light_curves:
+                if not series_matches_star(candidate, source_id=series.source_id, star_name=series.source_name):
+                    continue
+                key = (other_report.object_name, candidate.filter_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                sessions.append(OcSession(session_name=other_report.object_name, series=candidate))
+        return sessions
+
     def _open_variable_ephemeris_dialog(self) -> None:
         settings = self._ensure_sky_view_settings_loaded()
         dialog = VariableEphemerisDialog(
@@ -89478,6 +89873,7 @@ class MainWindow(QMainWindow):
             reference_measurements=context.reference_measurements,
             reference_inputs=reference_inputs,
             y_axis_mode=self._current_light_curve_y_axis_mode(),
+            default_comps_per_set=int(self._ensure_settings().nearby_reference_count),
             parent=self,
         )
         if dialog.exec() != int(QDialog.DialogCode.Accepted):
@@ -89514,6 +89910,7 @@ class MainWindow(QMainWindow):
         if not series_replaced:
             updated_series.append(result.series)
         report.light_curves = updated_series
+        self._clear_source_lookup_caches()
         self._refresh_comparison_fit_views()
         comparison_names = ", ".join(result.comparison_source_names)
         self._append_work_log(
@@ -90777,6 +91174,8 @@ class MainWindow(QMainWindow):
 
             entry.metadata["literature_eclipse_duration_hours"] = period_result.eclipse_duration_hours
 
+            entry.metadata["literature_epoch_hjd"] = period_result.epoch_hjd
+
         self._refresh_processing_views(refresh_source_table=True)
 
         self._persist_period_result_cache()
@@ -91693,13 +92092,9 @@ class MainWindow(QMainWindow):
 
     def _source_entry(self, report: ProcessingReport, source_name: str, catalog_name: str) -> CatalogStar | None:
 
-        for entry in self._source_catalog_entries(report):
+        self._ensure_source_lookup_caches(report)
 
-            if entry.name == source_name and entry.catalog == catalog_name:
-
-                return entry
-
-        return None
+        return self._source_entry_by_name_cache.get((source_name, catalog_name))
 
     def _render_measurement_details(self) -> None:
 
@@ -91811,7 +92206,7 @@ class MainWindow(QMainWindow):
 
             if measurement.comparison_source_names:
 
-                lines.append("Nearby Comparison Stars:")
+                lines.append("Comparison Stars:")
 
                 lines.extend(f"- {name}" for name in measurement.comparison_source_names)
 
@@ -91919,7 +92314,7 @@ class MainWindow(QMainWindow):
 
             return
 
-        series = self._active_series_for_plotting(selected_series)
+        series = self._series_for_display(self._active_series_for_plotting(selected_series))
 
         if series is None:
 
@@ -91953,6 +92348,8 @@ class MainWindow(QMainWindow):
             phase_period_hours=self._fit_period_spin.value() / _MINUTES_PER_HOUR,
 
             phase_anchor_mode=self._current_phase_anchor_mode(),
+
+            phase_anchor_jd=self._current_phase_anchor_jd(),
 
             phase_opacity_floor=float(self._phase_opacity_floor_spin.value()),
 
@@ -92006,6 +92403,10 @@ class MainWindow(QMainWindow):
             self._overview_measurements(),
 
             source_id,
+
+            max_comparison_stars=self._overview_max_comparison_stars(),
+
+            preferred_comparison_source_ids=self._overview_preferred_comparison_source_ids(source_id),
 
         )
 
@@ -92068,9 +92469,15 @@ class MainWindow(QMainWindow):
             return
         band = None
         sources: list[str] = []
-        for measurement in self._current_processing_report.measurements if self._current_processing_report is not None else []:
-            if measurement.source_id != source_id:
-                continue
+        report = self._current_processing_report
+        if report is None:
+            return
+        measurement_map = self._source_measurement_map(report)
+        matching_rows: list[PhotometryMeasurement] = []
+        for rows in measurement_map.values():
+            if rows and rows[0].source_id == source_id:
+                matching_rows.extend(rows)
+        for measurement in matching_rows:
             if (measurement.filter_name or "unknown") != (filter_name or "unknown"):
                 continue
             if measurement.standard_catalog_band:
@@ -93786,13 +94193,17 @@ class MainWindow(QMainWindow):
 
             source_name = payload.get("source")
 
+            epoch_hjd = payload.get("epoch_hjd")
+
             restored_literature[(catalog, source_id)] = LiteraturePeriodResult(
 
                 period_days=float(period_days),
 
                 eclipse_duration_hours=float(eclipse_duration_hours) if isinstance(eclipse_duration_hours, (float, int)) else None,
 
-                source=str(source_name) if isinstance(source_name, str) and source_name.strip() else None,
+                source=str(source_name) if isinstance(source_name, str) and source_name.strip() else "",
+
+                epoch_hjd=float(epoch_hjd) if isinstance(epoch_hjd, (float, int)) and float(epoch_hjd) > 0 else None,
 
             )
 
@@ -93941,6 +94352,8 @@ class MainWindow(QMainWindow):
                 "eclipse_duration_hours": None if result is None else result.eclipse_duration_hours,
 
                 "source": None if result is None else result.source,
+
+                "epoch_hjd": None if result is None else result.epoch_hjd,
 
             }
 
@@ -96009,8 +96422,26 @@ class MainWindow(QMainWindow):
 
             wanted_source_id = entry.source_id
 
+        if entry is not None:
+
+            source_rows = self._source_measurement_map(report).get((entry.catalog, entry.source_id), [])
+
+            if source_rows and not any(self._measurement_passes_light_curve_filters(row) for row in source_rows):
+
+                if self._series_selector.currentIndex() != -1:
+
+                    self._series_selector.blockSignals(True)
+
+                    self._series_selector.setCurrentIndex(-1)
+
+                    self._series_selector.blockSignals(False)
+
+                return
+
         # If Valid-only / axis filtering hid the series, put one back so Overview/sync can find it.
-        if wanted_source_id is not None and not any(
+        valid_only = bool(self._light_curve_valid_only_checkbox.isChecked())
+
+        if wanted_source_id is not None and valid_only and not any(
 
             isinstance(self._series_selector.itemData(index), LightCurveSeries)
             and self._series_selector.itemData(index).source_id == wanted_source_id
@@ -96063,6 +96494,14 @@ class MainWindow(QMainWindow):
                 self._series_selector.blockSignals(False)
 
             return
+
+        if self._series_selector.currentIndex() != -1:
+
+            self._series_selector.blockSignals(True)
+
+            self._series_selector.setCurrentIndex(-1)
+
+            self._series_selector.blockSignals(False)
 
     def _selected_measurement_row(self) -> PhotometryMeasurement | None:
 
@@ -96278,6 +96717,46 @@ class MainWindow(QMainWindow):
 
         return filtered_rows or ordered_rows
 
+    def _saturation_frames_hidden(self) -> bool:
+
+        settings = self._ensure_settings()
+
+        return bool(getattr(settings, "saturation_filter_enabled", True))
+
+    def _series_for_display(self, series: LightCurveSeries | None) -> LightCurveSeries | None:
+
+        if series is None:
+
+            return None
+
+        if not self._saturation_frames_hidden():
+
+            return series
+
+        points = [point for point in series.points if not getattr(point, "is_saturated", False)]
+
+        if len(points) == len(series.points):
+
+            return series
+
+        return LightCurveSeries(
+
+            object_name=series.object_name,
+
+            source_id=series.source_id,
+
+            source_name=series.source_name,
+
+            filter_name=series.filter_name,
+
+            points=points,
+
+            candidate_score=series.candidate_score,
+
+            variability_metrics=dict(series.variability_metrics),
+
+        )
+
     def _active_series_for_plotting(self, series: object) -> LightCurveSeries | None:
 
         if not isinstance(series, LightCurveSeries):
@@ -96350,23 +96829,37 @@ class MainWindow(QMainWindow):
 
         comparison_path = measurement.file_path if image_path is None else image_path
 
-        lookup = {
+        frame_index = self._reference_measurement_frame_index(report)
 
-            item.source_id: item
+        selected: list[PhotometryMeasurement] = []
 
-            for item in report.measurements
+        for source_id in measurement.comparison_source_ids:
 
-            if item.is_reference
+            source_rows = frame_index.get(source_id)
 
-            and item.file_path == comparison_path
+            if not source_rows:
 
-            and item.filter_name == measurement.filter_name
+                continue
 
-            and item.source_id in measurement.comparison_source_ids
+            match = source_rows.get((comparison_path, measurement.filter_name))
 
-        }
+            if match is not None:
 
-        return [lookup[source_id] for source_id in measurement.comparison_source_ids if source_id in lookup]
+                selected.append(match)
+
+        return selected
+
+    def _reference_measurement_frame_index(
+
+        self,
+
+        report: ProcessingReport,
+
+    ) -> dict[str, dict[tuple[Path, str | None], PhotometryMeasurement]]:
+
+        self._ensure_source_lookup_caches(report)
+
+        return self._reference_measurement_frame_index_cache
 
     def _selected_scan_file_path(self) -> Path | None:
 

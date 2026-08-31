@@ -8,11 +8,9 @@ from html import unescape
 
 import json
 import math
-
 from pathlib import Path
-
 import re
-
+import threading
 from typing import Callable
 
 
@@ -33,7 +31,7 @@ import requests
 
 from photometry_app.core.image_io import read_header
 from photometry_app.core.models import CatalogStar, FieldCatalog, SolvedField
-from photometry_app.core.wcs import celestial_wcs, validate_wcs
+from photometry_app.core.wcs import _raise_if_wcs_solve_cancelled, celestial_wcs, validate_wcs
 
 
 _GAIA_DR3_VIZIER_COLUMNS = (
@@ -371,6 +369,8 @@ class LiteraturePeriodResult:
     eclipse_duration_hours: float | None = None
 
     source: str = ""
+
+    epoch_hjd: float | None = None
 
 
 
@@ -710,6 +710,8 @@ class CatalogService:
 
         progress_label: str = "transient-veto field",
 
+        cancel_event: threading.Event | None = None,
+
     ) -> list[CatalogStar]:
 
         magnitude_limit = max(-5.0, min(30.0, float(maximum_magnitude)))
@@ -770,6 +772,7 @@ class CatalogService:
             row_limit=normalized_row_limit,
             progress_callback=progress_callback,
             query_label="Gaia DR3",
+            cancel_event=cancel_event,
         )
 
         partial_catalog = FieldCatalog(
@@ -888,10 +891,12 @@ class CatalogService:
         progress_callback: Callable[[str], None] | None = None,
         query_label: str = "Gaia DR3",
         tile_options: GaiaTileOptions | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> list[CatalogStar]:
         resolved_tile_options = _resolved_gaia_tile_options(tile_options)
         tiles = build_gaia_query_tiles(solved_field, resolved_tile_options)
         if len(tiles) <= 1:
+            _raise_if_wcs_solve_cancelled(cancel_event)
             return self._query_vizier_with_alternate_centers(
                 solved_field,
                 lambda center, radius: self._query_gaia_filtered(
@@ -912,6 +917,7 @@ class CatalogService:
         completed = 0
         planned = len(tiles)
         while pending:
+            _raise_if_wcs_solve_cancelled(cancel_event)
             tile = pending.pop(0)
             completed += 1
             if progress_callback is not None:
@@ -1569,6 +1575,9 @@ def fetch_catalog_literature_period_result(star: CatalogStar, timeout_seconds: f
 
             source="NASA Exoplanet Archive",
 
+            epoch_hjd=_as_float(star.metadata.get("transit_epoch_hjd"))
+            or _as_float(star.metadata.get("literature_epoch_hjd")),
+
         )
 
     return None
@@ -1825,6 +1834,16 @@ def _fetch_vsx_literature_period_result(star: CatalogStar, timeout_seconds: floa
 
     cached_duration = _as_float(star.metadata.get("literature_eclipse_duration_hours"))
 
+    cached_epoch = _as_float(star.metadata.get("literature_epoch_hjd"))
+
+    if cached_epoch is None:
+
+        cached_epoch = _as_float(star.metadata.get("epoch_hjd"))
+
+    if cached_epoch is None:
+
+        cached_epoch = _as_float(star.metadata.get("epoch"))
+
     source_id = str(star.source_id).strip()
 
     if not source_id:
@@ -1840,6 +1859,8 @@ def _fetch_vsx_literature_period_result(star: CatalogStar, timeout_seconds: floa
             eclipse_duration_hours=cached_duration,
 
             source="VSX cache",
+
+            epoch_hjd=cached_epoch,
 
         )
 
@@ -1875,6 +1896,8 @@ def _fetch_vsx_literature_period_result(star: CatalogStar, timeout_seconds: floa
 
             source="VSX cache",
 
+            epoch_hjd=cached_epoch,
+
         )
 
 
@@ -1883,9 +1906,13 @@ def _fetch_vsx_literature_period_result(star: CatalogStar, timeout_seconds: floa
 
     duration_value = _extract_vsx_detail_value(html_text, "Rise/eclipse dur.")
 
+    epoch_value = _extract_vsx_detail_value(html_text, "Epoch")
+
     period_days = _parse_period_days(period_value) or cached_period
 
     duration_hours = _parse_vsx_duration_hours(duration_value, period_days) or cached_duration
+
+    epoch_hjd = _parse_epoch_hjd(epoch_value) or cached_epoch
 
     if period_days is None and duration_hours is None:
 
@@ -1898,6 +1925,8 @@ def _fetch_vsx_literature_period_result(star: CatalogStar, timeout_seconds: floa
         eclipse_duration_hours=duration_hours,
 
         source="VSX",
+
+        epoch_hjd=epoch_hjd,
 
     )
 
@@ -2205,6 +2234,36 @@ def _extract_vsx_detail_value(html_text: str, label: str) -> str | None:
 def _parse_period_days(value: str | None) -> float | None:
 
     return _parse_unitized_duration(value, default_unit="d", convert_to="d")
+
+
+
+
+
+def _parse_epoch_hjd(value: str | None) -> float | None:
+
+    if value is None:
+
+        return None
+
+    match = re.search(r"([-+]?\d+(?:\.\d+)?)", str(value))
+
+    if match is None:
+
+        return None
+
+    try:
+
+        epoch_hjd = float(match.group(1))
+
+    except ValueError:
+
+        return None
+
+    if not math.isfinite(epoch_hjd) or epoch_hjd <= 0:
+
+        return None
+
+    return epoch_hjd
 
 
 

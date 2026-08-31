@@ -28,6 +28,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from astropy.io import fits
+from astropy.time import Time
 from astropy.wcs import WCS
 import numpy as np
 
@@ -2564,6 +2565,88 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(self.window._fold_plot_button.text(), "Fold")
 
         self.assertFalse(self.window._fold_plot_button.isEnabled())
+
+    def test_oc_button_exists_next_to_fold(self) -> None:
+
+        self.assertEqual(self.window._oc_button.text(), "O–C")
+
+        self.assertFalse(self.window._oc_button.isEnabled())
+
+        fold_index = self.window._light_curve_controls_layout.indexOf(self.window._fold_plot_button)
+
+        oc_index = self.window._light_curve_controls_layout.indexOf(self.window._oc_button)
+
+        self.assertGreater(oc_index, fold_index)
+
+        self.window._sync_light_curve_toolbar_button_widths()
+
+        self.assertEqual(self.window._oc_button.width(), self.window._fold_plot_button.width())
+
+        self.assertEqual(self.window._oc_button.width(), self.window._light_curve_filter_button.width())
+
+    def test_oc_log_prefills_literature_ephemeris_and_current_session(self) -> None:
+
+        measurement_time = datetime(2026, 3, 16, 1, 0, 0)
+        series = LightCurveSeries(
+            object_name="Demo",
+            source_id="vsx-1",
+            source_name="DY Her",
+            filter_name="V",
+            points=[
+                LightCurvePoint(
+                    observation_time=measurement_time + timedelta(minutes=index * 8),
+                    file_path=Path(f"frame_{index:02d}.fits"),
+                    differential_magnitude=10.9 + (0.02 * index),
+                    instrumental_magnitude=-9.0,
+                    flux=5000.0,
+                    flux_error=15.0,
+                    differential_magnitude_error=0.02,
+                    standard_magnitude=10.9 + (0.02 * index),
+                    standard_magnitude_error=0.02,
+                )
+                for index in range(8)
+            ],
+        )
+        report = ProcessingReport(
+            object_name="Demo",
+            files_processed=1,
+            solved_files=1,
+            field_catalog=FieldCatalog(center_ra_deg=10.0, center_dec_deg=20.0, radius_deg=1.0, variable_stars=[]),
+            measurements=[
+                PhotometryMeasurement(
+                    source_id="vsx-1",
+                    source_name="DY Her",
+                    catalog="vsx",
+                    object_name="Demo",
+                    file_path=Path("frame_00.fits"),
+                    observation_time=measurement_time,
+                    filter_name="V",
+                    ra_deg=10.0,
+                    dec_deg=20.0,
+                    x=50.0,
+                    y=60.0,
+                    flux=5000.0,
+                    flux_error=15.0,
+                    instrumental_magnitude=-9.0,
+                    differential_magnitude=0.32,
+                    is_variable=True,
+                    is_reference=False,
+                    differential_magnitude_error=0.03,
+                )
+            ],
+            light_curves=[series],
+        )
+        self.window._current_processing_report = report
+        self.window._literature_period_results[("vsx", "vsx-1")] = LiteraturePeriodResult(
+            period_days=0.148773,
+            source="VSX",
+            epoch_hjd=2430000.123,
+        )
+        log = self.window._oc_log_for_series(series)
+        sessions = self.window._oc_sessions_for_series(series)
+        self.assertAlmostEqual(log.period_days or 0.0, 0.148773)
+        self.assertAlmostEqual(log.t0_hjd or 0.0, 2430000.123)
+        self.assertEqual([session.session_name for session in sessions], ["Demo"])
 
     def test_light_curve_export_button_exists(self) -> None:
 
@@ -6903,7 +6986,13 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.window._source_table.clearSelection()
 
-        self.window._source_table.setCurrentCell(1, 0)
+        beta_row = next(
+            row_index
+            for row_index in range(self.window._source_table.rowCount())
+            if self.window._source_table.item(row_index, 0) is not None
+            and self.window._source_table.item(row_index, 0).text() == "Beta"
+        )
+        self.window._source_table.setCurrentCell(beta_row, 0)
 
         self.window._handle_source_selection_changed()
 
@@ -14576,6 +14665,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
                         "source": "VSX",
 
+                        "epoch_hjd": 2430000.123,
+
                     }
 
                 }
@@ -14639,6 +14730,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertAlmostEqual(literature_result.eclipse_duration_hours or 0.0, 2.75)
 
             self.assertEqual(literature_result.source, "VSX")
+
+            self.assertAlmostEqual(literature_result.epoch_hjd or 0.0, 2430000.123)
 
             self.assertAlmostEqual(calculated_result.period_hours, 12.0)
 
@@ -15677,6 +15770,107 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertAlmostEqual(self.window._fit_period_spin.value(), 0.75 * 24.0 * 60.0)
 
         self.assertIn("using literature period 0.7500 d", self.window.statusBar().currentMessage())
+
+        work_log = self.window._work_log_output.toPlainText()
+
+        self.assertIn("using literature period 0.7500 d", work_log)
+
+        self.assertIn("no literature epoch, so phase 0 uses Primary Minimum of this series", work_log)
+
+        self.assertIn("AAVSO export stays a time-series file in JD, not this folded phase view", work_log)
+
+
+
+    def test_fold_locks_phase_zero_to_literature_epoch_when_available(self) -> None:
+
+        measurement_time = datetime(2026, 3, 16, 1, 0, 0)
+        epoch_hjd = float(Time(measurement_time).jd)
+        series = LightCurveSeries(
+            object_name="Demo",
+            source_id="vsx-1",
+            source_name="Target",
+            filter_name="R",
+            points=[
+                LightCurvePoint(
+                    observation_time=measurement_time + timedelta(minutes=index * 20),
+                    file_path=Path(f"frame_{index:02d}.fits"),
+                    differential_magnitude=12.0 + (0.1 * index),
+                    instrumental_magnitude=-9.0,
+                    flux=5000.0,
+                    flux_error=15.0,
+                    differential_magnitude_error=0.03,
+                )
+                for index in range(3)
+            ],
+        )
+        report = ProcessingReport(
+            object_name="Demo",
+            files_processed=1,
+            solved_files=1,
+            field_catalog=FieldCatalog(
+                center_ra_deg=10.0,
+                center_dec_deg=20.0,
+                radius_deg=1.0,
+                variable_stars=[
+                    CatalogStar(
+                        catalog="vsx",
+                        source_id="vsx-1",
+                        name="Target",
+                        ra_deg=10.0,
+                        dec_deg=20.0,
+                        magnitude=12.3,
+                        is_variable=True,
+                    )
+                ],
+            ),
+            measurements=[
+                PhotometryMeasurement(
+                    source_id="vsx-1",
+                    source_name="Target",
+                    catalog="vsx",
+                    object_name="Demo",
+                    file_path=Path("frame_00.fits"),
+                    observation_time=measurement_time,
+                    filter_name="R",
+                    ra_deg=10.0,
+                    dec_deg=20.0,
+                    x=50.0,
+                    y=60.0,
+                    flux=5000.0,
+                    flux_error=15.0,
+                    instrumental_magnitude=-9.0,
+                    differential_magnitude=0.32,
+                    is_variable=True,
+                    is_reference=False,
+                    differential_magnitude_error=0.03,
+                )
+            ],
+            light_curves=[series],
+        )
+        self.window._current_processing_report = report
+        self.window._literature_period_results[("vsx", "vsx-1")] = LiteraturePeriodResult(
+            period_days=0.75,
+            eclipse_duration_hours=None,
+            source="VSX",
+            epoch_hjd=epoch_hjd,
+        )
+        self._show_differential_light_curve_axis()
+        self.window._populate_series_selector([series])
+        self.window._phase_anchor_selector.setCurrentIndex(
+            self.window._phase_anchor_selector.findData("primary_minimum")
+        )
+
+        self.window._toggle_fold_selected_series()
+
+        payload = self.window._light_curve_widget._payload
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertAlmostEqual(payload.points[0].x, 0.0, places=5)
+        self.assertFalse(self.window._phase_anchor_selector.isEnabled())
+        self.assertEqual(self.window._phase_anchor_label.text(), "Literature Epoch")
+        work_log = self.window._work_log_output.toPlainText()
+        self.assertIn(f"phase 0 is locked to literature epoch HJD {epoch_hjd:.5f}", work_log)
+        self.assertIn("AAVSO export stays a time-series file in JD, not this folded phase view", work_log)
 
 
 
@@ -17127,6 +17321,14 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertAlmostEqual(self.window._fit_period_spin.value(), 18.0 * 60.0)
 
         self.assertIn("using calculated period 0.7500 d", self.window.statusBar().currentMessage())
+
+        work_log = self.window._work_log_output.toPlainText()
+
+        self.assertIn("using calculated period 0.7500 d", work_log)
+
+        self.assertIn("no literature period", work_log)
+
+        self.assertIn("AAVSO export stays a time-series file in JD, not this folded phase view", work_log)
 
 
 

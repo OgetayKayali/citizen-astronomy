@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from astropy.time import Time
 import numpy as np
 
 from photometry_app.core.models import LightCurvePoint, LightCurveSeries
@@ -511,6 +512,46 @@ class LightCurvePlotPayloadTest(unittest.TestCase):
         self.assertEqual(payload.x_axis_mode, "phase")
         self.assertAlmostEqual(payload.points[1].x, 0.0, places=6)
         self.assertAlmostEqual(payload.points[0].x, 0.75, places=6)
+
+    def test_phase_payload_can_lock_to_a_fixed_literature_epoch(self) -> None:
+        start = datetime(2025, 1, 1, 0, 0, 0)
+        series = LightCurveSeries(
+            object_name="Demo",
+            source_id="target-1",
+            source_name="Target",
+            filter_name="V",
+            points=[
+                LightCurvePoint(
+                    observation_time=start,
+                    file_path=Path("frame_01.fits"),
+                    differential_magnitude=12.10,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.05,
+                ),
+                LightCurvePoint(
+                    observation_time=start + timedelta(hours=6),
+                    file_path=Path("frame_02.fits"),
+                    differential_magnitude=12.55,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.05,
+                ),
+            ],
+        )
+        payload = build_light_curve_plot_payload(
+            series,
+            empty_message="No data available.",
+            x_axis_mode="phase",
+            phase_period_hours=24.0,
+            phase_anchor_mode="primary_minimum",
+            phase_anchor_jd=float(Time(start).jd),
+        )
+
+        self.assertAlmostEqual(payload.points[0].x, 0.0, places=6)
+        self.assertAlmostEqual(payload.points[1].x, 0.25, places=6)
 
     def test_payload_suppresses_pathological_fit_curve(self) -> None:
         start = datetime(2025, 1, 1, 0, 0, 0)

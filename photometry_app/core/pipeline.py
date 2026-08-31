@@ -128,6 +128,9 @@ _PHOTOMETRY_GAIA_MAX_MAGNITUDE = 16.0
 
 _PHOTOMETRY_GAIA_ROW_LIMIT = 5000
 
+# Group unresolved frames from the same night/pointing so one solve can be reused.
+_POINTING_REUSE_QUANTUM_DEG = 0.05
+
 
 
 
@@ -1290,11 +1293,13 @@ class PhotometryPipeline:
 
                 field_catalog.gaia_stars,
 
-                field_catalog.variable_stars,
+                automatic_variable_stars,
 
                 minimum_magnitude=settings.reference_star_min_magnitude,
 
                 maximum_magnitude=settings.reference_star_max_magnitude,
+
+                per_target_count=settings.nearby_reference_count,
 
             )
 
@@ -1335,7 +1340,7 @@ class PhotometryPipeline:
 
                 progress_callback,
 
-                f"Selected {len(automatic_reference_stars)} Gaia reference star(s) for differential photometry; using up to {settings.nearby_reference_count} nearby comparison star(s) per variable.",
+                f"Selected {len(automatic_reference_stars)} Gaia reference star(s) for differential photometry; using up to {settings.nearby_reference_count} magnitude-matched comparison star(s) per variable.",
 
             )
 
@@ -1541,88 +1546,19 @@ class PhotometryPipeline:
 
 
 
-        if settings.saturation_filter_enabled:
-
-            saturated_source_ids = {
-
-                measurement.source_id
-
-                for measurement in measurements
-
-                if measurement.is_variable and measurement.is_saturated
-
-            }
-
-            if saturated_source_ids:
-
-                saturated_name_by_id = {
-
-                    measurement.source_id: measurement.source_name
-
-                    for measurement in measurements
-
-                    if measurement.source_id in saturated_source_ids
-
-                }
-
-                for measurement in measurements:
-
-                    if measurement.source_id not in saturated_source_ids or not measurement.is_saturated:
-
-                        continue
-
-                    file_notes[measurement.file_path.name] = [
-
-                        *file_notes.get(measurement.file_path.name, []),
-
-                        f"Skipped {measurement.source_name} from analysis because it was saturated.",
-
-                    ]
-
-                skipped_names = [saturated_name_by_id[source_id] for source_id in sorted(saturated_source_ids)]
-
-                notes.append(
-
-                    f"Skipped {len(skipped_names)} selected variable star(s) from analysis because they were saturated: {', '.join(skipped_names)}."
-
-                )
-
-                _emit_progress(
-
-                    progress_callback,
-
-                    f"Skipping {len(skipped_names)} selected variable star(s) because saturation was detected: {', '.join(skipped_names)}.",
-
-                )
-
-                selected_field_catalog = FieldCatalog(
-
-                    center_ra_deg=selected_field_catalog.center_ra_deg,
-
-                    center_dec_deg=selected_field_catalog.center_dec_deg,
-
-                    radius_deg=selected_field_catalog.radius_deg,
-
-                    gaia_stars=selected_field_catalog.gaia_stars,
-
-                    variable_stars=[
-
-                        entry for entry in selected_field_catalog.variable_stars if entry.source_id not in saturated_source_ids
-
-                    ],
-
-                    exoplanets=selected_field_catalog.exoplanets,
-
-                )
-
-                measurements = [
-
-                    measurement
-
-                    for measurement in measurements
-
-                    if not (measurement.is_variable and measurement.source_id in saturated_source_ids)
-
+        measurements, saturation_notes = apply_saturation_frame_filter(
+            measurements,
+            settings.saturation_filter_enabled,
+        )
+        notes.extend(saturation_notes)
+        if saturation_notes:
+            _emit_progress(progress_callback, saturation_notes[0])
+            for measurement in measurements:
+                if not (measurement.is_variable and measurement.is_saturated):
+                    continue
+                file_notes[measurement.file_path.name] = [
+                    *file_notes.get(measurement.file_path.name, []),
+                    f"Skipped saturated frame for {measurement.source_name}.",
                 ]
 
 
@@ -2961,15 +2897,45 @@ def _aligned_frame_reuse_key(
 
         return (f"aligned:{file_result.object_folder}", width, height, file_result.path.suffix.lower(), None, None)
 
-    if not is_pixinsight_staralignment_output(file_result.path):
+    if is_pixinsight_staralignment_output(file_result.path):
 
+        center_ra = round(hints.center_ra_deg, 4) if hints is not None and hints.center_ra_deg is not None else None
+
+        center_dec = round(hints.center_dec_deg, 4) if hints is not None and hints.center_dec_deg is not None else None
+
+        return (str(file_result.path.parent.resolve()).lower(), width, height, file_result.path.suffix.lower(), center_ra, center_dec)
+
+    night_token = _observation_night_token(file_result)
+    if (
+        night_token is not None
+        and hints is not None
+        and hints.center_ra_deg is not None
+        and hints.center_dec_deg is not None
+    ):
+        center_ra = _quantize_sky_angle_deg(hints.center_ra_deg)
+        center_dec = _quantize_sky_angle_deg(hints.center_dec_deg)
+        return (
+            f"night-pointing:{file_result.object_folder}:{night_token}",
+            width,
+            height,
+            file_result.path.suffix.lower(),
+            center_ra,
+            center_dec,
+        )
+
+    return None
+
+
+def _observation_night_token(file_result: FileScanResult) -> str | None:
+    date_obs = file_result.metadata.date_obs
+    if date_obs is None:
         return None
+    return date_obs.strftime("%Y-%m-%d")
 
-    center_ra = round(hints.center_ra_deg, 4) if hints is not None and hints.center_ra_deg is not None else None
 
-    center_dec = round(hints.center_dec_deg, 4) if hints is not None and hints.center_dec_deg is not None else None
-
-    return (str(file_result.path.parent.resolve()).lower(), width, height, file_result.path.suffix.lower(), center_ra, center_dec)
+def _quantize_sky_angle_deg(value: float) -> float:
+    quantum = float(_POINTING_REUSE_QUANTUM_DEG)
+    return round(float(value) / quantum) * quantum
 
 
 
@@ -2989,6 +2955,35 @@ def _query_photometry_field_catalog(catalog_service: CatalogService, solved_fiel
         if "unexpected keyword" not in message and "positional argument" not in message:
             raise
         return catalog_service.query_field_catalog(solved_field)
+
+
+def apply_saturation_frame_filter(
+    measurements: list[PhotometryMeasurement],
+    enabled: bool,
+) -> tuple[list[PhotometryMeasurement], list[str]]:
+    """Exclude saturated frames from analysis without dropping the target star."""
+    if not enabled:
+        return list(measurements), []
+    updated: list[PhotometryMeasurement] = []
+    skipped = 0
+    for measurement in measurements:
+        if measurement.is_variable and measurement.is_saturated:
+            skipped += 1
+            reasons = list(measurement.exclusion_reasons)
+            if "Saturated frame." not in reasons:
+                reasons.append("Saturated frame.")
+            updated.append(
+                replace(
+                    measurement,
+                    excluded_from_analysis=True,
+                    exclusion_reasons=reasons,
+                )
+            )
+            continue
+        updated.append(measurement)
+    if not skipped:
+        return updated, []
+    return updated, [f"Skipped {skipped} saturated frame(s) from analysis. Targets remain in the results."]
 
 
 def _deduplicate(items: list[str]) -> list[str]:

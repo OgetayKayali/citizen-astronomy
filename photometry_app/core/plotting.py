@@ -1229,6 +1229,8 @@ def plot_light_curve(
 
     phase_anchor_mode: str = "first_observation",
 
+    phase_anchor_jd: float | None = None,
+
     theme: str = "normal",
 
     custom_theme_colors: dict[str, str] | None = None,
@@ -1256,6 +1258,8 @@ def plot_light_curve(
         phase_period_hours=phase_period_hours,
 
         phase_anchor_mode=phase_anchor_mode,
+
+        phase_anchor_jd=phase_anchor_jd,
 
     )
 
@@ -1374,7 +1378,32 @@ def plot_light_curve_payload(
 
             y_errors = [point.y_error for point in payload.points]
 
-            _plot_series_markers(axis, x_values, y_values, y_errors, theme_colors, export_style=export_style)
+            normal_x, normal_y, normal_errors = [], [], []
+            saturated_x, saturated_y, saturated_errors = [], [], []
+            for point, x_value, y_value, y_error in zip(payload.points, x_values, y_values, y_errors, strict=True):
+                if getattr(getattr(point, "source_point", None), "is_saturated", False):
+                    saturated_x.append(x_value)
+                    saturated_y.append(y_value)
+                    saturated_errors.append(y_error)
+                    continue
+                normal_x.append(x_value)
+                normal_y.append(y_value)
+                normal_errors.append(y_error)
+            if normal_x:
+                _plot_series_markers(axis, normal_x, normal_y, normal_errors, theme_colors, export_style=export_style)
+            if saturated_x:
+                _plot_series_markers(
+                    axis,
+                    saturated_x,
+                    saturated_y,
+                    saturated_errors,
+                    {**theme_colors, "point_brush": "#f97316", "point_pen": "#fb923c", "error_bar_color": "#f97316"},
+                    export_style=export_style,
+                    marker="X",
+                    marker_size=4.2,
+                    alpha=0.95,
+                    label="Saturated",
+                )
 
         if payload.fit_x_values is not None and payload.fit_y_values is not None:
 
@@ -1605,6 +1634,8 @@ def build_light_curve_plot_payload(
 
     phase_anchor_mode: str = "first_observation",
 
+    phase_anchor_jd: float | None = None,
+
 ) -> LightCurvePlotPayload:
 
     title = f"{series.source_name} [{series.filter_name}]"
@@ -1621,7 +1652,11 @@ def build_light_curve_plot_payload(
 
     phase_period_days = (phase_period_hours / 24.0) if phase_period_hours is not None and phase_period_hours > 0 else None
 
-    phase_anchor_jd = _phase_anchor_jd(series, y_axis_mode, phase_anchor_mode) if phase_mode else None
+    resolved_phase_anchor_jd = (
+        _phase_anchor_jd(series, y_axis_mode, phase_anchor_mode, phase_anchor_jd=phase_anchor_jd)
+        if phase_mode
+        else None
+    )
 
     for point in series.points:
 
@@ -1631,7 +1666,7 @@ def build_light_curve_plot_payload(
 
             continue
 
-        x_value = _phase_axis_value(point.observation_time, phase_period_days, phase_anchor_jd) if phase_mode else _time_axis_value(point.observation_time, x_axis_mode)
+        x_value = _phase_axis_value(point.observation_time, phase_period_days, resolved_phase_anchor_jd) if phase_mode else _time_axis_value(point.observation_time, x_axis_mode)
 
         if x_value is None:
 
@@ -2233,7 +2268,20 @@ def _phase_axis_value(observation_time: object, period_days: float | None, ancho
 
 
 
-def _phase_anchor_jd(series: LightCurveSeries, y_axis_mode: str, anchor_mode: str) -> float | None:
+def _phase_anchor_jd(
+    series: LightCurveSeries,
+    y_axis_mode: str,
+    anchor_mode: str,
+    phase_anchor_jd: float | None = None,
+) -> float | None:
+
+    if phase_anchor_jd is not None:
+
+        resolved_anchor = float(phase_anchor_jd)
+
+        if np.isfinite(resolved_anchor):
+
+            return resolved_anchor
 
     timed_values: list[tuple[float, float]] = []
 
@@ -3249,7 +3297,7 @@ def _light_curve_point_error(point: object, y_axis_mode: str) -> float | None:
 
 def _light_curve_point_fit_weight(point: object, y_axis_mode: str) -> float | None:
 
-    if getattr(point, "excluded_from_analysis", False):
+    if getattr(point, "excluded_from_analysis", False) or getattr(point, "is_saturated", False):
 
         return 0.0
 

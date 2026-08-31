@@ -17,9 +17,11 @@ from photometry_app.core.catalogs import (
     GaiaTileOptions,
     _GAIA_DR3_VIZIER_COLUMNS,
     _GaiaQueryTile,
+    _parse_epoch_hjd,
     _solved_field_celestial_wcs,
     build_gaia_query_tiles,
     capped_solved_field,
+    fetch_catalog_literature_period_result,
     fetch_catalog_target_details,
     fetch_catalog_targets_at_coordinate,
     gaia_field_needs_tiles,
@@ -319,6 +321,42 @@ class CatalogServiceTest(unittest.TestCase):
             self.assertEqual(query_gaia_filtered.call_args.kwargs["maximum_magnitude"], 16.5)
             self.assertEqual(query_gaia_filtered.call_args.kwargs["row_limit"], 250)
             self.assertEqual([star.source_id for star in stars], ["gaia-ref"])
+
+    def test_query_gaia_field_stops_between_tiles_when_cancelled(self) -> None:
+        import threading
+
+        from photometry_app.core.wcs import WcsSolveCancelled
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            solved_field = SolvedField(
+                center_ra_deg=83.822,
+                center_dec_deg=-5.391,
+                radius_deg=1.2,
+                width=6248,
+                height=4176,
+                wcs_path=Path("test.fits"),
+            )
+            cancel_event = threading.Event()
+            calls = {"count": 0}
+
+            def fake_query(*_args, **_kwargs):
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    cancel_event.set()
+                return [
+                    CatalogStar("gaia-dr3", f"gaia-{calls['count']}", f"gaia-{calls['count']}", 83.8, -5.4, 12.0, False)
+                ]
+
+            with patch.object(CatalogService, "_query_gaia_filtered", side_effect=fake_query):
+                with self.assertRaises(WcsSolveCancelled):
+                    service._query_gaia_field(
+                        solved_field,
+                        maximum_magnitude=14.0,
+                        row_limit=100,
+                        cancel_event=cancel_event,
+                    )
+            self.assertEqual(calls["count"], 1)
 
     def test_gaia_rows_capture_preferred_non_gaia_display_name_in_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -641,3 +679,27 @@ class GaiaQueryTilesTest(unittest.TestCase):
         self.assertAlmostEqual(capped.radius_deg, DEFAULT_GAIA_TILE_OPTIONS.max_radius_deg)
         self.assertEqual(capped.center_ra_deg, wide.center_ra_deg)
         self.assertFalse(gaia_field_needs_tiles(capped))
+
+
+class LiteraturePeriodFetchTest(unittest.TestCase):
+    def test_parse_epoch_hjd_reads_the_leading_julian_date(self) -> None:
+        self.assertAlmostEqual(_parse_epoch_hjd("2430000.123 (HJD)"), 2430000.123)
+        self.assertIsNone(_parse_epoch_hjd(""))
+        self.assertIsNone(_parse_epoch_hjd("none"))
+
+    def test_fetch_vsx_literature_period_includes_epoch(self) -> None:
+        star = CatalogStar("vsx", "12345", "DY Her", 10.0, 20.0, 10.5, True)
+        html = (
+            '<td class="detailtitle">Period</td><td class="detaildata">0.148773 d</td>'
+            '<td class="detailtitle">Epoch</td><td class="detaildata">2430000.123 (HJD)</td>'
+            '<td class="detailtitle">Rise/eclipse dur.</td><td class="detaildata"></td>'
+        )
+        response = SimpleNamespace(text=html, raise_for_status=lambda: None)
+        with patch("photometry_app.core.catalogs.requests.get", return_value=response):
+            result = fetch_catalog_literature_period_result(star)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertAlmostEqual(result.period_days or 0.0, 0.148773)
+        self.assertAlmostEqual(result.epoch_hjd or 0.0, 2430000.123)
+        self.assertEqual(result.source, "VSX")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 
-from math import hypot
+from math import hypot, isfinite
 
 from pathlib import Path
 
@@ -215,6 +215,10 @@ class LightCurvePlotWidget(QWidget):
 
         self._selected_point_item = pg.ScatterPlotItem(size=12, pen=pg.mkPen("#ff9f1c", width=1.5), brush=pg.mkBrush(255, 255, 255, 0))
 
+        self._extrema_marker_item = pg.ScatterPlotItem(pxMode=True)
+
+        self._extrema_markers: list[tuple[float, float, str]] = []
+
         self._hover_radius_pixels = 18.0
 
         self._segment_selection_active = False
@@ -269,6 +273,8 @@ class LightCurvePlotWidget(QWidget):
 
         self._plot_item.addItem(self._selected_point_item)
 
+        self._plot_item.addItem(self._extrema_marker_item)
+
         self._plot_widget.scene().sigMouseMoved.connect(self._handle_mouse_moved)
 
         self._position_plot_corner_buttons()
@@ -290,6 +296,8 @@ class LightCurvePlotWidget(QWidget):
         self._theme_colors = self._resolve_theme_colors(normalized_theme, custom_colors)
 
         self._selected_point_item.setPen(pg.mkPen(self._theme_colors["selection_color"], width=1.5))
+
+        self._apply_extrema_markers()
 
 
 
@@ -318,6 +326,38 @@ class LightCurvePlotWidget(QWidget):
         if self._payload is not None:
 
             self._render_payload(self._payload)
+
+    def set_plot_minimum_height(self, height: int) -> None:
+
+        self._plot_widget.setMinimumHeight(max(80, int(height)))
+
+    def set_extrema_markers(self, markers: list[tuple[float, float, str]]) -> None:
+
+        self._extrema_markers = [
+            (float(x_value), float(y_value), str(kind))
+            for x_value, y_value, kind in markers
+            if isfinite(float(x_value)) and isfinite(float(y_value))
+        ]
+        self._apply_extrema_markers()
+
+    def _apply_extrema_markers(self) -> None:
+
+        if not hasattr(self, "_extrema_marker_item"):
+            return
+        spots = []
+        accent = self._theme_colors.get("selection_color", "#ff9f1c")
+        for x_value, y_value, kind in getattr(self, "_extrema_markers", []):
+            is_maximum = str(kind).casefold() == "maximum"
+            spots.append(
+                {
+                    "pos": (x_value, y_value),
+                    "size": 14,
+                    "symbol": "t1" if is_maximum else "t",
+                    "pen": pg.mkPen(accent, width=1.6),
+                    "brush": pg.mkBrush(255, 255, 255, 0),
+                }
+            )
+        self._extrema_marker_item.setData(spots)
 
     def set_fit_period_badge_text(self, text: str | None) -> None:
 
@@ -615,6 +655,8 @@ class LightCurvePlotWidget(QWidget):
 
         phase_anchor_mode: str = "first_observation",
 
+        phase_anchor_jd: float | None = None,
+
         phase_opacity_floor: float = 0.24,
 
         recent_period_error_bars_only: bool = False,
@@ -646,6 +688,8 @@ class LightCurvePlotWidget(QWidget):
                 phase_period_hours=phase_period_hours,
 
                 phase_anchor_mode=phase_anchor_mode,
+
+                phase_anchor_jd=phase_anchor_jd,
 
             )
 
@@ -1120,7 +1164,11 @@ class LightCurvePlotWidget(QWidget):
 
         self._plot_item.addItem(self._selected_point_item)
 
+        self._plot_item.addItem(self._extrema_marker_item)
+
         self._selected_point_item.setData([], [])
+
+        self._apply_extrema_markers()
 
         self._scatter_item = None
 
@@ -1600,27 +1648,23 @@ class LightCurvePlotWidget(QWidget):
 
         default_brush = str(override.get("color") or self._theme_colors["point_brush"])
 
-        if payload.x_axis_mode != "phase":
+        default_symbol = str(override.get("symbol") or "o")
 
-            return [{"pos": (point.x, point.y), "data": index} for index, point in enumerate(payload.points)]
-
-
-
-        alpha_by_index = self._phase_alpha_by_point_index(payload)
+        alpha_by_index = self._phase_alpha_by_point_index(payload) if payload.x_axis_mode == "phase" else {}
 
         maximum_alpha = 255
-
-
 
         spots: list[dict[str, object]] = []
 
         for index, point in enumerate(payload.points):
 
+            saturated = bool(getattr(getattr(point, "source_point", None), "is_saturated", False))
+
             alpha = alpha_by_index.get(index, maximum_alpha)
 
-            pen_color = QColor(default_pen)
+            pen_color = QColor("#fb923c" if saturated else default_pen)
 
-            brush_color = QColor(default_brush)
+            brush_color = QColor("#f97316" if saturated else default_brush)
 
             pen_color.setAlpha(alpha)
 
@@ -1634,7 +1678,11 @@ class LightCurvePlotWidget(QWidget):
 
                     "data": index,
 
-                    "pen": pg.mkPen(pen_color, width=1.0),
+                    "symbol": "x" if saturated else default_symbol,
+
+                    "size": 11 if saturated else 8,
+
+                    "pen": pg.mkPen(pen_color, width=1.6 if saturated else 1.0),
 
                     "brush": pg.mkBrush(brush_color),
 

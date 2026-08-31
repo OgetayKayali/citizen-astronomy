@@ -18,6 +18,10 @@ _REFERENCE_MAGNITUDE_MAX = 16.0
 _PREFERRED_REFERENCE_MAGNITUDE_MIN = 10.0
 _PREFERRED_REFERENCE_MAGNITUDE_MAX = 13.5
 _IDEAL_REFERENCE_MAGNITUDE = 11.5
+# Wider bounds when building per-target pools so bright/faint variables can
+# still match similar-brightness comparison stars (saturation is filtered later).
+_PER_TARGET_REFERENCE_MAGNITUDE_MIN = -1.0
+_PER_TARGET_REFERENCE_MAGNITUDE_MAX = 18.0
 
 
 def measurement_has_usable_value(measurement: PhotometryMeasurement) -> bool:
@@ -35,36 +39,56 @@ def select_reference_stars(
     exclusion_radius_arcsec: float = 30.0,
     minimum_magnitude: float | None = None,
     maximum_magnitude: float | None = None,
+    per_target_count: int | None = None,
+    target_stars: list[CatalogStar] | None = None,
 ) -> list[CatalogStar]:
-    variable_coords = SkyCoord(
-        [star.ra_deg for star in variable_stars] * u.deg,
-        [star.dec_deg for star in variable_stars] * u.deg,
-    ) if variable_stars else None
+    """Select Gaia comparison stars for differential photometry.
 
-    active_minimum = _REFERENCE_MAGNITUDE_MIN if minimum_magnitude is None else max(-5.0, float(minimum_magnitude))
-    active_maximum = _REFERENCE_MAGNITUDE_MAX if maximum_magnitude is None else min(30.0, float(maximum_magnitude))
+    When ``per_target_count`` is set and there are pool targets (``target_stars``
+    if provided, otherwise ``variable_stars``), each target gets its own
+    magnitude-matched pool of up to that many stars; the returned list is the
+    union across targets. ``variable_stars`` always define the exclusion zone
+    (stars near known variables are never used as comps).
+
+    Otherwise a single field-wide mid-range pool of up to ``limit`` stars is
+    returned (legacy / no per-target mode).
+    """
+    exclusion_stars = list(variable_stars)
+    pool_targets = list(target_stars) if target_stars is not None else list(variable_stars)
+    variable_coords = SkyCoord(
+        [star.ra_deg for star in exclusion_stars] * u.deg,
+        [star.dec_deg for star in exclusion_stars] * u.deg,
+    ) if exclusion_stars else None
+
+    use_per_target = per_target_count is not None and int(per_target_count) > 0 and bool(pool_targets)
+    if use_per_target:
+        active_minimum = (
+            _PER_TARGET_REFERENCE_MAGNITUDE_MIN if minimum_magnitude is None else max(-5.0, float(minimum_magnitude))
+        )
+        active_maximum = (
+            _PER_TARGET_REFERENCE_MAGNITUDE_MAX if maximum_magnitude is None else min(30.0, float(maximum_magnitude))
+        )
+    else:
+        active_minimum = _REFERENCE_MAGNITUDE_MIN if minimum_magnitude is None else max(-5.0, float(minimum_magnitude))
+        active_maximum = _REFERENCE_MAGNITUDE_MAX if maximum_magnitude is None else min(30.0, float(maximum_magnitude))
     if active_minimum > active_maximum:
         active_minimum, active_maximum = active_maximum, active_minimum
 
+    magnitude_filtered = [
+        star
+        for star in gaia_stars
+        if star.magnitude is not None and active_minimum <= star.magnitude <= active_maximum
+    ]
+    eligible = _exclude_stars_near_variables(magnitude_filtered, variable_coords, exclusion_radius_arcsec)
+
+    if use_per_target:
+        return _select_per_target_reference_stars(eligible, pool_targets, int(per_target_count))
+
     candidates = sorted(
-        [
-            star
-            for star in gaia_stars
-            if star.magnitude is not None and active_minimum <= star.magnitude <= active_maximum
-        ],
+        eligible,
         key=lambda star: _reference_candidate_sort_key(star, active_minimum, active_maximum),
     )
-
-    selected: list[CatalogStar] = []
-    for star in candidates:
-        if variable_coords is not None:
-            coord = SkyCoord(star.ra_deg * u.deg, star.dec_deg * u.deg)
-            if coord.separation(variable_coords).arcsecond.min() < exclusion_radius_arcsec:
-                continue
-        selected.append(star)
-        if len(selected) >= limit:
-            break
-    return selected
+    return candidates[: max(0, int(limit))]
 
 
 def apply_differential_photometry(
@@ -128,7 +152,7 @@ def apply_differential_photometry(
                 nearby_references = [item for item in reference_rows if item.source_id in comparison_source_ids]
                 nearby_references.sort(key=lambda item: comparison_source_ids.index(item.source_id))
             else:
-                nearby_references = _nearest_reference_measurements(
+                nearby_references = _select_comparison_measurements(
                     reference_rows,
                     measurement,
                     nearby_reference_count,
@@ -284,16 +308,105 @@ def apply_measurement_quality_analysis(
     return [updated_lookup.get(_measurement_key(measurement), measurement) for measurement in measurements]
 
 
-def _nearest_reference_measurements(
+def _exclude_stars_near_variables(
+    stars: list[CatalogStar],
+    variable_coords: SkyCoord | None,
+    exclusion_radius_arcsec: float,
+) -> list[CatalogStar]:
+    if variable_coords is None or not stars:
+        return list(stars)
+    kept: list[CatalogStar] = []
+    for star in stars:
+        coord = SkyCoord(star.ra_deg * u.deg, star.dec_deg * u.deg)
+        if coord.separation(variable_coords).arcsecond.min() < exclusion_radius_arcsec:
+            continue
+        kept.append(star)
+    return kept
+
+
+def _select_per_target_reference_stars(
+    eligible: list[CatalogStar],
+    variable_stars: list[CatalogStar],
+    per_target_count: int,
+) -> list[CatalogStar]:
+    count = max(1, int(per_target_count))
+    selected_by_id: dict[str, CatalogStar] = {}
+    for variable in variable_stars:
+        for star in _rank_reference_candidates_for_target(eligible, variable)[:count]:
+            selected_by_id[star.source_id] = star
+    return list(selected_by_id.values())
+
+
+def _rank_reference_candidates_for_target(
+    eligible: list[CatalogStar],
+    target: CatalogStar,
+) -> list[CatalogStar]:
+    target_magnitude = _finite_magnitude(target.magnitude)
+    candidates = [star for star in eligible if star.source_id != target.source_id]
+    return sorted(
+        candidates,
+        key=lambda star: _catalog_reference_sort_key(star, target, target_magnitude),
+    )
+
+
+def _catalog_reference_sort_key(
+    star: CatalogStar,
+    target: CatalogStar,
+    target_magnitude: float | None,
+) -> tuple[float, float, float, str]:
+    star_magnitude = _finite_magnitude(star.magnitude)
+    if target_magnitude is None or star_magnitude is None:
+        delta_mag = math.inf
+    else:
+        delta_mag = abs(star_magnitude - target_magnitude)
+    separation = _catalog_sky_distance_squared(star, target)
+    magnitude_for_tie = star_magnitude if star_magnitude is not None else 99.0
+    return (delta_mag, separation, magnitude_for_tie, str(star.source_id))
+
+
+def _select_comparison_measurements(
     references: list[PhotometryMeasurement],
     target: PhotometryMeasurement,
     nearby_reference_count: int,
 ) -> list[PhotometryMeasurement]:
+    """Pick comparison stars for one target: closest catalog magnitude, then sky distance."""
+    usable = [reference for reference in references if not _has_hard_quality_flag(reference.flags)]
+    target_magnitude = _finite_magnitude(target.catalog_magnitude)
     ordered = sorted(
-        [reference for reference in references if not _has_hard_quality_flag(reference.flags)],
-        key=lambda measurement: _sky_distance_squared(measurement, target),
+        usable,
+        key=lambda measurement: _comparison_measurement_sort_key(measurement, target, target_magnitude),
     )
-    return ordered[:nearby_reference_count]
+    return ordered[: max(0, int(nearby_reference_count))]
+
+
+def _comparison_measurement_sort_key(
+    reference: PhotometryMeasurement,
+    target: PhotometryMeasurement,
+    target_magnitude: float | None,
+) -> tuple[float, float, float, str]:
+    reference_magnitude = _finite_magnitude(reference.catalog_magnitude)
+    if target_magnitude is None or reference_magnitude is None:
+        delta_mag = math.inf
+    else:
+        delta_mag = abs(reference_magnitude - target_magnitude)
+    return (
+        delta_mag,
+        _sky_distance_squared(reference, target),
+        reference_magnitude if reference_magnitude is not None else 99.0,
+        str(reference.source_id),
+    )
+
+
+def _finite_magnitude(value: float | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        magnitude = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(magnitude):
+        return None
+    return magnitude
 
 
 def _reference_candidate_sort_key(
@@ -313,6 +426,12 @@ def minimum_or_default(value: float, default: float) -> float:
 
 def maximum_or_default(value: float, default: float) -> float:
     return min(value, default)
+
+
+def _catalog_sky_distance_squared(first: CatalogStar, second: CatalogStar) -> float:
+    delta_ra = first.ra_deg - second.ra_deg
+    delta_dec = first.dec_deg - second.dec_deg
+    return (delta_ra * delta_ra) + (delta_dec * delta_dec)
 
 
 def _sky_distance_squared(first: PhotometryMeasurement, second: PhotometryMeasurement) -> float:
@@ -501,8 +620,15 @@ def build_overview_light_curve_layers(
     target_source_id: str,
     *,
     max_comparison_stars: int = 8,
+    preferred_comparison_source_ids: list[str] | None = None,
 ) -> tuple[list[OverviewLightCurveLayer], str | None]:
-    """Build multi-series Overview layers for one science target."""
+    """Build multi-series Overview layers for one science target.
+
+    Comparison stars match the target's ensemble: prefer
+    ``preferred_comparison_source_ids`` (UI sticky set), otherwise the most
+    common exact comparison set across target rows. A frequency-ranked union is
+    only a last resort, still capped by ``max_comparison_stars``.
+    """
     target_id = str(target_source_id).strip()
     if not target_id:
         return [], "Select a target source to show the Overview light curve."
@@ -518,17 +644,22 @@ def build_overview_light_curve_layers(
     target_name = target_rows[0].source_name or target_id
     comparison_counts: dict[str, int] = defaultdict(int)
     comparison_names: dict[str, str] = {}
+    comparison_set_counts: dict[tuple[str, ...], int] = defaultdict(int)
     for measurement in target_rows:
+        ordered_ids: list[str] = []
         for index, source_id in enumerate(measurement.comparison_source_ids):
             resolved_id = str(source_id).strip()
             if not resolved_id:
                 continue
+            ordered_ids.append(resolved_id)
             comparison_counts[resolved_id] += 1
             if resolved_id not in comparison_names:
                 if index < len(measurement.comparison_source_names) and measurement.comparison_source_names[index]:
                     comparison_names[resolved_id] = str(measurement.comparison_source_names[index])
                 else:
                     comparison_names[resolved_id] = resolved_id
+        if ordered_ids:
+            comparison_set_counts[tuple(ordered_ids)] += 1
 
     check_ids: dict[str, str] = {}
     for measurement in measurements:
@@ -538,12 +669,37 @@ def build_overview_light_curve_layers(
             continue
         check_ids.setdefault(measurement.source_id, measurement.source_name or measurement.source_id)
 
-    ranked_comps = sorted(comparison_counts.items(), key=lambda item: (-item[1], comparison_names.get(item[0], item[0]).lower()))
-    comp_candidates = [source_id for source_id, _count in ranked_comps if source_id not in check_ids]
-    truncated = max(0, len(comp_candidates) - max(0, int(max_comparison_stars)))
-    selected_comps = comp_candidates[: max(0, int(max_comparison_stars))]
+    preferred_ids = [
+        str(source_id).strip()
+        for source_id in (preferred_comparison_source_ids or [])
+        if str(source_id).strip() and str(source_id).strip() not in check_ids
+    ]
+    if preferred_ids:
+        selected_comps = preferred_ids[: max(0, int(max_comparison_stars))]
+        truncated = max(0, len(preferred_ids) - len(selected_comps))
+    elif comparison_set_counts:
+        most_common_set = max(
+            comparison_set_counts.items(),
+            key=lambda item: (item[1], -len(item[0]), item[0]),
+        )[0]
+        selected_comps = [source_id for source_id in most_common_set if source_id not in check_ids]
+        selected_comps = selected_comps[: max(0, int(max_comparison_stars))]
+        truncated = 0
+    else:
+        ranked_comps = sorted(
+            comparison_counts.items(),
+            key=lambda item: (-item[1], comparison_names.get(item[0], item[0]).lower()),
+        )
+        comp_candidates = [source_id for source_id, _count in ranked_comps if source_id not in check_ids]
+        truncated = max(0, len(comp_candidates) - max(0, int(max_comparison_stars)))
+        selected_comps = comp_candidates[: max(0, int(max_comparison_stars))]
 
     frame_contexts = _overview_frame_contexts(target_rows)
+    rows_by_source_id: dict[str, list[PhotometryMeasurement]] = defaultdict(list)
+    for measurement in measurements:
+        if measurement_has_usable_value(measurement):
+            rows_by_source_id[measurement.source_id].append(measurement)
+
     layers: list[OverviewLightCurveLayer] = []
     layers.extend(
         _overview_layers_for_source(
@@ -555,11 +711,7 @@ def build_overview_light_curve_layers(
     )
 
     for source_id in selected_comps:
-        comp_rows = [
-            measurement
-            for measurement in measurements
-            if measurement.source_id == source_id and measurement_has_usable_value(measurement)
-        ]
+        comp_rows = rows_by_source_id.get(source_id, [])
         layers.extend(
             _overview_layers_for_source(
                 comp_rows,
@@ -570,11 +722,7 @@ def build_overview_light_curve_layers(
         )
 
     for source_id, source_name in sorted(check_ids.items(), key=lambda item: item[1].lower()):
-        check_rows = [
-            measurement
-            for measurement in measurements
-            if measurement.source_id == source_id and measurement_has_usable_value(measurement)
-        ]
+        check_rows = rows_by_source_id.get(source_id, [])
         layers.extend(
             _overview_layers_for_source(
                 check_rows,
@@ -589,7 +737,7 @@ def build_overview_light_curve_layers(
 
     status_note = None
     if truncated > 0:
-        status_note = f"Overview shows {len(selected_comps)} of {len(comp_candidates)} comparison stars."
+        status_note = f"Overview shows {len(selected_comps)} of {len(preferred_ids) if preferred_ids else len(comparison_counts)} comparison stars."
     return layers, status_note
 
 
@@ -682,6 +830,7 @@ def _build_light_curve_series_from_rows(
             quality_weight=row.quality_weight,
             excluded_from_analysis=row.excluded_from_analysis,
             exclusion_reasons=list(row.exclusion_reasons),
+            is_saturated=row.is_saturated,
         )
         for row in ordered_rows
     ]
@@ -777,6 +926,7 @@ def _overview_light_curve_point_from_row(
         quality_weight=row.quality_weight,
         excluded_from_analysis=row.excluded_from_analysis,
         exclusion_reasons=list(row.exclusion_reasons),
+        is_saturated=row.is_saturated,
     )
 
 

@@ -41,6 +41,59 @@ class MatchingTest(unittest.TestCase):
 
         self.assertEqual([star.source_id for star in selected], ["ref-c", "ref-b"])
 
+    def test_select_reference_stars_builds_per_variable_magnitude_matched_pools(self) -> None:
+        variables = [
+            CatalogStar("vsx", "var-bright", "Bright Var", 10.0, 20.0, 5.0, True),
+            CatalogStar("vsx", "var-faint", "Faint Var", 10.5, 20.5, 14.0, True),
+        ]
+        gaia_stars = [
+            CatalogStar("gaia-dr3", "ref-near-bright-far-mag", "Near Bright Far Mag", 10.001, 20.001, 12.0, False),
+            CatalogStar("gaia-dr3", "ref-match-bright", "Match Bright", 10.05, 20.05, 5.2, False),
+            CatalogStar("gaia-dr3", "ref-match-bright-b", "Match Bright B", 10.06, 20.06, 4.8, False),
+            CatalogStar("gaia-dr3", "ref-match-faint", "Match Faint", 10.55, 20.55, 13.8, False),
+            CatalogStar("gaia-dr3", "ref-match-faint-b", "Match Faint B", 10.56, 20.56, 14.3, False),
+            CatalogStar("gaia-dr3", "ref-mid", "Mid", 10.2, 20.2, 11.5, False),
+        ]
+
+        selected = select_reference_stars(gaia_stars, variables, per_target_count=2)
+        selected_ids = {star.source_id for star in selected}
+
+        self.assertEqual(
+            selected_ids,
+            {"ref-match-bright", "ref-match-bright-b", "ref-match-faint", "ref-match-faint-b"},
+        )
+        self.assertNotIn("ref-near-bright-far-mag", selected_ids)
+        self.assertNotIn("ref-mid", selected_ids)
+
+    def test_select_reference_stars_uses_explicit_target_stars_for_discover_style_pools(self) -> None:
+        exclusions = [
+            CatalogStar("vsx", "known-var", "Known Var", 10.0, 20.0, 11.0, True),
+        ]
+        targets = [
+            CatalogStar("gaia-dr3", "cand-bright", "Cand Bright", 10.2, 20.2, 5.0, False),
+            CatalogStar("gaia-dr3", "cand-faint", "Cand Faint", 10.8, 20.8, 14.0, False),
+        ]
+        gaia_stars = [
+            *exclusions,
+            *targets,
+            CatalogStar("gaia-dr3", "ref-match-bright", "Match Bright", 10.25, 20.25, 5.1, False),
+            CatalogStar("gaia-dr3", "ref-match-faint", "Match Faint", 10.85, 20.85, 13.9, False),
+            CatalogStar("gaia-dr3", "ref-mid", "Mid", 10.5, 20.5, 11.5, False),
+        ]
+
+        selected = select_reference_stars(
+            gaia_stars,
+            exclusions,
+            per_target_count=1,
+            target_stars=targets,
+        )
+        selected_ids = {star.source_id for star in selected}
+
+        self.assertEqual(selected_ids, {"ref-match-bright", "ref-match-faint"})
+        self.assertNotIn("cand-bright", selected_ids)
+        self.assertNotIn("cand-faint", selected_ids)
+        self.assertNotIn("ref-mid", selected_ids)
+
     def test_apply_differential_photometry_uses_nearest_reference_stars(self) -> None:
         root = Path("C:/synthetic")
         file_path = root / "frame.fit"
@@ -157,6 +210,87 @@ class MatchingTest(unittest.TestCase):
         self.assertEqual(updated_variable.comparison_source_ids, ["ref-a", "ref-b"])
         self.assertEqual(updated_variable.comparison_source_names, ["Ref A", "Ref B"])
         self.assertAlmostEqual(updated_variable.comparison_reference_flux or 0.0, expected_reference_flux, places=6)
+
+    def test_apply_differential_photometry_prefers_magnitude_matched_references(self) -> None:
+        root = Path("C:/synthetic")
+        file_path = root / "frame.fit"
+        observation_time = datetime(2026, 3, 16, 1, 0, 0)
+        variable = PhotometryMeasurement(
+            source_id="var-1",
+            source_name="Var 1",
+            catalog="vsx",
+            object_name="M42",
+            file_path=file_path,
+            observation_time=observation_time,
+            filter_name="R",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            x=100.0,
+            y=100.0,
+            flux=1000.0,
+            flux_error=10.0,
+            instrumental_magnitude=-7.5,
+            differential_magnitude=None,
+            is_variable=True,
+            is_reference=False,
+            catalog_magnitude=5.0,
+            flags=[],
+        )
+        nearby_mismatched = PhotometryMeasurement(
+            source_id="ref-near-faint",
+            source_name="Ref Near Faint",
+            catalog="gaia-dr3",
+            object_name="M42",
+            file_path=file_path,
+            observation_time=observation_time,
+            filter_name="R",
+            ra_deg=10.001,
+            dec_deg=20.001,
+            x=101.0,
+            y=101.0,
+            flux=500.0,
+            flux_error=8.0,
+            instrumental_magnitude=-6.7,
+            differential_magnitude=None,
+            is_variable=False,
+            is_reference=True,
+            catalog_magnitude=12.0,
+            flags=[],
+        )
+        farther_matched = PhotometryMeasurement(
+            source_id="ref-far-bright",
+            source_name="Ref Far Bright",
+            catalog="gaia-dr3",
+            object_name="M42",
+            file_path=file_path,
+            observation_time=observation_time,
+            filter_name="R",
+            ra_deg=10.05,
+            dec_deg=20.05,
+            x=150.0,
+            y=150.0,
+            flux=2000.0,
+            flux_error=8.0,
+            instrumental_magnitude=-8.2,
+            differential_magnitude=None,
+            is_variable=False,
+            is_reference=True,
+            catalog_magnitude=5.1,
+            flags=[],
+        )
+
+        updated = apply_differential_photometry(
+            [variable, nearby_mismatched, farther_matched],
+            nearby_reference_count=1,
+        )
+
+        updated_variable = next(item for item in updated if item.source_id == "var-1")
+        self.assertEqual(updated_variable.comparison_source_ids, ["ref-far-bright"])
+        self.assertAlmostEqual(
+            updated_variable.differential_magnitude or 0.0,
+            -2.5 * math.log10(1000.0 / 2000.0),
+            places=6,
+        )
 
     def test_apply_differential_photometry_ignores_saturated_reference_measurements(self) -> None:
         root = Path("C:/synthetic")
@@ -611,10 +745,10 @@ class MatchingTest(unittest.TestCase):
         self.assertIn("Check Check Star [V]", labels)
         self.assertEqual(roles.count("target"), 2)
         self.assertEqual(roles.count("check"), 1)
-        self.assertLessEqual(roles.count("comparison"), 3)
-        self.assertIsNotNone(status_note)
-        assert status_note is not None
-        self.assertIn("2 of 3", status_note)
+        # Most common exact ensemble is Comp A+B; Comp A appears in V and B filters.
+        comparison_source_ids = {layer.series.source_id for layer in layers if layer.role == "comparison"}
+        self.assertEqual(comparison_source_ids, {"comp-a", "comp-b"})
+        self.assertIsNone(status_note)
 
         comp_layers = [layer for layer in layers if layer.role == "comparison"]
         self.assertTrue(comp_layers)
@@ -622,6 +756,79 @@ class MatchingTest(unittest.TestCase):
             for point in layer.series.points:
                 self.assertIsNotNone(point.differential_magnitude)
                 self.assertIsNotNone(point.calibrated_magnitude)
+
+    def test_build_overview_light_curve_layers_prefers_sticky_comparison_ids(self) -> None:
+        root = Path("C:/synthetic")
+        t0 = datetime(2026, 3, 16, 1, 0, 0)
+
+        def _row(
+            *,
+            source_id: str,
+            source_name: str,
+            filter_name: str,
+            minute: int,
+            is_reference: bool = False,
+            comparison_source_ids: list[str] | None = None,
+            comparison_source_names: list[str] | None = None,
+            flux: float = 1000.0,
+        ) -> PhotometryMeasurement:
+            return PhotometryMeasurement(
+                source_id=source_id,
+                source_name=source_name,
+                catalog="vsx" if not is_reference else "gaia-dr3",
+                object_name="CS UMa",
+                file_path=root / f"{filter_name}_{minute}.fit",
+                observation_time=t0.replace(minute=minute),
+                filter_name=filter_name,
+                ra_deg=10.0,
+                dec_deg=20.0,
+                x=100.0,
+                y=100.0,
+                flux=flux,
+                flux_error=10.0,
+                instrumental_magnitude=-7.5 if not is_reference else -8.0,
+                differential_magnitude=0.1 if not is_reference else None,
+                calibrated_magnitude=None if is_reference else 12.0,
+                is_variable=not is_reference,
+                is_reference=is_reference,
+                comparison_source_ids=list(comparison_source_ids or []),
+                comparison_source_names=list(comparison_source_names or []),
+                flags=[],
+            )
+
+        measurements = [
+            _row(
+                source_id="target-1",
+                source_name="CS UMa",
+                filter_name="V",
+                minute=0,
+                comparison_source_ids=["comp-a", "comp-b"],
+                comparison_source_names=["Comp A", "Comp B"],
+            ),
+            _row(
+                source_id="target-1",
+                source_name="CS UMa",
+                filter_name="L",
+                minute=1,
+                comparison_source_ids=["comp-c", "comp-d"],
+                comparison_source_names=["Comp C", "Comp D"],
+            ),
+            _row(source_id="comp-a", source_name="Comp A", filter_name="V", minute=0, is_reference=True, flux=2000.0),
+            _row(source_id="comp-b", source_name="Comp B", filter_name="V", minute=0, is_reference=True, flux=1800.0),
+            _row(source_id="comp-c", source_name="Comp C", filter_name="L", minute=1, is_reference=True, flux=1700.0),
+            _row(source_id="comp-d", source_name="Comp D", filter_name="L", minute=1, is_reference=True, flux=1600.0),
+        ]
+
+        layers, status_note = build_overview_light_curve_layers(
+            measurements,
+            "target-1",
+            max_comparison_stars=8,
+            preferred_comparison_source_ids=["comp-a", "comp-b"],
+        )
+
+        comparison_source_ids = {layer.series.source_id for layer in layers if layer.role == "comparison"}
+        self.assertEqual(comparison_source_ids, {"comp-a", "comp-b"})
+        self.assertIsNone(status_note)
 
     def test_build_overview_light_curve_layers_requires_science_target(self) -> None:
         root = Path("C:/synthetic")

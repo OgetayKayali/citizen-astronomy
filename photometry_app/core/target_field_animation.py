@@ -2348,6 +2348,7 @@ def export_target_field_animation(
     x_axis_mode: str = "datetime",
     phase_period_hours: float | None = None,
     phase_anchor_mode: str = "first_observation",
+    phase_anchor_jd: float | None = None,
     plot_theme: str = "normal",
     custom_theme_colors: dict[str, str] | None = None,
     plot_image: QImage | None = None,
@@ -2401,6 +2402,7 @@ def export_target_field_animation(
         x_axis_mode=x_axis_mode,
         phase_period_hours=phase_period_hours,
         phase_anchor_mode=phase_anchor_mode,
+        phase_anchor_jd=phase_anchor_jd,
     )
     frame_count = len(frames)
     if resolved_mode == TARGET_FIELD_ALIGN_ALIGN_THEN_CROP:

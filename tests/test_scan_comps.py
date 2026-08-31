@@ -17,12 +17,31 @@ class ScanCompsHelpersTests(unittest.TestCase):
         self.assertEqual(sets, [("a", "b"), ("a", "c"), ("b", "c")])
         self.assertEqual(combination_count(3, 2), 3)
 
-    def test_build_scan_comp_candidates_ranks_by_mag_color_distance(self) -> None:
+    def test_build_scan_comp_candidates_ranks_by_closest_magnitude_then_distance(self) -> None:
         references = [
-            ScanCompReferenceInput("far", "Far", 10.5, 20.0, 12.05, 0.82),
+            ScanCompReferenceInput("far_match", "FarMatch", 10.5, 20.0, 12.05, 0.82),
+            ScanCompReferenceInput("near_mismatch", "NearMismatch", 10.01, 20.01, 14.0, 0.81),
+            ScanCompReferenceInput("best", "Best", 10.01, 20.01, 12.05, 0.81),
+            ScanCompReferenceInput("mid", "Mid", 10.2, 20.2, 12.4, 0.9),
+        ]
+        candidates, color_used = build_scan_comp_candidates(
+            target_ra_deg=10.0,
+            target_dec_deg=20.0,
+            target_magnitude=12.0,
+            target_bp_rp=0.8,
+            references=references,
+            pool_size=10,
+        )
+        self.assertFalse(color_used)
+        self.assertEqual([item.source_id for item in candidates], ["best", "far_match", "mid", "near_mismatch"])
+        self.assertLess(candidates[0].delta_mag or 99.0, candidates[-1].delta_mag or 0.0)
+
+    def test_build_scan_comp_candidates_optional_hard_filters(self) -> None:
+        references = [
             ScanCompReferenceInput("best", "Best", 10.01, 20.01, 12.05, 0.81),
             ScanCompReferenceInput("wrong_mag", "WrongMag", 10.01, 20.01, 14.0, 0.81),
             ScanCompReferenceInput("wrong_color", "WrongColor", 10.01, 20.01, 12.05, 1.5),
+            ScanCompReferenceInput("far", "Far", 10.5, 20.0, 12.05, 0.82),
         ]
         candidates, color_used = build_scan_comp_candidates(
             target_ra_deg=10.0,
@@ -37,7 +56,6 @@ class ScanCompsHelpersTests(unittest.TestCase):
         )
         self.assertTrue(color_used)
         self.assertEqual([item.source_id for item in candidates], ["best", "far"])
-        self.assertLess(candidates[0].score, candidates[1].score)
 
     def test_build_scan_comp_candidates_skips_color_when_missing(self) -> None:
         references = [

@@ -446,6 +446,7 @@ class LightCurvePoint:
     quality_weight: float | None = None
     excluded_from_analysis: bool = False
     exclusion_reasons: list[str] = field(default_factory=list)
+    is_saturated: bool = False
 
 
 @dataclass(slots=True)

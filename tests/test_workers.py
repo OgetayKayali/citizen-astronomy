@@ -571,7 +571,7 @@ class WorkerConcurrencyTest(unittest.TestCase):
 
             _resolve_summary_fields=lambda files, settings, progress: solved_results,
 
-            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress: field_catalog,
+            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress, **_kwargs: field_catalog,
 
         )
 
@@ -979,7 +979,7 @@ class WorkerConcurrencyTest(unittest.TestCase):
 
             _resolve_summary_fields=lambda files, settings, progress: solved_results,
 
-            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress: field_catalog,
+            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress, **_kwargs: field_catalog,
 
         )
 
@@ -1298,7 +1298,7 @@ class WorkerConcurrencyTest(unittest.TestCase):
 
             _resolve_summary_fields=lambda files, settings, progress: solved_results,
 
-            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress: field_catalog,
+            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress, **_kwargs: field_catalog,
 
         )
 
@@ -1650,7 +1650,7 @@ class WorkerConcurrencyTest(unittest.TestCase):
 
             _resolve_summary_fields=lambda files, settings, progress: solved_results,
 
-            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress: field_catalog,
+            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress, **_kwargs: field_catalog,
 
         )
 
@@ -1983,7 +1983,7 @@ class WorkerConcurrencyTest(unittest.TestCase):
 
             _resolve_summary_fields=lambda files, settings, progress: solved_results,
 
-            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress: field_catalog,
+            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress, **_kwargs: field_catalog,
 
         )
 
@@ -2391,7 +2391,7 @@ class WorkerConcurrencyTest(unittest.TestCase):
 
             _resolve_summary_fields=lambda files, settings, progress: solved_results,
 
-            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress: field_catalog,
+            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress, **_kwargs: field_catalog,
 
         )
 
@@ -2740,7 +2740,7 @@ class WorkerConcurrencyTest(unittest.TestCase):
 
             _resolve_summary_fields=lambda files, settings, progress: solved_results,
 
-            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress: field_catalog,
+            _best_field_catalog_for_solved_results=lambda catalog_service, solved_results, progress, **_kwargs: field_catalog,
 
         )
 

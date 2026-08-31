@@ -778,6 +778,8 @@ def export_light_curve_plot(
 
     phase_anchor_mode: str = "first_observation",
 
+    phase_anchor_jd: float | None = None,
+
     theme: str = "normal",
 
     custom_theme_colors: dict[str, str] | None = None,
@@ -817,6 +819,8 @@ def export_light_curve_plot(
             phase_period_hours=phase_period_hours,
 
             phase_anchor_mode=phase_anchor_mode,
+
+            phase_anchor_jd=phase_anchor_jd,
 
             theme=theme,
 
@@ -3378,6 +3382,7 @@ def export_light_curve_animated_gif(
     x_axis_mode: str = "datetime",
     phase_period_hours: float | None = None,
     phase_anchor_mode: str = "first_observation",
+    phase_anchor_jd: float | None = None,
     plot_theme: str = "normal",
     custom_theme_colors: dict[str, str] | None = None,
     x_limits: tuple[float, float] | None = None,
@@ -3397,6 +3402,7 @@ def export_light_curve_animated_gif(
         x_axis_mode=x_axis_mode,
         phase_period_hours=phase_period_hours,
         phase_anchor_mode=phase_anchor_mode,
+        phase_anchor_jd=phase_anchor_jd,
     )
     animation_plan = _light_curve_animation_plan(
         payload,

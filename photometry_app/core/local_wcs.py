@@ -34,9 +34,11 @@ from photometry_app.core.wcs import (
 
 
 _PLATE_SCALE_ARCSEC_FACTOR = 206.26480624709636
+# Keep the racing Gaia path inside one VizieR cone so it stays a cheap parallel helper.
 _GAIA_MAXIMUM_MAGNITUDE = 15.5
-_GAIA_ROW_LIMIT = 8000
-_GAIA_WCS_MAGNITUDE_LADDER = (_GAIA_MAXIMUM_MAGNITUDE, 14.0, 12.5)
+_GAIA_WCS_MAX_RADIUS_DEG = 0.35
+_GAIA_ROW_LIMIT = 2500
+_GAIA_WCS_MAGNITUDE_LADDER = (14.0, 12.5, _GAIA_MAXIMUM_MAGNITUDE)
 _GAIA_WCS_RADIUS_SCALES = (1.0, 0.7, 0.5)
 _MINIMUM_FINAL_MATCHES = 10
 _MAXIMUM_FINAL_RMS_PIXELS = 2.5
@@ -309,6 +311,8 @@ def recover_wcs_racing_available_solvers(
             },
             cancel_event=cancel_event,
             emit=emit,
+            progress_callback=progress_callback,
+            progress_lock=progress_lock,
         )
     try:
         if run_local:
@@ -327,6 +331,8 @@ def _race_wcs_solvers(
     *,
     cancel_event: threading.Event,
     emit: Callable[[str], None],
+    progress_callback: Callable[[str], None] | None = None,
+    progress_lock: threading.Lock | None = None,
 ) -> PlateSolveResult:
     executor = ThreadPoolExecutor(max_workers=len(solvers), thread_name_prefix="wcs-race")
     futures = {executor.submit(solver): method for method, solver in solvers.items()}
@@ -344,8 +350,15 @@ def _race_wcs_solvers(
                 continue
             if result.solved_field is not None:
                 winner = _annotate_wcs_solver_result(result, method)
+                win_message = _wcs_solver_win_message(method)
                 cancel_event.set()
-                emit(_wcs_solver_win_message(method))
+                # Win status must still appear after cancel gates normal progress.
+                if progress_callback is not None:
+                    lock = progress_lock if progress_lock is not None else threading.Lock()
+                    with lock:
+                        progress_callback(win_message)
+                else:
+                    emit(win_message)
                 break
             failures.extend(reason for reason in result.reasons if reason)
     finally:
@@ -419,8 +432,10 @@ def _query_gaia_stars_for_wcs_fallback(
 ) -> list[CatalogStar]:
     """Query Gaia with a denser-field retry ladder for local WCS recovery.
 
-    Always caps rows, then on VizieR overload/empty responses tightens the
-    magnitude cut, and finally shrinks the search radius while keeping tiling.
+    The racing path stays inside one VizieR cone by default so it remains a
+    cheap parallel helper beside astrometry.net. Always caps rows, then on
+    VizieR overload/empty responses tightens the magnitude cut, and finally
+    shrinks the (already capped) search radius.
     """
     attempts = _gaia_wcs_fallback_query_attempts(provisional_field.radius_deg)
     last_error: Exception | None = None
@@ -442,7 +457,11 @@ def _query_gaia_stars_for_wcs_fallback(
                 maximum_magnitude=maximum_magnitude,
                 row_limit=_GAIA_ROW_LIMIT,
                 progress_callback=progress_callback,
+                progress_label="WCS recovery field",
+                cancel_event=cancel_event,
             )
+        except WcsSolveCancelled:
+            raise
         except Exception as exc:
             last_error = exc
             if index + 1 >= len(attempts) or not _should_retry_gaia_wcs_catalog_query(exc):
@@ -453,24 +472,25 @@ def _query_gaia_stars_for_wcs_fallback(
 
 
 def _gaia_wcs_fallback_query_attempts(full_radius_deg: float) -> list[tuple[float, float, str]]:
-    radius = max(0.05, float(full_radius_deg))
+    full_radius = max(0.05, float(full_radius_deg))
+    capped_radius = min(full_radius, _GAIA_WCS_MAX_RADIUS_DEG)
     attempts: list[tuple[float, float, str]] = []
     for magnitude in _GAIA_WCS_MAGNITUDE_LADDER:
         attempts.append(
             (
                 float(magnitude),
-                radius,
-                f"G <= {magnitude:.1f} and full search radius",
+                capped_radius,
+                f"G <= {magnitude:.1f} and {capped_radius:.2f} deg search radius",
             )
         )
     for scale in _GAIA_WCS_RADIUS_SCALES[1:]:
-        scaled_radius = max(0.05, radius * float(scale))
-        bright_magnitude = float(_GAIA_WCS_MAGNITUDE_LADDER[-1])
+        scaled_radius = max(0.05, capped_radius * float(scale))
+        bright_magnitude = float(_GAIA_WCS_MAGNITUDE_LADDER[0])
         attempts.append(
             (
                 bright_magnitude,
                 scaled_radius,
-                f"G <= {bright_magnitude:.1f} and {int(round(scale * 100.0))}% search radius",
+                f"G <= {bright_magnitude:.1f} and {int(round(scale * 100.0))}% of capped search radius",
             )
         )
     return attempts

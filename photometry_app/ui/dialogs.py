@@ -13161,7 +13161,11 @@ class SettingsDialog(QDialog):
         self._synthetic_tracking_allow_mixed_all_group_input.setChecked(settings.synthetic_tracking_allow_mixed_all_group)
         self._synthetic_tracking_advanced_enabled_input = QCheckBox("Open manual one-stack dialog")
         self._synthetic_tracking_advanced_enabled_input.setChecked(settings.synthetic_tracking_advanced_enabled)
-        self._saturation_filter_enabled_input = QCheckBox("Skip saturated selected variable stars during analysis")
+        self._saturation_filter_enabled_input = QCheckBox("Skip saturated frames during analysis")
+        self._saturation_filter_enabled_input.setToolTip(
+            "When on, saturated frames are left out of fits and the cleaned light curve. "
+            "The target stays. When off, those frames stay on the curve with a distinct marker."
+        )
         self._saturation_filter_enabled_input.setChecked(settings.saturation_filter_enabled)
         self._wcs_sanity_check_enabled_input = QCheckBox("Check embedded WCS against Gaia stars")
         self._wcs_sanity_check_enabled_input.setChecked(bool(settings.wcs_sanity_check_enabled))
@@ -13376,6 +13380,14 @@ class SettingsDialog(QDialog):
         self._filter_system_input.addItems(_AAVSO_FILTER_OPTIONS)
         self._filter_system_input.setCurrentText(settings.filter_system)
         self._aavso_chart_id_input = QLineEdit(settings.aavso_chart_id)
+        self._aavso_api_token_input = QLineEdit(settings.aavso_api_token)
+        self._aavso_api_token_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._aavso_api_token_input.setPlaceholderText("Optional AAVSO account API token")
+        self._aavso_api_token_input.setClearButtonEnabled(True)
+        self._aavso_api_token_input.setToolTip(
+            "From your AAVSO account settings. Used by O–C → Pull AAVSO for the official AID API "
+            "(one request every 10 seconds). Leave blank to download through VSX without a login."
+        )
         self._observation_timezone_input = QComboBox()
         self._observation_timezone_input.setEditable(True)
         self._observation_timezone_input.addItems(_OBSERVATION_TIMEZONE_OPTIONS)
@@ -13497,7 +13509,7 @@ class SettingsDialog(QDialog):
         form_layout.addRow("", clear_actions_container)
 
         differential_photometry_form_layout = QFormLayout()
-        differential_photometry_form_layout.addRow("Nearby Comparison Stars", self._nearby_reference_count_input)
+        differential_photometry_form_layout.addRow("Comparison Stars per Variable", self._nearby_reference_count_input)
         differential_photometry_form_layout.addRow("Frame Edge Margin", self._frame_edge_margin_percent_input)
         differential_photometry_form_layout.addRow("Saturation Filter", self._saturation_filter_enabled_input)
         reference_magnitude_grid = QGridLayout()
@@ -13550,6 +13562,7 @@ class SettingsDialog(QDialog):
         science_metadata_layout.addRow("Organization", self._organization_input)
         science_metadata_layout.addRow("AAVSO Export Filter", self._filter_system_input)
         science_metadata_layout.addRow("AAVSO Sequence/Chart ID", self._aavso_chart_id_input)
+        science_metadata_layout.addRow("AAVSO API Token", self._aavso_api_token_input)
         science_metadata_layout.addRow("Image Timestamp Timezone", self._observation_timezone_input)
         science_metadata_layout.addRow("Time Standard", self._time_standard_input)
         science_metadata_layout.addRow("Transformed Data", self._transformed_input)
@@ -14622,6 +14635,7 @@ class SettingsDialog(QDialog):
             bortle_scale=None if self._bortle_scale_input.value() <= 0 else self._bortle_scale_input.value(),
             filter_system=self._filter_system_input.currentText().strip(),
             aavso_chart_id=self._aavso_chart_id_input.text().strip(),
+            aavso_api_token=self._aavso_api_token_input.text().strip(),
             observation_timezone=self._observation_timezone_input.currentText().strip() or "UTC",
             time_standard=self._time_standard_input.currentText().strip() or "UTC",
             transformed=self._transformed_input.isChecked(),
@@ -15098,6 +15112,7 @@ class SettingsDialog(QDialog):
         self._bortle_scale_input.setValue(0 if defaults.bortle_scale is None else int(defaults.bortle_scale))
         self._filter_system_input.setCurrentText(defaults.filter_system)
         self._aavso_chart_id_input.setText(defaults.aavso_chart_id)
+        self._aavso_api_token_input.setText(defaults.aavso_api_token)
         self._observation_timezone_input.setCurrentText(defaults.observation_timezone)
         self._time_standard_input.setCurrentText(defaults.time_standard)
         self._transformed_input.setChecked(defaults.transformed)

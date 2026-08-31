@@ -7,11 +7,13 @@ import math
 from typing import Any
 
 
-DEFAULT_MAX_DELTA_MAG = 1.0
-DEFAULT_MAX_DELTA_COLOR = 0.3
-DEFAULT_MAX_SEPARATION_ARCMIN = 15.0
+# Defaults match automatic Generate: magnitude-first pools without a hard Δmag cut.
+# Color and separation remain optional UI filters (0 disables the hard limit).
+DEFAULT_MAX_DELTA_MAG = 0.0
+DEFAULT_MAX_DELTA_COLOR = 0.0
+DEFAULT_MAX_SEPARATION_ARCMIN = 0.0
 DEFAULT_POOL_SIZE = 30
-DEFAULT_COMPS_PER_SET = 2
+DEFAULT_COMPS_PER_SET = 5
 MAX_COMBINATIONS_SOFT_CAP = 200
 
 
@@ -101,8 +103,12 @@ def build_scan_comp_candidates(
 ) -> tuple[list[ScanCompCandidate], bool]:
     """Rank measured reference stars for Scan Comps.
 
-    Returns ``(candidates, color_filter_active)``. Color is used only when the
-    target and a reference both have finite Gaia BP−RP.
+    Ranking matches automatic Generate: closest catalog magnitude first, then
+    sky distance. Optional hard limits (Δmag / color / separation) apply only
+    when their values are > 0. Color is used only when the target and a
+    reference both have finite Gaia BP−RP.
+
+    Returns ``(candidates, color_filter_active)``.
     """
     mag_limit = max(0.0, float(max_delta_mag))
     color_limit = max(0.0, float(max_delta_color))
@@ -138,11 +144,10 @@ def build_scan_comp_candidates(
         if color_filter_active and delta_color is not None and delta_color > color_limit:
             continue
 
-        mag_term = 0.0 if delta_mag is None or mag_limit <= 0 else delta_mag / mag_limit
-        color_term = 0.0 if not color_used or color_limit <= 0 else float(delta_color) / color_limit
-        sep_term = 0.0 if sep_limit <= 0 else separation / sep_limit
-        # Prefer mag+color+distance proximity; missing color just omits that term.
-        score = mag_term + color_term + sep_term
+        # Score mirrors Generate priority: |Δmag| primary, separation secondary.
+        mag_score = float(delta_mag) if delta_mag is not None else math.inf
+        sep_score = float(separation)
+        score = mag_score + (sep_score / 60.0)
         ranked.append(
             ScanCompCandidate(
                 source_id=str(reference.source_id),
@@ -159,6 +164,13 @@ def build_scan_comp_candidates(
             )
         )
 
-    ranked.sort(key=lambda item: (item.score, item.separation_arcmin, item.source_name.casefold(), item.source_id))
+    ranked.sort(
+        key=lambda item: (
+            math.inf if item.delta_mag is None else float(item.delta_mag),
+            float(item.separation_arcmin),
+            item.source_name.casefold(),
+            item.source_id,
+        )
+    )
     color_used_any = any(item.color_used for item in ranked[:limit])
     return ranked[:limit], bool(color_filter_active and color_used_any)

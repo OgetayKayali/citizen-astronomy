@@ -153,20 +153,22 @@ $$
 
 ### Comparison Star Selection
 
-Good comparison stars are critical. CAst selects them automatically from the Gaia DR3 catalog:
+Good comparison stars are critical. CAst selects them automatically from the Gaia DR3 catalog **per variable**:
 
-- **Magnitude range:** 8.0 to 16.0 (configurable), with preference for 10.0 to 13.5 -- bright enough for good signal, faint enough to avoid saturation.
-- **Ideal magnitude:** 11.5 (closest to the midpoint of the preferred range gets priority).
+- **Per-variable pools:** Each variable star gets its own comparison-star pool of up to **N** stars (Settings → Comparison Stars per Variable, default 5).
+- **Magnitude matching:** Candidates are ranked by how close their Gaia G magnitude is to that variable, with sky distance as a tie-breaker. Bright variables therefore get brighter comps; faint variables get fainter ones.
+- **Union for measurement:** The unique union of those per-variable pools is measured on every frame.
+- **Magnitude range:** Optional Settings limits still apply. When unset, per-variable selection uses a wide window (−1 to 18) so similar-brightness comps remain available; saturated comps are dropped later.
 - **Variable exclusion:** Any star within 30 arcseconds of a known VSX variable is excluded.
-- **Maximum count:** Up to 25 reference stars are selected per field.
-
-For each measurement of the target star, the **5 nearest** comparison stars (by sky distance) are used. Their fluxes are combined using inverse-variance weighting:
+- **Ensemble:** For each target measurement, up to N surviving comps (again closest in magnitude, then nearest on sky) are combined with inverse-variance weighting:
 
 $$
 F_{\text{ref}} = \frac{\sum_i w_i  F_i}{\sum_i w_i}, \quad w_i = \frac{1}{\sigma_{F_i}^2}
 $$
 
 This ensemble approach minimizes the noise contribution from any single comparison star. If no valid flux errors are available, an unweighted median is used as a fallback.
+
+**Scan Comps** uses the same magnitude-first ranking on the measured reference pool (optional Δmag / color / separation hard filters default to off).
 
 ### Manual Aperture Editor
 
@@ -377,7 +379,7 @@ Fits a Fourier series at the determined period (default 2 harmonics, up to 6). C
 The **Discover** action systematically searches for unreported variable stars among the non-cataloged Gaia stars in your field. For each candidate:
 
 1. The star is measured across all frames as if it were a variable target.
-2. An optimized comparison star subset is selected.
+2. A magnitude-matched comparison-star pool is selected for that star (same closest-Gaia-mag rule as Generate), and an optimized subset is used for the light curve.
 3. A differential light curve is constructed.
 4. Variability metrics are computed:
   - **Reduced chi-squared** -- how much the light curve deviates from a constant.

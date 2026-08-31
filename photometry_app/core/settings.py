@@ -870,6 +870,8 @@ class AppSettings:
 
     aavso_chart_id: str = ""
 
+    aavso_api_token: str = ""
+
     observation_timezone: str = "UTC"
 
     time_standard: str = "UTC"
@@ -913,6 +915,8 @@ class AppSettings:
     literature_period_cache: dict[str, dict[str, dict[str, object]]] | None = None
 
     calculated_period_cache: dict[str, dict[str, dict[str, object]]] | None = None
+
+    oc_extrema_logs: dict[str, dict[str, object]] | None = None
 
 
 
@@ -1434,6 +1438,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
     filter_system = _coerce_metadata_text(payload.get("filter_system"))
 
     aavso_chart_id = _coerce_metadata_text(payload.get("aavso_chart_id"))
+
+    aavso_api_token = os.getenv("CITIZEN_PHOTOMETRY_AAVSO_API_TOKEN") or _coerce_metadata_text(payload.get("aavso_api_token"))
 
     observation_timezone = _coerce_timezone_name(payload.get("observation_timezone"))
 
@@ -2296,6 +2302,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
         aavso_chart_id=aavso_chart_id,
 
+        aavso_api_token=aavso_api_token,
+
         observation_timezone=observation_timezone,
 
         time_standard=time_standard,
@@ -2339,6 +2347,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         literature_period_cache=_coerce_period_cache(payload.get("literature_period_cache")),
 
         calculated_period_cache=_coerce_period_cache(payload.get("calculated_period_cache")),
+
+        oc_extrema_logs=_coerce_oc_extrema_logs(payload.get("oc_extrema_logs")),
 
     )
 
@@ -3013,6 +3023,8 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
 
         "aavso_chart_id": _coerce_metadata_text(settings.aavso_chart_id),
 
+        "aavso_api_token": _coerce_metadata_text(settings.aavso_api_token),
+
         "observation_timezone": _coerce_timezone_name(settings.observation_timezone),
 
         "time_standard": _coerce_time_standard(settings.time_standard),
@@ -3058,6 +3070,8 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "literature_period_cache": _period_cache_to_payload(settings.literature_period_cache or {}),
 
         "calculated_period_cache": _period_cache_to_payload(settings.calculated_period_cache or {}),
+
+        "oc_extrema_logs": _oc_extrema_logs_to_payload(settings.oc_extrema_logs or {}),
 
     }
 
@@ -4287,6 +4301,33 @@ def _coerce_period_cache(value: object) -> dict[str, dict[str, dict[str, object]
 
 
 
+
+
+def _coerce_oc_extrema_logs(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, dict):
+        return {}
+    logs: dict[str, dict[str, object]] = {}
+    for star_key, payload in value.items():
+        if not isinstance(star_key, str) or not star_key.strip() or not isinstance(payload, dict):
+            continue
+        logs[star_key.strip()] = {
+            key: entry_value
+            for key, entry_value in payload.items()
+            if isinstance(key, str)
+        }
+    return logs
+
+
+def _oc_extrema_logs_to_payload(value: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+    return {
+        star_key: {
+            key: entry_value
+            for key, entry_value in payload.items()
+            if isinstance(key, str)
+        }
+        for star_key, payload in value.items()
+        if isinstance(star_key, str) and isinstance(payload, dict)
+    }
 
 
 def _period_cache_to_payload(value: dict[str, dict[str, dict[str, object]]]) -> dict[str, dict[str, dict[str, object]]]:

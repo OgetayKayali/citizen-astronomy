@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -23,8 +24,17 @@ from photometry_app.core.local_wcs import (
     infer_metadata_wcs_seed,
     recover_wcs_racing_available_solvers,
 )
-from photometry_app.core.models import CatalogStar, PlateSolveResult, SolvedField, WcsStatus
-from photometry_app.core.wcs import AstrometryNetClient, WcsSolveCancelled, _prepare_plate_solve_input, celestial_wcs, infer_astrometry_solve_hints, scale_wcs_pixel_grid, validate_wcs
+from photometry_app.core.models import CatalogStar, FileScanResult, ObservationMetadata, PlateSolveResult, SolvedField, WcsStatus
+from photometry_app.core.wcs import (
+    AstrometryNetClient,
+    AstrometrySolveHints,
+    WcsSolveCancelled,
+    _prepare_plate_solve_input,
+    celestial_wcs,
+    infer_astrometry_solve_hints,
+    scale_wcs_pixel_grid,
+    validate_wcs,
+)
 
 
 class AstrometryNetClientTest(unittest.TestCase):
@@ -73,7 +83,7 @@ class AstrometryNetClientTest(unittest.TestCase):
 
         self.assertEqual(
             [(round(mag, 1), round(radius, 3)) for mag, radius, _label in attempts],
-            [(15.5, 1.5), (14.0, 1.5), (12.5, 1.5), (12.5, 1.05), (12.5, 0.75)],
+            [(14.0, 0.35), (12.5, 0.35), (15.5, 0.35), (14.0, 0.245), (14.0, 0.175)],
         )
 
     def test_gaia_wcs_fallback_retries_empty_vizier_with_brighter_then_smaller_field(self) -> None:
@@ -108,14 +118,15 @@ class AstrometryNetClientTest(unittest.TestCase):
         self.assertEqual(result, stars)
         self.assertEqual(service.query_gaia_stars_limited.call_count, 5)
         first_call = service.query_gaia_stars_limited.call_args_list[0]
-        self.assertEqual(first_call.kwargs["maximum_magnitude"], 15.5)
-        self.assertEqual(first_call.kwargs["row_limit"], 8000)
-        self.assertAlmostEqual(first_call.args[0].radius_deg, 1.5103, places=4)
+        self.assertEqual(first_call.kwargs["maximum_magnitude"], 14.0)
+        self.assertEqual(first_call.kwargs["row_limit"], 2500)
+        self.assertEqual(first_call.kwargs["progress_label"], "WCS recovery field")
+        self.assertAlmostEqual(first_call.args[0].radius_deg, 0.35, places=4)
         last_call = service.query_gaia_stars_limited.call_args_list[-1]
-        self.assertEqual(last_call.kwargs["maximum_magnitude"], 12.5)
-        self.assertAlmostEqual(last_call.args[0].radius_deg, 1.5103 * 0.5, places=4)
-        self.assertTrue(any("G <= 14.0" in message for message in progress))
-        self.assertTrue(any("50% search radius" in message for message in progress))
+        self.assertEqual(last_call.kwargs["maximum_magnitude"], 14.0)
+        self.assertAlmostEqual(last_call.args[0].radius_deg, 0.35 * 0.5, places=4)
+        self.assertTrue(any("G <= 12.5" in message for message in progress))
+        self.assertTrue(any("50% of capped search radius" in message for message in progress))
         self.assertTrue(_should_retry_gaia_wcs_catalog_query(empty_parse))
 
     def test_metadata_seeded_gaia_fit_recovers_rotation_and_parity(self) -> None:
@@ -568,6 +579,7 @@ class WcsRecoveryRaceTest(unittest.TestCase):
         nova_field = SolvedField(1.0, 2.0, 0.5, 100, 80, Path("nova.fits"))
         astrometry_started = threading.Event()
         astrometry_cancelled = threading.Event()
+        progress: list[str] = []
 
         def local_solver(path, cache, **kwargs):
             astrometry_started.wait(timeout=1.0)
@@ -592,11 +604,13 @@ class WcsRecoveryRaceTest(unittest.TestCase):
             api_key="demo",
             local_solver=local_solver,
             astrometry_client_cls=FakeClient,
+            progress_callback=progress.append,
         )
 
         self.assertEqual(result.solved_field, local_field)
         self.assertIn("metadata-seeded Gaia matching", " ".join(result.reasons))
         self.assertTrue(astrometry_cancelled.wait(timeout=1.0))
+        self.assertTrue(any("stopping astrometry.net" in message for message in progress))
 
     def test_race_keeps_astrometry_when_local_is_slower(self) -> None:
         source_path = Path("demo.fits")
@@ -632,3 +646,74 @@ class WcsRecoveryRaceTest(unittest.TestCase):
         cancel_event.set()
         with self.assertRaises(WcsSolveCancelled):
             client._wait_for_job(1, timeout_seconds=30, cancel_event=cancel_event)
+
+
+class AlignedFrameReuseKeyTest(unittest.TestCase):
+    def _file(self, name: str, date_obs: datetime | None) -> FileScanResult:
+        return FileScanResult(
+            path=Path(f"R And/{name}"),
+            object_folder="R And",
+            metadata=ObservationMetadata(date_obs, "V", 60.0, 2000, 1500, "R And"),
+            wcs_status=WcsStatus.UNSOLVED,
+        )
+
+    def test_same_night_similar_pointing_shares_reuse_key(self) -> None:
+        from types import SimpleNamespace
+
+        from photometry_app.core.pipeline import _aligned_frame_reuse_key
+
+        settings = SimpleNamespace(assume_aligned_images=False)
+        night = datetime(2024, 11, 15, 2, 30, 0)
+        hints_a = AstrometrySolveHints(center_ra_deg=23.40, center_dec_deg=38.50)
+        hints_b = AstrometrySolveHints(center_ra_deg=23.42, center_dec_deg=38.51)
+        key_a = _aligned_frame_reuse_key(self._file("a.fits", night), hints_a, settings)
+        key_b = _aligned_frame_reuse_key(self._file("b.fits", night), hints_b, settings)
+
+        self.assertIsNotNone(key_a)
+        self.assertEqual(key_a, key_b)
+        assert key_a is not None
+        self.assertEqual(key_a[0], "night-pointing:R And:2024-11-15")
+
+    def test_different_nights_do_not_share_reuse_key(self) -> None:
+        from types import SimpleNamespace
+
+        from photometry_app.core.pipeline import _aligned_frame_reuse_key
+
+        settings = SimpleNamespace(assume_aligned_images=False)
+        hints = AstrometrySolveHints(center_ra_deg=23.40, center_dec_deg=38.50)
+        key_a = _aligned_frame_reuse_key(
+            self._file("a.fits", datetime(2024, 11, 15, 2, 30, 0)),
+            hints,
+            settings,
+        )
+        key_b = _aligned_frame_reuse_key(
+            self._file("b.fits", datetime(2024, 11, 16, 2, 30, 0)),
+            hints,
+            settings,
+        )
+
+        self.assertIsNotNone(key_a)
+        self.assertIsNotNone(key_b)
+        self.assertNotEqual(key_a, key_b)
+
+    def test_large_pointing_offset_does_not_share_reuse_key(self) -> None:
+        from types import SimpleNamespace
+
+        from photometry_app.core.pipeline import _aligned_frame_reuse_key
+
+        settings = SimpleNamespace(assume_aligned_images=False)
+        night = datetime(2024, 11, 15, 2, 30, 0)
+        key_a = _aligned_frame_reuse_key(
+            self._file("a.fits", night),
+            AstrometrySolveHints(center_ra_deg=23.40, center_dec_deg=38.50),
+            settings,
+        )
+        key_b = _aligned_frame_reuse_key(
+            self._file("b.fits", night),
+            AstrometrySolveHints(center_ra_deg=23.55, center_dec_deg=38.50),
+            settings,
+        )
+
+        self.assertIsNotNone(key_a)
+        self.assertIsNotNone(key_b)
+        self.assertNotEqual(key_a, key_b)

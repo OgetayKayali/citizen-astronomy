@@ -569,7 +569,7 @@ def _discover_raw_light_curve_target_stars(
 
     field_catalog: object,
 
-    reference_stars: list[CatalogStar],
+    reference_stars: list[CatalogStar] | None = None,
 
     allowed_source_ids: set[str] | None = None,
 
@@ -579,7 +579,9 @@ def _discover_raw_light_curve_target_stars(
 
     known_source_ids.update(entry.source_id for entry in getattr(field_catalog, "exoplanets", []))
 
-    known_source_ids.update(entry.source_id for entry in reference_stars)
+    if reference_stars:
+
+        known_source_ids.update(entry.source_id for entry in reference_stars)
 
     candidates = [
 
@@ -2663,6 +2665,8 @@ class LightCurveGifExportWorker(QThread):
 
         phase_anchor_mode: str = "first_observation",
 
+        phase_anchor_jd: float | None = None,
+
         plot_theme: str = "normal",
 
         custom_theme_colors: dict[str, str] | None = None,
@@ -2692,6 +2696,8 @@ class LightCurveGifExportWorker(QThread):
         self._phase_period_hours = phase_period_hours
 
         self._phase_anchor_mode = phase_anchor_mode
+
+        self._phase_anchor_jd = phase_anchor_jd
 
         self._plot_theme = plot_theme
 
@@ -2738,6 +2744,8 @@ class LightCurveGifExportWorker(QThread):
                 phase_period_hours=self._phase_period_hours,
 
                 phase_anchor_mode=self._phase_anchor_mode,
+
+                phase_anchor_jd=self._phase_anchor_jd,
 
                 plot_theme=self._plot_theme,
 
@@ -2804,6 +2812,7 @@ class TargetFieldAnimationExportWorker(QThread):
         x_axis_mode: str = "datetime",
         phase_period_hours: float | None = None,
         phase_anchor_mode: str = "first_observation",
+        phase_anchor_jd: float | None = None,
         plot_theme: str = "normal",
         custom_theme_colors: dict[str, str] | None = None,
         plot_image: QImage | None = None,
@@ -2840,6 +2849,7 @@ class TargetFieldAnimationExportWorker(QThread):
         self._x_axis_mode = x_axis_mode
         self._phase_period_hours = phase_period_hours
         self._phase_anchor_mode = phase_anchor_mode
+        self._phase_anchor_jd = phase_anchor_jd
         self._plot_theme = plot_theme
         self._custom_theme_colors = None if custom_theme_colors is None else dict(custom_theme_colors)
         self._plot_image = None if plot_image is None or plot_image.isNull() else plot_image.copy()
@@ -2881,6 +2891,7 @@ class TargetFieldAnimationExportWorker(QThread):
                 x_axis_mode=self._x_axis_mode,
                 phase_period_hours=self._phase_period_hours,
                 phase_anchor_mode=self._phase_anchor_mode,
+                phase_anchor_jd=self._phase_anchor_jd,
                 plot_theme=self._plot_theme,
                 custom_theme_colors=self._custom_theme_colors,
                 plot_image=self._plot_image,
@@ -7380,16 +7391,23 @@ class DiscoverSourcesWorker(QThread):
 
                 return
 
+            exclusion_stars = [*field_catalog.variable_stars, *field_catalog.exoplanets]
+            provisional_targets = _discover_raw_light_curve_target_stars(
+                field_catalog,
+                reference_stars=None,
+                allowed_source_ids=self._allowed_source_ids,
+            )
+            if not provisional_targets:
+                self.discovery_failed.emit("Discover could not find any non-variable Gaia targets to test.")
+                return
+
             reference_stars = select_reference_stars(
-
                 field_catalog.gaia_stars,
-
-                [*field_catalog.variable_stars, *field_catalog.exoplanets],
-
+                exclusion_stars,
                 minimum_magnitude=self._settings.reference_star_min_magnitude,
-
                 maximum_magnitude=self._settings.reference_star_max_magnitude,
-
+                per_target_count=self._settings.nearby_reference_count,
+                target_stars=provisional_targets,
             )
 
             if not reference_stars:
@@ -7397,6 +7415,22 @@ class DiscoverSourcesWorker(QThread):
                 self.discovery_failed.emit("Discover could not build a usable comparison-star pool.")
 
                 return
+
+            reference_source_ids = {star.source_id for star in reference_stars}
+            discover_targets = [
+                entry for entry in provisional_targets if entry.source_id not in reference_source_ids
+            ]
+            if not discover_targets:
+                self.discovery_failed.emit(
+                    "Discover could not keep any targets after building magnitude-matched comparison pools."
+                )
+                return
+
+            self._emit_progress(
+                f"Discover selected {len(reference_stars)} magnitude-matched comparison star(s) "
+                f"across {len(provisional_targets)} provisional target(s); "
+                f"testing {len(discover_targets)} target(s)."
+            )
 
             configured_workers, worker_label = _resolve_photometry_parallel_workers(self._settings)
 
@@ -7488,12 +7522,6 @@ class DiscoverSourcesWorker(QThread):
 
                     )
 
-            discover_targets = _discover_raw_light_curve_target_stars(
-                field_catalog,
-                reference_stars,
-                self._allowed_source_ids,
-            )
-
             target_plans = [
 
                 DiscoverTargetPlan(entry=entry, search_type="raw light curve")
@@ -7530,7 +7558,7 @@ class DiscoverSourcesWorker(QThread):
 
             self._emit_progress(
 
-                f"Discover will build raw light curves for {len(target_plans)} non-variable star(s) with {len(reference_stars)} reusable comparison star(s)."
+                f"Discover will build raw light curves for {len(target_plans)} non-variable star(s) with {len(reference_stars)} magnitude-matched comparison star(s)."
 
             )
 
@@ -8173,6 +8201,41 @@ class ScanCompsBatchResult:
     cancelled: bool = False
 
 
+_MAX_SCAN_COMPS_WORKERS = 8
+
+
+def _recommended_scan_comps_workers(total_groups: int) -> int:
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(total_groups, _MAX_SCAN_COMPS_WORKERS, max(1, cpu_count - 1)))
+
+
+def _evaluate_scan_comp_set(
+    target_measurements: list[PhotometryMeasurement],
+    selected_reference_measurements: list[PhotometryMeasurement],
+    comparison_group: tuple[str, ...],
+    comparison_names: tuple[str, ...],
+    y_axis_mode: str,
+) -> ScanCompSetEvaluation:
+    updated_targets, series, _period, diagnostics = _evaluate_comparison_source_group_core(
+        target_measurements,
+        selected_reference_measurements,
+        comparison_group,
+        fit_config=None,
+        y_axis_mode=y_axis_mode,
+        period_method="lomb_scargle",
+        period_convention="standard",
+        calculate_period=False,
+    )
+    return ScanCompSetEvaluation(
+        comparison_source_ids=tuple(comparison_group),
+        comparison_source_names=comparison_names,
+        target_measurements=updated_targets,
+        series=series,
+        valid_point_count=int(diagnostics.usable_target_row_count),
+        excluded_point_count=int(diagnostics.excluded_target_row_count),
+    )
+
+
 class ScanCompsWorker(QThread):
     set_ready = Signal(object)
     batch_completed = Signal(object)
@@ -8189,6 +8252,7 @@ class ScanCompsWorker(QThread):
         reference_measurements: list[PhotometryMeasurement],
         comparison_groups: list[tuple[str, ...]],
         y_axis_mode: str = "differential_magnitude",
+        max_parallel_workers: int = 0,
         parent: object | None = None,
     ) -> None:
         super().__init__(parent)
@@ -8200,6 +8264,7 @@ class ScanCompsWorker(QThread):
         self._reference_measurements = list(reference_measurements)
         self._comparison_groups = list(comparison_groups)
         self._y_axis_mode = y_axis_mode
+        self._max_parallel_workers = int(max_parallel_workers)
         self._cancel_requested = Event()
 
     def request_cancel(self) -> None:
@@ -8208,12 +8273,34 @@ class ScanCompsWorker(QThread):
     def cancellation_requested(self) -> bool:
         return self._cancel_requested.is_set()
 
+    def _worker_count(self, total_groups: int) -> int:
+        if self._max_parallel_workers > 0:
+            return max(1, min(total_groups, _MAX_SCAN_COMPS_WORKERS, self._max_parallel_workers))
+        return _recommended_scan_comps_workers(total_groups)
+
     def run(self) -> None:
         try:
             name_lookup = _comparison_source_names_by_id(self._reference_measurements)
+            reference_index = _index_reference_measurements_by_source_and_frame(self._reference_measurements)
             results: list[ScanCompSetEvaluation] = []
             total = len(self._comparison_groups)
-            for index, comparison_group in enumerate(self._comparison_groups, start=1):
+            if total == 0:
+                self.batch_completed.emit(
+                    ScanCompsBatchResult(
+                        report_token=self._report_token,
+                        target_source_id=self._target_source_id,
+                        target_source_name=self._target_source_name,
+                        filter_name=self._filter_name,
+                        total_combination_count=0,
+                        evaluated_combination_count=0,
+                        results=[],
+                        cancelled=False,
+                    )
+                )
+                return
+
+            prepared: list[tuple[tuple[str, ...], tuple[str, ...], list[PhotometryMeasurement]]] = []
+            for comparison_group in self._comparison_groups:
                 if self._cancel_requested.is_set():
                     self.batch_completed.emit(
                         ScanCompsBatchResult(
@@ -8222,37 +8309,87 @@ class ScanCompsWorker(QThread):
                             target_source_name=self._target_source_name,
                             filter_name=self._filter_name,
                             total_combination_count=total,
-                            evaluated_combination_count=len(results),
-                            results=results,
+                            evaluated_combination_count=0,
+                            results=[],
                             cancelled=True,
                         )
                     )
                     return
                 comparison_names = tuple(name_lookup.get(source_id, source_id) for source_id in comparison_group)
-                label = ", ".join(comparison_names)
-                self.progress_updated.emit(
-                    f"Scan Comps: evaluating set {index}/{total} ({label}) for {self._target_source_name} [{self._filter_name}]."
-                )
-                updated_targets, series, _period, diagnostics = _evaluate_comparison_source_group_core(
-                    self._target_measurements,
-                    self._reference_measurements,
+                selected_references = _comparison_group_reference_measurements(
+                    reference_index,
                     comparison_group,
-                    fit_config=None,
-                    y_axis_mode=self._y_axis_mode,
-                    period_method="lomb_scargle",
-                    period_convention="standard",
-                    calculate_period=False,
+                    self._target_measurements,
                 )
-                evaluation = ScanCompSetEvaluation(
-                    comparison_source_ids=tuple(comparison_group),
-                    comparison_source_names=comparison_names,
-                    target_measurements=updated_targets,
-                    series=series,
-                    valid_point_count=int(diagnostics.usable_target_row_count),
-                    excluded_point_count=int(diagnostics.excluded_target_row_count),
-                )
-                results.append(evaluation)
-                self.set_ready.emit(evaluation)
+                prepared.append((comparison_group, comparison_names, selected_references))
+
+            worker_count = self._worker_count(total)
+            self.progress_updated.emit(
+                f"Scan Comps: evaluating {total} combination(s) for {self._target_source_name} "
+                f"[{self._filter_name}] with {worker_count} worker(s)."
+            )
+
+            completed_count = 0
+            cancelled = False
+            # Thread pool + per-set filtered refs keeps cancel/Use Selected responsive
+            # (ProcessPool shutdown was blocking the UI for many seconds).
+            executor = ThreadPoolExecutor(max_workers=worker_count)
+            future_map: dict[object, tuple[str, ...]] = {}
+            pending_groups = deque(prepared)
+            try:
+                while pending_groups and len(future_map) < worker_count and not self._cancel_requested.is_set():
+                    comparison_group, comparison_names, selected_references = pending_groups.popleft()
+                    future = executor.submit(
+                        _evaluate_scan_comp_set,
+                        self._target_measurements,
+                        selected_references,
+                        comparison_group,
+                        comparison_names,
+                        self._y_axis_mode,
+                    )
+                    future_map[future] = comparison_group
+
+                while future_map:
+                    if self._cancel_requested.is_set():
+                        cancelled = True
+                        pending_groups.clear()
+                        for future in list(future_map):
+                            future.cancel()
+                        future_map.clear()
+                        break
+
+                    done, _pending = wait(set(future_map), timeout=0.1, return_when=FIRST_COMPLETED)
+                    if not done:
+                        continue
+
+                    for future in done:
+                        future_map.pop(future, None)
+                        if future.cancelled():
+                            continue
+                        evaluation = future.result()
+                        completed_count += 1
+                        results.append(evaluation)
+                        label = ", ".join(evaluation.comparison_source_names)
+                        self.progress_updated.emit(
+                            f"Scan Comps: evaluated {completed_count}/{total} ({label}) for "
+                            f"{self._target_source_name} [{self._filter_name}]."
+                        )
+                        self.set_ready.emit(evaluation)
+
+                    while pending_groups and len(future_map) < worker_count and not self._cancel_requested.is_set():
+                        comparison_group, comparison_names, selected_references = pending_groups.popleft()
+                        future = executor.submit(
+                            _evaluate_scan_comp_set,
+                            self._target_measurements,
+                            selected_references,
+                            comparison_group,
+                            comparison_names,
+                            self._y_axis_mode,
+                        )
+                        future_map[future] = comparison_group
+            finally:
+                executor.shutdown(wait=not cancelled, cancel_futures=True)
+
             self.batch_completed.emit(
                 ScanCompsBatchResult(
                     report_token=self._report_token,
@@ -8262,7 +8399,7 @@ class ScanCompsWorker(QThread):
                     total_combination_count=total,
                     evaluated_combination_count=len(results),
                     results=results,
-                    cancelled=False,
+                    cancelled=cancelled,
                 )
             )
         except Exception as exc:
