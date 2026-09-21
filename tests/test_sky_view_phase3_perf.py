@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, QPointF, QRectF
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QApplication
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from photometry_app.core.sky_atlas import SkyAtlasObject
 from photometry_app.ui.main_window import _SkyAtlasViewWidget, _SkyVisibleObject
@@ -21,7 +21,7 @@ class SkyViewPhase3PerfBehaviorTests(unittest.TestCase):
     def test_unified_partition_skips_fast_star_groups(self) -> None:
         widget = _SkyAtlasViewWidget()
         widget._star_renderer._available = True
-        widget._star_renderer._require_vao = True
+        widget._star_renderer._use_instancing = True
         widget._sky_view_star_renderer_disabled_for_session = False
 
         faint = SkyAtlasObject(
@@ -46,6 +46,7 @@ class SkyViewPhase3PerfBehaviorTests(unittest.TestCase):
             label_visible=True,
             selectable=True,
         )
+        widget.set_objects((faint, named))
         visible = [
             _SkyVisibleObject(faint, 10.0, 10.0, 1.0, 7.0, 40.0),
             _SkyVisibleObject(named, 20.0, 20.0, 1.0, 0.03, 50.0),
@@ -58,7 +59,7 @@ class SkyViewPhase3PerfBehaviorTests(unittest.TestCase):
     def test_label_stars_remain_overlay_candidates_while_dragging(self) -> None:
         widget = _SkyAtlasViewWidget()
         widget._star_renderer._available = True
-        widget._star_renderer._require_vao = True
+        widget._star_renderer._use_instancing = True
         widget._drag_origin = QPoint(1, 1)
         labeled = SkyAtlasObject(
             name="Vega",
@@ -82,6 +83,7 @@ class SkyViewPhase3PerfBehaviorTests(unittest.TestCase):
             label_visible=False,
             selectable=False,
         )
+        widget.set_objects((fast, labeled))
         visible = [
             _SkyVisibleObject(fast, 10.0, 10.0, 1.0, 4.0, 40.0),
             _SkyVisibleObject(labeled, 20.0, 20.0, 1.0, 0.03, 50.0),
@@ -159,6 +161,78 @@ class SkyViewPhase3PerfBehaviorTests(unittest.TestCase):
         self.assertTrue(widget._deferred_hit_grid_dirty)
         self.assertGreaterEqual(painter.drawText.call_count, 2)
 
+    def test_drag_and_stable_frames_apply_the_same_label_decluttering(self) -> None:
+        widget = _SkyAtlasViewWidget()
+        stars = tuple(
+            SkyAtlasObject(
+                name=name,
+                object_type="star",
+                ra_deg=279.2 + index,
+                dec_deg=38.8,
+                magnitude=0.2 + index * 0.1,
+                catalog="Local",
+                searchable=True,
+                label_visible=True,
+                selectable=True,
+            )
+            for index, name in enumerate(("Alpha", "Beta"))
+        )
+        rich = [
+            _SkyVisibleObject(stars[0], 12.0, 14.0, 1.0, 0.2, 30.0),
+            _SkyVisibleObject(stars[1], 28.0, 14.0, 1.0, 0.3, 30.0),
+        ]
+
+        def overlapping_candidates(_painter, sky_object, magnitude, **_kwargs):
+            return (
+                (
+                    (0, float(magnitude), 0.0, 0.0, 0, sky_object.name),
+                    QFont(),
+                    QPointF(80.0, 80.0),
+                    QRectF(80.0, 68.0, 52.0, 16.0),
+                    sky_object.name,
+                    QColor("#ffffff"),
+                    QColor("#000000"),
+                    sky_object,
+                ),
+            )
+
+        widget._build_object_label_candidates = MagicMock(side_effect=overlapping_candidates)  # type: ignore[method-assign]
+        initial_painter = MagicMock()
+        widget._draw_object_overlays(
+            initial_painter,
+            rich,
+            QRectF(0, 0, 200, 200),
+            draw_star_sprites=False,
+            ground_geometry=None,
+            all_visible_objects=rich,
+        )
+
+        widget._drag_origin = QPoint(1, 1)
+        drag_painter = MagicMock()
+        widget._draw_object_overlays(
+            drag_painter,
+            rich,
+            QRectF(0, 0, 200, 200),
+            draw_star_sprites=False,
+            ground_geometry=None,
+            all_visible_objects=rich,
+        )
+
+        widget._drag_origin = None
+        stable_painter = MagicMock()
+        widget._draw_object_overlays(
+            stable_painter,
+            rich,
+            QRectF(0, 0, 200, 200),
+            draw_star_sprites=False,
+            ground_geometry=None,
+            all_visible_objects=rich,
+        )
+
+        self.assertEqual(initial_painter.drawText.call_count, 2)
+        self.assertEqual(drag_painter.drawText.call_count, 2)
+        self.assertEqual(stable_painter.drawText.call_count, 2)
+
     def test_legacy_fast_groups_can_be_rebuilt_for_visual_fallback(self) -> None:
         widget = _SkyAtlasViewWidget()
         star = SkyAtlasObject(
@@ -176,6 +250,102 @@ class SkyViewPhase3PerfBehaviorTests(unittest.TestCase):
             [_SkyVisibleObject(star, 30.0, 40.0, 1.0, 6.2, 45.0)]
         )
         self.assertEqual(sum(len(points) for points in groups.values()), 1)
+
+    def test_compatibility_activation_is_explicit_and_emitted_once(self) -> None:
+        widget = _SkyAtlasViewWidget()
+        messages: list[str] = []
+        widget.starRendererCompatibilityActivated.connect(messages.append)
+
+        widget._activate_star_renderer_compatibility("VAO creation failed")
+        widget._activate_star_renderer_compatibility("second failure")
+
+        self.assertTrue(widget._sky_view_star_renderer_disabled_for_session)
+        self.assertTrue(widget._sky_view_gl_stars_last_qpainter_fallback)
+        self.assertIn("compatibility=active", widget._sky_view_last_star_renderer_log)
+        self.assertIn("VAO creation failed", widget._sky_view_last_star_renderer_log)
+        self.assertEqual(len(messages), 1)
+        self.assertIn("explicit compatibility rendering is active", messages[0])
+
+    def test_static_gpu_catalog_keeps_only_interactive_stars_in_cpu_candidates(self) -> None:
+        widget = _SkyAtlasViewWidget()
+        anonymous = SkyAtlasObject(
+            name="HIP anonymous",
+            object_type="star",
+            ra_deg=83.8,
+            dec_deg=-5.0,
+            magnitude=5.0,
+            catalog="Hipparcos",
+            searchable=False,
+            label_visible=False,
+            selectable=False,
+        )
+        named = SkyAtlasObject(
+            name="Named star",
+            object_type="star",
+            ra_deg=83.8,
+            dec_deg=-5.0,
+            magnitude=4.0,
+            catalog="Local",
+            searchable=True,
+            label_visible=True,
+            selectable=True,
+        )
+        galaxy = SkyAtlasObject(
+            name="Galaxy",
+            object_type="Galaxy",
+            ra_deg=83.8,
+            dec_deg=-5.0,
+            magnitude=6.0,
+            catalog="NGC",
+        )
+        widget.set_objects((anonymous, named, galaxy))
+        widget._star_renderer._available = True
+        widget._star_renderer._use_instancing = True
+
+        field_height = widget._field_height_deg(QRectF(widget.rect()))
+        gpu_candidates, _ = widget._candidate_objects_for_current_view_with_detail(field_height)
+
+        self.assertNotIn(anonymous, gpu_candidates)
+        self.assertIn(named, gpu_candidates)
+        self.assertIn(galaxy, gpu_candidates)
+
+        widget._sky_view_star_renderer_disabled_for_session = True
+        fallback_candidates, _ = widget._candidate_objects_for_current_view_with_detail(field_height)
+        self.assertIn(anonymous, fallback_candidates)
+
+    def test_large_catalog_uses_bounded_dynamic_gpu_path(self) -> None:
+        widget = _SkyAtlasViewWidget()
+        stars = tuple(
+            SkyAtlasObject(
+                name=f"HIP {index}",
+                object_type="star",
+                ra_deg=83.8 + index,
+                dec_deg=-5.0,
+                magnitude=5.0,
+                catalog="Hipparcos",
+                searchable=False,
+                label_visible=False,
+                selectable=False,
+            )
+            for index in range(2)
+        )
+
+        with patch("photometry_app.ui.main_window.MAX_STATIC_CATALOG_STARS", 1):
+            widget.set_objects(stars)
+
+        self.assertFalse(widget._star_renderer.has_static_catalog)
+        widget._star_renderer._available = True
+        widget._star_renderer._use_instancing = True
+
+        field_height = widget._field_height_deg(QRectF(widget.rect()))
+        candidates, _ = widget._candidate_objects_for_current_view_with_detail(field_height)
+        self.assertTrue(any(star in candidates for star in stars))
+
+        visible = [_SkyVisibleObject(stars[0], 10.0, 10.0, 1.0, 5.0, 40.0)]
+        fast_groups, rich, gpu = widget._partition_visible_objects(visible)
+        self.assertEqual(fast_groups, {})
+        self.assertEqual(rich, [])
+        self.assertEqual(gpu, [])
 
     def test_visual_fallback_groups_include_bright_stars(self) -> None:
         widget = _SkyAtlasViewWidget()

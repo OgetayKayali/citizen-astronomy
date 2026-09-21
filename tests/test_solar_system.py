@@ -91,6 +91,8 @@ from photometry_app.core.solar_system import (
     detect_known_solar_system_objects,
 
     estimate_visible_magnitude_limit,
+    _resolved_wcs_for_field,
+    _usable_existing_solved_field,
 
     lookup_known_solar_system_object,
 
@@ -4345,6 +4347,236 @@ class SolarSystemTest(unittest.TestCase):
         self.assertEqual(result.tested_star_count, 6)
 
         self.assertIn("18.8", result.summary_text)
+
+
+
+    def test_estimate_visible_magnitude_limit_reuses_provided_solved_field(self) -> None:
+
+        from astropy.io import fits
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root_path = Path(temp_dir)
+
+            settings = AppSettings.from_root(root_path)
+
+            settings.asteroid_estimate_snr_threshold = 4.0
+
+            settings.asteroid_estimate_start_magnitude = 16.0
+
+            settings.asteroid_estimate_stars_per_bin = 2
+
+            settings.asteroid_estimate_required_visible_stars = 1
+
+            source_path = root_path / "download.jpg"
+
+            source_path.write_bytes(b"jpg")
+
+            wcs = WCS(naxis=2)
+
+            wcs.wcs.crpix = [30.0, 30.0]
+
+            wcs.wcs.cdelt = np.array([-1.0 / 3600.0, 1.0 / 3600.0])
+
+            wcs.wcs.crval = [10.0, 20.0]
+
+            wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+
+            wcs_path = root_path / "solved.fits"
+
+            fits.PrimaryHDU(data=np.zeros((60, 60), dtype=np.float32), header=wcs.to_header()).writeto(wcs_path)
+
+            solved_field = SolvedField(
+
+                center_ra_deg=10.0,
+
+                center_dec_deg=20.0,
+
+                radius_deg=0.1,
+
+                width=60,
+
+                height=60,
+
+                wcs_path=wcs_path,
+
+            )
+
+            self.assertIs(_usable_existing_solved_field(solved_field), solved_field)
+
+            self.assertIsNone(
+
+                _usable_existing_solved_field(
+
+                    SolvedField(10.0, 20.0, 0.1, 60, 60, source_path)
+
+                )
+
+            )
+
+            image_data = np.zeros((60, 60), dtype=float)
+
+            stars = [
+
+                CatalogStar(
+
+                    catalog="gaia-dr3",
+
+                    source_id="v1",
+
+                    name="V1",
+
+                    ra_deg=float(wcs.pixel_to_world_values(24.0, 24.0)[0]),
+
+                    dec_deg=float(wcs.pixel_to_world_values(24.0, 24.0)[1]),
+
+                    magnitude=16.1,
+
+                    is_variable=False,
+
+                ),
+
+            ]
+
+            progress_messages: list[str] = []
+
+            with (
+
+                patch(
+
+                    "photometry_app.core.solar_system._resolve_source_field",
+
+                    side_effect=AssertionError("should reuse the existing Sky Explorer WCS"),
+
+                ),
+
+                patch("photometry_app.core.solar_system.read_photometry_image_data", return_value=image_data),
+
+                patch(
+
+                    "photometry_app.core.solar_system._measure_local_match",
+
+                    side_effect=lambda _image_data, predicted_x, predicted_y, expected_trail_length_px=None: (
+
+                        predicted_x,
+
+                        predicted_y,
+
+                        1.0,
+
+                        8.0,
+
+                        200.0,
+
+                        1000.0,
+
+                        2.5,
+
+                    ),
+
+                ),
+
+            ):
+
+                result = estimate_visible_magnitude_limit(
+
+                    source_path,
+
+                    settings=settings,
+
+                    catalog_service=_StubGaiaCatalogService(stars),
+
+                    solved_field=solved_field,
+
+                    progress_callback=progress_messages.append,
+
+                )
+
+        self.assertIn("Reusing the already recovered plate-solve WCS.", progress_messages)
+
+        self.assertAlmostEqual(result.dimmest_visible_magnitude, 16.1)
+
+
+
+    def test_resolved_wcs_for_field_loads_three_dimensional_sip_header(self) -> None:
+
+        from astropy.io import fits
+
+        from astropy.io.fits import Header
+
+        header = Header()
+
+        header["WCSAXES"] = 3
+
+        header["NAXIS"] = 3
+
+        header["NAXIS1"] = 2560
+
+        header["NAXIS2"] = 1440
+
+        header["NAXIS3"] = 3
+
+        header["CTYPE1"] = "RA---TAN-SIP"
+
+        header["CTYPE2"] = "DEC--TAN-SIP"
+
+        header["CTYPE3"] = "RGB"
+
+        header["CRVAL1"] = 284.88
+
+        header["CRVAL2"] = -36.64
+
+        header["CRVAL3"] = 1.0
+
+        header["CRPIX1"] = 1280.0
+
+        header["CRPIX2"] = 720.0
+
+        header["CRPIX3"] = 1.0
+
+        header["CD1_1"] = -0.00027
+
+        header["CD1_2"] = 0.0
+
+        header["CD2_1"] = 0.0
+
+        header["CD2_2"] = 0.00027
+
+        header["CD3_3"] = 1.0
+
+        header["A_ORDER"] = 2
+
+        header["B_ORDER"] = 2
+
+        header["A_0_2"] = 0.0
+
+        header["A_1_1"] = 0.0
+
+        header["A_2_0"] = 0.0
+
+        header["B_0_2"] = 0.0
+
+        header["B_1_1"] = 0.0
+
+        header["B_2_0"] = 0.0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            wcs_path = Path(temp_dir) / "solved.fits"
+
+            fits.PrimaryHDU(header=header).writeto(wcs_path)
+
+            wcs = _resolved_wcs_for_field(
+
+                SolvedField(284.88, -36.64, 0.5, 2560, 1440, wcs_path)
+
+            )
+
+        self.assertEqual(wcs.pixel_n_dim, 2)
+
+        ra_deg, dec_deg = wcs.pixel_to_world_values(1280.0, 720.0)
+
+        self.assertAlmostEqual(float(dec_deg), -36.64, places=2)
 
 
 

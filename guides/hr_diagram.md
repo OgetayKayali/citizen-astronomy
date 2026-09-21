@@ -6,7 +6,7 @@ Every star has a place on a map drawn more than a century ago -- a map that stil
 
 The Hertzsprung-Russell diagram (HR diagram) places stars by color (temperature) against intrinsic brightness (luminosity). Hot blue stars sit to the left. Cool red stars sit to the right. Giants rise above the main sequence. White dwarfs settle below it. Look at a cluster, and you are not looking at a random spray of points: you are looking at a population that formed together, aged together, and left a fingerprint of that shared history on the diagram.
 
-**Citizen Astronomy (CAst)** turns a single deep image of a star field into an interactive HR diagram. You open a plate-solved FITS or XISF frame, CAst detects the stars on your image, matches them to Gaia DR3, computes absolute magnitudes from parallax, and plots a color-magnitude diagram you can explore, filter, and export.
+**Citizen Astronomy (CAst)** turns a single deep image of a star field into an interactive HR diagram. You open a FITS, XISF, PNG, or JPEG frame, CAst detects the stars on your image, matches them to Gaia DR3, computes absolute magnitudes from parallax, and plots a color-magnitude diagram you can explore, filter, and export.
 
 ### What you can do with this mode
 
@@ -28,17 +28,18 @@ Amateur images of open clusters, globular clusters, and rich Milky Way fields al
 
 ### Step 1: Choose a Source Image
 
-Switch to **HR Diagram** mode and open a single FITS, FIT, or XISF image with `File > Open File`.
+Switch to **HR Diagram** mode and open a single FITS, FIT, XISF, PNG, or JPEG image with `File > Open File`.
 
 The first time you enter HR mode in a given app version, CAst shows a short prerequisites reminder. You can check **Don't show again for this version** to hide it until the next update (default is to show it again after each new version).
 
 HR mode expects:
 
-- a **plate-solved** image with usable celestial WCS
-- preferably a **linear RGB** image (color-calibrated if possible)
+- an image CAst can **plate-solve** (embedded celestial WCS, or a recovered solve)
+- preferably a **linear RGB** FITS/XISF image (color-calibrated if possible)
+- PNG or JPEG uploads are supported for the educational workflow; CAst recovers a WCS, then uses that solved WCS for Gaia matching, the diagram, and overlays such as proper-motion vectors
 - network access for Gaia (and related catalog) lookups
 
-The preview can be stretched for comfortable viewing, but photometric measurement is performed on the original linear image data. If the image lacks a valid WCS, CAst recovers one from metadata-seeded Gaia matching and, when configured, astrometry.net, keeping the first success.
+The preview can be stretched for comfortable viewing, but photometric measurement is performed on the original linear image data. If the image lacks a valid WCS, CAst recovers one from metadata-seeded Gaia matching and, when configured, astrometry.net, keeping the first success. JPEG and PNG files do not carry FITS WCS, so matching always uses that recovered solve.
 
 Unlike Differential Photometry, HR mode works from **one source image at a time**, not a time-series folder.
 

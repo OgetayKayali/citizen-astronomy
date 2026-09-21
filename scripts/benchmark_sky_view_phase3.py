@@ -59,6 +59,8 @@ def main() -> int:
 
     canvas = _SkyAtlasViewWidget()
     canvas.resize(args.width, args.height)
+    if args.no_milky_way:
+        canvas.set_milky_way_enabled(False)
     canvas.show()
     app.processEvents()
 
@@ -102,6 +104,7 @@ def main() -> int:
         "ground_seconds",
         "moon_seconds",
     )
+    backend_failures: list[str] = []
     for name, configure, step in scenarios:
         if configure is not None:
             configure(harness)
@@ -125,6 +128,8 @@ def main() -> int:
         star_samples: list[float] = []
         upload_samples: list[int] = []
         backend = "unknown"
+        observed_backends: set[str] = set()
+        observed_static_catalog_modes: set[bool] = set()
         visible_stars = 0
         max_upload_bytes = 0
         stage_totals = {attr: 0.0 for attr in stage_attrs}
@@ -145,8 +150,10 @@ def main() -> int:
             log_line = str(getattr(canvas, "_sky_view_last_star_renderer_log", "") or "")
             if "backend=" in log_line:
                 backend = log_line.split("backend=", 1)[1].split()[0]
+                observed_backends.add(backend)
             metrics = getattr(getattr(canvas, "_star_renderer", None), "metrics", None)
             if metrics is not None:
+                observed_static_catalog_modes.add(bool(getattr(metrics, "static_catalog_active", False)))
                 star_ms = (
                     float(getattr(metrics, "prepare_seconds", 0.0))
                     + float(getattr(metrics, "upload_seconds", 0.0))
@@ -196,7 +203,21 @@ def main() -> int:
         )
         print(f"  top3_cpu=[{top3_text}]")
         print(f"  star_renderer_log={getattr(canvas, '_sky_view_last_star_renderer_log', '')}")
+        if observed_backends != {"instanced"}:
+            backend_failures.append(
+                f"{name}: expected only instanced, observed {sorted(observed_backends) or ['unknown']}"
+            )
+        if observed_static_catalog_modes != {True}:
+            backend_failures.append(
+                f"{name}: static GPU catalog inactive in measured frames "
+                f"(observed {sorted(observed_static_catalog_modes) or ['unknown']})"
+            )
 
+    if backend_failures:
+        print("ERROR: GPU star-renderer performance gate failed:")
+        for failure in backend_failures:
+            print(f"  {failure}")
+        return 2
     return 0
 
 

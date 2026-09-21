@@ -1,35 +1,64 @@
 from __future__ import annotations
 
+import csv
 import json
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
+from time import perf_counter, sleep
 from typing import Any, cast
+from urllib.parse import quote_plus
 
+import requests
 from astroquery.vizier import Vizier
-
 
 from photometry_app.core.sky_atlas_catalog_storage import sky_atlas_catalog_root
 
 _HIPPARCOS_VIZIER_CATALOG = "I/239/hip_main"
 _TYCHO2_VIZIER_CATALOG = "I/259/tyc2"
 _GAIA_DR3_VIZIER_CATALOG = "I/355/gaiadr3"
+_GAIA_FLATHUB_ENDPOINT = "https://flathub.flatironinstitute.org/api/gaiadr3"
+_GAIA_STREAM_CONNECT_TIMEOUT_SEC = 15
+_GAIA_STREAM_READ_TIMEOUT_SEC = 60
+_GAIA_PROGRESS_EVERY_STARS = 100_000
+_GAIA_PROGRESS_MIN_INTERVAL_SEC = 0.25
+_VIZIER_QUERY_TIMEOUT_SEC = 60
+_SKY_ATLAS_HTTP_USER_AGENT = "CitizenAstronomy-SkyAtlas/1.0"
 _NGC2000_VIZIER_CATALOG = "VII/118/ngc2000"
 _VDB_VIZIER_CATALOG = "VII/21/catalog"
 _LDN_VIZIER_CATALOG = "VII/7A/ldn"
 _LBN_VIZIER_CATALOG = "VII/9"
+_BARNARD_VIZIER_CATALOG = "VII/220A"
+_SHARPLESS_VIZIER_CATALOG = "VII/20"
+_RCW_VIZIER_CATALOG = "VII/216"
+_HASH_PN_VIZIER_CATALOG = "V/163/pnmain"
 _DEFAULT_SCIENTIFIC_STAR_MAGNITUDE_LIMIT = 9.5
 _HIPPARCOS_PRACTICAL_MAGNITUDE_LIMIT = 12.0
 _TYCHO_PRACTICAL_MAGNITUDE_LIMIT = 12.5
 _MAX_SKY_ATLAS_STAR_MAGNITUDE_LIMIT = 15.0
+SKY_ATLAS_WIDE_FIELD_STAR_MAGNITUDE = 5.0
+SKY_ATLAS_STARTUP_STAR_MAGNITUDE = 6.5
+_STARTUP_CACHE_FALLBACK_SLACK_MAG = 1.0
 _SCIENTIFIC_CATALOG_CACHE_SCHEMA_VERSION = 1
 _DEEP_SKY_CATALOG_CACHE_SCHEMA_VERSION = 1
 _NAMED_OBJECT_DEDUPLICATION_RADIUS_DEG = 0.12
 _ALWAYS_VISIBLE_SKY_ATLAS_CATALOGS = frozenset({"Hipparcos", "Tycho-2", "Gaia DR3", "Bright Star", "Local", "Solar System"})
-SKY_ATLAS_DEEP_SKY_CATALOG_NAMES = ("Messier", "NGC", "IC", "VdB", "LDN", "LBN")
+SKY_ATLAS_DEEP_SKY_CATALOG_NAMES = (
+    "Messier",
+    "NGC",
+    "IC",
+    "VdB",
+    "LDN",
+    "LBN",
+    "Barnard",
+    "Sharpless",
+    "RCW",
+    "HASH PN",
+)
 _DEEP_SKY_CATALOG_COLORS = {
     "Messier": "#a7f3d0",
     "NGC": "#93c5fd",
@@ -37,6 +66,26 @@ _DEEP_SKY_CATALOG_COLORS = {
     "VdB": "#fde68a",
     "LDN": "#c4b5fd",
     "LBN": "#67e8f9",
+    "Barnard": "#e9d5ff",
+    "Sharpless": "#fda4af",
+    "RCW": "#fdba74",
+    "HASH PN": "#5eead4",
+}
+_HASH_PN_SKIP_STATUSES = frozenset({"Q", "TEST"})
+_HASH_PN_STATUS_TYPES: dict[str, str] = {
+    "T": "Planetary Nebula",
+    "L": "Planetary Nebula",
+    "P": "Planetary Nebula",
+    "C": "Planetary Nebula",
+    "A": "Planetary Nebula",
+    "B": "Planetary Nebula",
+    "HII": "HII Region",
+    "SNR": "Supernova Remnant",
+    "SR?": "Supernova Remnant",
+    "RNE": "Reflection Nebula",
+    "EMO": "Emission Nebula",
+    "G": "Galaxy",
+    "G?": "Galaxy",
 }
 _HIPPARCOS_IDENTIFIER_PATTERN = re.compile(r"^HIP\s*(\d+)\b", flags=re.IGNORECASE)
 _MESSIER_PATTERN = re.compile(r"^(?:MESSIER|M)\s*0*(\d+)\b", flags=re.IGNORECASE)
@@ -45,6 +94,8 @@ _IC_PATTERN = re.compile(r"^IC\s*0*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE)
 _VDB_PATTERN = re.compile(r"^(?:VDB|V\s*DB)\s*0*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE)
 _BARNARD_PATTERN = re.compile(r"^(?:BARNARD|B)\s*0*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE)
 _SH2_PATTERN = re.compile(r"^(?:SH\s*2|SH2|SHARPLESS)\s*-?\s*0*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE)
+_RCW_PATTERN = re.compile(r"^RCW\s*0*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE)
+_HASH_PN_PATTERN = re.compile(r"^HASH\s*0*(\d+)\b", flags=re.IGNORECASE)
 _OTHER_IDENTIFIER_PATTERNS: tuple[tuple[re.Pattern[str], str, int], ...] = (
     (re.compile(r"^HR\s*0*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE), "HR {value}", 10),
     (re.compile(r"^HD\s*0*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE), "HD {value}", 11),
@@ -57,6 +108,18 @@ _OTHER_IDENTIFIER_PATTERNS: tuple[tuple[re.Pattern[str], str, int], ...] = (
     (re.compile(r"^LHS\s*([0-9A-Za-z.+\- ]+)$", flags=re.IGNORECASE), "LHS {value}", 18),
     (re.compile(r"^LACAILLE\s*([0-9A-Za-z.+\- ]+)$", flags=re.IGNORECASE), "Lacaille {value}", 19),
 )
+CancelCheck = Callable[[], None]
+
+
+class SkyAtlasCatalogCancelled(Exception):
+    """Raised when a Sky Atlas catalog download is cancelled."""
+
+
+def _raise_if_catalogue_cancelled(cancel_check: CancelCheck | None) -> None:
+    if cancel_check is not None:
+        cancel_check()
+
+
 _TECHNICAL_NAME_PREFIXES = (
     "HD ",
     "HIP ",
@@ -110,6 +173,12 @@ class SkyAtlasObject:
         return " ".join((self.name, self.object_type, self.catalog, self.constellation, *self.aliases)).casefold()
 
 
+@dataclass(frozen=True, slots=True)
+class SkyAtlasLiteratureLink:
+    label: str
+    url: str
+
+
 def load_local_sky_atlas_objects() -> tuple[SkyAtlasObject, ...]:
     return _load_packaged_named_sky_atlas_objects()
 
@@ -121,6 +190,8 @@ def load_sky_atlas_objects(
     download_if_missing: bool = False,
     enabled_deep_sky_catalogs: frozenset[str] | set[str] | tuple[str, ...] | None = None,
     progress_callback=None,
+    cancel_check: CancelCheck | None = None,
+    star_magnitude_achieved: list[float] | None = None,
 ) -> tuple[SkyAtlasObject, ...]:
     packaged_objects = list(_load_packaged_named_sky_atlas_objects())
     catalogs = normalize_sky_atlas_deep_sky_catalogs(enabled_deep_sky_catalogs)
@@ -130,27 +201,41 @@ def load_sky_atlas_objects(
             _load_packaged_messier_objects(),
         )
     if cache_dir is None:
+        if star_magnitude_achieved is not None:
+            star_magnitude_achieved.clear()
+            star_magnitude_achieved.append(0.0)
         return filter_sky_atlas_objects_by_deep_sky_catalogs(
             tuple(sorted(packaged_objects, key=lambda item: (_magnitude_sort_key(item.magnitude), item.name.casefold()))),
             catalogs,
         )
     try:
-        scientific_stars = load_scientific_sky_atlas_star_objects(
+        scientific_stars, achieved_limit = _load_scientific_sky_atlas_star_objects(
             cache_dir,
             maximum_magnitude=maximum_scientific_magnitude,
             download_if_missing=download_if_missing,
             progress_callback=progress_callback,
+            cancel_check=cancel_check,
         )
+    except SkyAtlasCatalogCancelled:
+        raise
     except Exception:
         scientific_stars = ()
+        achieved_limit = 0.0
+    if star_magnitude_achieved is not None:
+        star_magnitude_achieved.clear()
+        star_magnitude_achieved.append(float(achieved_limit))
     if scientific_stars:
         packaged_objects = _merge_packaged_targets_with_scientific_stars(packaged_objects, scientific_stars)
+    _raise_if_catalogue_cancelled(cancel_check)
     try:
         deep_sky_objects = load_sky_atlas_deep_sky_objects(
             cache_dir,
             enabled_catalogs=catalogs,
             download_if_missing=download_if_missing,
+            cancel_check=cancel_check,
         )
+    except SkyAtlasCatalogCancelled:
+        raise
     except Exception:
         deep_sky_objects = ()
     if deep_sky_objects:
@@ -200,6 +285,7 @@ def load_sky_atlas_deep_sky_objects(
     *,
     enabled_catalogs: frozenset[str] | set[str] | tuple[str, ...] | None = None,
     download_if_missing: bool = False,
+    cancel_check: CancelCheck | None = None,
 ) -> tuple[SkyAtlasObject, ...]:
     catalogs = normalize_sky_atlas_deep_sky_catalogs(enabled_catalogs)
     if not catalogs:
@@ -208,6 +294,7 @@ def load_sky_atlas_deep_sky_objects(
     for catalog_name in SKY_ATLAS_DEEP_SKY_CATALOG_NAMES:
         if catalog_name not in catalogs:
             continue
+        _raise_if_catalogue_cancelled(cancel_check)
         loaded.extend(
             _load_or_download_deep_sky_catalog(
                 cache_dir,
@@ -224,24 +311,48 @@ def load_scientific_sky_atlas_star_objects(
     maximum_magnitude: float = _DEFAULT_SCIENTIFIC_STAR_MAGNITUDE_LIMIT,
     download_if_missing: bool = False,
     progress_callback=None,
+    cancel_check: CancelCheck | None = None,
 ) -> tuple[SkyAtlasObject, ...]:
+    objects, _achieved = _load_scientific_sky_atlas_star_objects(
+        cache_dir,
+        maximum_magnitude=maximum_magnitude,
+        download_if_missing=download_if_missing,
+        progress_callback=progress_callback,
+        cancel_check=cancel_check,
+    )
+    return objects
+
+
+def _load_scientific_sky_atlas_star_objects(
+    cache_dir: Path,
+    *,
+    maximum_magnitude: float = _DEFAULT_SCIENTIFIC_STAR_MAGNITUDE_LIMIT,
+    download_if_missing: bool = False,
+    progress_callback=None,
+    cancel_check: CancelCheck | None = None,
+) -> tuple[tuple[SkyAtlasObject, ...], float]:
     catalog_root = sky_atlas_catalog_root(cache_dir)
     requested_limit = max(1.0, min(_MAX_SKY_ATLAS_STAR_MAGNITUDE_LIMIT, float(maximum_magnitude)))
     merged: list[SkyAtlasObject] = []
+    achieved_limit = 0.0
 
     hip_limit = min(requested_limit, _HIPPARCOS_PRACTICAL_MAGNITUDE_LIMIT)
     if progress_callback is not None:
         progress_callback(f"Loading Hipparcos stars to mag {hip_limit:.1f}...", None)
     try:
-        hipparcos = _load_or_download_named_star_catalog(
+        hipparcos, hip_achieved = _load_or_download_named_star_catalog(
             catalog_root,
             catalog_key="hipparcos",
             catalog_label="Hipparcos",
             maximum_magnitude=hip_limit,
             download_if_missing=download_if_missing,
             downloader=_download_hipparcos_star_objects,
+            cancel_check=cancel_check,
         )
         merged.extend(hipparcos)
+        achieved_limit = max(achieved_limit, hip_achieved)
+    except SkyAtlasCatalogCancelled:
+        raise
     except Exception:
         if progress_callback is not None:
             progress_callback("Hipparcos load failed; continuing with other catalogs...", None)
@@ -251,7 +362,7 @@ def load_scientific_sky_atlas_star_objects(
         if progress_callback is not None:
             progress_callback(f"Loading Tycho-2 stars to mag {tycho_limit:.1f}...", None)
         try:
-            tycho = _load_or_download_named_star_catalog(
+            tycho, tycho_achieved = _load_or_download_named_star_catalog(
                 catalog_root,
                 catalog_key="tycho2",
                 catalog_label="Tycho-2",
@@ -259,8 +370,12 @@ def load_scientific_sky_atlas_star_objects(
                 download_if_missing=download_if_missing,
                 downloader=_download_tycho2_star_objects,
                 minimum_magnitude=9.4,
+                cancel_check=cancel_check,
             )
             merged = _merge_star_catalogs(merged, tycho)
+            achieved_limit = max(achieved_limit, tycho_achieved)
+        except SkyAtlasCatalogCancelled:
+            raise
         except Exception:
             if progress_callback is not None:
                 progress_callback("Tycho-2 load failed; continuing...", None)
@@ -269,19 +384,26 @@ def load_scientific_sky_atlas_star_objects(
         if progress_callback is not None:
             progress_callback(f"Loading Gaia DR3 stars to mag {requested_limit:.1f}...", None)
         try:
-            gaia = _load_or_download_gaia_star_objects(
+            gaia, gaia_achieved = _load_or_download_gaia_star_objects(
                 catalog_root,
                 maximum_magnitude=requested_limit,
                 download_if_missing=download_if_missing,
                 progress_callback=progress_callback,
                 minimum_magnitude=_TYCHO_PRACTICAL_MAGNITUDE_LIMIT,
+                cancel_check=cancel_check,
             )
             merged = _merge_star_catalogs(merged, gaia)
+            achieved_limit = max(achieved_limit, gaia_achieved)
+        except SkyAtlasCatalogCancelled:
+            raise
         except Exception:
             if progress_callback is not None:
                 progress_callback("Gaia DR3 load failed; continuing...", None)
 
-    return tuple(sorted(merged, key=lambda item: (_magnitude_sort_key(item.magnitude), item.name.casefold())))
+    return (
+        tuple(sorted(merged, key=lambda item: (_magnitude_sort_key(item.magnitude), item.name.casefold()))),
+        achieved_limit,
+    )
 
 
 def _load_or_download_named_star_catalog(
@@ -293,18 +415,27 @@ def _load_or_download_named_star_catalog(
     download_if_missing: bool,
     downloader,
     minimum_magnitude: float | None = None,
-) -> tuple[SkyAtlasObject, ...]:
+    cancel_check: CancelCheck | None = None,
+) -> tuple[tuple[SkyAtlasObject, ...], float]:
     cache_path = _star_catalog_cache_path(catalog_root, catalog_key, maximum_magnitude)
     cached = _load_cached_scientific_star_objects(cache_path, maximum_magnitude)
-    if cached is not None:
+    if cached:
         if minimum_magnitude is None:
-            return cached
-        return tuple(item for item in cached if item.magnitude is None or item.magnitude > float(minimum_magnitude))
+            return cached, float(maximum_magnitude)
+        return (
+            tuple(item for item in cached if item.magnitude is None or item.magnitude > float(minimum_magnitude)),
+            float(maximum_magnitude),
+        )
     fallback = _best_available_named_star_catalog_cache(catalog_root, catalog_key, maximum_magnitude)
     if fallback is not None:
         fallback_path, fallback_limit = fallback
+        if (
+            (not download_if_missing)
+            and fallback_limit > float(maximum_magnitude) + _STARTUP_CACHE_FALLBACK_SLACK_MAG
+        ):
+            return (), 0.0
         fallback_objects = _load_cached_scientific_star_objects(fallback_path, fallback_limit)
-        if fallback_objects is not None:
+        if fallback_objects:
             filtered = fallback_objects
             if minimum_magnitude is not None:
                 filtered = tuple(
@@ -312,24 +443,54 @@ def _load_or_download_named_star_catalog(
                     for item in fallback_objects
                     if item.magnitude is None or item.magnitude > float(minimum_magnitude)
                 )
-            return filtered
+            if fallback_limit + 1.0e-6 >= float(maximum_magnitude):
+                requested = tuple(
+                    item
+                    for item in filtered
+                    if item.magnitude is None or item.magnitude <= float(maximum_magnitude) + 1.0e-6
+                )
+                if requested:
+                    if fallback_limit > float(maximum_magnitude) + 1.0e-6:
+                        _store_startup_star_catalog_cache(
+                            catalog_root,
+                            catalog_key,
+                            catalog_label,
+                            requested,
+                            float(maximum_magnitude),
+                        )
+                    return requested, float(maximum_magnitude)
+            if filtered and ((not download_if_missing) or fallback_limit + 1.0e-6 >= float(maximum_magnitude)):
+                return filtered, float(fallback_limit)
     if not download_if_missing:
-        return ()
+        return (), 0.0
+    _raise_if_catalogue_cancelled(cancel_check)
     downloaded = tuple(
         sorted(
             downloader(maximum_magnitude),
             key=lambda item: (_magnitude_sort_key(item.magnitude), item.name.casefold()),
         )
     )
+    _raise_if_catalogue_cancelled(cancel_check)
     _store_cached_scientific_star_objects(
         cache_path,
         downloaded,
         maximum_magnitude,
         catalog_label=catalog_label,
     )
+    if catalog_key == "hipparcos":
+        _store_startup_star_catalog_cache(
+            catalog_root,
+            catalog_key,
+            catalog_label,
+            downloaded,
+            SKY_ATLAS_STARTUP_STAR_MAGNITUDE,
+        )
     if minimum_magnitude is None:
-        return downloaded
-    return tuple(item for item in downloaded if item.magnitude is None or item.magnitude > float(minimum_magnitude))
+        return downloaded, float(maximum_magnitude)
+    return (
+        tuple(item for item in downloaded if item.magnitude is None or item.magnitude > float(minimum_magnitude)),
+        float(maximum_magnitude),
+    )
 
 
 def _star_catalog_cache_path(catalog_root: Path, catalog_key: str, maximum_magnitude: float) -> Path:
@@ -442,6 +603,47 @@ def _load_packaged_named_sky_atlas_objects() -> tuple[SkyAtlasObject, ...]:
     return tuple(sorted(objects, key=lambda item: (_magnitude_sort_key(item.magnitude), item.name.casefold())))
 
 
+def all_sky_atlas_deep_sky_catalogs() -> frozenset[str]:
+    return frozenset(SKY_ATLAS_DEEP_SKY_CATALOG_NAMES)
+
+
+def format_sky_atlas_search_result_title(sky_object: SkyAtlasObject) -> str:
+    object_type = str(sky_object.object_type or "").strip() or "Object"
+    name = str(sky_object.name or "").strip() or object_type
+    return f"{object_type}  {name}"
+
+
+def load_sky_atlas_search_objects(
+    cache_dir: Path | None = None,
+    *,
+    displayed_objects: tuple[SkyAtlasObject, ...] = (),
+) -> tuple[SkyAtlasObject, ...]:
+    """Build a search index of packaged targets plus every cached catalog.
+
+    Display filters do not apply here: disabled deep-sky catalogs stay searchable
+    when their cache is already on disk. Missing catalogs are not downloaded.
+    """
+    merged = list(_load_packaged_named_sky_atlas_objects())
+    merged = _merge_sky_atlas_search_objects(merged, _load_packaged_messier_objects())
+    if cache_dir is not None:
+        try:
+            cached_catalogs = load_sky_atlas_deep_sky_objects(
+                cache_dir,
+                enabled_catalogs=all_sky_atlas_deep_sky_catalogs(),
+                download_if_missing=False,
+            )
+        except Exception:
+            cached_catalogs = ()
+        merged = _merge_sky_atlas_search_objects(merged, cached_catalogs)
+    searchable_displayed = tuple(
+        item
+        for item in displayed_objects
+        if item.object_type.casefold() != "star" or item.searchable or item.label_visible
+    )
+    merged = _merge_sky_atlas_search_objects(merged, searchable_displayed)
+    return tuple(sorted(merged, key=lambda item: (_magnitude_sort_key(item.magnitude), item.name.casefold())))
+
+
 def search_sky_atlas_objects(
     objects: tuple[SkyAtlasObject, ...],
     query: str,
@@ -449,6 +651,8 @@ def search_sky_atlas_objects(
     limit: int = 80,
     magnitude_limit: float | None = None,
     deep_sky_magnitude_limit: float | None = None,
+    require_searchable: bool = True,
+    apply_magnitude_limits: bool = True,
 ) -> tuple[SkyAtlasObject, ...]:
     normalized_query = str(query or "").strip().casefold()
     star_limit = None if magnitude_limit is None else float(magnitude_limit)
@@ -459,44 +663,97 @@ def search_sky_atlas_objects(
     )
 
     def _passes_magnitude(item: SkyAtlasObject) -> bool:
+        if not apply_magnitude_limits:
+            return True
         if item.magnitude is None:
             return True
         if item.object_type.casefold() == "star":
             return star_limit is None or item.magnitude <= star_limit
         return object_limit is None or item.magnitude <= object_limit
 
-    candidates = tuple(item for item in objects if item.searchable and _passes_magnitude(item))
-    if not normalized_query:
-        return tuple(sorted(candidates, key=lambda item: (_magnitude_sort_key(item.magnitude), item.name.casefold()))[: max(1, int(limit))])
+    def _is_candidate(item: SkyAtlasObject) -> bool:
+        if not _passes_magnitude(item):
+            return False
+        if not require_searchable:
+            return True
+        if item.searchable:
+            return True
+        return item.object_type.casefold() != "star"
 
-    ranked: list[tuple[int, float, str, SkyAtlasObject]] = []
+    candidates = tuple(item for item in objects if _is_candidate(item))
+    if not normalized_query:
+        return tuple(
+            sorted(candidates, key=lambda item: (_magnitude_sort_key(item.magnitude), item.name.casefold()))[
+                : max(1, int(limit))
+            ]
+        )
+
+    ranked: list[tuple[int, int, float, str, SkyAtlasObject]] = []
     for item in candidates:
-        text = item.search_text
-        name = item.name.casefold()
-        aliases = tuple(alias.casefold() for alias in item.aliases)
-        compact_query = normalized_query.replace(" ", "")
-        compact_name = name.replace(" ", "")
-        compact_aliases = tuple(alias.replace(" ", "") for alias in aliases)
-        if (
-            normalized_query == name
-            or normalized_query in aliases
-            or compact_query == compact_name
-            or compact_query in compact_aliases
-        ):
-            rank = 0
-        elif (
-            name.startswith(normalized_query)
-            or any(alias.startswith(normalized_query) for alias in aliases)
-            or compact_name.startswith(compact_query)
-            or any(alias.startswith(compact_query) for alias in compact_aliases)
-        ):
-            rank = 1
-        elif normalized_query in text or compact_query in text.replace(" ", ""):
-            rank = 2
-        else:
+        rank = _sky_atlas_search_rank(item, normalized_query)
+        if rank is None:
             continue
-        ranked.append((rank, _magnitude_sort_key(item.magnitude), item.name.casefold(), item))
+        named_penalty = 0 if sky_atlas_object_has_given_name(item) else 1
+        ranked.append((rank, named_penalty, _magnitude_sort_key(item.magnitude), item.name.casefold(), item))
     return tuple(item for *_sort, item in sorted(ranked)[: max(1, int(limit))])
+
+
+def _sky_atlas_search_rank(item: SkyAtlasObject, normalized_query: str) -> int | None:
+    name = item.name.casefold()
+    aliases = tuple(alias.casefold() for alias in item.aliases)
+    compact_query = re.sub(r"[\s\-_]", "", normalized_query)
+    compact_name = re.sub(r"[\s\-_]", "", name)
+    compact_aliases = tuple(re.sub(r"[\s\-_]", "", alias) for alias in aliases)
+    if (
+        normalized_query == name
+        or normalized_query in aliases
+        or compact_query == compact_name
+        or compact_query in compact_aliases
+    ):
+        return 0
+    if (
+        name.startswith(normalized_query)
+        or any(alias.startswith(normalized_query) for alias in aliases)
+        or compact_name.startswith(compact_query)
+        or any(alias.startswith(compact_query) for alias in compact_aliases)
+    ):
+        return 1
+    if (
+        normalized_query in name
+        or any(normalized_query in alias for alias in aliases)
+        or compact_query in compact_name
+        or any(compact_query in alias for alias in compact_aliases)
+    ):
+        return 2
+    if len(normalized_query) < 3:
+        return None
+    text = item.search_text
+    if normalized_query in text or compact_query in re.sub(r"[\s\-_]", "", text):
+        return 3
+    return None
+
+
+def _merge_sky_atlas_search_objects(
+    primary: list[SkyAtlasObject] | tuple[SkyAtlasObject, ...],
+    extra: tuple[SkyAtlasObject, ...] | list[SkyAtlasObject],
+) -> list[SkyAtlasObject]:
+    merged = list(primary)
+    known_names = {item.name.casefold() for item in merged}
+    known_aliases = {alias.casefold() for item in merged for alias in item.aliases}
+    known_coordinates = {(round(item.ra_deg, 3), round(item.dec_deg, 3)) for item in merged}
+    for item in extra:
+        if item.name.casefold() in known_names:
+            continue
+        if any(alias.casefold() in known_aliases for alias in item.aliases):
+            continue
+        coordinate_key = (round(item.ra_deg, 3), round(item.dec_deg, 3))
+        if coordinate_key in known_coordinates:
+            continue
+        merged.append(item)
+        known_names.add(item.name.casefold())
+        known_aliases.update(alias.casefold() for alias in item.aliases)
+        known_coordinates.add(coordinate_key)
+    return merged
 
 
 def _load_cached_scientific_star_objects(cache_path: Path, maximum_magnitude: float) -> tuple[SkyAtlasObject, ...] | None:
@@ -514,8 +771,12 @@ def _load_cached_scientific_star_objects(cache_path: Path, maximum_magnitude: fl
     if cached_limit is None or abs(cached_limit - float(maximum_magnitude)) > 1.0e-6:
         cache_path.unlink(missing_ok=True)
         return None
+    raw_objects = payload.get("objects", [])
+    if not raw_objects:
+        cache_path.unlink(missing_ok=True)
+        return None
     objects: list[SkyAtlasObject] = []
-    for entry in payload.get("objects", []):
+    for entry in raw_objects:
         raw_name = str(entry.get("name", "")).strip()
         base_aliases = tuple(str(alias).strip() for alias in entry.get("aliases", []) if str(alias).strip())
         hip_number = _extract_hip_identifier(raw_name, base_aliases)
@@ -545,6 +806,39 @@ def _load_cached_scientific_star_objects(cache_path: Path, maximum_magnitude: fl
             )
         )
     return tuple(sorted(objects, key=lambda item: (_magnitude_sort_key(item.magnitude), item.name.casefold())))
+
+
+def _store_startup_star_catalog_cache(
+    catalog_root: Path,
+    catalog_key: str,
+    catalog_label: str,
+    objects: tuple[SkyAtlasObject, ...],
+    maximum_magnitude: float,
+) -> None:
+    if catalog_key != "hipparcos":
+        return
+    startup_limit = min(float(maximum_magnitude), SKY_ATLAS_STARTUP_STAR_MAGNITUDE)
+    if startup_limit + 1.0e-6 < SKY_ATLAS_STARTUP_STAR_MAGNITUDE:
+        return
+    startup_path = _star_catalog_cache_path(catalog_root, catalog_key, SKY_ATLAS_STARTUP_STAR_MAGNITUDE)
+    if startup_path.exists():
+        return
+    startup_objects = tuple(
+        item
+        for item in objects
+        if item.magnitude is None or item.magnitude <= SKY_ATLAS_STARTUP_STAR_MAGNITUDE + 1.0e-6
+    )
+    if not startup_objects:
+        return
+    try:
+        _store_cached_scientific_star_objects(
+            startup_path,
+            startup_objects,
+            SKY_ATLAS_STARTUP_STAR_MAGNITUDE,
+            catalog_label=catalog_label,
+        )
+    except OSError:
+        return
 
 
 def _store_cached_scientific_star_objects(
@@ -584,6 +878,7 @@ def _store_cached_scientific_star_objects(
 def _download_tycho2_star_objects(maximum_magnitude: float) -> tuple[SkyAtlasObject, ...]:
     vizier = Vizier(columns=["TYC1", "TYC2", "TYC3", "RA_ICRS", "DE_ICRS", "VTmag", "BTmag"], row_limit=-1)
     vizier.ROW_LIMIT = -1
+    vizier.TIMEOUT = _VIZIER_QUERY_TIMEOUT_SEC
     try:
         result = cast(Any, vizier).query_constraints(
             catalog=_TYCHO2_VIZIER_CATALOG,
@@ -633,6 +928,89 @@ def _download_tycho2_star_objects(maximum_magnitude: float) -> tuple[SkyAtlasObj
     return tuple(objects)
 
 
+def _gaia_npy_cache_path(catalog_root: Path, maximum_magnitude: float) -> Path:
+    normalized_limit = f"{float(maximum_magnitude):.1f}".replace(".", "p")
+    catalog_root.mkdir(parents=True, exist_ok=True)
+    return catalog_root / f"gaia_dr3_vmag_le_{normalized_limit}.npy"
+
+
+def _gaia_cache_dtype():
+    import numpy as np
+
+    return np.dtype(
+        [
+            ("source_id", "i8"),
+            ("ra_deg", "f8"),
+            ("dec_deg", "f8"),
+            ("magnitude", "f4"),
+            ("bp_rp", "f4"),
+        ]
+    )
+
+
+def _load_cached_gaia_npy(cache_path: Path) -> tuple[SkyAtlasObject, ...] | None:
+    if not cache_path.exists():
+        return None
+    try:
+        import numpy as np
+
+        records = np.load(cache_path, allow_pickle=False)
+    except Exception:
+        return None
+    if records is None or len(records) == 0:
+        return None
+    return tuple(_gaia_object_from_record(record) for record in records)
+
+
+def _store_cached_gaia_npy(cache_path: Path, records) -> None:
+    import numpy as np
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    array = np.asarray(records, dtype=_gaia_cache_dtype())
+    temporary_path = cache_path.with_name(f"{cache_path.name}.tmp.npy")
+    try:
+        np.save(temporary_path, array, allow_pickle=False)
+        temporary_path.replace(cache_path)
+    finally:
+        if temporary_path.exists() and temporary_path != cache_path:
+            temporary_path.unlink(missing_ok=True)
+
+
+def _best_available_gaia_npy_cache(catalog_root: Path, maximum_magnitude: float) -> tuple[Path, float] | None:
+    if not catalog_root.exists():
+        return None
+    requested_limit = float(maximum_magnitude)
+    best_path: Path | None = None
+    best_limit = float("-inf")
+    prefix = "gaia_dr3_vmag_le_"
+    for candidate_path in catalog_root.glob(f"{prefix}*.npy"):
+        suffix = candidate_path.stem.removeprefix(prefix).replace("p", ".")
+        try:
+            candidate_limit = float(suffix)
+        except ValueError:
+            continue
+        if candidate_limit + 1.0e-6 < requested_limit:
+            continue
+        if best_path is None or candidate_limit < best_limit:
+            best_path = candidate_path
+            best_limit = candidate_limit
+    if best_path is None:
+        for candidate_path in catalog_root.glob(f"{prefix}*.npy"):
+            suffix = candidate_path.stem.removeprefix(prefix).replace("p", ".")
+            try:
+                candidate_limit = float(suffix)
+            except ValueError:
+                continue
+            if candidate_limit > requested_limit + 1.0e-6:
+                continue
+            if candidate_limit > best_limit:
+                best_path = candidate_path
+                best_limit = candidate_limit
+    if best_path is None:
+        return None
+    return best_path, best_limit
+
+
 def _load_or_download_gaia_star_objects(
     catalog_root: Path,
     *,
@@ -640,85 +1018,207 @@ def _load_or_download_gaia_star_objects(
     download_if_missing: bool,
     progress_callback=None,
     minimum_magnitude: float = _TYCHO_PRACTICAL_MAGNITUDE_LIMIT,
-) -> tuple[SkyAtlasObject, ...]:
-    cache_path = _star_catalog_cache_path(catalog_root, "gaia_dr3", maximum_magnitude)
-    cached = _load_cached_scientific_star_objects(cache_path, maximum_magnitude)
-    if cached is not None:
-        return tuple(
-            item for item in cached if item.magnitude is None or item.magnitude > float(minimum_magnitude)
+    cancel_check: CancelCheck | None = None,
+) -> tuple[tuple[SkyAtlasObject, ...], float]:
+    npy_path = _gaia_npy_cache_path(catalog_root, maximum_magnitude)
+    cached = _load_cached_gaia_npy(npy_path)
+    if cached is None:
+        json_path = _star_catalog_cache_path(catalog_root, "gaia_dr3", maximum_magnitude)
+        cached = _load_cached_scientific_star_objects(json_path, maximum_magnitude)
+        if cached is not None:
+            return (
+                tuple(item for item in cached if item.magnitude is None or item.magnitude > float(minimum_magnitude)),
+                float(maximum_magnitude),
+            )
+        fallback = _best_available_gaia_npy_cache(catalog_root, maximum_magnitude)
+        if fallback is not None:
+            fallback_path, fallback_limit = fallback
+            fallback_objects = _load_cached_gaia_npy(fallback_path)
+            if fallback_objects is not None:
+                return (
+                    tuple(
+                        item
+                        for item in fallback_objects
+                        if item.magnitude is None or item.magnitude > float(minimum_magnitude)
+                    ),
+                    float(fallback_limit),
+                )
+    else:
+        return (
+            tuple(item for item in cached if item.magnitude is None or item.magnitude > float(minimum_magnitude)),
+            float(maximum_magnitude),
         )
     if not download_if_missing:
-        return ()
-    downloaded = _download_gaia_star_objects_by_ra_strips(
+        return (), 0.0
+    downloaded, records = _download_gaia_star_objects_from_flathub(
         maximum_magnitude,
         minimum_magnitude=minimum_magnitude,
         progress_callback=progress_callback,
+        cancel_check=cancel_check,
     )
-    _store_cached_scientific_star_objects(cache_path, downloaded, maximum_magnitude, catalog_label="Gaia DR3")
-    return downloaded
+    _raise_if_catalogue_cancelled(cancel_check)
+    try:
+        _store_cached_gaia_npy(npy_path, records)
+    except Exception:
+        if progress_callback is not None:
+            progress_callback("Gaia DR3 catalog downloaded, but saving the cache file failed.", None)
+    if progress_callback is not None:
+        progress_callback(f"Gaia DR3 download complete ({len(downloaded):,} stars).", 100.0)
+    return downloaded, float(maximum_magnitude)
 
 
-def _download_gaia_star_objects_by_ra_strips(
+def _gaia_object_from_record(record) -> SkyAtlasObject:
+    source_id = _optional_int(record["source_id"] if hasattr(record, "dtype") else record[0])
+    if hasattr(record, "dtype"):
+        ra_deg = float(record["ra_deg"])
+        dec_deg = float(record["dec_deg"])
+        magnitude = _optional_float(record["magnitude"])
+        bp_rp = _optional_float(record["bp_rp"])
+    else:
+        ra_deg = float(record[1])
+        dec_deg = float(record[2])
+        magnitude = _optional_float(record[3])
+        bp_rp = _optional_float(record[4]) if len(record) > 4 else None
+    name = f"Gaia DR3 {source_id}" if source_id is not None and source_id > 0 else "Gaia star"
+    return SkyAtlasObject(
+        name=name,
+        object_type="Star",
+        ra_deg=_normalized_ra_deg(ra_deg),
+        dec_deg=max(-90.0, min(90.0, dec_deg)),
+        magnitude=magnitude,
+        catalog="Gaia DR3",
+        aliases=(name,),
+        color=_color_from_bv_index(None if bp_rp is None else bp_rp * 0.85),
+        description="Gaia DR3 star catalog",
+        searchable=False,
+        label_visible=False,
+        selectable=False,
+    )
+
+
+def _gaia_object_from_csv_row(row: dict[str, str], fallback_index: int) -> SkyAtlasObject | None:
+    ra_deg = _optional_float(row.get("ra") or row.get("RAJ2000"))
+    dec_deg = _optional_float(row.get("dec") or row.get("DEJ2000"))
+    magnitude = _optional_float(row.get("phot_g_mean_mag") or row.get("Gmag"))
+    if ra_deg is None or dec_deg is None or magnitude is None:
+        return None
+    source_id = _optional_int(row.get("source_id") or row.get("Source"))
+    name = f"Gaia DR3 {source_id}" if source_id is not None else f"Gaia {fallback_index}"
+    bp_rp = _optional_float(row.get("bp_rp") or row.get("BP-RP") or row.get("BP_RP"))
+    return SkyAtlasObject(
+        name=name,
+        object_type="Star",
+        ra_deg=_normalized_ra_deg(ra_deg),
+        dec_deg=max(-90.0, min(90.0, dec_deg)),
+        magnitude=magnitude,
+        catalog="Gaia DR3",
+        aliases=(name,),
+        color=_color_from_bv_index(None if bp_rp is None else bp_rp * 0.85),
+        description="Gaia DR3 star catalog",
+        searchable=False,
+        label_visible=False,
+        selectable=False,
+    )
+
+
+def _count_gaia_flathub_stars(minimum_magnitude: float, maximum_magnitude: float) -> int | None:
+    try:
+        response = requests.post(
+            f"{_GAIA_FLATHUB_ENDPOINT}/count",
+            json={"phot_g_mean_mag": {"gte": float(minimum_magnitude), "lte": float(maximum_magnitude)}},
+            timeout=(_GAIA_STREAM_CONNECT_TIMEOUT_SEC, _GAIA_STREAM_READ_TIMEOUT_SEC),
+            headers={"User-Agent": _SKY_ATLAS_HTTP_USER_AGENT},
+        )
+        response.raise_for_status()
+        return int(response.json())
+    except (TypeError, ValueError, requests.RequestException):
+        return None
+
+
+def _download_gaia_star_objects_from_flathub(
     maximum_magnitude: float,
     *,
     minimum_magnitude: float,
     progress_callback=None,
-    strip_width_deg: float = 15.0,
-) -> tuple[SkyAtlasObject, ...]:
-    vizier = Vizier(columns=["Source", "RAJ2000", "DEJ2000", "Gmag", "BP-RP"], row_limit=-1)
-    vizier.ROW_LIMIT = -1
+    cancel_check: CancelCheck | None = None,
+) -> tuple[tuple[SkyAtlasObject, ...], list[tuple[int, float, float, float, float]]]:
+    _raise_if_catalogue_cancelled(cancel_check)
+    if progress_callback is not None:
+        progress_callback("Preparing Gaia DR3 catalog download...", None)
+    expected_count = _count_gaia_flathub_stars(minimum_magnitude, maximum_magnitude)
+    if progress_callback is not None:
+        if expected_count:
+            progress_callback(f"Downloading Gaia DR3 ({expected_count:,} stars)...", 0.0)
+        else:
+            progress_callback("Downloading Gaia DR3 catalog...", 0.0)
+    params = {
+        "fields": "source_id,ra,dec,phot_g_mean_mag,bp_rp",
+        "phot_g_mean_mag": f"{float(minimum_magnitude):.3f},{float(maximum_magnitude):.3f}",
+    }
+    try:
+        response = requests.get(
+            f"{_GAIA_FLATHUB_ENDPOINT}/data/csv",
+            params=params,
+            stream=True,
+            timeout=(_GAIA_STREAM_CONNECT_TIMEOUT_SEC, _GAIA_STREAM_READ_TIMEOUT_SEC),
+            headers={"User-Agent": _SKY_ATLAS_HTTP_USER_AGENT},
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Gaia DR3 catalog download failed: {exc}") from exc
     objects: list[SkyAtlasObject] = []
-    strips = max(1, int(math.ceil(360.0 / strip_width_deg)))
-    for strip_index in range(strips):
-        ra_min = strip_index * strip_width_deg
-        ra_max = min(360.0, ra_min + strip_width_deg)
-        if progress_callback is not None:
-            progress_callback(
-                f"Downloading Gaia DR3 strip {strip_index + 1}/{strips} (RA {ra_min:.0f}–{ra_max:.0f}°)...",
-                (strip_index / strips) * 100.0,
-            )
-        try:
-            result = cast(Any, vizier).query_constraints(
-                catalog=_GAIA_DR3_VIZIER_CATALOG,
-                Gmag=f"{float(minimum_magnitude):.1f}..{float(maximum_magnitude):.1f}",
-                RAJ2000=f"{ra_min:.3f}..{ra_max:.3f}",
-            )
-        except Exception:
-            continue
-        if not result:
-            continue
-        table = result[0]
-        colnames = set(getattr(table, "colnames", ()))
-        for row in table:
-            ra_deg = _optional_float(row["RAJ2000"]) if "RAJ2000" in colnames else None
-            dec_deg = _optional_float(row["DEJ2000"]) if "DEJ2000" in colnames else None
-            magnitude = _optional_float(row["Gmag"]) if "Gmag" in colnames else None
-            if ra_deg is None or dec_deg is None or magnitude is None:
+    records: list[tuple[int, float, float, float, float]] = []
+    bytes_read = 0
+    last_progress_at = 0.0
+    try:
+        reader = csv.DictReader(response.iter_lines(decode_unicode=True))
+        for row in reader:
+            _raise_if_catalogue_cancelled(cancel_check)
+            if not row:
                 continue
-            if magnitude <= float(minimum_magnitude) or magnitude > float(maximum_magnitude):
+            sky_object = _gaia_object_from_csv_row(row, len(objects) + 1)
+            if sky_object is None or sky_object.magnitude is None:
                 continue
-            source_id = _optional_int(row["Source"]) if "Source" in colnames else None
-            name = f"Gaia DR3 {source_id}" if source_id is not None else f"Gaia {len(objects) + 1}"
-            bp_rp = _optional_float(row["BP-RP"]) if "BP-RP" in colnames else None
-            objects.append(
-                SkyAtlasObject(
-                    name=name,
-                    object_type="Star",
-                    ra_deg=_normalized_ra_deg(ra_deg),
-                    dec_deg=max(-90.0, min(90.0, dec_deg)),
-                    magnitude=magnitude,
-                    catalog="Gaia DR3",
-                    aliases=(name,),
-                    color=_color_from_bv_index(None if bp_rp is None else bp_rp * 0.85),
-                    description="Gaia DR3 star catalog",
-                    searchable=False,
-                    label_visible=False,
-                    selectable=False,
+            if sky_object.magnitude <= float(minimum_magnitude) or sky_object.magnitude > float(maximum_magnitude):
+                continue
+            source_id = _optional_int(row.get("source_id") or row.get("Source")) or 0
+            bp_rp = _optional_float(row.get("bp_rp") or row.get("BP-RP") or row.get("BP_RP"))
+            objects.append(sky_object)
+            records.append(
+                (
+                    int(source_id),
+                    float(sky_object.ra_deg),
+                    float(sky_object.dec_deg),
+                    float(sky_object.magnitude),
+                    float(bp_rp) if bp_rp is not None else float("nan"),
                 )
             )
-    if progress_callback is not None:
-        progress_callback("Gaia DR3 download complete.", 100.0)
-    return tuple(objects)
+            bytes_read += 48
+            if len(objects) % _GAIA_PROGRESS_EVERY_STARS == 0:
+                sleep(0.001)
+                if progress_callback is not None:
+                    now = perf_counter()
+                    if now - last_progress_at >= _GAIA_PROGRESS_MIN_INTERVAL_SEC:
+                        last_progress_at = now
+                        downloaded_mb = bytes_read / (1024 * 1024)
+                        if expected_count:
+                            progress_callback(
+                                (
+                                    f"Downloading Gaia DR3 ({len(objects):,} / {expected_count:,} stars, "
+                                    f"{downloaded_mb:.0f} MB)..."
+                                ),
+                                min(99.0, (len(objects) / expected_count) * 100.0),
+                            )
+                        else:
+                            progress_callback(
+                                f"Downloading Gaia DR3 ({len(objects):,} stars, {downloaded_mb:.0f} MB)...",
+                                None,
+                            )
+    finally:
+        response.close()
+    if not objects:
+        raise RuntimeError("Gaia DR3 catalog download returned no stars.")
+    return tuple(objects), records
 
 
 def _download_hipparcos_star_objects(maximum_magnitude: float) -> tuple[SkyAtlasObject, ...]:
@@ -727,6 +1227,7 @@ def _download_hipparcos_star_objects(maximum_magnitude: float) -> tuple[SkyAtlas
         row_limit=-1,
     )
     vizier.ROW_LIMIT = -1
+    vizier.TIMEOUT = _VIZIER_QUERY_TIMEOUT_SEC
     try:
         result = cast(Any, vizier).query_constraints(
             catalog=_HIPPARCOS_VIZIER_CATALOG,
@@ -838,7 +1339,8 @@ def _merge_packaged_targets_with_deep_sky_objects(
 def _deep_sky_catalog_cache_path(cache_dir: Path, catalog_name: str) -> Path:
     scientific_dir = sky_atlas_catalog_root(cache_dir) / "deep-sky"
     scientific_dir.mkdir(parents=True, exist_ok=True)
-    return scientific_dir / f"{catalog_name.casefold()}.json"
+    slug = re.sub(r"[^a-z0-9]+", "-", catalog_name.casefold()).strip("-") or catalog_name.casefold()
+    return scientific_dir / f"{slug}.json"
 
 
 def _load_or_download_deep_sky_catalog(
@@ -981,6 +1483,14 @@ def _download_deep_sky_catalog_objects(catalog_name: str) -> tuple[SkyAtlasObjec
         return _download_ldn_objects()
     if catalog_name == "LBN":
         return _download_lbn_objects()
+    if catalog_name == "Barnard":
+        return _download_barnard_objects()
+    if catalog_name == "Sharpless":
+        return _download_sharpless_objects()
+    if catalog_name == "RCW":
+        return _download_rcw_objects()
+    if catalog_name == "HASH PN":
+        return _download_hash_pn_objects()
     return ()
 
 
@@ -1131,6 +1641,342 @@ def _download_lbn_objects() -> tuple[SkyAtlasObject, ...]:
                 )
             )
     return tuple(objects)
+
+
+def _download_barnard_objects() -> tuple[SkyAtlasObject, ...]:
+    vizier = Vizier(columns=["**"], row_limit=-1)
+    vizier.ROW_LIMIT = -1
+    try:
+        result = cast(Any, vizier).get_catalogs(_BARNARD_VIZIER_CATALOG)
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(f"Barnard catalog download failed: {exc}") from exc
+    if not result:
+        return ()
+    objects: list[SkyAtlasObject] = []
+    for table in result:
+        for row in table:
+            parsed = _barnard_object_from_row(row)
+            if parsed is not None:
+                objects.append(parsed)
+    return tuple(objects)
+
+
+def _barnard_object_from_row(row: Any) -> SkyAtlasObject | None:
+    barnard_id = _optional_text(row["Barn"]) if "Barn" in getattr(row, "colnames", ()) else ""
+    ra_deg, dec_deg = _row_ra_dec_degrees(
+        row,
+        ra_keys=("_RA.icrs", "RAJ2000", "_RAJ2000", "RAdeg", "_RA"),
+        dec_keys=("_DE.icrs", "DEJ2000", "_DEJ2000", "DEdeg", "_DE"),
+    )
+    if not barnard_id or ra_deg is None or dec_deg is None:
+        return None
+    object_name = f"Barnard {barnard_id.lstrip('0') or barnard_id}"
+    alias = f"B{barnard_id.lstrip('0') or barnard_id}"
+    return SkyAtlasObject(
+        name=object_name,
+        object_type="Dark Nebula",
+        ra_deg=_normalized_ra_deg(ra_deg),
+        dec_deg=max(-90.0, min(90.0, dec_deg)),
+        magnitude=None,
+        catalog="Barnard",
+        aliases=(object_name, alias),
+        color=_DEEP_SKY_CATALOG_COLORS["Barnard"],
+        description="Barnard dark nebula",
+    )
+
+
+def _download_sharpless_objects() -> tuple[SkyAtlasObject, ...]:
+    vizier = Vizier(columns=["**"], row_limit=-1)
+    vizier.ROW_LIMIT = -1
+    try:
+        result = cast(Any, vizier).get_catalogs(_SHARPLESS_VIZIER_CATALOG)
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(f"Sharpless catalog download failed: {exc}") from exc
+    if not result:
+        return ()
+    objects: list[SkyAtlasObject] = []
+    for table in result:
+        for row in table:
+            parsed = _sharpless_object_from_row(row)
+            if parsed is not None:
+                objects.append(parsed)
+    return tuple(objects)
+
+
+def _sharpless_object_from_row(row: Any) -> SkyAtlasObject | None:
+    sh2_number = _optional_int(row["Sh2"]) if "Sh2" in getattr(row, "colnames", ()) else None
+    ra_deg, dec_deg = _row_ra_dec_degrees(
+        row,
+        ra_keys=("RAJ2000", "_RAJ2000", "RAdeg", "_RA"),
+        dec_keys=("DEJ2000", "_DEJ2000", "DEdeg", "_DE"),
+    )
+    if ra_deg is None or dec_deg is None:
+        galactic = _galactic_to_icrs_degrees(row)
+        if galactic is not None:
+            ra_deg, dec_deg = galactic
+    if sh2_number is None or ra_deg is None or dec_deg is None:
+        return None
+    object_name = f"Sh2-{sh2_number}"
+    return SkyAtlasObject(
+        name=object_name,
+        object_type="HII Region",
+        ra_deg=_normalized_ra_deg(ra_deg),
+        dec_deg=max(-90.0, min(90.0, dec_deg)),
+        magnitude=None,
+        catalog="Sharpless",
+        aliases=(object_name, f"Sharpless {sh2_number}"),
+        color=_DEEP_SKY_CATALOG_COLORS["Sharpless"],
+        description="Sharpless HII region",
+    )
+
+
+def _download_rcw_objects() -> tuple[SkyAtlasObject, ...]:
+    vizier = Vizier(columns=["**"], row_limit=-1)
+    vizier.ROW_LIMIT = -1
+    try:
+        result = cast(Any, vizier).get_catalogs(_RCW_VIZIER_CATALOG)
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(f"RCW catalog download failed: {exc}") from exc
+    if not result:
+        return ()
+    objects: list[SkyAtlasObject] = []
+    for table in result:
+        for row in table:
+            parsed = _rcw_object_from_row(row)
+            if parsed is not None:
+                objects.append(parsed)
+    return tuple(objects)
+
+
+def _rcw_object_from_row(row: Any) -> SkyAtlasObject | None:
+    colnames = set(getattr(row, "colnames", ()))
+    rcw_number = None
+    for key in ("RCW", "Name"):
+        if key not in colnames:
+            continue
+        text = _optional_text(row[key])
+        if not text:
+            continue
+        match = re.search(r"(\d+[A-Za-z]?)", text)
+        if match is not None:
+            rcw_number = match.group(1).lstrip("0") or match.group(1)
+            break
+        number = _optional_int(row[key])
+        if number is not None:
+            rcw_number = str(number)
+            break
+    ra_deg, dec_deg = _row_ra_dec_degrees(
+        row,
+        ra_keys=("RAJ2000", "_RAJ2000", "RAdeg", "_RA", "RAB1950"),
+        dec_keys=("DEJ2000", "_DEJ2000", "DEdeg", "_DE", "DEB1950"),
+    )
+    if rcw_number is None or ra_deg is None or dec_deg is None:
+        return None
+    object_name = f"RCW {rcw_number}"
+    return SkyAtlasObject(
+        name=object_name,
+        object_type="HII Region",
+        ra_deg=_normalized_ra_deg(ra_deg),
+        dec_deg=max(-90.0, min(90.0, dec_deg)),
+        magnitude=None,
+        catalog="RCW",
+        aliases=(object_name,),
+        color=_DEEP_SKY_CATALOG_COLORS["RCW"],
+        description="Rodgers, Campbell & Whiteoak HII region",
+    )
+
+
+def _download_hash_pn_objects() -> tuple[SkyAtlasObject, ...]:
+    vizier = Vizier(columns=["**"], row_limit=-1)
+    vizier.ROW_LIMIT = -1
+    try:
+        result = cast(Any, vizier).get_catalogs(_HASH_PN_VIZIER_CATALOG)
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(f"HASH PN catalog download failed: {exc}") from exc
+    if not result:
+        return ()
+    objects: list[SkyAtlasObject] = []
+    for table in result:
+        for row in table:
+            parsed = _hash_pn_object_from_row(row)
+            if parsed is not None:
+                objects.append(parsed)
+    return tuple(objects)
+
+
+def _hash_pn_object_from_row(row: Any) -> SkyAtlasObject | None:
+    hash_id = _hash_pn_identifier(row)
+    ra_deg, dec_deg = _row_ra_dec_degrees(
+        row,
+        ra_keys=("RAJ2000", "RAdeg", "_RAJ2000", "_RA"),
+        dec_keys=("DEJ2000", "DEdeg", "_DEJ2000", "_DE"),
+    )
+    if hash_id is None or ra_deg is None or dec_deg is None:
+        return None
+    status_code = _optional_text(row["PNstat"]).upper() if "PNstat" in getattr(row, "colnames", ()) else ""
+    if status_code in _HASH_PN_SKIP_STATUSES:
+        return None
+    usual_name = _hash_pn_usual_name(row)
+    png_name = _hash_pn_png_name(row)
+    hash_label = f"HASH {hash_id}"
+    display_name = usual_name or png_name or hash_label
+    aliases = _deduplicated_names(
+        (
+            display_name,
+            usual_name,
+            png_name,
+            hash_label,
+            *_designation_search_aliases(usual_name or display_name),
+        )
+    )
+    object_type = _HASH_PN_STATUS_TYPES.get(status_code, "Planetary Nebula" if not status_code else f"HASH Object ({status_code})")
+    status_label = {
+        "T": "True PN",
+        "L": "Likely PN",
+        "P": "Possible PN",
+        "C": "New candidate",
+        "A": "PAGB / Pre-PN",
+        "B": "Possible Pre-PN",
+    }.get(status_code, status_code or "HASH PN")
+    return SkyAtlasObject(
+        name=display_name,
+        object_type=object_type,
+        ra_deg=_normalized_ra_deg(ra_deg),
+        dec_deg=max(-90.0, min(90.0, dec_deg)),
+        magnitude=None,
+        catalog="HASH PN",
+        aliases=aliases,
+        color=_DEEP_SKY_CATALOG_COLORS["HASH PN"],
+        description=f"HASH PN · {status_label}",
+    )
+
+
+def _hash_pn_usual_name(row: Any) -> str:
+    colnames = set(getattr(row, "colnames", ()))
+    for key in ("Name", "SimbadID"):
+        if key not in colnames:
+            continue
+        candidate = _optional_text(row[key])
+        if candidate and not _is_hash_or_png_label(candidate):
+            return candidate
+    return ""
+
+
+def _is_hash_or_png_label(value: str) -> bool:
+    compact = re.sub(r"[\s\-_]", "", str(value or "")).casefold()
+    if compact.startswith("hash") and compact[4:].isdigit():
+        return True
+    return compact.startswith("png")
+
+
+def sky_atlas_object_has_given_name(sky_object: SkyAtlasObject) -> bool:
+    """True when the object has a discoverer or usual name, not only HASH/PNG."""
+    for candidate in (sky_object.name, *sky_object.aliases):
+        if candidate and not _is_hash_or_png_label(candidate):
+            return True
+    return False
+
+
+def _designation_search_aliases(name: str) -> tuple[str, ...]:
+    stripped = str(name or "").strip()
+    if not stripped:
+        return ()
+    variants = {stripped}
+    variants.add(re.sub(r"(?<=[A-Za-z])[\-_]+(?=\d)", " ", stripped))
+    variants.add(re.sub(r"(?<=[A-Za-z])\s+(?=\d)", "-", stripped))
+    variants.add(re.sub(r"[\s\-_]+", "", stripped))
+    return tuple(item for item in variants if item)
+
+
+def sky_atlas_literature_identifier(sky_object: SkyAtlasObject) -> str:
+    named = [
+        candidate.strip()
+        for candidate in (sky_object.name, *sky_object.aliases)
+        if candidate.strip() and not _is_hash_or_png_label(candidate)
+    ]
+    if named:
+        return named[0]
+    for candidate in (sky_object.name, *sky_object.aliases):
+        if candidate.strip():
+            return candidate.strip()
+    return sky_object.name.strip() or sky_object.catalog
+
+
+def sky_atlas_literature_links(sky_object: SkyAtlasObject) -> tuple[SkyAtlasLiteratureLink, ...]:
+    identifier = sky_atlas_literature_identifier(sky_object)
+    if not identifier:
+        return ()
+    encoded = quote_plus(identifier)
+    ads_query = f'object:"{identifier}"' if sky_atlas_object_has_given_name(sky_object) else identifier
+    links = [
+        SkyAtlasLiteratureLink(
+            "SIMBAD",
+            f"https://simbad.cds.unistra.fr/simbad/sim-id?Ident={encoded}",
+        ),
+        SkyAtlasLiteratureLink(
+            "ADS",
+            f"https://ui.adsabs.harvard.edu/search/q={quote_plus(ads_query)}&sort=citation_count%20desc",
+        ),
+        SkyAtlasLiteratureLink(
+            "VizieR",
+            f"https://vizier.cds.unistra.fr/viz-bin/VizieR-S?{encoded}",
+        ),
+    ]
+    hash_id = _hash_id_from_sky_object(sky_object)
+    if hash_id is not None:
+        links.append(
+            SkyAtlasLiteratureLink(
+                "HASH",
+                f"https://vizier.cds.unistra.fr/viz-bin/VizieR-4?-source={_HASH_PN_VIZIER_CATALOG}&HASH={quote_plus(hash_id)}",
+            )
+        )
+    return tuple(links)
+
+
+def _hash_id_from_sky_object(sky_object: SkyAtlasObject) -> str | None:
+    for candidate in (sky_object.name, *sky_object.aliases):
+        match = _HASH_PN_PATTERN.match(str(candidate).strip())
+        if match is not None:
+            return match.group(1)
+    return None
+
+
+def _hash_pn_identifier(row: Any) -> str | None:
+    colnames = set(getattr(row, "colnames", ()))
+    for key in ("HASH", "idPNMain"):
+        if key not in colnames:
+            continue
+        number = _optional_int(row[key])
+        if number is not None:
+            return str(number)
+        text = _optional_text(row[key])
+        digits = re.sub(r"[^\d]", "", text)
+        if digits:
+            return digits
+    return None
+
+
+def _hash_pn_png_name(row: Any) -> str:
+    png_value = _optional_text(row["PNG"]) if "PNG" in getattr(row, "colnames", ()) else ""
+    if not png_value:
+        return ""
+    compact = png_value.upper().replace(" ", "")
+    if compact.startswith("PNG"):
+        compact = compact[3:]
+    return f"PN G{compact}" if compact else ""
+
+
+def _galactic_to_icrs_degrees(row: Any) -> tuple[float, float] | None:
+    colnames = set(getattr(row, "colnames", ()))
+    lon = _optional_float(row["GLon"]) if "GLon" in colnames else None
+    lat = _optional_float(row["GLat"]) if "GLat" in colnames else None
+    if lon is None or lat is None:
+        return None
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+
+    coordinates = SkyCoord(l=float(lon) * u.deg, b=float(lat) * u.deg, frame="galactic").icrs
+    return float(coordinates.ra.deg), float(coordinates.dec.deg)
 
 
 def _row_ra_dec_degrees(
@@ -1309,6 +2155,8 @@ def _split_leading_catalog_designation(value: str) -> tuple[str | None, str]:
         (_VDB_PATTERN, lambda text: f"VdB {text.upper()}", 3),
         (_BARNARD_PATTERN, lambda text: f"Barnard {text.upper()}", 4),
         (_SH2_PATTERN, lambda text: f"Sh2-{text.upper()}", 5),
+        (_RCW_PATTERN, lambda text: f"RCW {text.upper()}", 6),
+        (_HASH_PN_PATTERN, lambda text: f"HASH {text}", 7),
     ):
         match = pattern.match(normalized)
         if match is None:
@@ -1372,6 +2220,10 @@ def _identifier_sort_key(value: str) -> tuple[int, int, str]:
         return (4, len(normalized), normalized.casefold())
     if _SH2_PATTERN.match(normalized):
         return (5, len(normalized), normalized.casefold())
+    if _RCW_PATTERN.match(normalized):
+        return (6, len(normalized), normalized.casefold())
+    if _HASH_PN_PATTERN.match(normalized):
+        return (7, len(normalized), normalized.casefold())
     for pattern, _formatter, priority in _OTHER_IDENTIFIER_PATTERNS:
         if pattern.match(normalized):
             return (priority, len(normalized), normalized.casefold())
@@ -1438,6 +2290,24 @@ def _color_from_bv_index(bv_index: float | None) -> str:
         return f"#{red:02x}{green:02x}{blue:02x}"
     red, green, blue = anchors[-1][1]
     return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+def _optional_text(value: object) -> str:
+    if value is None:
+        return ""
+    mask = getattr(value, "mask", None)
+    if mask is True:
+        return ""
+    if hasattr(mask, "all"):
+        try:
+            if bool(mask.all()):
+                return ""
+        except Exception:
+            pass
+    text = str(value).strip()
+    if not text or text in {"--", "nan", "None"}:
+        return ""
+    return text
 
 
 def _optional_int(value: object) -> int | None:

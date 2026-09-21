@@ -72,7 +72,7 @@ from photometry_app.core.pointing import assess_image_pointing
 
 from photometry_app.core.settings import AppSettings, resolve_astrometry_timeout_seconds
 
-from photometry_app.core.wcs import AstrometryNetClient, extract_solved_field, infer_astrometry_solve_hints, validate_wcs
+from photometry_app.core.wcs import AstrometryNetClient, celestial_wcs, extract_solved_field, infer_astrometry_solve_hints, validate_wcs
 
 
 
@@ -559,6 +559,10 @@ class _VisibleLimitEstimateOptions:
     step_magnitude: float = _VISIBLE_LIMIT_STEP_MAG
 
     annotate_all_visible_stars: bool = False
+
+    max_magnitude: float = 30.0
+
+    annotate_count: int | None = None
 
 
 
@@ -1858,13 +1862,29 @@ def estimate_visible_magnitude_limit(
 
     options: _VisibleLimitEstimateOptions | None = None,
 
+    solved_field: SolvedField | None = None,
+
 ) -> SolarSystemVisibilityEstimateResult:
 
     options = options or _visible_limit_estimate_options(settings)
 
     step_magnitude = max(0.1, float(options.step_magnitude))
 
-    solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=progress_callback)
+    reused_field = _usable_existing_solved_field(solved_field)
+
+    if reused_field is not None:
+
+        solved_field = reused_field
+
+        used_astrometry_fallback = True
+
+        if progress_callback is not None:
+
+            progress_callback("Reusing the already recovered plate-solve WCS.")
+
+    else:
+
+        solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=progress_callback)
 
     if progress_callback is not None:
 
@@ -1886,7 +1906,12 @@ def estimate_visible_magnitude_limit(
 
         for star in catalog_service.query_gaia_stars(solved_field, progress_callback=progress_callback)
 
-        if star.magnitude is not None and np.isfinite(float(star.magnitude))
+        if (
+            star.magnitude is not None
+            and np.isfinite(float(star.magnitude))
+            and float(star.magnitude) >= float(options.start_magnitude)
+            and float(star.magnitude) <= float(getattr(options, "max_magnitude", 30.0))
+        )
 
     ]
 
@@ -1968,17 +1993,21 @@ def estimate_visible_magnitude_limit(
 
     annotated_stars: tuple[SolarSystemVisibilityEstimateStar, ...] = ()
 
+    ranked_visible = sorted(chosen_result.visible_stars, key=lambda item: item.magnitude, reverse=True)
+
     if options.annotate_lowest_mag_stars:
 
-        annotated_stars = tuple(
+        annotate_count = getattr(options, "annotate_count", None)
 
-            sorted(chosen_result.visible_stars, key=lambda item: item.magnitude, reverse=True)[: options.required_visible_count]
+        if annotate_count is None:
 
-        )
+            annotate_count = options.required_visible_count
+
+        annotated_stars = tuple(ranked_visible[: max(1, int(annotate_count))])
 
     elif options.annotate_all_visible_stars:
 
-        annotated_stars = tuple(sorted(chosen_result.visible_stars, key=lambda item: item.magnitude, reverse=True))
+        annotated_stars = tuple(ranked_visible)
 
     return SolarSystemVisibilityEstimateResult(
 
@@ -2078,11 +2107,48 @@ def _dedupe_strings(values: list[str]) -> list[str]:
 
 
 
+def _usable_existing_solved_field(solved_field: SolvedField | None) -> SolvedField | None:
+
+    if solved_field is None:
+
+        return None
+
+    wcs_path = getattr(solved_field, "wcs_path", None)
+
+    if not wcs_path:
+
+        return None
+
+    path = Path(wcs_path)
+
+    if not path.exists():
+
+        return None
+
+    try:
+
+        header = read_header(path)
+
+        valid, _reasons = validate_wcs(header, path)
+
+        if not valid:
+
+            return None
+
+        _resolved_wcs_for_field(solved_field)
+
+    except Exception:
+
+        return None
+
+    return solved_field
+
+
 def _resolved_wcs_for_field(solved_field: SolvedField) -> WCS:
 
     header = read_header(solved_field.wcs_path)
 
-    return WCS(header)
+    return celestial_wcs(header)
 
 
 
@@ -3565,6 +3631,10 @@ def build_visible_limit_estimate_options(
 
     annotate_all_visible_stars: bool = False,
 
+    max_magnitude: float = 30.0,
+
+    annotate_count: int | None = None,
+
 ) -> _VisibleLimitEstimateOptions:
 
     resolved_stars_per_bin = max(2, int(stars_per_bin))
@@ -3586,6 +3656,10 @@ def build_visible_limit_estimate_options(
         step_magnitude=max(0.1, float(step_magnitude)),
 
         annotate_all_visible_stars=bool(annotate_all_visible_stars),
+
+        max_magnitude=min(30.0, max(-5.0, float(max_magnitude))),
+
+        annotate_count=None if annotate_count is None else max(1, int(annotate_count)),
 
     )
 
@@ -3675,7 +3749,11 @@ def _probe_visible_limit_bins(
 
             for item in projected_stars
 
-            if item.star.magnitude is not None and float(item.star.magnitude) >= options.start_magnitude
+            if (
+                item.star.magnitude is not None
+                and float(item.star.magnitude) >= options.start_magnitude
+                and float(item.star.magnitude) <= float(getattr(options, "max_magnitude", 30.0))
+            )
 
         }
 
@@ -5383,7 +5461,13 @@ def measure_detections_in_frame(
 
     header = read_header(source_path)
 
-    wcs = WCS(header)
+    try:
+
+        wcs = celestial_wcs(header)
+
+    except Exception:
+
+        wcs = WCS(header)
 
     if not getattr(wcs, "has_celestial", False):
 

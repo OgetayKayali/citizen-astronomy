@@ -378,6 +378,15 @@ def overlay_view_target(overlay: LoadedSkyAtlasCustomOverlay) -> tuple[float, fl
     return float(center.ra.deg) % 360.0, float(center.dec.deg), field_width_deg
 
 
+def apply_overlay_black_as_alpha(rgb: np.ndarray) -> np.ndarray:
+    """Turn black and near-black pixels transparent using peak channel brightness."""
+    channels = np.asarray(rgb)
+    if channels.ndim != 3 or channels.shape[-1] < 3:
+        raise ValueError("Overlay RGB data must have at least three channels.")
+    peak = np.max(channels[..., :3].astype(np.float32, copy=False), axis=-1)
+    return np.clip(peak, np.float32(0.0), np.float32(255.0)).astype(np.uint8)
+
+
 def apply_overlay_edge_feather(
     alpha: np.ndarray,
     *,
@@ -412,6 +421,7 @@ def build_overlay_display_qimage(
     brightness: float,
     saturation: float,
     feather: float = 0.0,
+    black_as_alpha: bool = False,
 ) -> QImage:
     rgb = overlay.image_rgb.astype(np.float32, copy=False)
     toned = apply_overlay_tone_controls(
@@ -422,12 +432,21 @@ def build_overlay_display_qimage(
     toned_rgb = np.clip(toned, 0.0, 255.0).astype(np.uint8)
 
     resolved_feather = max(0.0, min(1.0, float(feather)))
+    use_black_as_alpha = bool(black_as_alpha)
     if overlay.image_alpha is not None:
         alpha = overlay.image_alpha.astype(np.uint8, copy=False)
-    elif resolved_feather > 1.0e-6:
+    elif resolved_feather > 1.0e-6 or use_black_as_alpha:
         alpha = np.full((overlay.height, overlay.width), 255, dtype=np.uint8)
     else:
         alpha = None
+
+    if alpha is not None and use_black_as_alpha:
+        luminance_alpha = apply_overlay_black_as_alpha(overlay.image_rgb)
+        alpha = np.clip(
+            alpha.astype(np.float32, copy=False) * (luminance_alpha.astype(np.float32, copy=False) / np.float32(255.0)),
+            np.float32(0.0),
+            np.float32(255.0),
+        ).astype(np.uint8)
 
     if alpha is not None and resolved_feather > 1.0e-6:
         alpha = apply_overlay_edge_feather(

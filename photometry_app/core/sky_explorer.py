@@ -4013,6 +4013,46 @@ def format_sky_explorer_ruler_distance_label(
     return f"{distance_px:.2f} px"
 
 
+_SEXAGESIMAL_MARKERS = re.compile(r"[:hHdDmMsS]")
+_SEXAGESIMAL_WHITESPACE = re.compile(
+    r"^[\+\-]?\d+(?:\.\d+)?(?:\s+[\+\-]?\d+(?:\.\d+)?){1,2}$"
+)
+
+
+def _coordinate_text_looks_sexagesimal(text: str) -> bool:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return False
+    if _SEXAGESIMAL_MARKERS.search(stripped) is not None:
+        return True
+    return bool(_SEXAGESIMAL_WHITESPACE.match(stripped))
+
+
+def parse_sky_explorer_ra_dec(ra_text: str, dec_text: str) -> tuple[float, float] | None:
+    """Parse RA/Dec as decimal degrees or sexagesimal (RA hours when sexagesimal)."""
+    ra_text = str(ra_text or "").strip()
+    dec_text = str(dec_text or "").strip()
+    if not ra_text or not dec_text:
+        return None
+    if _coordinate_text_looks_sexagesimal(ra_text):
+        unit_pairs: tuple[tuple[object, object], ...] = ((u.hourangle, u.deg), (u.deg, u.deg))
+    else:
+        unit_pairs = ((u.deg, u.deg),)
+    for unit_pair in unit_pairs:
+        try:
+            coordinates = SkyCoord(ra_text, dec_text, unit=unit_pair, frame="icrs")
+        except Exception:
+            continue
+        ra_deg = float(coordinates.ra.deg) % 360.0
+        dec_deg = float(coordinates.dec.deg)
+        if not math.isfinite(ra_deg) or not math.isfinite(dec_deg):
+            continue
+        if dec_deg < -90.0 or dec_deg > 90.0:
+            continue
+        return ra_deg, dec_deg
+    return None
+
+
 def sky_explorer_angular_separation_arcsec(
     ra_a_deg: float,
     dec_a_deg: float,

@@ -2180,6 +2180,14 @@ class SettingsTest(unittest.TestCase):
 
             settings.sky_explorer_mag_limit_examples_per_bin = 4
 
+            settings.sky_explorer_mag_limit_faintest_count = 3
+
+            settings.sky_explorer_mag_limit_start_magnitude = 13.5
+
+            settings.sky_explorer_mag_limit_max_magnitude = 19.0
+
+            settings.sky_explorer_mag_limit_text_scale_mode = "brighter"
+
             settings.sky_explorer_mag_limit_marker_color = "#ff00aa"
 
             settings.sky_explorer_mag_limit_marker_stroke_color = "#223344"
@@ -2264,6 +2272,14 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(loaded.sky_explorer_gaia_hard_cap_rows, 432)
 
         self.assertEqual(loaded.sky_explorer_mag_limit_examples_per_bin, 4)
+
+        self.assertEqual(loaded.sky_explorer_mag_limit_faintest_count, 3)
+
+        self.assertEqual(loaded.sky_explorer_mag_limit_start_magnitude, 13.5)
+
+        self.assertEqual(loaded.sky_explorer_mag_limit_max_magnitude, 19.0)
+
+        self.assertEqual(loaded.sky_explorer_mag_limit_text_scale_mode, "brighter")
 
         self.assertEqual(loaded.sky_explorer_mag_limit_marker_color, "#ff00aa")
 

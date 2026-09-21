@@ -996,7 +996,43 @@ class LightCurvePlotWidget(QWidget):
             if not was_visible:
                 self.hide()
 
-
+    def apply_label_font_size(self, point_size: float) -> None:
+        size = max(1.0, float(point_size))
+        font = QFont()
+        font.setPointSizeF(size)
+        size_css = f"{size:g}pt"
+        tick_offset = max(2, int(round(size * 0.35)))
+        for name in ("left", "bottom"):
+            axis = self._plot_item.getAxis(name)
+            if axis is None:
+                continue
+            axis.setTickFont(font)
+            axis.setStyle(tickTextOffset=tick_offset)
+            label_text = str(getattr(axis, "labelText", "") or "")
+            label_units = str(getattr(axis, "labelUnits", "") or "")
+            label_style = dict(getattr(axis, "labelStyle", {}) or {})
+            label_style.pop("size", None)
+            label_style["font-size"] = size_css
+            if label_text or label_units:
+                axis.setLabel(text=label_text, units=label_units or None, **label_style)
+        title_item = getattr(self._plot_item, "titleLabel", None)
+        if title_item is not None:
+            title_height = max(30, int(round(size * 2.4)))
+            title_item.setMaximumHeight(title_height)
+            layout = getattr(self._plot_item, "layout", None)
+            if layout is not None and hasattr(layout, "setRowFixedHeight"):
+                layout.setRowFixedHeight(0, title_height)
+            title_text = str(getattr(title_item, "text", "") or "")
+            title_opts = dict(getattr(title_item, "opts", {}) or {})
+            title_opts["size"] = size_css
+            if title_text:
+                title_item.setText(title_text, **title_opts)
+            else:
+                set_attr = getattr(title_item, "setAttr", None)
+                if callable(set_attr):
+                    set_attr("size", size_css)
+        if self._legend_item is not None:
+            self._legend_item.setLabelTextSize(size_css)
 
     def export_current_view(self, output_path: str, scale_factor: float = 3.0) -> None:
 

@@ -11,6 +11,7 @@ from photometry_app.core.benchmarking import BENCHMARK_ENABLED, get_benchmark_re
 import json
 import math
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -375,6 +376,37 @@ class ConstellationLabelRenderer:
         self.last_cache_hits = 0
         self.last_cache_misses = 0
 
+    def collect_draws(
+        self,
+        labels: tuple[_ProjectedConstellationLabel, ...],
+        settings: ConstellationOverlaySettings,
+        field_width_deg: float,
+    ) -> tuple[tuple[QFont, QPointF, str, QColor, QColor], ...]:
+        self.last_cache_hits = 0
+        self.last_cache_misses = 0
+        label_alpha = self._label_alpha(settings, field_width_deg)
+        if not labels or label_alpha <= 0.01:
+            return ()
+        color = QColor(settings.label_color)
+        if not color.isValid():
+            color = QColor(settings.line_color)
+        if not color.isValid():
+            color = QColor("#dfe7f2")
+        color.setAlphaF(label_alpha)
+        shadow_color = QColor(0, 0, 0, max(36, min(150, int(round(180.0 * label_alpha)))))
+        font = self._label_font(settings)
+        draws: list[tuple[QFont, QPointF, str, QColor, QColor]] = []
+        for projected_label in labels:
+            text = projected_label.label.name
+            _static_text, width, height, cache_hit = self._cached_static_text(text, font, settings.label_size_pt)
+            if cache_hit:
+                self.last_cache_hits += 1
+            else:
+                self.last_cache_misses += 1
+            origin = QPointF(projected_label.x - width * 0.5, projected_label.y - height * 0.5)
+            draws.append((font, origin, text, color, shadow_color))
+        return tuple(draws)
+
     def draw(
         self,
         painter: QPainter,
@@ -384,34 +416,20 @@ class ConstellationLabelRenderer:
     ) -> int:
         benchmark_recorder = get_benchmark_recorder() if BENCHMARK_ENABLED else None
 
-        self.last_cache_hits = 0
-        self.last_cache_misses = 0
         benchmark_visibility_token = benchmark_recorder.start_section("constellation.label_visibility_fade", metadata={"labels": len(labels)}) if benchmark_recorder is not None else None
-        label_alpha = self._label_alpha(settings, field_width_deg)
+        collected = self.collect_draws(labels, settings, field_width_deg)
         if benchmark_recorder is not None:
-            benchmark_recorder.stop_section(benchmark_visibility_token, metadata={"label_alpha": label_alpha})
-        if not labels or label_alpha <= 0.01:
+            benchmark_recorder.stop_section(
+                benchmark_visibility_token,
+                metadata={"label_alpha": 0.0 if not collected else float(collected[0][3].alphaF())},
+            )
+        if not collected:
             return 0
-
-        color = QColor(settings.label_color)
-        if not color.isValid():
-            color = QColor(settings.line_color)
-        if not color.isValid():
-            color = QColor("#dfe7f2")
-        color.setAlphaF(label_alpha)
-        shadow_color = QColor(0, 0, 0, max(36, min(150, int(round(180.0 * label_alpha)))))
-        font = self._label_font(settings)
 
         drawn_count = 0
         benchmark_draw_token = benchmark_recorder.start_section("constellation.label_drawing", metadata={"labels": len(labels)}) if benchmark_recorder is not None else None
-        for projected_label in labels:
-            text = projected_label.label.name
-            static_text, width, height, cache_hit = self._cached_static_text(text, font, settings.label_size_pt)
-            if cache_hit:
-                self.last_cache_hits += 1
-            else:
-                self.last_cache_misses += 1
-            origin = QPointF(projected_label.x - width * 0.5, projected_label.y - height * 0.5)
+        for font, origin, text, color, shadow_color in collected:
+            static_text, _width, _height, _cache_hit = self._cached_static_text(text, font, settings.label_size_pt)
             painter.setPen(QPen(shadow_color, 1.0))
             painter.drawStaticText(QPointF(origin.x() + 1.0, origin.y() + 1.0), static_text)
             painter.setPen(QPen(color, 1.0))
@@ -491,7 +509,14 @@ class ConstellationOverlay:
     def data_loader(self) -> ConstellationDataLoader:
         return self._data_loader
 
-    def draw(self, painter: QPainter, scene: object, settings: ConstellationOverlaySettings) -> ConstellationOverlayMetrics:
+    def draw(
+        self,
+        painter: QPainter,
+        scene: object,
+        settings: ConstellationOverlaySettings,
+        *,
+        gpu_label_drawer: Callable[[tuple[tuple[QFont, QPointF, str, QColor, QColor], ...], QRectF], bool] | None = None,
+    ) -> ConstellationOverlayMetrics:
         benchmark_recorder = get_benchmark_recorder() if BENCHMARK_ENABLED else None
 
         benchmark_token = benchmark_recorder.start_section("constellation.overlay_draw") if benchmark_recorder is not None else None
@@ -521,12 +546,25 @@ class ConstellationOverlay:
             if settings.show_lines:
                 drawn_line_count = self._line_renderer.draw(painter, geometry.lines, settings)
             if settings.show_labels:
-                drawn_label_count = self._label_renderer.draw(
-                    painter,
-                    geometry.labels,
-                    settings,
-                    float(getattr(scene, "field_width_deg", 180.0)),
-                )
+                field_width_deg = float(getattr(scene, "field_width_deg", 180.0))
+                if gpu_label_drawer is not None:
+                    collected = self._label_renderer.collect_draws(geometry.labels, settings, field_width_deg)
+                    if collected and gpu_label_drawer(collected, QRectF(viewport_rect)):
+                        drawn_label_count = len(collected)
+                    else:
+                        drawn_label_count = self._label_renderer.draw(
+                            painter,
+                            geometry.labels,
+                            settings,
+                            field_width_deg,
+                        )
+                else:
+                    drawn_label_count = self._label_renderer.draw(
+                        painter,
+                        geometry.labels,
+                        settings,
+                        field_width_deg,
+                    )
         finally:
             painter.restore()
 

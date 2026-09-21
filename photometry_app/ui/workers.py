@@ -3469,6 +3469,110 @@ class DistanceMapWorker(QThread):
 
 
 
+class SkyAtlasCatalogLoadWorker(QThread):
+    progress_updated = Signal(str, object)
+    startup_completed = Signal(object, float, object)
+    load_completed = Signal(object, float, object)
+    load_failed = Signal(str)
+    load_cancelled = Signal()
+
+    def __init__(
+        self,
+        *,
+        cache_dir: Path,
+        maximum_scientific_magnitude: float,
+        enabled_deep_sky_catalogs: frozenset[str] | set[str] | tuple[str, ...],
+        parent: object | None = None,
+        loader=None,
+    ) -> None:
+        super().__init__(parent)
+        self._cache_dir = Path(cache_dir)
+        self._maximum_scientific_magnitude = float(maximum_scientific_magnitude)
+        self._enabled_deep_sky_catalogs = frozenset(enabled_deep_sky_catalogs)
+        self._loader = loader
+        self._cancel = Event()
+        self._last_progress_emit = 0.0
+
+    def request_cancel(self) -> None:
+        self._cancel.set()
+        self.requestInterruption()
+
+    def _check_cancel(self) -> None:
+        if self._cancel.is_set() or self.isInterruptionRequested():
+            from photometry_app.core.sky_atlas import SkyAtlasCatalogCancelled
+
+            raise SkyAtlasCatalogCancelled()
+
+    def _emit_progress(self, message: str, percent: float | None) -> None:
+        self._check_cancel()
+        now = perf_counter()
+        try:
+            resolved = None if percent is None else float(percent)
+        except (TypeError, ValueError):
+            resolved = None
+        is_complete = resolved is not None and resolved >= 99.5
+        if not is_complete and (now - self._last_progress_emit) < 0.25:
+            return
+        self._last_progress_emit = now
+        self.progress_updated.emit(str(message), percent)
+
+    def run(self) -> None:
+        from photometry_app.core.sky_atlas import (
+            SKY_ATLAS_STARTUP_STAR_MAGNITUDE,
+            SkyAtlasCatalogCancelled,
+            load_sky_atlas_objects,
+        )
+
+        loader = self._loader or load_sky_atlas_objects
+        startup_limit = min(SKY_ATLAS_STARTUP_STAR_MAGNITUDE, self._maximum_scientific_magnitude)
+        try:
+            startup_achieved: list[float] = []
+            startup_objects = loader(
+                self._cache_dir,
+                download_if_missing=True,
+                maximum_scientific_magnitude=startup_limit,
+                enabled_deep_sky_catalogs=self._enabled_deep_sky_catalogs,
+                progress_callback=self._emit_progress,
+                cancel_check=self._check_cancel,
+                star_magnitude_achieved=startup_achieved,
+            )
+            startup_limit_achieved = float(startup_achieved[0]) if startup_achieved else 0.0
+            has_scientific_stars = startup_limit_achieved > 0.0 or any(
+                str(item.catalog or "").casefold() == "hipparcos" for item in startup_objects
+            )
+            if has_scientific_stars:
+                self.startup_completed.emit(
+                    startup_objects,
+                    startup_limit_achieved,
+                    self._enabled_deep_sky_catalogs,
+                )
+            if self._maximum_scientific_magnitude <= startup_limit + 1.0e-6:
+                self.load_completed.emit(
+                    startup_objects,
+                    startup_limit_achieved,
+                    self._enabled_deep_sky_catalogs,
+                )
+                return
+            achieved: list[float] = []
+            objects = loader(
+                self._cache_dir,
+                download_if_missing=True,
+                maximum_scientific_magnitude=self._maximum_scientific_magnitude,
+                enabled_deep_sky_catalogs=self._enabled_deep_sky_catalogs,
+                progress_callback=self._emit_progress,
+                cancel_check=self._check_cancel,
+                star_magnitude_achieved=achieved,
+            )
+        except SkyAtlasCatalogCancelled:
+            self.load_cancelled.emit()
+            return
+        except Exception as exc:
+            self.load_failed.emit(str(exc).strip() or exc.__class__.__name__)
+            return
+        achieved_limit = float(achieved[0]) if achieved else 0.0
+        self.load_completed.emit(objects, achieved_limit, self._enabled_deep_sky_catalogs)
+
+
 class SkyAtlasCustomOverlayImportWorker(QThread):
 
     import_completed = Signal(object)

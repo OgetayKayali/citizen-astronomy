@@ -47,6 +47,7 @@ from photometry_app.core.sky_explorer import (
     format_sky_explorer_angular_distance,
     format_sky_explorer_ruler_distance_label,
     merge_sky_explorer_results,
+    parse_sky_explorer_ra_dec,
     SkyExplorerResult,
     sky_explorer_angular_separation_arcsec,
     sky_explorer_object_type_key_for_object,
@@ -3037,4 +3038,25 @@ class SkyExplorerCancelTest(unittest.TestCase):
         settings = AppSettings.from_root(Path("."))
         with self.assertRaises(SkyExplorerCancelled):
             explore_sky_image(Path("unused.fits"), settings=settings, cancel_callback=lambda: True)
+
+
+class SkyExplorerGotoCoordinateParseTest(unittest.TestCase):
+    def test_parse_decimal_degrees_without_treating_ra_as_hours(self) -> None:
+        parsed = parse_sky_explorer_ra_dec("270.63", "-23.03")
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertAlmostEqual(parsed[0], 270.63, places=4)
+        self.assertAlmostEqual(parsed[1], -23.03, places=4)
+
+    def test_parse_sexagesimal_ra_as_hours(self) -> None:
+        parsed = parse_sky_explorer_ra_dec("18:02:31", "-23:01:48")
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertAlmostEqual(parsed[0], 270.6291667, places=3)
+        self.assertAlmostEqual(parsed[1], -23.03, places=3)
+
+    def test_parse_rejects_empty_or_invalid_text(self) -> None:
+        self.assertIsNone(parse_sky_explorer_ra_dec("", "-23.03"))
+        self.assertIsNone(parse_sky_explorer_ra_dec("270.63", ""))
+        self.assertIsNone(parse_sky_explorer_ra_dec("not-ra", "not-dec"))
 

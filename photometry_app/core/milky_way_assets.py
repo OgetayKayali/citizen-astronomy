@@ -27,7 +27,9 @@ _HIGH_DETAIL_TILE_MANIFEST_PATHS = (
     Path("textures") / "milky_way_tiles" / "manifest.json",
 )
 _DEFAULT_TILE_MANIFEST_PATHS = _DEFAULT_INTERACTIVE_TILE_MANIFEST_PATHS
-_DEFAULT_PREVIEW_PATH = Path("textures") / "milkyway_2020_4k_preview.png"
+_DEFAULT_PREVIEW_PATHS = (
+    Path("textures") / "milkyway_2020_4k_preview.png",
+)
 _DEFAULT_GLOBAL_PATHS = (
     Path("textures") / "milkyway_2020_4k.png",
     Path("textures") / "milkyway_2020_8k.png",
@@ -40,7 +42,7 @@ _VALID_RA_DIRECTIONS = {"left", "right"}
 _VALID_TONE_PREPROCESSING = {"none", "source_like", "display_toned"}
 _LEVEL_WIDTH_CAPS = {
     "low": 4096,
-    "medium": 16384,
+    "medium": 8192,
     "high": None,
 }
 _QUALITY_TARGETS = {
@@ -685,7 +687,7 @@ class MilkyWayAssetResolver:
         fallback_reasons: list[str] = []
         manifest_candidate = self._tile_manifest_override or self._first_existing_path(default_manifest_paths)
         global_candidate = self._global_texture_override or self._first_existing_path(_DEFAULT_GLOBAL_PATHS)
-        preview_candidate = self._preview_texture_override or (self._project_root / _DEFAULT_PREVIEW_PATH)
+        preview_candidate = self._preview_texture_override or self._first_existing_path(_DEFAULT_PREVIEW_PATHS)
 
         runtime_mode = "missing"
         runtime_path: Path | None = None
@@ -728,7 +730,7 @@ class MilkyWayAssetResolver:
                 asset=MilkyWayGlobalAsset(path=global_candidate, mode="single_global"),
             )
 
-        if preview_candidate.is_file():
+        if preview_candidate is not None and preview_candidate.is_file():
             return MilkyWayAssetInfo(
                 asset_mode="preview_fallback",
                 active_path=preview_candidate,

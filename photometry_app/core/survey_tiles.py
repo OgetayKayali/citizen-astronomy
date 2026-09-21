@@ -15,8 +15,10 @@ from photometry_app.core.survey_images import (
     SKY_EXPLORER_SURVEY_FIELD_DETAIL_REFINE,
     SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS,
     SKY_EXPLORER_SURVEY_FIELD_PREVIEW_MAX_EDGE,
+    build_sky_explorer_field_wcs,
     sky_explorer_survey_field_neighbor_tile_indices,
     sky_explorer_survey_field_preview_size,
+    sky_explorer_survey_field_tile_indices_for_sky,
     sky_explorer_survey_field_tile_spec,
 )
 
@@ -223,6 +225,56 @@ def survey_tile_pixel_rect(
     x0 = -float(tile_i) * width
     y0 = float(tile_j) * height
     return x0, y0, width, height
+
+
+def sky_explorer_survey_field_image_point_for_sky(
+    *,
+    ra_deg: float,
+    dec_deg: float,
+    origin_ra_deg: float,
+    origin_dec_deg: float,
+    fov_arcmin: float,
+    width_px: int,
+    height_px: int,
+) -> tuple[float, float] | None:
+    """Map a sky position to unbounded survey-mosaic image pixels."""
+    try:
+        tile_i, tile_j = sky_explorer_survey_field_tile_indices_for_sky(
+            ra_deg=ra_deg,
+            dec_deg=dec_deg,
+            origin_ra_deg=origin_ra_deg,
+            origin_dec_deg=origin_dec_deg,
+            fov_arcmin=fov_arcmin,
+            width_px=width_px,
+            height_px=height_px,
+        )
+        spec = sky_explorer_survey_field_tile_spec(
+            origin_ra_deg=origin_ra_deg,
+            origin_dec_deg=origin_dec_deg,
+            fov_arcmin=fov_arcmin,
+            tile_i=tile_i,
+            tile_j=tile_j,
+            width_px=width_px,
+            height_px=height_px,
+        )
+        tile_wcs = build_sky_explorer_field_wcs(
+            ra_deg=spec.ra_deg,
+            dec_deg=spec.dec_deg,
+            fov_arcmin=fov_arcmin,
+            width_px=width_px,
+            height_px=height_px,
+        )
+        local_x, local_y = tile_wcs.world_to_pixel_values(float(ra_deg), float(dec_deg))
+        x_value = float(local_x)
+        y_value = float(local_y)
+        if not math.isfinite(x_value) or not math.isfinite(y_value):
+            return None
+        x0, y0, _width, _height = survey_tile_pixel_rect(
+            tile_i, tile_j, width_px=width_px, height_px=height_px
+        )
+        return x0 + x_value, y0 + y_value
+    except Exception:
+        return None
 
 
 def survey_tile_draw_rect(

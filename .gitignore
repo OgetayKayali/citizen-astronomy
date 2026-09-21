@@ -30,6 +30,7 @@ textures/milky_way_tiles_*/
 # Large source textures (too big for GitHub, obtain separately)
 textures/milkyway_2020_32k.exr
 textures/milkyway_2020_4k.exr
+textures/starxt/
 textures/moon_lroc_color_16bit_srgb_8k.tif
 textures/moon_ldem_16.tif
 

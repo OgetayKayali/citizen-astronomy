@@ -2,27 +2,33 @@
 
 Formulas (defaults)
 -------------------
-Source luminosity proxy (Stellarium-like, then calibrated):
-    lnL = -0.921034 * (magnitude + 12.12331) + ln(zoom_exposure)
-    zoom_exposure = (60 / max(FOV_deg, 0.7)) ** 0.8
-    calibration = 5.0 / exp(-0.921034 * 12.12331)
-    luminosity = exp(lnL) * calibration
-    compact_intensity = luminosity * (0.7 + 0.3 * contrast)
+Display luminosity proxy (Stellarium-like perceptual compression):
+    adaptation = max(0, visible_magnitude_limit - 5)
+    display_mag = magnitude - adaptation
+    magnitude_slope = 0.08 + 0.03 * magnitude_contrast
+    luminosity = 5.0 * 10 ** (-magnitude_slope * display_mag)
+    compact_intensity = luminosity
 
-    At FOV 60 / contrast 1, magnitude 0 → intensity ≈ 5.
+    At the wide-field limit of mag 5 / contrast 1: magnitude 0 → intensity 5
+    and magnitude 5 → intensity ≈ 1.4. Zooming in raises the visible limit, so
+    already-visible stars brighten while 1-mag intensity ratios stay constant.
 
 Compact radius uses a separate flux curve:
-    size_flux = 10 ** (-0.4 * magnitude * (0.55 + 0.45 * contrast))
-    raw_radius = (0.75 + 3.1 * size_flux**0.32) * star_size * dpr
+    size_flux = 10 ** (-0.4 * display_mag * (0.32 + 0.28 * contrast))
+    raw_radius = (1.65 + 4.35 * size_flux**0.28) * star_size * dpr
 
 Faint-star stability (physical framebuffer pixels; uploaded as logical = physical/dpr):
-    logical_base = (0.75 + 3.1 * size_flux**0.32) * star_size
+    logical_base = (1.65 + 4.35 * size_flux**0.28) * star_size
     raw_physical = logical_base * dpr
-    if raw_physical < 0.3*dpr: omit (unless within limiting magnitude pad)
-    elif raw_physical < 1.2*dpr: radius_physical = 1.2*dpr; intensity *= (raw/min)**3
+    if raw_physical < 0.45*dpr: omit (unless within limiting magnitude pad)
+    elif raw_physical < 2.35*dpr: radius_physical = 2.35*dpr; intensity *= (raw/min)**1.35
     else: radius_physical = raw_physical
     if radius_physical > 8*dpr: compress extra growth with sqrt
     compact_radius_px (attribute) = radius_physical / dpr
+
+Wide-field size: compact radius is multiplied by a FOV scale that is 1.0 at
+    60° and shrinks toward ~0.3 at a full-sky view, so all-sky stars stay
+    point-like. Minimum/omit/compress floors scale with that factor.
 
 Visibility fade multiplies intensity only (not compact footprint) near the limit.
 
@@ -51,10 +57,10 @@ with 1.5x hysteresis and never shrinks mid-session unless ``release()``.
 
 OpenGL note
 -----------
-The rest of Sky View uses ``QOpenGLFunctions_2_0``. This renderer prefers true
-instancing via PyOpenGL (``glVertexAttribDivisor`` + ``glDrawArraysInstanced``)
-on compatibility contexts. If that fails, it falls back to one expanded-quad
-draw call (still a single ``glDrawArrays``, no per-star Python GL calls).
+The rest of Sky View uses ``QOpenGLFunctions_2_0``. This renderer requires true
+instancing via PyOpenGL (``glVertexAttribDivisor`` + ``glDrawArraysInstanced``).
+Unsupported contexts are handled by Sky Atlas compatibility mode instead of a
+silent, substantially slower expanded-quad backend.
 """
 
 from __future__ import annotations
@@ -76,7 +82,6 @@ from PySide6.QtOpenGL import (
     QOpenGLShader,
     QOpenGLShaderProgram,
     QOpenGLTexture,
-    QOpenGLVertexArrayObject,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,6 +92,9 @@ _LOGGER = logging.getLogger(__name__)
 _INSTANCE_FLOATS = 10
 _INSTANCE_STRIDE = _INSTANCE_FLOATS * 4
 _INSTANCE_BYTES = _INSTANCE_STRIDE
+_CATALOG_FLOATS = 9
+_CATALOG_STRIDE = _CATALOG_FLOATS * 4
+_EMPTY_INSTANCES = np.zeros((0, _INSTANCE_FLOATS), dtype=np.float32)
 
 # OpenGL enums (avoid relying on QOpenGLFunctions_* attribute exposure).
 _GL_BLEND = 0x0BE2
@@ -126,8 +134,24 @@ _MAG_LUT_MIN = -2.0
 _MAG_LUT_MAX = 16.0
 
 BACKEND_INSTANCED = "instanced"
-BACKEND_EXPANDED = "expanded"
 BACKEND_LEGACY = "legacy"
+MAX_STATIC_CATALOG_STARS = 500_000
+
+STAR_SIZE_REFERENCE_FOV_DEG = 60.0
+STAR_FOV_SIZE_EXPONENT = 0.6
+STAR_FOV_SIZE_MIN_SCALE = 0.30
+STAR_FOV_SIZE_MAX_SCALE = 1.06
+STAR_VISIBILITY_FADE_WINDOW_MAG = 1.15
+STAR_FOV_MIN_RADIUS_PX = 1.05
+STAR_FOV_OMIT_RADIUS_PX = 0.22
+STAR_FOV_COMPRESS_RADIUS_PX = 3.2
+
+
+def star_fov_size_scale(field_width_deg: float) -> float:
+    """Shrink star discs at wide FOV; keep size nearly unchanged from 60° in."""
+    fov = max(1.0, float(field_width_deg))
+    scale = (STAR_SIZE_REFERENCE_FOV_DEG / fov) ** STAR_FOV_SIZE_EXPONENT
+    return max(STAR_FOV_SIZE_MIN_SCALE, min(STAR_FOV_SIZE_MAX_SCALE, scale))
 
 
 @dataclass(slots=True)
@@ -137,15 +161,16 @@ class StarRendererSettings:
     star_size: float = 1.0
     magnitude_size_contrast: float = 1.0
     limiting_magnitude: float = 8.7
+    visible_magnitude_limit: float = 5.0
     twinkle_amount: float = 0.5
     device_pixel_ratio: float = 1.0
     halo_threshold_magnitude: float = 1.8
-    halo_intensity: float = 0.35
-    halo_radius_scale: float = 4.5
+    halo_intensity: float = 0.42
+    halo_radius_scale: float = 5.0
     color_saturation: float = 0.55
     hdr_exposure: float = 1.15
-    faint_min_radius_px: float = 1.2
-    faint_omit_radius_px: float = 0.3
+    faint_min_radius_px: float = 2.35
+    faint_omit_radius_px: float = 0.45
     bright_compress_radius_px: float = 8.0
     interaction_stable: bool = True
     time_seconds: float = 0.0
@@ -198,6 +223,7 @@ class StarRendererMetrics:
     gl_version: str = ""
     glsl_version: str = ""
     instancing_available: bool = False
+    static_catalog_active: bool = False
 
 
 @dataclass(slots=True)
@@ -212,6 +238,8 @@ class StarRendererDiagnostics:
     hdr_status: str
     direct_additive_fallback: bool
     disabled_reason: str = ""
+    vao_ready: bool = False
+    preexisting_gl_errors: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +254,35 @@ class StarInstanceInput:
     extinction: float = 1.0
     selected: bool = False
     bv_index: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StarCatalogInput:
+    ra_deg: float
+    dec_deg: float
+    magnitude: float
+    color: str
+    star_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class StarCatalogProjection:
+    equatorial_to_horizon_matrix: tuple[
+        tuple[float, float, float],
+        tuple[float, float, float],
+        tuple[float, float, float],
+    ]
+    camera_forward: tuple[float, float, float]
+    camera_up: tuple[float, float, float]
+    camera_right: tuple[float, float, float]
+    half_width_rad: float
+    half_height_rad: float
+    visible_magnitude_limit: float
+    projection_margin: float = 1.05
+    ground_enabled: bool = False
+    selected_star_id: int = 0
+    moon_focus_zoom: float = 0.0
+    moon_focus_extreme_zoom: float = 0.0
 
 
 class StarRenderer:
@@ -281,6 +338,222 @@ void main() {
 }
 """
 
+    _CATALOG_VERTEX_SHADER = """
+#version 120
+attribute vec2 a_corner;
+attribute vec3 a_equatorial;
+attribute float a_magnitude;
+attribute vec3 a_catalog_color;
+attribute float a_seed;
+attribute float a_star_id;
+
+uniform vec4 u_viewport_rect;
+uniform float u_dpr;
+uniform float u_time;
+uniform float u_twinkle_amount;
+uniform float u_twinkle_enabled;
+uniform vec3 u_equatorial_to_horizon_row0;
+uniform vec3 u_equatorial_to_horizon_row1;
+uniform vec3 u_equatorial_to_horizon_row2;
+uniform vec3 u_camera_forward;
+uniform vec3 u_camera_up;
+uniform vec3 u_camera_right;
+uniform float u_half_width_rad;
+uniform float u_half_height_rad;
+uniform float u_projection_margin;
+uniform float u_visible_magnitude_limit;
+uniform float u_limiting_magnitude;
+uniform float u_star_brightness;
+uniform float u_star_size;
+uniform float u_fov_size_scale;
+uniform float u_magnitude_contrast;
+uniform float u_color_saturation;
+uniform float u_faint_min_radius_px;
+uniform float u_faint_omit_radius_px;
+uniform float u_bright_compress_radius_px;
+uniform float u_halo_threshold_magnitude;
+uniform float u_halo_intensity;
+uniform float u_halo_radius_scale;
+uniform float u_halo_pass;
+uniform float u_ground_enabled;
+uniform float u_selected_star_id;
+uniform float u_moon_dim;
+uniform float u_moon_focus_zoom;
+uniform float u_moon_focus_extreme_zoom;
+
+varying vec2 v_local;
+varying vec3 v_rgb;
+varying float v_intensity;
+varying float v_brightness_weight;
+
+float smooth_curve(float value) {
+    float resolved = clamp(value, 0.0, 1.0);
+    return resolved * resolved * (3.0 - 2.0 * resolved);
+}
+
+float hash11(float n) {
+    return fract(sin(n) * 43758.5453123);
+}
+
+float extinction_for_altitude(float altitude_deg) {
+    if (u_ground_enabled < 0.5) {
+        return 1.0;
+    }
+    if (altitude_deg <= -4.0) {
+        return 0.0;
+    }
+    float altitude = clamp(altitude_deg, 0.2, 89.9);
+    float secz = 1.0 / (
+        sin(radians(altitude))
+        + 0.50572 * pow(altitude + 6.07995, -1.6364)
+    );
+    float extinction_mag = clamp(0.12 * (secz - 1.0), 0.0, 1.4);
+    return clamp(pow(10.0, -0.4 * extinction_mag), 0.18, 1.0);
+}
+
+void hide_star() {
+    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
+    v_local = a_corner;
+    v_rgb = vec3(0.0);
+    v_intensity = 0.0;
+    v_brightness_weight = 0.0;
+}
+
+void main() {
+    vec3 horizon = vec3(
+        dot(u_equatorial_to_horizon_row0, a_equatorial),
+        dot(u_equatorial_to_horizon_row1, a_equatorial),
+        dot(u_equatorial_to_horizon_row2, a_equatorial)
+    );
+    float altitude_deg = degrees(asin(clamp(horizon.z, -1.0, 1.0)));
+    bool selected = u_selected_star_id > 0.5 && abs(a_star_id - u_selected_star_id) < 0.25;
+    if (u_ground_enabled > 0.5 && altitude_deg < -0.9 && !selected) {
+        hide_star();
+        return;
+    }
+
+    float magnitude_layer = smooth_curve((a_magnitude - 0.25) / 2.75);
+    float magnitude_release = smooth_curve((a_magnitude - 3.6) / 1.8);
+    float layer_offset = 0.35 * magnitude_layer * (1.0 - 0.6 * magnitude_release);
+    float effective_limit = u_visible_magnitude_limit - layer_offset;
+    float visibility = smooth_curve((effective_limit + 1.15 - a_magnitude) / 2.3);
+    if (selected) {
+        visibility = 1.0;
+    } else if (u_moon_focus_zoom > 0.0) {
+        float faint_weight = clamp((a_magnitude - 1.2) / 5.8, 0.0, 1.0);
+        float alpha_scale = 1.0 - u_moon_focus_zoom * (0.26 + 0.56 * faint_weight);
+        if (u_moon_focus_extreme_zoom > 0.0) {
+            alpha_scale *= 1.0 - u_moon_focus_extreme_zoom * (0.56 + 0.34 * faint_weight);
+        }
+        visibility *= max(alpha_scale, 0.0);
+    }
+    if (visibility <= 0.01 && !selected) {
+        hide_star();
+        return;
+    }
+
+    float cos_distance = clamp(dot(u_camera_forward, horizon), -1.0, 1.0);
+    if (cos_distance <= -0.999999) {
+        hide_star();
+        return;
+    }
+    float angular_distance = acos(cos_distance);
+    float sin_distance = sin(angular_distance);
+    float projection_scale = abs(sin_distance) > 1.0e-7
+        ? angular_distance / sin_distance
+        : 1.0;
+    float x_normalized = (
+        projection_scale * dot(horizon, u_camera_right)
+    ) / max(u_half_width_rad, 1.0e-7);
+    float y_normalized = (
+        projection_scale * dot(horizon, u_camera_up)
+    ) / max(u_half_height_rad, 1.0e-7);
+    if (
+        abs(x_normalized) > u_projection_margin
+        || abs(y_normalized) > u_projection_margin
+    ) {
+        hide_star();
+        return;
+    }
+
+    float contrast = clamp(u_magnitude_contrast, 0.4, 2.0);
+    float adaptation = max(0.0, u_visible_magnitude_limit - 5.0);
+    float display_mag = a_magnitude - adaptation;
+    float magnitude_slope = 0.08 + 0.03 * contrast;
+    float luminosity = 5.0 * pow(10.0, -magnitude_slope * display_mag);
+    float compact_intensity = luminosity;
+    float size_flux = pow(10.0, -0.4 * display_mag * (0.32 + 0.28 * contrast));
+    float fov_scale = clamp(u_fov_size_scale, 0.25, 1.25);
+    float raw_logical = (
+        1.65 + 4.35 * pow(max(size_flux, 1.0e-9), 0.28)
+    ) * clamp(u_star_size, 0.4, 2.5) * fov_scale;
+    float raw_physical = raw_logical * u_dpr;
+    float omit_physical = max(0.22 * u_dpr, u_faint_omit_radius_px * u_dpr * fov_scale);
+    float min_physical = max(1.05 * u_dpr, u_faint_min_radius_px * u_dpr * fov_scale);
+    if (
+        raw_physical < omit_physical
+        && a_magnitude > u_limiting_magnitude + 0.5
+        && !selected
+    ) {
+        hide_star();
+        return;
+    }
+    float working_physical = max(raw_physical, omit_physical);
+    float radius_physical = working_physical;
+    if (working_physical < min_physical) {
+        compact_intensity *= pow(working_physical / max(min_physical, 1.0e-7), 1.35);
+        radius_physical = min_physical;
+    }
+    float compress_at = max(3.2 * u_dpr, u_bright_compress_radius_px * u_dpr * fov_scale);
+    if (radius_physical > compress_at) {
+        radius_physical = compress_at + sqrt(radius_physical - compress_at);
+    }
+    float radius = radius_physical / max(u_dpr, 1.0e-7);
+    float extinction = extinction_for_altitude(altitude_deg);
+    float intensity_scale = visibility * extinction * u_moon_dim * clamp(u_star_brightness, 0.35, 2.0);
+    float intensity = compact_intensity * intensity_scale;
+
+    if (u_halo_pass > 0.5) {
+        if (a_magnitude > u_halo_threshold_magnitude) {
+            hide_star();
+            return;
+        }
+        radius *= u_halo_radius_scale;
+        intensity = u_halo_intensity
+            * pow(max(luminosity / 5.0, 1.0e-9), 0.35)
+            * intensity_scale;
+    }
+    if (selected && intensity <= 1.0e-6) {
+        intensity = 0.12;
+        radius = max(radius, u_faint_min_radius_px);
+    }
+    if (intensity <= 1.0e-6) {
+        hide_star();
+        return;
+    }
+
+    vec2 radius_clip = vec2(
+        (radius * 2.0) / max(u_viewport_rect.z, 1.0),
+        (radius * 2.0) / max(u_viewport_rect.w, 1.0)
+    );
+    vec2 corner_clip = vec2(a_corner.x * radius_clip.x, -a_corner.y * radius_clip.y);
+    gl_Position = vec4(vec2(x_normalized, y_normalized) + corner_clip, 0.0, 1.0);
+    v_local = a_corner;
+    float alt_sin = sin(clamp(altitude_deg, -5.0, 90.0) * 0.01745329252);
+    float horizon_weight = clamp(1.0 - 0.9 * max(alt_sin, 0.0), 0.1, 1.0);
+    float twinkle = 1.0;
+    if (u_twinkle_enabled > 0.5 && u_twinkle_amount > 1.0e-6 && intensity > 0.08) {
+        float phase = a_seed * 6.2831853 + u_time * (1.7 + fract(a_seed * 13.0) * 1.3);
+        float noise = 0.5 + 0.5 * sin(phase) * (0.65 + 0.35 * hash11(a_seed * 47.0 + floor(u_time * 8.0)));
+        float amp = (0.06 + 0.04 * clamp(intensity * 2.0, 0.0, 1.0)) * u_twinkle_amount * 1.6 * horizon_weight;
+        twinkle = clamp(1.0 - amp * (1.0 - noise), 0.88, 1.0);
+    }
+    v_intensity = intensity * twinkle;
+    v_rgb = mix(vec3(0.96, 0.97, 1.0), a_catalog_color, clamp(u_color_saturation, 0.0, 1.5));
+    v_brightness_weight = clamp(intensity * 1.8, 0.0, 1.0);
+}
+"""
+
     _COMPACT_FRAGMENT_SHADER = """
 #version 120
 varying vec2 v_local;
@@ -293,14 +566,16 @@ void main() {
     if (r2 > 1.0) {
         discard;
     }
-    float core = exp(-18.0 * r2);
-    float middle = 0.22 * exp(-5.0 * r2);
-    float wing = 0.025 * exp(-1.3 * r2);
-    float mid_weight = mix(0.15, 1.0, v_brightness_weight);
-    float wing_weight = mix(0.05, 0.85, v_brightness_weight * v_brightness_weight);
-    float mask = smoothstep(1.0, 0.72, r2);
-    float psf = (core + middle * mid_weight + wing * wing_weight) * mask;
-    if (psf < 0.002) {
+    float core = exp(-9.0 * r2);
+    float middle = 0.34 * exp(-3.2 * r2);
+    float wing = 0.07 * exp(-0.9 * r2);
+    float mid_weight = mix(0.48, 1.0, v_brightness_weight);
+    float wing_weight = mix(0.28, 0.9, v_brightness_weight * v_brightness_weight);
+    float edge_fade = max(0.0, 1.0 - r2);
+    float psf = (
+        core + middle * mid_weight + wing * wing_weight
+    ) * edge_fade * edge_fade;
+    if (psf < 0.0001) {
         discard;
     }
     vec3 rgb = v_rgb * (v_intensity * psf);
@@ -320,11 +595,19 @@ void main() {
     if (r2 > 1.0) {
         discard;
     }
-    float falloff = exp(-2.4 * r2) * (1.0 - smoothstep(0.55, 1.0, r2));
-    if (falloff < 0.004) {
+    float inner_glow = 0.52 * exp(-10.0 * r2);
+    float middle_glow = 0.26 * exp(-2.6 * r2);
+    float outer_aura = 0.055 * exp(-0.75 * r2);
+    float edge_fade = max(0.0, 1.0 - r2);
+    float falloff = (
+        inner_glow + middle_glow + outer_aura
+    ) * edge_fade * edge_fade;
+    if (falloff < 0.00001) {
         discard;
     }
-    vec3 rgb = v_rgb * (v_intensity * falloff * 0.55);
+    float white_core = clamp(inner_glow * 0.8, 0.0, 0.42);
+    vec3 halo_color = mix(v_rgb, vec3(1.0), white_core);
+    vec3 rgb = halo_color * (v_intensity * falloff);
     gl_FragColor = vec4(rgb, 1.0);
 }
 """
@@ -359,10 +642,13 @@ void main() {
         self._functions: QOpenGLFunctions_2_0 | None = None
         self._compact_program: QOpenGLShaderProgram | None = None
         self._halo_program: QOpenGLShaderProgram | None = None
+        self._catalog_program: QOpenGLShaderProgram | None = None
+        self._catalog_halo_program: QOpenGLShaderProgram | None = None
         self._tonemap_program: QOpenGLShaderProgram | None = None
         self._quad_buffer: QOpenGLBuffer | None = None
         self._instance_buffer: QOpenGLBuffer | None = None
         self._halo_instance_buffer: QOpenGLBuffer | None = None
+        self._catalog_buffer: QOpenGLBuffer | None = None
         self._tonemap_quad_buffer: QOpenGLBuffer | None = None
         self._hdr_fbo: QOpenGLFramebufferObject | None = None
         self._bv_texture: QOpenGLTexture | None = None
@@ -375,11 +661,12 @@ void main() {
         self._mag_lut_key: tuple[object, ...] | None = None
         self._bv_table = self._build_bv_color_table()
         self._use_instancing = False
-        self._vao: QOpenGLVertexArrayObject | None = None
         self._gl_vao_id: int = 0
-        self._require_vao = True
-        self._instancing_disabled_permanently = False
+        self._preexisting_gl_errors: tuple[int, ...] = ()
         self._gl = None
+        self._catalog_cpu_data = np.zeros((0, _CATALOG_FLOATS), dtype=np.float32)
+        self._catalog_generation = 0
+        self._catalog_gpu_generation = -1
         self.metrics = StarRendererMetrics()
         self._locations: dict[str, dict[str, int]] = {}
         self._default_fbo_handle = 0
@@ -403,10 +690,58 @@ void main() {
         return self._disabled_reason
 
     @property
+    def static_catalog_count(self) -> int:
+        return int(self._catalog_cpu_data.shape[0])
+
+    @property
+    def has_static_catalog(self) -> bool:
+        return self.static_catalog_count > 0
+
+    @property
+    def static_catalog_generation(self) -> int:
+        return self._catalog_generation
+
+    def set_static_catalog(self, stars: Sequence[StarCatalogInput]) -> None:
+        """Pack immutable celestial star data once; upload on the next GL draw."""
+        ordered_stars = tuple(sorted(stars, key=lambda star: (float(star.magnitude), int(star.star_id))))
+        data = np.zeros((len(ordered_stars), _CATALOG_FLOATS), dtype=np.float32)
+        color_cache: dict[str, np.ndarray] = {}
+        for index, star in enumerate(ordered_stars):
+            ra_rad = math.radians(float(star.ra_deg) % 360.0)
+            dec_rad = math.radians(max(-90.0, min(90.0, float(star.dec_deg))))
+            cos_dec = math.cos(dec_rad)
+            data[index, 0] = cos_dec * math.cos(ra_rad)
+            data[index, 1] = cos_dec * math.sin(ra_rad)
+            data[index, 2] = math.sin(dec_rad)
+            data[index, 3] = float(star.magnitude)
+            color_key = str(star.color or "#f8fbff")
+            rgb = color_cache.get(color_key)
+            if rgb is None:
+                rgb = _srgb_hex_to_linear(color_key)
+                color_cache[color_key] = rgb
+            data[index, 4:7] = rgb
+            data[index, 7] = float((int(star.star_id) * 2654435761) & 0xFFFFFFFF) / 4294967295.0
+            data[index, 8] = float(star.star_id)
+        self._catalog_cpu_data = data
+        self._catalog_generation += 1
+        self._catalog_gpu_generation = -1
+
+    def _static_halo_count(self) -> int:
+        if not self.has_static_catalog:
+            return 0
+        return int(
+            np.searchsorted(
+                self._catalog_cpu_data[:, 3],
+                float(self._settings.halo_threshold_magnitude),
+                side="right",
+            )
+        )
+
+    @property
     def backend_name(self) -> str:
-        if not self._available:
+        if not self._available or not self._use_instancing:
             return BACKEND_LEGACY
-        return BACKEND_INSTANCED if self._use_instancing else BACKEND_EXPANDED
+        return BACKEND_INSTANCED
 
     def diagnostics(self) -> StarRendererDiagnostics:
         hdr_complete = bool(self._hdr_fbo is not None and self._hdr_fbo.isValid() and self._hdr_status.startswith("complete"))
@@ -421,6 +756,8 @@ void main() {
             hdr_status=self._hdr_status,
             direct_additive_fallback=not hdr_complete and self._available,
             disabled_reason=self._disabled_reason,
+            vao_ready=self._gl_vao_id > 0,
+            preexisting_gl_errors=self._preexisting_gl_errors,
         )
 
     def initialize(self, functions: QOpenGLFunctions_2_0 | None, *, default_framebuffer: int = 0) -> bool:
@@ -433,49 +770,55 @@ void main() {
             return True
         self._functions = functions
         self._default_fbo_handle = int(default_framebuffer)
+        self._preexisting_gl_errors = ()
         try:
             self._gl = None
             self._capture_gl_info()
             self._compact_program = self._compile_program(self._COMPACT_VERTEX_SHADER, self._COMPACT_FRAGMENT_SHADER)
             self._halo_program = self._compile_program(self._COMPACT_VERTEX_SHADER, self._HALO_FRAGMENT_SHADER)
+            self._catalog_program = self._compile_program(
+                self._CATALOG_VERTEX_SHADER,
+                self._COMPACT_FRAGMENT_SHADER,
+            )
+            self._catalog_halo_program = self._compile_program(
+                self._CATALOG_VERTEX_SHADER,
+                self._HALO_FRAGMENT_SHADER,
+            )
             self._tonemap_program = self._compile_program(self._TONEMAP_VERTEX_SHADER, self._TONEMAP_FRAGMENT_SHADER)
             self._locations = {
                 "compact": self._resolve_program_locations(self._compact_program, instance=True),
                 "halo": self._resolve_program_locations(self._halo_program, instance=True),
+                "catalog": self._resolve_catalog_program_locations(self._catalog_program),
+                "catalog_halo": self._resolve_catalog_program_locations(self._catalog_halo_program),
                 "tonemap": self._resolve_tonemap_locations(self._tonemap_program),
             }
             self._quad_buffer = self._create_unit_quad_buffer()
             self._tonemap_quad_buffer = self._create_fullscreen_quad_buffer()
             self._instance_buffer = self._create_dynamic_buffer()
             self._halo_instance_buffer = self._create_dynamic_buffer()
+            self._catalog_buffer = self._create_static_buffer()
             self._bv_texture = self._create_bv_texture()
             try:
                 self._gl = self._import_opengl()
             except Exception as exc:
-                _LOGGER.warning("StarRenderer PyOpenGL import failed; expanded backend only: %s", exc)
-                self._gl = None
-            self._use_instancing = (
-                False if self._instancing_disabled_permanently else self._probe_instancing()
+                raise RuntimeError(f"PyOpenGL unavailable: {exc}") from exc
+            if not self._probe_instancing():
+                raise RuntimeError("required OpenGL instancing or VAO functions are unavailable")
+            self._use_instancing = True
+            # initializeGL() already has this QOpenGLWidget's context current.
+            # Creating the VAO here normally keeps it outside QPainter's
+            # native-paint boundary. Any older context error is recorded before
+            # PyOpenGL can misattribute it to glGenVertexArrays.
+            self._ensure_vao_bound()
+            self._release_vao_binding()
+            _LOGGER.info(
+                "StarRenderer backend=instanced vendor=%s renderer=%s version=%s glsl=%s vao=%s",
+                self._gl_vendor,
+                self._gl_renderer,
+                self._gl_version,
+                self._glsl_version,
+                self._gl_vao_id,
             )
-            # Defer VAO creation until the first draw() under beginNativePainting
-            # so the object is created with the paint drawable's context current.
-            self._vao = None
-            if not self._use_instancing:
-                _LOGGER.warning(
-                    "StarRenderer fallback backend=expanded "
-                    "(vendor=%s renderer=%s version=%s)",
-                    self._gl_vendor,
-                    self._gl_renderer,
-                    self._gl_version,
-                )
-            else:
-                _LOGGER.info(
-                    "StarRenderer backend=instanced vendor=%s renderer=%s version=%s glsl=%s",
-                    self._gl_vendor,
-                    self._gl_renderer,
-                    self._gl_version,
-                    self._glsl_version,
-                )
             self._rebuild_magnitude_lut(self._settings)
             self._available = True
             self._disabled_reason = ""
@@ -533,19 +876,19 @@ void main() {
         self._last_uploaded_halo_key = None
         self._gpu_has_compact = False
         self._gpu_has_halo = False
-        if self._vao is not None:
-            try:
-                self._vao.destroy()
-            except Exception:
-                pass
-            self._vao = None
         if self._gl_vao_id and self._gl is not None:
             try:
                 self._gl.glDeleteVertexArrays(1, [int(self._gl_vao_id)])
             except Exception:
                 pass
             self._gl_vao_id = 0
-        for program in (self._compact_program, self._halo_program, self._tonemap_program):
+        for program in (
+            self._compact_program,
+            self._halo_program,
+            self._catalog_program,
+            self._catalog_halo_program,
+            self._tonemap_program,
+        ):
             if program is None:
                 continue
             try:
@@ -558,8 +901,16 @@ void main() {
                 pass
         self._compact_program = None
         self._halo_program = None
+        self._catalog_program = None
+        self._catalog_halo_program = None
         self._tonemap_program = None
-        for buffer in (self._quad_buffer, self._instance_buffer, self._halo_instance_buffer, self._tonemap_quad_buffer):
+        for buffer in (
+            self._quad_buffer,
+            self._instance_buffer,
+            self._halo_instance_buffer,
+            self._catalog_buffer,
+            self._tonemap_quad_buffer,
+        ):
             if buffer is None:
                 continue
             try:
@@ -569,6 +920,7 @@ void main() {
         self._quad_buffer = None
         self._instance_buffer = None
         self._halo_instance_buffer = None
+        self._catalog_buffer = None
         self._tonemap_quad_buffer = None
         if self._bv_texture is not None:
             try:
@@ -580,6 +932,7 @@ void main() {
         self._hdr_status = "released"
         self._instance_capacity = 0
         self._halo_capacity = 0
+        self._catalog_gpu_generation = -1
         self._cpu_instances = np.zeros((0, _INSTANCE_FLOATS), dtype=np.float32)
         self._cpu_halo_instances = np.zeros((0, _INSTANCE_FLOATS), dtype=np.float32)
         self._locations = {}
@@ -593,6 +946,7 @@ void main() {
             "star_size",
             "magnitude_size_contrast",
             "limiting_magnitude",
+            "visible_magnitude_limit",
             "device_pixel_ratio",
             "halo_threshold_magnitude",
             "halo_intensity",
@@ -713,8 +1067,9 @@ void main() {
         *,
         viewport_rect: QRectF,
         device_pixel_ratio: float,
-        compact_instances: np.ndarray,
-        halo_instances: np.ndarray,
+        compact_instances: np.ndarray | None = None,
+        halo_instances: np.ndarray | None = None,
+        catalog_projection: StarCatalogProjection | None = None,
         settings: StarRendererSettings | None = None,
         default_framebuffer: int | None = None,
         geometry_content_key: tuple[object, ...] | None = None,
@@ -733,6 +1088,11 @@ void main() {
             return metrics
         if settings is not None:
             self.apply_settings(**{field: getattr(settings, field) for field in settings.__dataclass_fields__})
+        compact_instances = _EMPTY_INSTANCES if compact_instances is None else compact_instances
+        halo_instances = _EMPTY_INSTANCES if halo_instances is None else halo_instances
+        draw_static_catalog = catalog_projection is not None and self.has_static_catalog
+        metrics.candidate_count = self.static_catalog_count if draw_static_catalog else int(compact_instances.shape[0])
+        metrics.static_catalog_active = draw_static_catalog
         self._settings.device_pixel_ratio = max(1.0e-6, float(device_pixel_ratio))
         dpr = self._settings.device_pixel_ratio
         physical_w = max(1, int(math.ceil(viewport_rect.width() * dpr)))
@@ -776,7 +1136,9 @@ void main() {
         metrics.hdr_status = self._hdr_status
         metrics.direct_additive_fallback = not use_hdr
         content_key = geometry_content_key
-        if content_key is None:
+        if draw_static_catalog:
+            content_key = ("static_catalog", self._catalog_generation)
+        elif content_key is None:
             content_key = (
                 int(compact_instances.shape[0]),
                 int(halo_instances.shape[0]),
@@ -813,72 +1175,95 @@ void main() {
             functions.glBlendFunc(_GL_ONE, _GL_ONE)
             functions.glBlendEquation(_GL_FUNC_ADD)
 
-            metrics.visible_star_count = int(compact_instances.shape[0])
-            metrics.halo_star_count = int(halo_instances.shape[0])
             metrics.used_instancing = self._use_instancing
             metrics.backend = self.backend_name
 
-            if compact_instances.shape[0] > 0:
-                if skip_compact_upload:
+            if draw_static_catalog:
+                assert catalog_projection is not None
+                catalog_count = self.static_catalog_count
+                halo_count = self._static_halo_count()
+                metrics.visible_star_count = catalog_count
+                metrics.halo_star_count = halo_count
+                if self._catalog_gpu_generation == self._catalog_generation:
                     metrics.upload_skipped = True
                     metrics.cache_hit = True
                 else:
                     upload_start = perf_counter()
-                    self._upload_instances(self._instance_buffer, compact_instances, is_halo=False)
+                    self._upload_static_catalog()
                     metrics.upload_seconds += perf_counter() - upload_start
-                    metrics.uploaded_bytes += int(compact_instances.nbytes)
-                    self._last_uploaded_compact_key = content_key
-                    self._gpu_has_compact = True
-                # Keep CPU cache aligned with the arrays used for this draw.
-                if compact_instances is not self._cpu_instances[: compact_instances.shape[0]]:
-                    need = int(compact_instances.shape[0])
-                    if self._cpu_instances.shape[0] < need:
-                        self._cpu_instances = np.zeros((max(256, need * 2), _INSTANCE_FLOATS), dtype=np.float32)
-                    self._cpu_instances[:need] = compact_instances
+                    metrics.uploaded_bytes += int(self._catalog_cpu_data.nbytes)
                 draw_start = perf_counter()
-                self._draw_instance_pass(
-                    program_key="compact",
-                    program=self._compact_program,
-                    instance_buffer=self._instance_buffer,
-                    cpu_instances=self._cpu_instances[: int(compact_instances.shape[0])],
-                    count=int(compact_instances.shape[0]),
+                self._draw_catalog_pass(
+                    program_key="catalog",
+                    program=self._catalog_program,
+                    projection=catalog_projection,
+                    halo_pass=False,
+                    count=catalog_count,
                     viewport_rect=viewport_rect,
                 )
                 metrics.compact_draw_seconds = perf_counter() - draw_start
                 metrics.draw_call_count += 1
-
-            if halo_instances.shape[0] > 0:
-                if skip_halo_upload and skip_compact_upload:
-                    metrics.upload_skipped = True
-                    metrics.cache_hit = True
-                else:
-                    upload_start = perf_counter()
-                    self._upload_instances(self._halo_instance_buffer, halo_instances, is_halo=True)
-                    metrics.upload_seconds += perf_counter() - upload_start
-                    metrics.uploaded_bytes += int(halo_instances.nbytes)
-                    self._last_uploaded_halo_key = content_key
-                    self._gpu_has_halo = True
-                if halo_instances is not self._cpu_halo_instances[: halo_instances.shape[0]]:
-                    need = int(halo_instances.shape[0])
-                    if self._cpu_halo_instances.shape[0] < need:
-                        self._cpu_halo_instances = np.zeros(
-                            (max(64, need * 2), _INSTANCE_FLOATS), dtype=np.float32
-                        )
-                    self._cpu_halo_instances[:need] = halo_instances
-                draw_start = perf_counter()
-                self._draw_instance_pass(
-                    program_key="halo",
-                    program=self._halo_program,
-                    instance_buffer=self._halo_instance_buffer,
-                    cpu_instances=self._cpu_halo_instances[: int(halo_instances.shape[0])],
-                    count=int(halo_instances.shape[0]),
-                    viewport_rect=viewport_rect,
-                )
-                metrics.halo_draw_seconds = perf_counter() - draw_start
-                metrics.draw_call_count += 1
+                if halo_count > 0:
+                    draw_start = perf_counter()
+                    self._draw_catalog_pass(
+                        program_key="catalog_halo",
+                        program=self._catalog_halo_program,
+                        projection=catalog_projection,
+                        halo_pass=True,
+                        count=halo_count,
+                        viewport_rect=viewport_rect,
+                    )
+                    metrics.halo_draw_seconds = perf_counter() - draw_start
+                    metrics.draw_call_count += 1
             else:
-                self._gpu_has_halo = False
-                self._last_uploaded_halo_key = content_key
+                metrics.visible_star_count = int(compact_instances.shape[0])
+                metrics.halo_star_count = int(halo_instances.shape[0])
+                if compact_instances.shape[0] > 0:
+                    if skip_compact_upload:
+                        metrics.upload_skipped = True
+                        metrics.cache_hit = True
+                    else:
+                        upload_start = perf_counter()
+                        self._upload_instances(self._instance_buffer, compact_instances, is_halo=False)
+                        metrics.upload_seconds += perf_counter() - upload_start
+                        metrics.uploaded_bytes += int(compact_instances.nbytes)
+                        self._last_uploaded_compact_key = content_key
+                        self._gpu_has_compact = True
+                    draw_start = perf_counter()
+                    self._draw_instance_pass(
+                        program_key="compact",
+                        program=self._compact_program,
+                        instance_buffer=self._instance_buffer,
+                        count=int(compact_instances.shape[0]),
+                        viewport_rect=viewport_rect,
+                    )
+                    metrics.compact_draw_seconds = perf_counter() - draw_start
+                    metrics.draw_call_count += 1
+
+                if halo_instances.shape[0] > 0:
+                    if skip_halo_upload and skip_compact_upload:
+                        metrics.upload_skipped = True
+                        metrics.cache_hit = True
+                    else:
+                        upload_start = perf_counter()
+                        self._upload_instances(self._halo_instance_buffer, halo_instances, is_halo=True)
+                        metrics.upload_seconds += perf_counter() - upload_start
+                        metrics.uploaded_bytes += int(halo_instances.nbytes)
+                        self._last_uploaded_halo_key = content_key
+                        self._gpu_has_halo = True
+                    draw_start = perf_counter()
+                    self._draw_instance_pass(
+                        program_key="halo",
+                        program=self._halo_program,
+                        instance_buffer=self._halo_instance_buffer,
+                        count=int(halo_instances.shape[0]),
+                        viewport_rect=viewport_rect,
+                    )
+                    metrics.halo_draw_seconds = perf_counter() - draw_start
+                    metrics.draw_call_count += 1
+                else:
+                    self._gpu_has_halo = False
+                    self._last_uploaded_halo_key = content_key
 
             if use_hdr:
                 QOpenGLFramebufferObject.bindDefault()
@@ -981,7 +1366,8 @@ void main() {
             f"gpu={(m.compact_draw_seconds + m.halo_draw_seconds + m.tonemap_seconds) * 1000.0:.2f}ms "
             f"draws={m.draw_call_count} bytes={m.uploaded_bytes} "
             f"hdr={int(m.hdr_active)} hdr_status={m.hdr_status or '-'} "
-            f"direct_additive={int(m.direct_additive_fallback)}"
+            f"direct_additive={int(m.direct_additive_fallback)} "
+            f"static_catalog={int(m.static_catalog_active)}"
         )
 
     @staticmethod
@@ -997,6 +1383,7 @@ void main() {
             round(settings.star_size, 4),
             round(settings.magnitude_size_contrast, 4),
             round(settings.limiting_magnitude, 4),
+            round(settings.visible_magnitude_limit, 4),
             round(settings.device_pixel_ratio, 4),
             round(settings.halo_threshold_magnitude, 4),
             round(settings.halo_intensity, 4),
@@ -1043,25 +1430,25 @@ void main() {
 
     @staticmethod
     def _compute_appearance(magnitude: float, settings: StarRendererSettings) -> StarAppearanceSample:
-        fov = max(0.7, float(settings.field_width_deg))
-        zoom_exposure = math.pow(60.0 / fov, 0.8)
         contrast = max(0.4, min(2.0, float(settings.magnitude_size_contrast)))
         dpr = max(1.0e-6, float(settings.device_pixel_ratio))
-        # Stellarium-inspired luminosity proxy, then calibrated so mag 0 at FOV 60
-        # yields compact_intensity ≈ 5 under default contrast.
-        ln_l = -0.921034 * (float(magnitude) + 12.12331) + math.log(max(1.0e-6, zoom_exposure))
-        raw_l = math.exp(ln_l)
-        calibration = 5.0 / max(1.0e-12, math.exp(-0.921034 * 12.12331))
-        luminosity = raw_l * calibration
-        intensity = luminosity * (0.7 + 0.3 * contrast)
-        size_flux = math.pow(10.0, -0.4 * float(magnitude) * (0.55 + 0.45 * contrast))
+        # Compress physical stellar flux into the display range. A physical
+        # 2.512x-per-magnitude curve makes ordinary catalog stars effectively
+        # black on a textured sky; this perceptual slope keeps them legible.
+        adaptation = max(0.0, float(settings.visible_magnitude_limit) - 5.0)
+        display_mag = float(magnitude) - adaptation
+        magnitude_slope = 0.08 + 0.03 * contrast
+        luminosity = 5.0 * math.pow(10.0, -magnitude_slope * display_mag)
+        intensity = luminosity
+        size_flux = math.pow(10.0, -0.4 * display_mag * (0.32 + 0.28 * contrast))
+        fov_scale = star_fov_size_scale(settings.field_width_deg)
         # Logical size curve, then convert to physical framebuffer pixels for stability rules.
-        raw_logical = (0.75 + 3.1 * math.pow(max(size_flux, 1.0e-9), 0.32)) * max(
+        raw_logical = (1.65 + 4.35 * math.pow(max(size_flux, 1.0e-9), 0.28)) * max(
             0.4, min(2.5, float(settings.star_size))
-        )
+        ) * fov_scale
         raw_physical = raw_logical * dpr
-        omit_physical = float(settings.faint_omit_radius_px) * dpr
-        min_physical = float(settings.faint_min_radius_px) * dpr
+        omit_physical = max(STAR_FOV_OMIT_RADIUS_PX, float(settings.faint_omit_radius_px) * fov_scale) * dpr
+        min_physical = max(STAR_FOV_MIN_RADIUS_PX, float(settings.faint_min_radius_px) * fov_scale) * dpr
         if raw_physical < omit_physical and magnitude > settings.limiting_magnitude + 0.5:
             return StarAppearanceSample(
                 0.0,
@@ -1077,11 +1464,11 @@ void main() {
         if working_physical < omit_physical:
             working_physical = omit_physical
         if working_physical < min_physical:
-            intensity *= math.pow(working_physical / min_physical, 3.0)
+            intensity *= math.pow(working_physical / min_physical, 1.35)
             radius_physical = min_physical
         else:
             radius_physical = working_physical
-        compress_at = float(settings.bright_compress_radius_px) * dpr
+        compress_at = max(STAR_FOV_COMPRESS_RADIUS_PX, float(settings.bright_compress_radius_px) * fov_scale) * dpr
         if radius_physical > compress_at:
             radius_physical = compress_at + math.sqrt(radius_physical - compress_at)
         radius_logical = radius_physical / dpr
@@ -1179,6 +1566,60 @@ void main() {
             raise RuntimeError("Star shader missing attributes: " + ", ".join(missing))
         return {name: int(location) for name, location in names.items()}
 
+    def _resolve_catalog_program_locations(self, program: QOpenGLShaderProgram) -> dict[str, int]:
+        names = {
+            name: (
+                program.attributeLocation(name)
+                if name.startswith("a_")
+                else program.uniformLocation(name)
+            )
+            for name in (
+                "a_corner",
+                "a_equatorial",
+                "a_magnitude",
+                "a_catalog_color",
+                "a_seed",
+                "a_star_id",
+                "u_viewport_rect",
+                "u_dpr",
+                "u_time",
+                "u_twinkle_amount",
+                "u_twinkle_enabled",
+                "u_equatorial_to_horizon_row0",
+                "u_equatorial_to_horizon_row1",
+                "u_equatorial_to_horizon_row2",
+                "u_camera_forward",
+                "u_camera_up",
+                "u_camera_right",
+                "u_half_width_rad",
+                "u_half_height_rad",
+                "u_projection_margin",
+                "u_visible_magnitude_limit",
+                "u_limiting_magnitude",
+                "u_star_brightness",
+                "u_star_size",
+                "u_fov_size_scale",
+                "u_magnitude_contrast",
+                "u_color_saturation",
+                "u_faint_min_radius_px",
+                "u_faint_omit_radius_px",
+                "u_bright_compress_radius_px",
+                "u_halo_threshold_magnitude",
+                "u_halo_intensity",
+                "u_halo_radius_scale",
+                "u_halo_pass",
+                "u_ground_enabled",
+                "u_selected_star_id",
+                "u_moon_dim",
+                "u_moon_focus_zoom",
+                "u_moon_focus_extreme_zoom",
+            )
+        }
+        missing = [name for name, location in names.items() if location < 0]
+        if missing:
+            raise RuntimeError("Catalog star shader missing locations: " + ", ".join(missing))
+        return {name: int(location) for name, location in names.items()}
+
     def _resolve_tonemap_locations(self, program: QOpenGLShaderProgram) -> dict[str, int]:
         names = {
             "a_pos": program.attributeLocation("a_pos"),
@@ -1245,6 +1686,13 @@ void main() {
         buffer.setUsagePattern(QOpenGLBuffer.UsagePattern.StreamDraw)
         return buffer
 
+    def _create_static_buffer(self) -> QOpenGLBuffer:
+        buffer = QOpenGLBuffer(QOpenGLBuffer.Type.VertexBuffer)
+        if not buffer.create():
+            raise RuntimeError("Failed to create static star catalog buffer")
+        buffer.setUsagePattern(QOpenGLBuffer.UsagePattern.StaticDraw)
+        return buffer
+
     def _create_bv_texture(self) -> QOpenGLTexture:
         image = np.zeros((_BV_TABLE_SIZE, 1, 4), dtype=np.float32)
         image[:, 0, 0:3] = self._bv_table
@@ -1294,8 +1742,15 @@ void main() {
             if gl is None:
                 self._gl = self._import_opengl()
                 gl = self._gl
-            return callable(getattr(gl, "glDrawArraysInstanced", None)) and callable(
-                getattr(gl, "glVertexAttribDivisor", None)
+            return all(
+                callable(getattr(gl, name, None))
+                for name in (
+                    "glDrawArraysInstanced",
+                    "glVertexAttribDivisor",
+                    "glGenVertexArrays",
+                    "glBindVertexArray",
+                    "glDeleteVertexArrays",
+                )
             )
         except Exception as exc:
             _LOGGER.warning("StarRenderer instancing probe failed: %s", exc)
@@ -1352,13 +1807,133 @@ void main() {
             buffer.write(0, payload, len(payload))
         buffer.release()
 
+    def _upload_static_catalog(self) -> None:
+        buffer = self._catalog_buffer
+        if buffer is None:
+            raise RuntimeError("static star catalog buffer is unavailable")
+        payload = bytes(self._catalog_cpu_data)
+        buffer.bind()
+        buffer.allocate(len(payload))
+        if payload:
+            buffer.write(0, payload, len(payload))
+        buffer.release()
+        self._catalog_gpu_generation = self._catalog_generation
+
+    def _draw_catalog_pass(
+        self,
+        *,
+        program_key: str,
+        program: QOpenGLShaderProgram | None,
+        projection: StarCatalogProjection,
+        halo_pass: bool,
+        count: int,
+        viewport_rect: QRectF,
+    ) -> None:
+        if program is None or self._catalog_buffer is None or self._quad_buffer is None or count <= 0:
+            return
+        functions = self._functions
+        gl = self._gl
+        assert functions is not None and gl is not None
+        locations = self._locations[program_key]
+        matrix = projection.equatorial_to_horizon_matrix
+
+        program.bind()
+        functions.glUniform4f(
+            locations["u_viewport_rect"],
+            float(viewport_rect.x()),
+            float(viewport_rect.y()),
+            float(viewport_rect.width()),
+            float(viewport_rect.height()),
+        )
+        functions.glUniform1f(locations["u_dpr"], float(self._settings.device_pixel_ratio))
+        functions.glUniform1f(locations["u_time"], float(self._settings.time_seconds))
+        functions.glUniform1f(locations["u_twinkle_amount"], float(self._settings.twinkle_amount))
+        functions.glUniform1f(
+            locations["u_twinkle_enabled"],
+            1.0 if self._settings.interaction_stable else 0.0,
+        )
+        for uniform_name, vector in (
+            ("u_equatorial_to_horizon_row0", matrix[0]),
+            ("u_equatorial_to_horizon_row1", matrix[1]),
+            ("u_equatorial_to_horizon_row2", matrix[2]),
+            ("u_camera_forward", projection.camera_forward),
+            ("u_camera_up", projection.camera_up),
+            ("u_camera_right", projection.camera_right),
+        ):
+            functions.glUniform3f(
+                locations[uniform_name],
+                float(vector[0]),
+                float(vector[1]),
+                float(vector[2]),
+            )
+        scalar_uniforms = {
+            "u_half_width_rad": projection.half_width_rad,
+            "u_half_height_rad": projection.half_height_rad,
+            "u_projection_margin": projection.projection_margin,
+            "u_visible_magnitude_limit": projection.visible_magnitude_limit,
+            "u_limiting_magnitude": self._settings.limiting_magnitude,
+            "u_star_brightness": self._settings.star_brightness,
+            "u_star_size": self._settings.star_size,
+            "u_fov_size_scale": star_fov_size_scale(self._settings.field_width_deg),
+            "u_magnitude_contrast": self._settings.magnitude_size_contrast,
+            "u_color_saturation": self._settings.color_saturation,
+            "u_faint_min_radius_px": self._settings.faint_min_radius_px,
+            "u_faint_omit_radius_px": self._settings.faint_omit_radius_px,
+            "u_bright_compress_radius_px": self._settings.bright_compress_radius_px,
+            "u_halo_threshold_magnitude": self._settings.halo_threshold_magnitude,
+            "u_halo_intensity": self._settings.halo_intensity,
+            "u_halo_radius_scale": self._settings.halo_radius_scale,
+            "u_halo_pass": 1.0 if halo_pass else 0.0,
+            "u_ground_enabled": 1.0 if projection.ground_enabled else 0.0,
+            "u_selected_star_id": float(projection.selected_star_id),
+            "u_moon_dim": max(0.05, min(1.0, float(self._settings.moon_focus_dim))),
+            "u_moon_focus_zoom": max(0.0, min(1.0, float(projection.moon_focus_zoom))),
+            "u_moon_focus_extreme_zoom": max(
+                0.0,
+                min(1.0, float(projection.moon_focus_extreme_zoom)),
+            ),
+        }
+        for uniform_name, value in scalar_uniforms.items():
+            functions.glUniform1f(locations[uniform_name], float(value))
+
+        self._ensure_vao_bound()
+        try:
+            corner_loc = locations["a_corner"]
+            self._quad_buffer.bind()
+            program.enableAttributeArray(corner_loc)
+            program.setAttributeBuffer(corner_loc, _GL_FLOAT, 0, 2, 8)
+            gl.glVertexAttribDivisor(int(corner_loc), 0)
+
+            self._catalog_buffer.bind()
+            for name, size, offset in (
+                ("a_equatorial", 3, 0),
+                ("a_magnitude", 1, 12),
+                ("a_catalog_color", 3, 16),
+                ("a_seed", 1, 28),
+                ("a_star_id", 1, 32),
+            ):
+                location = locations[name]
+                program.enableAttributeArray(location)
+                program.setAttributeBuffer(location, _GL_FLOAT, offset, size, _CATALOG_STRIDE)
+                gl.glVertexAttribDivisor(int(location), 1)
+            gl.glDrawArraysInstanced(_GL_TRIANGLES, 0, 6, count)
+            for name in ("a_equatorial", "a_magnitude", "a_catalog_color", "a_seed", "a_star_id"):
+                location = locations[name]
+                program.disableAttributeArray(location)
+                gl.glVertexAttribDivisor(int(location), 0)
+            program.disableAttributeArray(corner_loc)
+            self._catalog_buffer.release()
+            self._quad_buffer.release()
+        finally:
+            self._release_vao_binding()
+            program.release()
+
     def _draw_instance_pass(
         self,
         *,
         program_key: str,
         program: QOpenGLShaderProgram | None,
         instance_buffer: QOpenGLBuffer | None,
-        cpu_instances: np.ndarray,
         count: int,
         viewport_rect: QRectF,
     ) -> None:
@@ -1369,95 +1944,87 @@ void main() {
         assert functions is not None and gl is not None
         locations = self._locations[program_key]
         program.bind()
-        program.setUniformValue(
+        functions.glUniform4f(
             locations["u_viewport_rect"],
             float(viewport_rect.x()),
             float(viewport_rect.y()),
             float(viewport_rect.width()),
             float(viewport_rect.height()),
         )
-        program.setUniformValue(locations["u_dpr"], float(self._settings.device_pixel_ratio))
-        program.setUniformValue(locations["u_time"], float(self._settings.time_seconds))
-        program.setUniformValue(locations["u_twinkle_amount"], float(self._settings.twinkle_amount))
-        program.setUniformValue(
+        functions.glUniform1f(locations["u_dpr"], float(self._settings.device_pixel_ratio))
+        functions.glUniform1f(locations["u_time"], float(self._settings.time_seconds))
+        functions.glUniform1f(locations["u_twinkle_amount"], float(self._settings.twinkle_amount))
+        functions.glUniform1f(
             locations["u_twinkle_enabled"],
             1.0 if self._settings.interaction_stable else 0.0,
         )
 
-        if self._use_instancing:
-            try:
-                self._draw_instanced(program, locations, instance_buffer, count, gl)
-            except Exception as exc:
-                _LOGGER.warning(
-                    "StarRenderer instanced draw failed (%s); permanently falling back to expanded",
-                    exc,
-                )
-                self._use_instancing = False
-                self._instancing_disabled_permanently = True
-                self._draw_expanded(program, locations, cpu_instances, count, gl)
-        else:
-            self._draw_expanded(program, locations, cpu_instances, count, gl)
+        if not self._use_instancing:
+            raise RuntimeError("instanced star renderer is not initialized")
+        self._draw_instanced(program, locations, instance_buffer, count, gl)
         program.release()
 
     def _ensure_vao_bound(self) -> None:
-        """Bind a VAO when required; no-op on compatibility profiles that allow non-VAO draws."""
+        """Create and bind the renderer VAO without misattributing stale GL errors."""
         gl = self._gl
-        if self._gl_vao_id and gl is not None:
-            try:
-                gl.glBindVertexArray(int(self._gl_vao_id))
-                return
-            except Exception:
-                self._gl_vao_id = 0
-        if self._vao is not None and self._vao.isCreated():
-            if self._vao.bind():
-                return
-            try:
-                self._vao.destroy()
-            except Exception:
-                pass
-            self._vao = None
-        # Prefer raw GL VAOs — QOpenGLVertexArrayObject.bind() is unreliable with
-        # QPainter beginNativePainting on some NVIDIA/Qt6 setups.
-        if gl is not None and callable(getattr(gl, "glGenVertexArrays", None)):
-            try:
-                generated = gl.glGenVertexArrays(1)
-                vao_id = int(generated[0] if isinstance(generated, (list, tuple)) else generated)
-                gl.glBindVertexArray(vao_id)
-                self._gl_vao_id = vao_id
-                return
-            except Exception as exc:
-                _LOGGER.warning("StarRenderer glGenVertexArrays failed: %s", exc)
+        if gl is None:
+            raise RuntimeError("OpenGL bindings unavailable while creating star VAO")
+
+        # PyOpenGL checks the complete context error state after a wrapped call.
+        # Qt or another earlier GL operation can leave an unrelated error
+        # pending, which previously made a successful glGenVertexArrays look
+        # like it failed. Preserve that evidence, clear the boundary, and
+        # validate the VAO calls against a clean error state.
+        stale_errors = self._consume_gl_errors()
+        if stale_errors:
+            first_observation = not self._preexisting_gl_errors
+            self._preexisting_gl_errors = tuple(dict.fromkeys((*self._preexisting_gl_errors, *stale_errors)))
+            if first_observation:
+                _LOGGER.warning(
+                    "StarRenderer found pre-existing OpenGL error(s) before a VAO operation: %s",
+                    ", ".join(f"0x{error:04x}" for error in stale_errors),
+                )
+
+        if self._gl_vao_id:
+            gl.glBindVertexArray(int(self._gl_vao_id))
+            bind_errors = self._consume_gl_errors()
+            if bind_errors:
+                raise RuntimeError(
+                    "OpenGL error(s) binding star VAO: "
+                    + ", ".join(f"0x{error:04x}" for error in bind_errors)
+                )
+            return
+
+        vao_id = 0
         try:
-            self._vao = QOpenGLVertexArrayObject()
-            if self._vao.create() and self._vao.bind():
-                return
-        except Exception as exc:
-            _LOGGER.warning("StarRenderer Qt VAO create/bind failed: %s", exc)
-        self._vao = None
-        self._gl_vao_id = 0
-        # Compatibility-profile contexts can draw without a VAO.
-        self._require_vao = False
-        self._use_instancing = False
-        self._instancing_disabled_permanently = True
-        _LOGGER.warning("StarRenderer drawing without VAO (compat fallback; expanded backend)")
+            generated = gl.glGenVertexArrays(1)
+            vao_id = int(generated[0] if isinstance(generated, (list, tuple)) else generated)
+            if vao_id <= 0:
+                raise RuntimeError(f"glGenVertexArrays returned invalid id {vao_id}")
+            gl.glBindVertexArray(vao_id)
+            creation_errors = self._consume_gl_errors()
+            if creation_errors:
+                raise RuntimeError(
+                    "OpenGL error(s) creating star VAO: "
+                    + ", ".join(f"0x{error:04x}" for error in creation_errors)
+                )
+        except Exception:
+            if vao_id > 0:
+                try:
+                    gl.glDeleteVertexArrays(1, [vao_id])
+                except Exception:
+                    pass
+            raise
+        self._gl_vao_id = vao_id
 
     def _release_vao_binding(self) -> None:
         if self._gl_vao_id and self._gl is not None:
-            try:
-                self._gl.glBindVertexArray(0)
-            except Exception:
-                pass
-            return
-        if self._vao is not None:
-            try:
-                self._vao.release()
-            except Exception:
-                pass
+            self._gl.glBindVertexArray(0)
 
     def _draw_instanced(self, program, locations, instance_buffer, count, gl) -> None:
         assert self._quad_buffer is not None
         self._ensure_vao_bound()
-        if not self._require_vao and not self._gl_vao_id and self._vao is None:
+        if not self._gl_vao_id:
             raise RuntimeError("instanced draw requires a VAO")
         try:
             corner_loc = locations["a_corner"]
@@ -1477,46 +2044,6 @@ void main() {
         finally:
             self._release_vao_binding()
 
-    def _draw_expanded(self, program, locations, instances, count, gl) -> None:
-        """Fallback: expand instances on CPU into one triangle list, one draw call."""
-        if instances is None or int(getattr(instances, "shape", [0])[0]) < count:
-            raise RuntimeError(
-                f"expanded draw missing CPU instances (have={0 if instances is None else instances.shape[0]} need={count})"
-            )
-        corners = np.array(
-            ((-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)),
-            dtype=np.float32,
-        )
-        expanded = np.empty((count * 6, _INSTANCE_FLOATS + 2), dtype=np.float32)
-        packed = np.asarray(instances[:count], dtype=np.float32)
-        for corner_index, corner in enumerate(corners):
-            expanded[corner_index::6, 0:2] = corner
-            expanded[corner_index::6, 2:] = packed
-        scratch = QOpenGLBuffer(QOpenGLBuffer.Type.VertexBuffer)
-        if not scratch.create():
-            raise RuntimeError("Failed to create expanded star buffer")
-        scratch.setUsagePattern(QOpenGLBuffer.UsagePattern.StreamDraw)
-        self._ensure_vao_bound()
-        try:
-            scratch.bind()
-            payload = bytes(expanded)
-            scratch.allocate(len(payload))
-            scratch.write(0, payload, len(payload))
-            stride = (_INSTANCE_FLOATS + 2) * 4
-            program.enableAttributeArray(locations["a_corner"])
-            program.setAttributeBuffer(locations["a_corner"], _GL_FLOAT, 0, 2, stride)
-            self._bind_expanded_attributes(program, locations, stride)
-            gl.glDrawArrays(_GL_TRIANGLES, 0, count * 6)
-            self._disable_instance_attributes(program, locations, gl)
-            program.disableAttributeArray(locations["a_corner"])
-            scratch.release()
-        finally:
-            try:
-                scratch.destroy()
-            except Exception:
-                pass
-            self._release_vao_binding()
-
     def _bind_instance_attributes(self, program, locations, gl, *, divisor: int) -> None:
         # Instance float layout (40 bytes). flags at offset 36 is CPU/metadata padding
         # and is intentionally not bound (unused by the compact PSF shader).
@@ -1533,20 +2060,6 @@ void main() {
             program.enableAttributeArray(loc)
             program.setAttributeBuffer(loc, _GL_FLOAT, offset, size, _INSTANCE_STRIDE)
             gl.glVertexAttribDivisor(loc, divisor)
-
-    def _bind_expanded_attributes(self, program, locations, stride: int) -> None:
-        specs = (
-            ("a_center", 2, 8),
-            ("a_radius", 1, 16),
-            ("a_intensity", 1, 20),
-            ("a_color", 3, 24),
-            ("a_altitude", 1, 36),
-            ("a_seed", 1, 40),
-        )
-        for name, size, offset in specs:
-            loc = locations[name]
-            program.enableAttributeArray(loc)
-            program.setAttributeBuffer(loc, _GL_FLOAT, offset, size, stride)
 
     def _disable_instance_attributes(self, program, locations, gl) -> None:
         for name in ("a_center", "a_radius", "a_intensity", "a_color", "a_altitude", "a_seed"):
@@ -1567,8 +2080,8 @@ void main() {
         self._tonemap_program.bind()
         functions.glActiveTexture(_GL_TEXTURE0)
         functions.glBindTexture(_GL_TEXTURE_2D, int(self._hdr_fbo.texture()))
-        self._tonemap_program.setUniformValue(locations["u_hdr"], 0)
-        self._tonemap_program.setUniformValue(locations["u_exposure"], float(self._settings.hdr_exposure))
+        functions.glUniform1i(locations["u_hdr"], 0)
+        functions.glUniform1f(locations["u_exposure"], float(self._settings.hdr_exposure))
         functions.glBlendFunc(_GL_ONE, _GL_ONE)
         self._tonemap_quad_buffer.bind()
         self._tonemap_program.enableAttributeArray(locations["a_pos"])
@@ -1590,13 +2103,23 @@ void main() {
                 pass
             self._hdr_fbo = None
 
-    def _check_gl_error(self, context: str) -> None:
+    def _consume_gl_errors(self, *, limit: int = 16) -> tuple[int, ...]:
         functions = self._functions
         if functions is None:
-            return
-        error = int(functions.glGetError())
-        if error:
-            raise RuntimeError(f"OpenGL error in {context}: 0x{error:04x}")
+            return ()
+        errors: list[int] = []
+        for _ in range(max(1, int(limit))):
+            error = int(functions.glGetError())
+            if error == 0:
+                break
+            errors.append(error)
+        return tuple(errors)
+
+    def _check_gl_error(self, context: str) -> None:
+        errors = self._consume_gl_errors()
+        if errors:
+            formatted = ", ".join(f"0x{error:04x}" for error in errors)
+            raise RuntimeError(f"OpenGL error(s) in {context}: {formatted}")
 
     @staticmethod
     def _get_integerv(gl, enum_value, count: int) -> list[int]:

@@ -23,6 +23,7 @@ from photometry_app.core.target_field_animation import (
     DEFAULT_TARGET_FIELD_DURATION_SECONDS,
     DEFAULT_TARGET_FIELD_FOV_PX,
     DEFAULT_TARGET_FIELD_FPS,
+    DEFAULT_TARGET_FIELD_PLOT_LABEL_FONT_SIZE,
     DEFAULT_TARGET_FIELD_SCALE_PERCENT,
     DEFAULT_TARGET_FIELD_STRETCH_MODE,
     TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
@@ -76,6 +77,7 @@ from photometry_app.core.target_field_animation import (
     normalize_target_field_marker_line_width,
     normalize_target_field_marker_style,
     normalize_target_field_plot_aspect,
+    normalize_target_field_plot_label_font_size,
     normalize_target_field_scale_percent,
     normalize_target_field_star_aspect,
     normalize_target_field_stretch_mode,
@@ -90,6 +92,7 @@ from photometry_app.core.target_field_animation import (
     target_field_frame_duration_ms,
     target_field_marker_extents,
     target_field_progress_stage_title,
+    target_field_scaled_plot_label_font_size,
 )
 
 
@@ -175,6 +178,14 @@ class TargetFieldAnimationTest(unittest.TestCase):
         self.assertEqual(defaults.plot_aspect, "16:4")
         self.assertEqual(defaults.star_fit, "fill")
         self.assertEqual(defaults.plot_fit, "stretch")
+        self.assertEqual(defaults.plot_label_font_size, DEFAULT_TARGET_FIELD_PLOT_LABEL_FONT_SIZE)
+        self.assertEqual(defaults.plot_label_font_size, 18)
+        self.assertEqual(normalize_target_field_plot_label_font_size(None), 18)
+        self.assertEqual(normalize_target_field_plot_label_font_size(24), 24)
+        self.assertEqual(normalize_target_field_plot_label_font_size(2), 8)
+        self.assertEqual(normalize_target_field_plot_label_font_size(99), 48)
+        self.assertAlmostEqual(target_field_scaled_plot_label_font_size(18, 960, 1920), 9.0)
+        self.assertAlmostEqual(target_field_scaled_plot_label_font_size(18, 1920, 1920), 18.0)
         self.assertFalse(defaults.save_star_separately)
         self.assertFalse(defaults.save_plot_separately)
         self.assertEqual(normalize_target_field_video_width(1919), 1920)
@@ -796,6 +807,7 @@ class TargetFieldAnimationTest(unittest.TestCase):
                 renderer.assert_called_once()
                 self.assertIsNone(renderer.call_args.kwargs["highlight_x"])
                 self.assertIsNone(renderer.call_args.kwargs["highlight_y"])
+                self.assertEqual(renderer.call_args.kwargs["label_font_size"], 18)
                 frames = gif_export.call_args.args[0]
                 self.assertEqual(len(frames), 2)
                 self.assertAlmostEqual(

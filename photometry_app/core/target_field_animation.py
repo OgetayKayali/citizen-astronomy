@@ -148,6 +148,9 @@ DEFAULT_TARGET_FIELD_STAR_ASPECT = "16:5"
 DEFAULT_TARGET_FIELD_PLOT_ASPECT = "16:4"
 DEFAULT_TARGET_FIELD_STAR_FIT = TARGET_FIELD_FIT_FILL
 DEFAULT_TARGET_FIELD_PLOT_FIT = TARGET_FIELD_FIT_STRETCH
+DEFAULT_TARGET_FIELD_PLOT_LABEL_FONT_SIZE = 18
+MIN_TARGET_FIELD_PLOT_LABEL_FONT_SIZE = 8
+MAX_TARGET_FIELD_PLOT_LABEL_FONT_SIZE = 48
 DEFAULT_TARGET_FIELD_VIDEO_WIDTH = 1920
 DEFAULT_TARGET_FIELD_VIDEO_HEIGHT = 1080
 MIN_TARGET_FIELD_VIDEO_WIDTH = 640
@@ -202,6 +205,7 @@ class TargetFieldAnimationExportOptions:
     plot_aspect: str = DEFAULT_TARGET_FIELD_PLOT_ASPECT
     star_fit: str = DEFAULT_TARGET_FIELD_STAR_FIT
     plot_fit: str = DEFAULT_TARGET_FIELD_PLOT_FIT
+    plot_label_font_size: int = DEFAULT_TARGET_FIELD_PLOT_LABEL_FONT_SIZE
     save_star_separately: bool = False
     save_plot_separately: bool = False
 
@@ -225,6 +229,7 @@ class TargetFieldAnimationExportOptions:
             plot_aspect=normalize_target_field_plot_aspect(self.plot_aspect),
             star_fit=normalize_target_field_fit_mode(self.star_fit, default=DEFAULT_TARGET_FIELD_STAR_FIT),
             plot_fit=normalize_target_field_fit_mode(self.plot_fit, default=DEFAULT_TARGET_FIELD_PLOT_FIT),
+            plot_label_font_size=normalize_target_field_plot_label_font_size(self.plot_label_font_size),
             save_star_separately=bool(self.save_star_separately),
             save_plot_separately=bool(self.save_plot_separately),
         )
@@ -410,6 +415,38 @@ def normalize_target_field_plot_aspect(
     if fallback is not None and fallback != TARGET_FIELD_ASPECT_REMAINING:
         return fallback
     return DEFAULT_TARGET_FIELD_PLOT_ASPECT
+
+
+def normalize_target_field_plot_label_font_size(
+    value: object,
+    default: int = DEFAULT_TARGET_FIELD_PLOT_LABEL_FONT_SIZE,
+) -> int:
+    try:
+        size = int(round(float(value)))
+    except (TypeError, ValueError):
+        size = int(default)
+    return min(MAX_TARGET_FIELD_PLOT_LABEL_FONT_SIZE, max(MIN_TARGET_FIELD_PLOT_LABEL_FONT_SIZE, size))
+
+
+def target_field_scaled_plot_label_font_size(
+    font_size: object,
+    render_width: object,
+    reference_width: object,
+) -> float:
+    resolved = float(normalize_target_field_plot_label_font_size(font_size))
+    try:
+        width = float(render_width)
+    except (TypeError, ValueError):
+        width = 1.0
+    try:
+        reference = float(reference_width)
+    except (TypeError, ValueError):
+        reference = 1.0
+    if not math.isfinite(width) or width <= 0.0:
+        width = 1.0
+    if not math.isfinite(reference) or reference <= 0.0:
+        reference = 1.0
+    return max(1.0, resolved * (width / reference))
 
 
 def normalize_target_field_fit_mode(
@@ -2498,6 +2535,7 @@ def export_target_field_animation(
             save_plot_separately=save_plot_separately,
             export_format=resolved_format,
             scale_percent=resolved_scale,
+            plot_label_font_size=DEFAULT_TARGET_FIELD_PLOT_LABEL_FONT_SIZE,
         ).normalized()
     )
     star_height, plot_height = target_field_panel_heights(
@@ -2516,6 +2554,7 @@ def export_target_field_animation(
             custom_theme_colors=custom_theme_colors,
             figure_size_inches=(max(1.0, layout.video_width / dpi), max(1.0, plot_height / dpi)),
             dpi=int(dpi),
+            label_font_size=layout.plot_label_font_size,
             return_scan_layout=True,
         )
         if isinstance(rendered, tuple):
@@ -2690,6 +2729,24 @@ def _highlight_for_frame(payload: LightCurvePlotPayload, frame: TargetFieldFrame
     return None
 
 
+def _apply_matplotlib_label_font_size(axis: object, point_size: float) -> None:
+    size = max(1.0, float(point_size))
+    title = getattr(axis, "title", None)
+    if title is not None and hasattr(title, "set_fontsize"):
+        title.set_fontsize(size)
+    for axis_item in (getattr(axis, "xaxis", None), getattr(axis, "yaxis", None)):
+        label = getattr(axis_item, "label", None) if axis_item is not None else None
+        if label is not None and hasattr(label, "set_fontsize"):
+            label.set_fontsize(size)
+    tick_params = getattr(axis, "tick_params", None)
+    if callable(tick_params):
+        tick_params(axis="both", labelsize=size)
+    legend = axis.get_legend() if hasattr(axis, "get_legend") else None
+    if legend is not None:
+        for text in legend.get_texts():
+            text.set_fontsize(size)
+
+
 def _render_light_curve_payload_with_highlight(
     payload: LightCurvePlotPayload,
     *,
@@ -2699,6 +2756,7 @@ def _render_light_curve_payload_with_highlight(
     custom_theme_colors: dict[str, str] | None,
     figure_size_inches: tuple[float, float] = (8.4, 4.8),
     dpi: int = 120,
+    label_font_size: float | None = None,
     return_scan_layout: bool = False,
 ) -> QImage | tuple[QImage, TargetFieldPlotScanLayout | None]:
     figure = Figure(figsize=figure_size_inches, dpi=dpi)
@@ -2712,6 +2770,8 @@ def _render_light_curve_payload_with_highlight(
             export_style="themed",
             show_empty_message=False,
         )
+        if label_font_size is not None:
+            _apply_matplotlib_label_font_size(axis, float(label_font_size))
         if highlight_x is not None and math.isfinite(highlight_x):
             axis.axvline(highlight_x, color="#f4d35e", alpha=0.45, linewidth=1.4, zorder=8)
         if highlight_x is not None and highlight_y is not None and math.isfinite(highlight_x) and math.isfinite(highlight_y):

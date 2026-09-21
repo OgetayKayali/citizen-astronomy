@@ -45,6 +45,8 @@ from time import monotonic, perf_counter, sleep
 
 import gc
 
+import threading
+
 import multiprocessing
 
 from typing import Callable, Sequence, cast
@@ -222,6 +224,7 @@ from photometry_app.core.survey_tiles import (
     survey_tile_pixel_rect,
     survey_tile_request_priority,
     survey_tile_sky_center,
+    sky_explorer_survey_field_image_point_for_sky,
 )
 from photometry_app.core.snr_binning import *
 from photometry_app.core.solar_system import *
@@ -232,7 +235,11 @@ from photometry_app.ui.dialogs import *
 from photometry_app.ui.distance_map_view import DistanceMapPanel
 from photometry_app.ui.differential_label_dialog import DifferentialQuickLabelDialog
 from photometry_app.ui.sky_explorer_collage_dialog import SkyExplorerCollageDialog
-from photometry_app.ui.sky_explorer_mag_limit_dialog import SkyExplorerMagLimitDialog, SkyExplorerMagLimitOptions
+from photometry_app.ui.sky_explorer_mag_limit_dialog import (
+    SkyExplorerMagLimitDialog,
+    SkyExplorerMagLimitOptions,
+    mag_limit_text_scale_factor,
+)
 from photometry_app.ui.sky_explorer_source_dialog import SkyExplorerSourceChoice, SkyExplorerSourceDialog
 from photometry_app.ui.hr_plot_widget import *
 from photometry_app.ui.image_view import *
@@ -248,7 +255,9 @@ from photometry_app.ui.sky_view_location import (
     _SkyViewObservingSiteSelection,
 )
 from photometry_app.ui.sky_atlas_custom_overlay_surveys_dialog import SkyAtlasCustomOverlaySurveysDialog
+from photometry_app.ui.sky_atlas_search_dialog import SkyAtlasSearchDialog
 from photometry_app.ui.sky_atlas_settings_dialog import SkyAtlasDisplaySettings, SkyAtlasSettingsDialog
+from photometry_app.ui.color_picker import ColorPickerPopup, apply_swatch_button
 from photometry_app.ui.constellation_overlay import ConstellationOverlay, ConstellationOverlaySettings
 from photometry_app.ui.sky_view_milky_way_gl import (
     OpenGLMilkyWayLayer,
@@ -256,13 +265,19 @@ from photometry_app.ui.sky_view_milky_way_gl import (
     SkyViewMilkyWayTileDrawRequest,
     SkyViewMilkyWayTileMeshVertex,
 )
+from photometry_app.ui.sky_view_label_renderer import GpuLabelDraw, GpuMarkerDraw, SkyViewLabelRenderer
 from photometry_app.ui.sky_view_star_renderer import (
     BACKEND_INSTANCED,
     BACKEND_LEGACY,
+    MAX_STATIC_CATALOG_STARS,
+    STAR_VISIBILITY_FADE_WINDOW_MAG,
+    StarCatalogInput,
+    StarCatalogProjection,
     StarHitGrid,
     StarInstanceInput,
     StarRenderer,
     StarRendererSettings,
+    star_fov_size_scale,
 )
 from photometry_app.ui.transient_label_dialog import TRANSIENT_QUICK_LABEL_OPTIONS, TransientQuickLabelDialog
 from photometry_app.ui.workers import *
@@ -306,6 +321,9 @@ _SKY_EXPLORER_SURVEY_PREVIEW_MAX_OUTPUT = 512
 _SKY_EXPLORER_SURVEY_DETAIL_PREVIEW = "preview"
 _SKY_EXPLORER_SURVEY_DETAIL_REFINE = "refine"
 _SKY_EXPLORER_IMAGE_COMPARISON_KEY = "__image__"
+_SKY_EXPLORER_ROI_STROKE_COLOR = "#22c55e"
+_SKY_EXPLORER_ROI_DRAG_STROKE_COLOR = "#86efac"
+_SKY_EXPLORER_MAG_LIMIT_SELECTION_COLOR = "#f5c14b"
 _THEME_GRUVBOX = "gruvbox"
 _THEME_CATPPUCCIN = "catppuccin"
 _THEME_SOLARIZED_DARK = "solarized-dark"
@@ -714,6 +732,12 @@ _HR_INTERFACE_TIPS = (
     "Double-click a star on the Source Image to select it on the HR diagram and results table.",
     "Use Find Cluster to highlight a likely common-motion group across the plot and table.",
     "Snapshot exports preserve the current HR view, while Scientific uses the filtered dataset.",
+)
+
+_SKY_EXPLORER_INTERFACE_TIPS = (
+    "Tip: Use the ROI tool next to Text, then drag on the image so Explore searches only that rectangle.",
+    "Tip: Shift+left-drag also draws an Explore ROI. Click ROI again or right-click the region to remove it.",
+    "Tip: Image and Survey sit together: first click loads a source, later clicks can replace it or add a comparison.",
 )
 
 
@@ -1895,7 +1919,7 @@ class _SkyViewRenderScene:
 
     rich_objects: list[_SkyVisibleObject]
 
-    gpu_star_draws: list[tuple[tuple[str, int, int, int, str], float, float, float, float]]
+    gpu_star_draws: list[tuple[tuple[str, int, int], float, float, float, float]]
 
     selected_object: SkyAtlasObject | None
 
@@ -1942,6 +1966,8 @@ class _SkyViewRenderScene:
     custom_sky_overlay_saturation: float
 
     custom_sky_overlay_feather: float
+
+    custom_sky_overlay_black_as_alpha: bool
 
     ground_base_color: QColor
 
@@ -4052,7 +4078,7 @@ class _QPainterSkyViewRenderer:
 
     def draw_non_star_glyphs(self, painter: QPainter, scene: _SkyViewRenderScene) -> None:
 
-        self._owner._draw_non_star_objects(painter, scene.rich_objects)
+        self._owner._draw_non_star_objects(painter, scene.rich_objects, scene.viewport_rect)
 
     def draw_moon(self, painter: QPainter, scene: _SkyViewRenderScene) -> None:
 
@@ -4217,6 +4243,8 @@ class _SkyViewCollectDetailWindow:
 class _SkyAtlasViewWidget(QOpenGLWidget):
 
     _WHEEL_ZOOM_DIVISOR = 1200.0
+    _WHEEL_PIXEL_ZOOM_DIVISOR = 150.0
+    _CAMERA_FOV_ANIMATION_BLEND = 0.22
     _SKY_VIEW_MIN_FIELD_WIDTH_DEG = 2.0
     _SKY_VIEW_MOON_FOCUS_MIN_FIELD_WIDTH_DEG = 0.24
     _SKY_VIEW_MOON_FOCUS_BACKGROUND_START_FIELD_WIDTH_DEG = 8.0
@@ -4228,6 +4256,16 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
     _SPATIAL_INDEX_TILE_DEG = 6.0
 
     _SPATIAL_INDEX_MAX_FIELD_WIDTH_DEG = 360.0
+
+    _MAX_OBJECT_LABEL_SOURCES = 180
+
+    _DENSE_DEEP_SKY_CATALOGS = frozenset({"hash pn", "ldn", "lbn", "barnard", "sharpless", "rcw"})
+
+    _DENSE_NAMED_LABEL_FOV_DEG = 28.0
+
+    _DENSE_ANONYMOUS_LABEL_FOV_DEG = 10.0
+
+    _STATIC_STAR_PICK_RADIUS_PX = 8.0
 
     _GL_BLEND = 0x0BE2
 
@@ -4346,6 +4384,16 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
     # legacy GL_FAINT_STARS path off; GL_GROUND should also stay off in that
     # setup because a successful GL atmosphere draw already owns atmosphere
     # plus flat ground for this render stage.
+    _SKY_VIEW_DEFAULT_FIELD_WIDTH_DEG = 60.0
+
+    _SKY_VIEW_WIDE_LOD_FOV_DEG = 60.0
+
+    _SKY_VIEW_NARROW_LOD_FOV_DEG = 2.5
+
+    _SKY_VIEW_LOD_EXPONENT = 0.55
+
+    _SKY_VIEW_DRAW_STAR_MAGNITUDE_TIERS = (6.5, 8.0, 9.5, 11.0, 12.5, 15.0)
+
     _SKY_VIEW_GL_STARS_ENV_VAR = "CITIZEN_PHOTOMETRY_SKY_VIEW_GL_STARS"
 
     _SKY_VIEW_GL_FAINT_STARS_ENV_VAR = "CITIZEN_PHOTOMETRY_SKY_VIEW_GL_FAINT_STARS"
@@ -4413,6 +4461,8 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     objectInfoChanged = Signal(object)
 
+    starRendererCompatibilityActivated = Signal(str)
+
     def __init__(self, parent: QWidget | None = None) -> None:
 
         surface_format = QSurfaceFormat()
@@ -4435,17 +4485,37 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self.setMouseTracking(True)
 
+        self._catalog_objects: tuple[SkyAtlasObject, ...] = ()
+
+        self._drawn_star_magnitude_cap: float | None = None
+
         self._objects: tuple[SkyAtlasObject, ...] = ()
 
         self._spatial_object_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
 
         self._spatial_star_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
 
+        self._cpu_overlay_objects: tuple[SkyAtlasObject, ...] = ()
+
+        self._spatial_cpu_overlay_object_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
+
+        self._spatial_interactive_star_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
+
+        self._static_gpu_star_ids: dict[int, int] = {}
+
+        self._static_gpu_stars: tuple[SkyAtlasObject, ...] = ()
+
+        self._dynamic_gpu_star_cache_key: tuple[Any, ...] | None = None
+
+        self._dynamic_gpu_star_compact: np.ndarray | None = None
+
+        self._dynamic_gpu_star_halos: np.ndarray | None = None
+
         self._spatial_finite_non_star_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
 
         self._spatial_magnitude_less_object_bins: dict[tuple[int, int], tuple[SkyAtlasObject, ...]] = {}
 
-        self._spatial_candidate_cache_key: tuple[tuple[tuple[int, int], ...], float, int] | None = None
+        self._spatial_candidate_cache_key: tuple[tuple[tuple[int, int], ...], float, int, bool] | None = None
 
         self._spatial_candidate_cache_value: tuple[SkyAtlasObject, ...] = ()
 
@@ -4453,9 +4523,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._visible_objects_cache_value: list[_SkyVisibleObject] = []
 
-        self._star_sprite_cache: dict[tuple[str, int, int, int, str], QPixmap] = {}
+        self._star_sprite_cache: dict[tuple[str, int, int], QPixmap] = {}
 
-        self._gpu_star_texture_cache: dict[tuple[str, int, int, int, str], QOpenGLTexture] = {}
+        self._gpu_star_texture_cache: dict[tuple[str, int, int], QOpenGLTexture] = {}
 
         self._gl_functions: QOpenGLFunctions_2_0 | None = None
 
@@ -4469,9 +4539,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._default_center_dec_deg = -5.0
 
-        self._field_width_deg = 95.0
+        self._field_width_deg = self._SKY_VIEW_DEFAULT_FIELD_WIDTH_DEG
 
-        self._default_field_width_deg = 95.0
+        self._default_field_width_deg = self._SKY_VIEW_DEFAULT_FIELD_WIDTH_DEG
 
         self._drag_origin: QPoint | None = None
 
@@ -4577,6 +4647,8 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._custom_sky_overlay_saturation = 1.0
 
         self._custom_sky_overlay_feather = 0.0
+
+        self._custom_sky_overlay_black_as_alpha = False
 
         self._custom_sky_overlay_entries: list[LoadedSkyAtlasCustomOverlay] = []
 
@@ -4693,10 +4765,6 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._sky_view_gl_milky_way_diagnostic_capture_result: dict[str, object] | None = None
 
-        self._star_bloom_strength = 1.0
-
-        self._star_spike_style = "subtle"
-
         self._star_magnitude_limit = 8.7
 
         self._star_brightness = 1.0
@@ -4745,6 +4813,10 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._star_renderer = StarRenderer()
 
+        self._label_renderer = SkyViewLabelRenderer()
+
+        self._sky_view_label_renderer_disabled_for_session = False
+
         self._star_hit_grid = StarHitGrid(cell_size_px=20.0)
 
         self._sky_view_unified_stars_drew = False
@@ -4752,12 +4824,6 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._sky_view_star_renderer_disabled_for_session = False
 
         self._sky_view_last_star_renderer_log = ""
-
-        self._sky_view_star_geometry_content_key: tuple[object, ...] | None = None
-
-        self._sky_view_star_packed_compact: object | None = None
-
-        self._sky_view_star_packed_halo: object | None = None
 
         self._sky_view_gl_context_destroyed_connected = False
 
@@ -4776,6 +4842,8 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         ] | None = None
 
         self._cached_overlay_label_key: tuple[object, ...] | None = None
+
+        self._cached_overlay_label_source_ids: frozenset[int] = frozenset()
 
         self._sky_view_last_paint_total_seconds = 0.0
 
@@ -5127,13 +5195,130 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def set_objects(self, objects: Sequence[SkyAtlasObject]) -> None:
 
-        self._objects = tuple(sorted(objects, key=lambda item: (self._magnitude_sort_key(item.magnitude), item.name.casefold())))
+        self._catalog_objects = tuple(sorted(objects, key=lambda item: (self._magnitude_sort_key(item.magnitude), item.name.casefold())))
+
+        self._drawn_star_magnitude_cap = None
+
+        self._install_drawn_catalog()
+
+    def _drawn_magnitude_cap(self) -> float:
+
+        configured_limit = float(self._star_magnitude_limit)
+        visible_limit = self._star_visible_magnitude_limit_for_current_fov()
+        needed = min(
+            configured_limit,
+            max(SKY_ATLAS_STARTUP_STAR_MAGNITUDE, visible_limit + STAR_VISIBILITY_FADE_WINDOW_MAG + 0.2),
+        )
+        for tier in self._SKY_VIEW_DRAW_STAR_MAGNITUDE_TIERS:
+            if needed <= float(tier) + 1.0e-6:
+                return min(configured_limit, float(tier))
+        return configured_limit
+
+    def _objects_for_drawn_magnitude_cap(self, cap: float) -> tuple[SkyAtlasObject, ...]:
+
+        drawn: list[SkyAtlasObject] = []
+        selected = self._selected_object
+        selected_included = False
+        for sky_object in self._catalog_objects:
+            if sky_object is selected:
+                selected_included = True
+            if sky_object.object_type.casefold() != "star":
+                drawn.append(sky_object)
+                continue
+            magnitude = sky_object.magnitude
+            if magnitude is None or float(magnitude) <= cap + 1.0e-6:
+                drawn.append(sky_object)
+        if selected is not None and not selected_included and selected in self._catalog_objects:
+            drawn.append(selected)
+        return tuple(drawn)
+
+    def _install_drawn_catalog(self, *, schedule_update: bool = True) -> None:
+
+        if getattr(self, "_star_renderer", None) is None:
+
+            return
+
+        cap = self._drawn_magnitude_cap()
+        selected = self._selected_object
+        if (
+            self._drawn_star_magnitude_cap is not None
+            and abs(cap - self._drawn_star_magnitude_cap) <= 1.0e-6
+            and (selected is None or selected in self._objects)
+        ):
+            return
+        self._drawn_star_magnitude_cap = cap
+        objects = self._objects_for_drawn_magnitude_cap(cap)
+
+        self._objects = objects
 
         self._spatial_object_bins = self._build_spatial_object_bins(self._objects)
 
-        self._spatial_star_bins = self._build_spatial_object_bins(
-            tuple(sky_object for sky_object in self._objects if sky_object.object_type.casefold() == "star")
+        stars = tuple(
+            sky_object
+            for sky_object in self._objects
+            if sky_object.object_type.casefold() == "star"
         )
+
+        interactive_stars = tuple(
+            sky_object
+            for sky_object in stars
+            if sky_object.searchable or sky_object.label_visible or sky_object.selectable
+        )
+
+        self._cpu_overlay_objects = tuple(
+            sky_object
+            for sky_object in self._objects
+            if sky_object.object_type.casefold() != "star"
+            or sky_object.searchable
+            or sky_object.label_visible
+            or sky_object.selectable
+        )
+
+        self._spatial_star_bins = self._build_spatial_object_bins(stars)
+
+        self._spatial_cpu_overlay_object_bins = self._build_spatial_object_bins(self._cpu_overlay_objects)
+
+        self._spatial_interactive_star_bins = self._build_spatial_object_bins(interactive_stars)
+
+        self._static_gpu_star_ids = {}
+
+        if len(stars) <= MAX_STATIC_CATALOG_STARS:
+
+            self._static_gpu_stars = stars
+
+            interactive_star_ids = {id(sky_object) for sky_object in interactive_stars}
+
+            static_catalog: list[StarCatalogInput] = []
+
+            for star_id, sky_object in enumerate(stars, start=1):
+
+                if id(sky_object) in interactive_star_ids:
+
+                    self._static_gpu_star_ids[id(sky_object)] = star_id
+
+                static_catalog.append(
+                    StarCatalogInput(
+                        ra_deg=float(sky_object.ra_deg),
+                        dec_deg=float(sky_object.dec_deg),
+                        magnitude=self._magnitude_sort_key(sky_object.magnitude),
+                        color=str(sky_object.color or "#f8fbff"),
+                        star_id=star_id,
+                    )
+                )
+
+            self._star_renderer.set_static_catalog(static_catalog)
+
+        else:
+
+            self._static_gpu_stars = ()
+
+            self._star_renderer.set_static_catalog(())
+
+        self._dynamic_gpu_star_cache_key = None
+
+        self._dynamic_gpu_star_compact = None
+
+        self._dynamic_gpu_star_halos = None
 
         self._spatial_finite_non_star_bins = self._build_spatial_object_bins(
             tuple(
@@ -5159,7 +5344,18 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._visible_objects_cache_value = []
 
-        if self._selected_object is not None and self._selected_object not in self._objects:
+        self._cached_overlay_label_draw_list = None
+
+        self._cached_overlay_label_key = None
+
+        self._cached_overlay_label_source_ids = frozenset()
+
+        if (
+            self._selected_object is not None
+            and self._selected_object.object_type.casefold() == "star"
+            and self._selected_object not in self._objects
+            and self._selected_object not in self._catalog_objects
+        ):
 
             self._selected_object = None
 
@@ -5167,7 +5363,48 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             self._hovered_object = None
 
-        self.update()
+        if schedule_update:
+
+            self.update()
+
+    def _static_gpu_star_projection_active(self) -> bool:
+
+        return bool(
+            self._unified_gpu_star_renderer_active()
+            and self._star_renderer.has_static_catalog
+        )
+
+    def _unified_gpu_star_renderer_active(self) -> bool:
+
+        return bool(
+            self._star_renderer.available
+            and self._star_renderer.backend_name == BACKEND_INSTANCED
+            and not self._sky_view_star_renderer_disabled_for_session
+        )
+
+    def _static_gpu_star_id_for_object(self, sky_object: SkyAtlasObject | None) -> int:
+
+        if sky_object is None or sky_object.object_type.casefold() != "star":
+
+            return 0
+
+        star_id = self._static_gpu_star_ids.get(id(sky_object), 0)
+
+        if star_id <= 0 and self._static_gpu_stars:
+
+            try:
+
+                star_id = self._static_gpu_stars.index(sky_object) + 1
+
+            except ValueError:
+
+                star_id = 0
+
+            if star_id > 0:
+
+                self._static_gpu_star_ids[id(sky_object)] = star_id
+
+        return int(star_id)
 
     def selected_object(self) -> SkyAtlasObject | None:
 
@@ -5261,6 +5498,22 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         )
 
         return min(360.0, max(minimum_field_width_deg, float(field_width_deg)))
+
+    @staticmethod
+    def _blend_field_width_deg(current_field_width_deg: float, target_field_width_deg: float, blend: float) -> float:
+        current = max(1.0e-6, float(current_field_width_deg))
+        target = max(1.0e-6, float(target_field_width_deg))
+        amount = max(0.0, min(1.0, float(blend)))
+        return math.exp(math.log(current) + (math.log(target) - math.log(current)) * amount)
+
+    def _wheel_zoom_factor(self, event: QWheelEvent) -> float | None:
+        pixel_delta = float(event.pixelDelta().y())
+        if abs(pixel_delta) > 1.0e-6:
+            return math.exp(-pixel_delta / self._WHEEL_PIXEL_ZOOM_DIVISOR)
+        angle_delta = float(event.angleDelta().y())
+        if abs(angle_delta) <= 1.0e-6:
+            return None
+        return math.exp(-angle_delta / self._WHEEL_ZOOM_DIVISOR)
 
     def _moon_focus_zoom_fraction(self) -> float:
 
@@ -5415,12 +5668,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         origin_y = max(rect.top() + text_ascent + 6.0, min(rect.bottom() - 6.0, baseline_y))
         text_color = QColor("#fbbf24") if sky_object == self._selected_object else QColor(220, 230, 245, 232)
         shadow_color = QColor(8, 14, 26, 168)
-        painter.setFont(font)
-        painter.setPen(QPen(shadow_color, 1.2))
-        painter.drawText(QPoint(int(round(origin_x + 1.0)), int(round(origin_y + 1.0))), text)
-        painter.setPen(QPen(text_color, 1.0))
-        painter.drawText(QPoint(int(round(origin_x)), int(round(origin_y))), text)
-        return True
+        return self._paint_overlay_labels(
+            painter,
+            ((font, QPointF(origin_x, origin_y), text, text_color, shadow_color),),
+            rect,
+        ) > 0
 
     def _moon_visual_debug_snapshot(self, rect: QRectF | None = None) -> dict[str, object]:
 
@@ -5972,6 +6224,8 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._selected_object = sky_object
 
+        self._install_drawn_catalog()
+
         if sky_object is not None and not self._is_moon_sky_object(sky_object):
 
             self._moon_focus_zoom_latched = False
@@ -6038,6 +6292,10 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._star_renderer.release()
 
+        self._label_renderer.release()
+
+        self._sky_view_label_renderer_disabled_for_session = False
+
         self._sky_view_star_renderer_disabled_for_session = False
 
         if not self._sky_view_star_renderer_disabled_for_session:
@@ -6046,23 +6304,33 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                 default_fbo = int(self.defaultFramebufferObject()) if hasattr(self, "defaultFramebufferObject") else 0
 
-                self._star_renderer.initialize(self._gl_functions, default_framebuffer=default_fbo)
+                initialized = self._star_renderer.initialize(self._gl_functions, default_framebuffer=default_fbo)
 
-                dpr = max(1.0, float(self.devicePixelRatioF()))
+                if initialized:
 
-                self._star_renderer.resize(
-                    max(1, int(math.ceil(self.width() * dpr))),
-                    max(1, int(math.ceil(self.height() * dpr))),
-                    dpr,
-                )
+                    dpr = max(1.0, float(self.devicePixelRatioF()))
+
+                    self._star_renderer.resize(
+                        max(1, int(math.ceil(self.width() * dpr))),
+                        max(1, int(math.ceil(self.height() * dpr))),
+                        dpr,
+                    )
+
+                    self._spatial_candidate_cache_key = None
+
+                    self._visible_objects_cache_key = None
+
+                else:
+
+                    self._activate_star_renderer_compatibility(
+                        self._star_renderer.disabled_reason or "GPU star renderer initialization failed"
+                    )
 
             except Exception as exc:
 
-                self._sky_view_star_renderer_disabled_for_session = True
-
                 self._star_renderer.release()
 
-                logging.getLogger(__name__).warning("Sky View unified star renderer disabled: %s", exc)
+                self._activate_star_renderer_compatibility(f"initialization exception: {exc}")
 
         if self._sky_view_gl_stars_requested and not self._sky_view_gl_stars_disabled_for_session:
 
@@ -6117,6 +6385,27 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             except Exception as exc:
 
                 self._disable_moon_renderer_for_session(exc)
+
+        if not self._sky_view_label_renderer_disabled_for_session:
+
+            try:
+
+                if not self._label_renderer.initialize(self._gl_functions):
+
+                    self._sky_view_label_renderer_disabled_for_session = True
+
+                    logging.getLogger(__name__).warning(
+                        "Sky Atlas GPU labels unavailable; using CPU text. %s",
+                        self._label_renderer.disabled_reason or "initialize returned False",
+                    )
+
+            except Exception as exc:
+
+                self._label_renderer.release()
+
+                self._sky_view_label_renderer_disabled_for_session = True
+
+                logging.getLogger(__name__).warning("Sky Atlas GPU label renderer initialization failed: %s", exc)
 
     def set_observer_context(
         self,
@@ -7053,30 +7342,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def prepare_startup_milky_way_cache(self) -> None:
 
-        if not self._milky_way_enabled:
-
-            return
-
-        render_mode = self._normalize_milky_way_render_mode(self._milky_way_render_mode)
-
-        if render_mode != "full":
-
-            return
-
-        asset_info = self._milky_way_runtime_asset_info(render_mode)
-
-        manifest_asset = asset_info.asset if isinstance(asset_info.asset, MilkyWayTilePyramidAsset) else None
-
-        if manifest_asset is None:
-
-            return
-
-        scene = SimpleNamespace(
-            milky_way_resolution_mode=self._milky_way_resolution_mode,
-            milky_way_render_mode=render_mode,
-        )
-
-        self._milky_way_manifest_full_image(manifest_asset, scene)  # type: ignore[arg-type]
+        # Opening Sky Atlas must stay interactive. Stitching the Full-mode
+        # 16k atlas from 128 LZW tiles blocked the UI for a minute or more.
+        return
 
     def _invalidate_custom_sky_overlay_view_cache(self) -> None:
 
@@ -7100,6 +7368,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             round(scene.custom_sky_overlay_brightness, 4),
             round(scene.custom_sky_overlay_saturation, 4),
             round(scene.custom_sky_overlay_feather, 4),
+            bool(scene.custom_sky_overlay_black_as_alpha),
         )
         cached_image = self._custom_sky_overlay_display_cache.get(cache_key)
         if cached_image is not None and not cached_image.isNull():
@@ -7110,6 +7379,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             brightness=scene.custom_sky_overlay_brightness,
             saturation=scene.custom_sky_overlay_saturation,
             feather=scene.custom_sky_overlay_feather,
+            black_as_alpha=scene.custom_sky_overlay_black_as_alpha,
         )
         if image.isNull():
             return None
@@ -7311,6 +7581,24 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         return self._custom_sky_overlay_feather
 
+    def set_custom_sky_overlay_black_as_alpha(self, enabled: bool) -> None:
+
+        resolved_enabled = bool(enabled)
+
+        if self._custom_sky_overlay_black_as_alpha == resolved_enabled:
+
+            return
+
+        self._custom_sky_overlay_black_as_alpha = resolved_enabled
+
+        self._invalidate_custom_sky_overlay_view_cache()
+
+        self.update()
+
+    def custom_sky_overlay_black_as_alpha(self) -> bool:
+
+        return self._custom_sky_overlay_black_as_alpha
+
     def set_custom_sky_overlay_entries(self, entries: Sequence[LoadedSkyAtlasCustomOverlay]) -> None:
 
         self._custom_sky_overlay_entries = list(entries)
@@ -7461,24 +7749,6 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         return self._milky_way_flip_horizontal
 
-    def set_star_bloom_strength(self, bloom_strength: float) -> None:
-
-        resolved_strength = max(0.45, min(1.8, float(bloom_strength)))
-
-        if abs(self._star_bloom_strength - resolved_strength) <= 1.0e-6:
-
-            return
-
-        self._star_bloom_strength = resolved_strength
-
-        self._clear_star_sprite_caches()
-
-        self.update()
-
-    def star_bloom_strength(self) -> float:
-
-        return self._star_bloom_strength
-
     def apply_sky_atlas_display_settings(self, display_settings: SkyAtlasDisplaySettings) -> None:
 
         star_magnitude_limit = max(3.0, min(15.0, float(display_settings.star_magnitude_limit)))
@@ -7521,6 +7791,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             star_size=star_size_scale,
             magnitude_size_contrast=max(0.4, star_magnitude_size_contrast),
             limiting_magnitude=star_magnitude_limit,
+            visible_magnitude_limit=self._star_visible_magnitude_limit_for_current_fov(),
             twinkle_amount=star_twinkle_amount,
             device_pixel_ratio=max(1.0, float(self.devicePixelRatioF())),
         )
@@ -7529,29 +7800,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             self._clear_star_sprite_caches()
 
-        self.update()
-
-    def set_star_spike_style(self, spike_style: str) -> None:
-
-        normalized_style = str(spike_style or "subtle").strip().casefold()
-
-        if normalized_style not in {"off", "subtle", "classic"}:
-
-            normalized_style = "subtle"
-
-        if self._star_spike_style == normalized_style:
-
-            return
-
-        self._star_spike_style = normalized_style
-
-        self._clear_star_sprite_caches()
+        self._install_drawn_catalog()
 
         self.update()
-
-    def star_spike_style(self) -> str:
-
-        return self._star_spike_style
 
     def _handle_appearance_animation_timeout(self) -> None:
 
@@ -7614,6 +7865,8 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             self._release_gpu_star_textures()
 
             self._star_renderer.release()
+
+            self._label_renderer.release()
 
             self._gl_milky_way_layer.release()
 
@@ -7719,7 +7972,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         visible_objects: list[_SkyVisibleObject],
         fast_star_groups: dict[tuple[str, int, float], list[QPointF]],
         rich_objects: list[_SkyVisibleObject],
-        gpu_star_draws: list[tuple[tuple[str, int, int, int, str], float, float, float, float]],
+        gpu_star_draws: list[tuple[tuple[str, int, int], float, float, float, float]],
         *,
         timing_enabled: bool,
     ) -> _SkyViewRenderScene:
@@ -7765,6 +8018,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             custom_sky_overlay_brightness=self._custom_sky_overlay_brightness,
             custom_sky_overlay_saturation=self._custom_sky_overlay_saturation,
             custom_sky_overlay_feather=self._custom_sky_overlay_feather,
+            custom_sky_overlay_black_as_alpha=self._custom_sky_overlay_black_as_alpha,
             ground_base_color=self._ground_base_color(),
             timing_enabled=timing_enabled,
             grid_detail_enabled=self._sky_view_grid_detail_enabled,
@@ -8191,13 +8445,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def wheelEvent(self, event: QWheelEvent) -> None:
 
-        delta = event.angleDelta().y()
+        zoom_factor = self._wheel_zoom_factor(event)
 
-        if delta == 0:
+        if zoom_factor is None:
 
             return
-
-        zoom_factor = math.exp(-float(delta) / self._WHEEL_ZOOM_DIVISOR)
 
         if self._camera_animation_timer.isActive():
 
@@ -8217,15 +8469,23 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         target_field_width_deg = self._clamp_field_width_deg(base_field_width_deg * zoom_factor)
 
-        self._camera_animation_timer.stop()
+        self._target_camera_forward = base_forward
 
-        self._set_camera_orientation_state(base_forward, base_up, target_field_width_deg)
+        self._target_camera_up = base_up
 
-        self._sync_camera_targets_to_current()
+        self._target_field_width_deg = target_field_width_deg
+
+        if not self._camera_animation_timer.isActive():
+
+            self._target_center_ra_deg = self._center_ra_deg
+
+            self._target_center_dec_deg = self._center_dec_deg
+
+            self._camera_animation_timer.start()
+
+        self._advance_camera_animation()
 
         self._defer_ground_layer_cache_generation_until_settled()
-
-        self.update()
 
         event.accept()
 
@@ -8279,6 +8539,8 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._center_ra_deg = resolved_center_ra_deg
 
         self._center_dec_deg = resolved_center_dec_deg
+
+        self._install_drawn_catalog(schedule_update=False)
 
     def _set_camera_state(self, center_ra_deg: float, center_dec_deg: float, field_width_deg: float) -> None:
 
@@ -8384,7 +8646,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._set_camera_orientation_state(
             interpolated_forward,
             interpolated_up,
-            self._field_width_deg + field_width_delta_deg * 0.18,
+            self._blend_field_width_deg(
+                self._field_width_deg,
+                self._target_field_width_deg,
+                self._CAMERA_FOV_ANIMATION_BLEND,
+            ),
             preserve_basis_orientation=True,
         )
 
@@ -9909,7 +10175,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         visible_objects_cache_key = self._sky_view_visible_objects_cache_key(rect, frame_state)
         if not collect_detail_enabled and visible_objects_cache_key == self._visible_objects_cache_key:
 
-            return self._visible_objects_cache_value
+            return self._reproject_cached_visible_objects(self._visible_objects_cache_value, frame_state)
 
         candidate_objects, candidate_detail = self._candidate_objects_for_current_view_with_detail(
             frame_state.field_height_deg,
@@ -10183,17 +10449,16 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             float(rect.width()),
             float(rect.height()),
             float(self._field_width_deg),
-            float(self._center_ra_deg),
-            float(self._center_dec_deg),
             frame_state.camera_forward,
             frame_state.camera_up,
             frame_state.camera_right,
-            self._equatorial_to_horizon_matrix,
+            self._horizon_collect_cache_key(),
             float(frame_state.star_visible_magnitude_limit),
             float(frame_state.object_visible_magnitude_limit),
             int(frame_state.visible_star_budget),
             bool(self._show_ground),
             id(self._selected_object),
+            self._static_gpu_star_projection_active(),
         )
 
     def _sky_view_collect_frame_state(self, rect: QRectF) -> _SkyViewCollectFrameState:
@@ -10210,7 +10475,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             exponent=0.9,
         )
 
-        magnitude_scan_cutoff = max(star_visible_magnitude_limit + 0.55, object_visible_magnitude_limit + 0.65) + 0.05
+        magnitude_scan_cutoff = max(star_visible_magnitude_limit + STAR_VISIBILITY_FADE_WINDOW_MAG, object_visible_magnitude_limit + 0.65) + 0.05
 
         rough_cull_margin_deg = max(1.0, min(8.0, max(self._field_width_deg, field_height_deg) * 0.06))
 
@@ -10296,7 +10561,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             limit = self._effective_star_visible_magnitude_limit(frame_state.star_visible_magnitude_limit, magnitude)
 
-            fade_window = 0.55
+            fade_window = STAR_VISIBILITY_FADE_WINDOW_MAG
 
         raw_alpha = (limit + fade_window - magnitude) / (fade_window * 2.0)
 
@@ -10355,7 +10620,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def _visibility_magnitude_scan_cutoff(self) -> float:
 
-        star_cutoff = self._star_visible_magnitude_limit_for_current_fov() + 0.55
+        star_cutoff = self._star_visible_magnitude_limit_for_current_fov() + STAR_VISIBILITY_FADE_WINDOW_MAG
 
         object_cutoff = self._interpolated_magnitude_limit(
             self._object_magnitude_limit,
@@ -10381,12 +10646,28 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         enumeration_start = perf_counter()
 
-        if self._field_width_deg > self._SPATIAL_INDEX_MAX_FIELD_WIDTH_DEG or not self._spatial_object_bins:
+        static_gpu_stars = self._static_gpu_star_projection_active()
 
-            return self._objects, _SkyViewCollectCandidateDetail(
+        source_objects = self._cpu_overlay_objects if static_gpu_stars else self._objects
+
+        source_object_bins = (
+            self._spatial_cpu_overlay_object_bins
+            if static_gpu_stars
+            else self._spatial_object_bins
+        )
+
+        source_star_bins = (
+            self._spatial_interactive_star_bins
+            if static_gpu_stars
+            else self._spatial_star_bins
+        )
+
+        if self._field_width_deg > self._SPATIAL_INDEX_MAX_FIELD_WIDTH_DEG or not source_object_bins:
+
+            return source_objects, _SkyViewCollectCandidateDetail(
                 used_spatial_bins=False,
                 candidate_path="full_list",
-                candidate_count_before_sorting=len(self._objects),
+                candidate_count_before_sorting=len(source_objects),
                 enumeration_seconds=perf_counter() - enumeration_start,
             )
 
@@ -10400,7 +10681,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         detail.selected_bin_count = len(bin_keys)
 
-        detail.spatial_candidate_count_estimate = sum(len(self._spatial_object_bins.get(key, ())) for key in bin_keys)
+        detail.spatial_candidate_count_estimate = sum(len(source_object_bins.get(key, ())) for key in bin_keys)
 
         resolved_magnitude_scan_cutoff = (
             self._visibility_magnitude_scan_cutoff()
@@ -10412,7 +10693,12 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             if star_candidate_budget is None
             else max(1, int(star_candidate_budget))
         )
-        cache_key = (bin_keys, round(resolved_magnitude_scan_cutoff, 6), resolved_star_candidate_budget)
+        cache_key = (
+            bin_keys,
+            round(resolved_magnitude_scan_cutoff, 6),
+            resolved_star_candidate_budget,
+            static_gpu_stars,
+        )
         if cache_key == self._spatial_candidate_cache_key:
 
             detail.candidate_count_before_sorting = len(self._spatial_candidate_cache_value)
@@ -10428,9 +10714,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             return self._magnitude_sort_key(item.magnitude), item.name.casefold()
 
         selected_star_bins = tuple(
-            self._spatial_star_bins[key]
+            source_star_bins[key]
             for key in bin_keys
-            if key in self._spatial_star_bins
+            if key in source_star_bins
         )
         star_candidates: list[SkyAtlasObject] = []
         for sky_object in heapq.merge(*selected_star_bins, key=candidate_order_key):
@@ -10591,27 +10877,19 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
     ) -> tuple[
         dict[tuple[str, int, float], list[QPointF]],
         list[_SkyVisibleObject],
-        list[tuple[tuple[str, int, int, int, str], float, float, float, float]],
+        list[tuple[tuple[str, int, int], float, float, float, float]],
     ]:
 
         fast_star_groups: dict[tuple[str, int, float], list[QPointF]] = {}
 
         rich_objects: list[_SkyVisibleObject] = []
 
-        gpu_star_draws: list[tuple[tuple[str, int, int, int, str], float, float, float, float]] = []
+        gpu_star_draws: list[tuple[tuple[str, int, int], float, float, float, float]] = []
 
-        # Prefer the unified GPU path only after it has a viable GL resource
-        # state. If the renderer falls back to the no-VAO compatibility path,
-        # keep legacy QPainter stars available as a visible safety net.
-        use_unified_stars = bool(
-            getattr(self, "_star_renderer", None) is not None
-            and self._star_renderer.available
-            and not getattr(self, "_sky_view_star_renderer_disabled_for_session", False)
-            and (
-                self._star_renderer.backend_name == BACKEND_INSTANCED
-                or bool(getattr(self._star_renderer, "_require_vao", True))
-            )
-        )
+        # The unified path is valid only when the required instanced backend is
+        # active. Compatibility rendering is selected explicitly for the whole
+        # session after a reported initialization/draw failure.
+        use_unified_stars = self._unified_gpu_star_renderer_active()
 
         use_gpu_star_pass = self._can_use_gpu_star_pass()
 
@@ -10728,6 +11006,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self,
         painter: QPainter,
         rich_objects: Sequence[_SkyVisibleObject],
+        rect: QRectF | None = None,
     ) -> None:
         non_star_objects = [
             visible_object
@@ -10739,51 +11018,76 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             return
 
+        viewport = QRectF(self.rect()) if rect is None else QRectF(rect)
+
+        markers: list[GpuMarkerDraw] = []
+
+        for visible_object in non_star_objects:
+
+            marker = self._gpu_marker_for_visible_object(visible_object)
+
+            if marker is not None:
+
+                markers.append(marker)
+
+        if markers and self._try_draw_gpu_overlay(painter, viewport, markers=markers):
+
+            return
+
         painter.save()
 
-        ground_geometry = self._ground_viewport_geometry(QRectF(self.rect())) if self._show_ground else None
+        ground_geometry = self._ground_viewport_geometry(viewport) if self._show_ground else None
 
         if ground_geometry is not None:
 
             painter.setClipPath(ground_geometry.sky_clip_path)
 
-        for visible_object in non_star_objects:
+        for marker in markers:
 
-            sky_object = visible_object.sky_object
+            painter.setPen(QPen(marker.edge, marker.stroke))
 
-            x = visible_object.x
+            painter.setBrush(marker.fill)
 
-            y = visible_object.y
-
-            visibility_alpha = visible_object.visibility_alpha
-
-            magnitude = visible_object.magnitude
-
-            visibility_alpha, background_size_scale = self._moon_focus_background_presentation(sky_object, visibility_alpha, magnitude)
-
-            if visibility_alpha <= 0.01:
-
-                continue
-
-            radius = max(3.5, min(12.0, 11.0 - magnitude * 0.42)) * (0.55 + 0.45 * visibility_alpha) * background_size_scale
-
-            object_color = QColor(sky_object.color)
-
-            edge_color = QColor(object_color)
-
-            edge_color.setAlpha(max(40, min(190, int(round(180.0 * visibility_alpha)))))
-
-            fill_color = QColor(object_color)
-
-            fill_color.setAlpha(max(16, min(70, int(round(58.0 * visibility_alpha)))))
-
-            painter.setPen(QPen(edge_color, max(1.0, min(2.2, radius * 0.16))))
-
-            painter.setBrush(fill_color)
-
-            painter.drawEllipse(QRectF(x - radius, y - radius, radius * 2.0, radius * 2.0))
+            painter.drawEllipse(
+                QRectF(marker.x - marker.radius, marker.y - marker.radius, marker.radius * 2.0, marker.radius * 2.0)
+            )
 
         painter.restore()
+
+    def _gpu_marker_for_visible_object(self, visible_object: _SkyVisibleObject) -> GpuMarkerDraw | None:
+
+        sky_object = visible_object.sky_object
+
+        visibility_alpha, background_size_scale = self._moon_focus_background_presentation(
+            sky_object,
+            visible_object.visibility_alpha,
+            visible_object.magnitude,
+        )
+
+        if visibility_alpha <= 0.01:
+
+            return None
+
+        radius = max(3.5, min(12.0, 11.0 - visible_object.magnitude * 0.42)) * (0.55 + 0.45 * visibility_alpha) * background_size_scale
+
+        object_color = QColor(sky_object.color)
+
+        edge_color = QColor(object_color)
+
+        edge_color.setAlpha(max(40, min(190, int(round(180.0 * visibility_alpha)))))
+
+        fill_color = QColor(object_color)
+
+        fill_color.setAlpha(max(16, min(70, int(round(58.0 * visibility_alpha)))))
+
+        return GpuMarkerDraw(
+            x=float(visible_object.x),
+            y=float(visible_object.y),
+            radius=float(radius),
+            fill=fill_color,
+            edge=edge_color,
+            stroke=max(1.0, min(2.2, radius * 0.16)),
+        )
 
     def _draw_object_overlays(
         self,
@@ -10813,6 +11117,8 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._sky_view_last_overlay_misc_seconds = 0.0
 
         self._sky_view_last_drawn_label_count = 0
+
+        overlay_markers: list[GpuMarkerDraw] = []
 
         interaction_busy = self._sky_view_interaction_state() != "stable"
 
@@ -10871,6 +11177,12 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         object_label_avoid_bounds: dict[SkyAtlasObject, QRectF] = {}
 
         rich_object_ids = {id(visible_object.sky_object) for visible_object in rich_objects}
+
+        allowed_label_source_ids = (
+            frozenset()
+            if reuse_cached_labels
+            else self._prioritized_object_label_source_ids(rich_objects)
+        )
 
         painter.save()
 
@@ -10974,11 +11286,16 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                     self._record_moon_marker_diagnostic((float(x), float(y)))
 
-                    painter.setPen(QPen(QColor("#fbbf24"), 1.8))
-
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-
-                    painter.drawEllipse(QRectF(x - hit_radius - 2.0, y - hit_radius - 2.0, (hit_radius + 2.0) * 2.0, (hit_radius + 2.0) * 2.0))
+                    overlay_markers.append(
+                        GpuMarkerDraw(
+                            x=float(x),
+                            y=float(y),
+                            radius=float(hit_radius + 2.0),
+                            fill=QColor(0, 0, 0, 0),
+                            edge=QColor("#fbbf24"),
+                            stroke=1.8,
+                        )
+                    )
 
             elif (not interaction_busy) and sky_object == self._hovered_object:
 
@@ -10990,16 +11307,20 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                     self._record_moon_marker_diagnostic((float(x), float(y)))
 
-                    painter.setPen(QPen(QColor(184, 208, 248, 138), 1.2))
-
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-
-                    painter.drawEllipse(QRectF(x - hit_radius - 1.0, y - hit_radius - 1.0, (hit_radius + 1.0) * 2.0, (hit_radius + 1.0) * 2.0))
+                    overlay_markers.append(
+                        GpuMarkerDraw(
+                            x=float(x),
+                            y=float(y),
+                            radius=float(hit_radius + 1.0),
+                            fill=QColor(0, 0, 0, 0),
+                            edge=QColor(184, 208, 248, 138),
+                            stroke=1.2,
+                        )
+                    )
 
             if (
                 (not reuse_cached_labels)
-                and sky_object.label_visible
-                and self._should_label_object(sky_object)
+                and id(sky_object) in allowed_label_source_ids
                 and not use_extended_moon_overlay
             ):
 
@@ -11044,6 +11365,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                 all_visible_objects,
                 rich_object_ids=rich_object_ids,
                 object_label_avoid_bounds=object_label_avoid_bounds,
+                overlay_markers=overlay_markers,
             )
 
         if interaction_busy:
@@ -11052,29 +11374,89 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             drawn_label_count = 0
 
-            labeled_sources: set[int] = set()
+            layout_start = perf_counter() if timing_enabled else 0.0
 
-            for _priority, font, origin, _bounds, text, text_color, shadow_color, source_object in label_candidates:
+            interaction_selection_refreshed = False
 
-                source_id = id(source_object)
+            if self._cached_overlay_label_source_ids:
 
-                if source_id in labeled_sources:
+                resolved_candidates_list = []
 
-                    continue
+                resolved_source_ids: set[int] = set()
 
-                labeled_sources.add(source_id)
+                for candidate in sorted(label_candidates, key=lambda item: item[0]):
 
-                painter.setFont(font)
+                    source_id = id(candidate[7])
 
-                painter.setPen(QPen(shadow_color, 1.2))
+                    if (
+                        (
+                            source_id not in self._cached_overlay_label_source_ids
+                            and candidate[7] != self._selected_object
+                        )
+                        or source_id in resolved_source_ids
+                    ):
 
-                painter.drawText(QPoint(int(round(origin.x() + 1.0)), int(round(origin.y() + 1.0))), text)
+                        continue
 
-                painter.setPen(QPen(text_color, 1.0))
+                    resolved_candidates_list.append(candidate)
 
-                painter.drawText(QPoint(int(round(origin.x())), int(round(origin.y()))), text)
+                    resolved_source_ids.add(source_id)
 
-                drawn_label_count += 1
+                minimum_cached_matches = max(
+                    1,
+                    int(math.ceil(len(self._cached_overlay_label_source_ids) * 0.5)),
+                )
+
+                if (
+                    label_candidates
+                    and len(resolved_candidates_list) < minimum_cached_matches
+                ):
+
+                    resolved_candidates_list = []
+
+                resolved_candidates = tuple(resolved_candidates_list)
+
+            else:
+
+                resolved_candidates = ()
+
+            if not resolved_candidates and label_candidates:
+
+                if all_visible_objects is not None:
+
+                    self._extend_fast_path_object_avoid_bounds(
+                        all_visible_objects,
+                        rich_object_ids=rich_object_ids,
+                        object_label_avoid_bounds=object_label_avoid_bounds,
+                    )
+
+                resolved_candidates = self._resolved_non_overlapping_object_label_candidates(
+                    label_candidates,
+                    rect=rect,
+                    object_avoid_bounds=object_label_avoid_bounds,
+                )
+
+                interaction_selection_refreshed = True
+
+            if timing_enabled:
+
+                self._sky_view_last_label_layout_seconds = perf_counter() - layout_start
+
+            drawn_label_count = self._paint_overlay_labels(
+                painter,
+                tuple(
+                    (font, origin, text, text_color, shadow_color)
+                    for _priority, font, origin, _bounds, text, text_color, shadow_color, _source_object in resolved_candidates
+                ),
+                rect,
+                markers=overlay_markers,
+            )
+
+            if interaction_selection_refreshed:
+
+                self._cached_overlay_label_source_ids = frozenset(
+                    id(candidate[7]) for candidate in resolved_candidates
+                )
 
             self._cached_overlay_label_draw_list = None
 
@@ -11089,6 +11471,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                 self._sky_view_last_label_seconds = (
                     self._sky_view_last_label_candidate_seconds
                     + self._sky_view_last_label_measure_seconds
+                    + self._sky_view_last_label_layout_seconds
                     + self._sky_view_last_label_draw_seconds
                 )
 
@@ -11104,19 +11487,12 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             assert self._cached_overlay_label_draw_list is not None
 
-            for font, origin, text, text_color, shadow_color in self._cached_overlay_label_draw_list:
-
-                painter.setFont(font)
-
-                painter.setPen(QPen(shadow_color, 1.2))
-
-                painter.drawText(QPoint(int(round(origin.x() + 1.0)), int(round(origin.y() + 1.0))), text)
-
-                painter.setPen(QPen(text_color, 1.0))
-
-                painter.drawText(QPoint(int(round(origin.x())), int(round(origin.y()))), text)
-
-                drawn_label_count += 1
+            drawn_label_count = self._paint_overlay_labels(
+                painter,
+                self._cached_overlay_label_draw_list,
+                rect,
+                markers=overlay_markers,
+            )
 
         else:
 
@@ -11132,27 +11508,20 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                 self._sky_view_last_label_layout_seconds = perf_counter() - layout_start
 
-            draw_list: list[tuple[QFont, QPointF, str, QColor, QColor]] = []
+            draw_list = [
+                (font, origin, text, text_color, shadow_color)
+                for _priority, font, origin, _bounds, text, text_color, shadow_color, _source_object in resolved_candidates
+            ]
 
-            for _priority, font, origin, _bounds, text, text_color, shadow_color, _source_object in resolved_candidates:
-
-                painter.setFont(font)
-
-                painter.setPen(QPen(shadow_color, 1.2))
-
-                painter.drawText(QPoint(int(round(origin.x() + 1.0)), int(round(origin.y() + 1.0))), text)
-
-                painter.setPen(QPen(text_color, 1.0))
-
-                painter.drawText(QPoint(int(round(origin.x())), int(round(origin.y()))), text)
-
-                draw_list.append((font, origin, text, text_color, shadow_color))
-
-                drawn_label_count += 1
+            drawn_label_count = self._paint_overlay_labels(painter, draw_list, rect, markers=overlay_markers)
 
             self._cached_overlay_label_draw_list = draw_list
 
             self._cached_overlay_label_key = label_cache_key
+
+            self._cached_overlay_label_source_ids = frozenset(
+                id(candidate[7]) for candidate in resolved_candidates
+            )
 
         if self._sky_view_moon_marker_hidden_due_to_extended_body and self._is_moon_sky_object(self._selected_object):
 
@@ -11175,6 +11544,120 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         painter.restore()
 
+    def _paint_overlay_labels(
+        self,
+        painter: QPainter,
+        labels: Sequence[tuple[QFont, QPointF, str, QColor, QColor]],
+        rect: QRectF,
+        markers: Sequence[GpuMarkerDraw] = (),
+    ) -> int:
+        gpu_labels = tuple(
+            GpuLabelDraw(
+                font=font,
+                origin_x=float(origin.x()),
+                origin_y=float(origin.y()),
+                text=text,
+                color=text_color,
+                shadow_color=shadow_color,
+            )
+            for font, origin, text, text_color, shadow_color in labels
+        )
+        if gpu_labels or markers:
+            if self._try_draw_gpu_overlay(painter, rect, labels=gpu_labels, markers=markers):
+                return len(gpu_labels)
+        for marker in markers:
+            painter.setPen(QPen(marker.edge, marker.stroke))
+            painter.setBrush(Qt.BrushStyle.NoBrush if marker.fill.alpha() <= 0 else marker.fill)
+            painter.drawEllipse(
+                QRectF(marker.x - marker.radius, marker.y - marker.radius, marker.radius * 2.0, marker.radius * 2.0)
+            )
+        for font, origin, text, text_color, shadow_color in labels:
+            painter.setFont(font)
+            painter.setPen(QPen(shadow_color, 1.2))
+            painter.drawText(QPoint(int(round(origin.x() + 1.0)), int(round(origin.y() + 1.0))), text)
+            painter.setPen(QPen(text_color, 1.0))
+            painter.drawText(QPoint(int(round(origin.x())), int(round(origin.y()))), text)
+        return len(labels)
+
+    def _try_draw_gpu_labels(
+        self,
+        painter: QPainter,
+        labels: Sequence[GpuLabelDraw],
+        rect: QRectF,
+    ) -> bool:
+        return self._try_draw_gpu_overlay(painter, rect, labels=labels)
+
+    def _try_draw_gpu_overlay(
+        self,
+        painter: QPainter,
+        rect: QRectF,
+        *,
+        labels: Sequence[GpuLabelDraw] = (),
+        markers: Sequence[GpuMarkerDraw] = (),
+    ) -> bool:
+        if not labels and not markers:
+            return True
+        if self._sky_view_label_renderer_disabled_for_session:
+            return False
+        if not self._label_renderer.available:
+            functions = self._gl_functions
+            if functions is None:
+                return False
+            try:
+                if not self._label_renderer.initialize(functions):
+                    self._sky_view_label_renderer_disabled_for_session = True
+                    return False
+            except Exception as exc:
+                self._sky_view_label_renderer_disabled_for_session = True
+                logging.getLogger(__name__).warning("Sky Atlas GPU labels disabled for this session: %s", exc)
+                return False
+        native_painting_started = False
+        try:
+            painter.beginNativePainting()
+            native_painting_started = True
+            if self._label_renderer.draw(labels, rect, markers=markers):
+                return True
+        except Exception as exc:
+            self._sky_view_label_renderer_disabled_for_session = True
+            logging.getLogger(__name__).warning("Sky Atlas GPU labels disabled for this session: %s", exc)
+            return False
+        finally:
+            if native_painting_started:
+                try:
+                    painter.endNativePainting()
+                except Exception:
+                    pass
+        return False
+
+    def _extend_fast_path_object_avoid_bounds(
+        self,
+        all_visible_objects: Sequence[_SkyVisibleObject],
+        *,
+        rich_object_ids: set[int],
+        object_label_avoid_bounds: dict[SkyAtlasObject, QRectF],
+    ) -> None:
+
+        for visible_object in all_visible_objects:
+
+            sky_object = visible_object.sky_object
+
+            if id(sky_object) in rich_object_ids or visible_object.visibility_alpha <= 0.015:
+
+                continue
+
+            x = float(visible_object.x)
+
+            y = float(visible_object.y)
+
+            hit_radius = self._hit_radius_for_visible_object(visible_object)
+
+            object_label_avoid_bounds[sky_object] = QRectF(
+                x - hit_radius - 2.0,
+                y - hit_radius - 2.0,
+                (hit_radius + 2.0) * 2.0,
+                (hit_radius + 2.0) * 2.0,
+            )
+
     def _register_fast_path_hit_targets(
         self,
         painter: QPainter,
@@ -11182,6 +11665,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         *,
         rich_object_ids: set[int],
         object_label_avoid_bounds: dict[SkyAtlasObject, QRectF],
+        overlay_markers: list[GpuMarkerDraw] | None = None,
     ) -> None:
 
         for visible_object in all_visible_objects:
@@ -11215,23 +11699,41 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             if sky_object == self._selected_object:
 
-                painter.setPen(QPen(QColor("#fbbf24"), 1.8))
-
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-
-                painter.drawEllipse(
-                    QRectF(x - hit_radius - 2.0, y - hit_radius - 2.0, (hit_radius + 2.0) * 2.0, (hit_radius + 2.0) * 2.0)
+                marker = GpuMarkerDraw(
+                    x=x,
+                    y=y,
+                    radius=float(hit_radius + 2.0),
+                    fill=QColor(0, 0, 0, 0),
+                    edge=QColor("#fbbf24"),
+                    stroke=1.8,
                 )
+                if overlay_markers is None:
+                    painter.setPen(QPen(marker.edge, marker.stroke))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawEllipse(
+                        QRectF(x - marker.radius, y - marker.radius, marker.radius * 2.0, marker.radius * 2.0)
+                    )
+                else:
+                    overlay_markers.append(marker)
 
             elif sky_object == self._hovered_object:
 
-                painter.setPen(QPen(QColor(184, 208, 248, 138), 1.2))
-
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-
-                painter.drawEllipse(
-                    QRectF(x - hit_radius - 1.0, y - hit_radius - 1.0, (hit_radius + 1.0) * 2.0, (hit_radius + 1.0) * 2.0)
+                marker = GpuMarkerDraw(
+                    x=x,
+                    y=y,
+                    radius=float(hit_radius + 1.0),
+                    fill=QColor(0, 0, 0, 0),
+                    edge=QColor(184, 208, 248, 138),
+                    stroke=1.2,
                 )
+                if overlay_markers is None:
+                    painter.setPen(QPen(marker.edge, marker.stroke))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawEllipse(
+                        QRectF(x - marker.radius, y - marker.radius, marker.radius * 2.0, marker.radius * 2.0)
+                    )
+                else:
+                    overlay_markers.append(marker)
 
     def _hit_radius_for_visible_object(self, visible_object: _SkyVisibleObject) -> float:
 
@@ -11428,6 +11930,14 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         if sky_object.object_type.casefold() != "star":
 
+            if sky_atlas_object_has_given_name(sky_object):
+
+                return 0.84
+
+            if sky_object.catalog.casefold() in self._DENSE_DEEP_SKY_CATALOGS:
+
+                return 0.50
+
             return 0.72 if sky_object.searchable else 0.64
 
         brightness_weight = max(0.0, min(1.0, math.exp(-0.26 * max(-1.5, float(magnitude))) / 1.55))
@@ -11492,6 +12002,42 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         return tuple(resolved_candidates)
 
+    def _prioritized_object_label_source_ids(
+        self,
+        visible_objects: Sequence[_SkyVisibleObject],
+    ) -> frozenset[int]:
+
+        ranked: list[tuple[tuple[int, float, float, float, int, str], int]] = []
+
+        for visible_object in visible_objects:
+
+            sky_object = visible_object.sky_object
+
+            if not sky_object.label_visible or not self._should_label_object(sky_object):
+
+                continue
+
+            ranked.append(
+                (
+                    self._object_label_draw_priority(sky_object, visible_object.magnitude),
+                    id(sky_object),
+                )
+            )
+
+        ranked.sort()
+
+        keep = {object_id for _priority, object_id in ranked[: self._MAX_OBJECT_LABEL_SOURCES]}
+
+        if self._selected_object is not None:
+
+            keep.add(id(self._selected_object))
+
+        if self._hovered_object is not None:
+
+            keep.add(id(self._hovered_object))
+
+        return frozenset(keep)
+
     def _object_label_draw_priority(
         self,
         sky_object: SkyAtlasObject,
@@ -11511,7 +12057,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def _draw_gpu_star_sprites(
         self,
-        gpu_star_draws: Sequence[tuple[tuple[str, int, int, int, str], float, float, float, float]],
+        gpu_star_draws: Sequence[tuple[tuple[str, int, int], float, float, float, float]],
     ) -> bool:
 
         functions = self._gl_functions
@@ -11648,11 +12194,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         painter.restore()
 
-    def _star_sprite_cache_key(self, color_name: str, magnitude: float) -> tuple[str, int, int, int, str]:
+    def _star_sprite_cache_key(self, color_name: str, magnitude: float) -> tuple[str, int, int]:
 
         magnitude_bucket = max(-8, min(48, int(round(float(magnitude) * 4.0))))
-
-        bloom_bucket = max(4, min(36, int(round(self._star_bloom_strength * 10.0))))
 
         size_bucket = max(4, min(25, int(round(self._star_size_scale * 10.0))))
 
@@ -11661,9 +12205,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         return (
             str(color_name),
             magnitude_bucket,
-            bloom_bucket,
             size_bucket * 100 + contrast_bucket,
-            self._star_spike_style,
         )
 
     def _star_sprite(self, color_name: str, magnitude: float) -> QPixmap:
@@ -11672,54 +12214,9 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         return self._star_sprite_from_cache_key(cache_key)
 
-    def _draw_star_spike_gradient(
-        self,
-        painter: QPainter,
-        center: QPointF,
-        extent: float,
-        thickness: float,
-        color: QColor,
-        center_alpha: int,
-        tip_alpha: int,
-        *,
-        rotation_deg: float = 0.0,
-    ) -> None:
+    def _star_sprite_from_cache_key(self, cache_key: tuple[str, int, int]) -> QPixmap:
 
-        if extent <= 0.0 or thickness <= 0.0 or center_alpha <= 0:
-
-            return
-
-        painter.save()
-
-        painter.translate(center)
-
-        if abs(rotation_deg) > 1.0e-6:
-
-            painter.rotate(rotation_deg)
-
-        gradient = QLinearGradient(QPointF(-extent, 0.0), QPointF(extent, 0.0))
-
-        gradient.setColorAt(0.0, self._with_alpha(color, 0))
-
-        gradient.setColorAt(0.1, self._with_alpha(color, tip_alpha))
-
-        gradient.setColorAt(0.5, self._with_alpha(color, center_alpha))
-
-        gradient.setColorAt(0.9, self._with_alpha(color, tip_alpha))
-
-        gradient.setColorAt(1.0, self._with_alpha(color, 0))
-
-        painter.setPen(Qt.PenStyle.NoPen)
-
-        painter.setBrush(QBrush(gradient))
-
-        painter.drawRoundedRect(QRectF(-extent, -(thickness / 2.0), extent * 2.0, thickness), thickness / 2.0, thickness / 2.0)
-
-        painter.restore()
-
-    def _star_sprite_from_cache_key(self, cache_key: tuple[str, int, int, int, str]) -> QPixmap:
-
-        color_name, magnitude_bucket, _bloom_bucket, _reserved_bucket, _spike_style = cache_key
+        color_name, magnitude_bucket, _appearance_bucket = cache_key
 
         cached = self._star_sprite_cache.get(cache_key)
 
@@ -11735,15 +12232,13 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def _build_star_sprite_pixmap(self, color_name: str, magnitude: float) -> QPixmap:
 
-        clamped_bloom = max(0.45, min(1.8, float(self._star_bloom_strength)))
-
-        source_color = QColor(str(color_name))
-
         base_color = self._display_star_color(color_name, magnitude)
+
+        contrast = max(0.4, min(2.0, float(self._star_magnitude_size_contrast)))
 
         visual_weight = max(
             0.025,
-            min(6.2, math.exp(-0.46 * float(self._star_magnitude_size_contrast) * float(magnitude))),
+            min(6.2, math.pow(10.0, -(0.08 + 0.03 * contrast) * float(magnitude))),
         )
 
         brightness_phase = max(0.0, min(1.0, (3.2 - float(magnitude)) / 5.2))
@@ -11752,58 +12247,17 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         tinted_core = self._blended_color(base_color, QColor("#fcfeff"), 0.52 + brightness_phase * 0.16)
 
-        core_radius = max(0.58, min(5.25, 0.56 + 1.48 * pow(visual_weight, 0.92))) * float(self._star_size_scale)
+        core_radius = max(0.72, min(6.4, 0.72 + 1.8 * pow(visual_weight, 0.78))) * float(self._star_size_scale)
 
-        bloom_radius = max(core_radius + 0.82, core_radius * (1.82 + 0.38 * clamped_bloom) + 2.35 * pow(visual_weight, 0.66))
+        bloom_radius = max(core_radius + 1.0, core_radius * 2.05 + 2.8 * pow(visual_weight, 0.62))
 
-        aura_radius = bloom_radius * (1.0 + 0.15 * clamped_bloom + 0.66 * aura_strength)
+        aura_radius = bloom_radius * (1.1 + 0.72 * aura_strength)
 
         if aura_strength <= 0.02:
 
             aura_radius = bloom_radius * 1.02
 
-        aura_offset = QPointF(
-            (0.28 + brightness_phase * 0.74) * (1.0 if source_color.blue() >= source_color.red() else -1.0),
-            -0.22 + brightness_phase * 0.18,
-        )
-
-        anisotropic_x = 1.0 + brightness_phase * 0.14
-
-        anisotropic_y = 1.0 - brightness_phase * 0.08
-
-        spike_extent = 0.0
-
-        diagonal_extent = 0.0
-
-        spike_thickness = 0.0
-
-        spike_color = QColor()
-
-        spike_tip_alpha = 0
-
-        spike_center_alpha = 0
-
-        if self._star_spike_style != "off" and magnitude <= 0.65:
-
-            spike_alpha_scale = 0.78 if self._star_spike_style == "subtle" else 1.0
-
-            spike_extent_scale = 0.58 if self._star_spike_style == "subtle" else 0.88
-
-            brightness_gain = 0.88 + brightness_phase * (0.56 if self._star_spike_style == "subtle" else 0.7)
-
-            spike_extent = aura_radius * spike_extent_scale * brightness_gain
-
-            diagonal_extent = spike_extent * 0.72 if self._star_spike_style == "classic" else 0.0
-
-            spike_thickness = 0.82 + brightness_phase * (0.3 if self._star_spike_style == "subtle" else 0.52)
-
-            spike_color = self._blended_color(base_color, QColor("#ffffff"), 0.42)
-
-            spike_center_alpha = int(round((24.0 + max(0.0, 0.65 - magnitude) * 15.0) * spike_alpha_scale))
-
-            spike_tip_alpha = max(3, int(round(spike_center_alpha * (0.14 if self._star_spike_style == "subtle" else 0.18))))
-
-        sprite_radius = max(aura_radius * anisotropic_x, aura_radius * anisotropic_y, spike_extent, diagonal_extent) + 4.0
+        sprite_radius = aura_radius + 4.0
 
         sprite_size = max(18, int(math.ceil(sprite_radius * 2.0)))
 
@@ -11819,11 +12273,13 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         center = QPointF(sprite_size / 2.0, sprite_size / 2.0)
 
-        aura_gradient = QRadialGradient(center + aura_offset, aura_radius)
+        aura_gradient = QRadialGradient(center, aura_radius)
 
-        aura_gradient.setColorAt(0.0, self._with_alpha(base_color, int(round((12.0 + brightness_phase * 50.0) * (0.8 + clamped_bloom * 0.18) * max(0.12, aura_strength)))))
+        aura_gradient.setColorAt(0.0, self._with_alpha(base_color, int(round((18.0 + brightness_phase * 58.0) * max(0.12, aura_strength)))))
 
-        aura_gradient.setColorAt(0.36, self._with_alpha(base_color, int(round((5.0 + brightness_phase * 18.0) * (0.84 + clamped_bloom * 0.14) * max(0.1, aura_strength)))))
+        aura_gradient.setColorAt(0.34, self._with_alpha(base_color, int(round((7.0 + brightness_phase * 22.0) * max(0.1, aura_strength)))))
+
+        aura_gradient.setColorAt(0.72, self._with_alpha(base_color, int(round((2.0 + brightness_phase * 7.0) * max(0.08, aura_strength)))))
 
         aura_gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
 
@@ -11831,44 +12287,26 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         sprite_painter.drawEllipse(
             QRectF(
-                center.x() - aura_radius * anisotropic_x,
-                center.y() - aura_radius * anisotropic_y,
-                aura_radius * 2.0 * anisotropic_x,
-                aura_radius * 2.0 * anisotropic_y,
+                center.x() - aura_radius,
+                center.y() - aura_radius,
+                aura_radius * 2.0,
+                aura_radius * 2.0,
             )
         )
 
         bloom_gradient = QRadialGradient(center, bloom_radius)
 
-        bloom_gradient.setColorAt(0.0, self._with_alpha(self._blended_color(base_color, QColor("#ffffff"), 0.36), int(round((82.0 + brightness_phase * 68.0) * (0.94 + clamped_bloom * 0.22)))))
+        bloom_gradient.setColorAt(0.0, self._with_alpha(self._blended_color(base_color, QColor("#ffffff"), 0.42), int(round(104.0 + brightness_phase * 82.0))))
 
-        bloom_gradient.setColorAt(0.3, self._with_alpha(base_color, int(round((32.0 + brightness_phase * 36.0) * (0.9 + clamped_bloom * 0.18)))))
+        bloom_gradient.setColorAt(0.28, self._with_alpha(base_color, int(round(38.0 + brightness_phase * 46.0))))
 
-        bloom_gradient.setColorAt(0.72, self._with_alpha(base_color, int(round(7.0 + brightness_phase * 15.0))))
+        bloom_gradient.setColorAt(0.7, self._with_alpha(base_color, int(round(8.0 + brightness_phase * 18.0))))
 
         bloom_gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
 
         sprite_painter.setBrush(QBrush(bloom_gradient))
 
         sprite_painter.drawEllipse(QRectF(center.x() - bloom_radius, center.y() - bloom_radius, bloom_radius * 2.0, bloom_radius * 2.0))
-
-        if spike_extent > 0.0 and spike_thickness > 0.0 and spike_center_alpha > 0:
-
-            self._draw_star_spike_gradient(sprite_painter, center, spike_extent, spike_thickness, spike_color, spike_center_alpha, spike_tip_alpha)
-
-            self._draw_star_spike_gradient(sprite_painter, center, spike_extent, spike_thickness, spike_color, spike_center_alpha, spike_tip_alpha, rotation_deg=90.0)
-
-            if diagonal_extent > 0.0:
-
-                diagonal_center_alpha = int(round(spike_center_alpha * 0.88))
-
-                diagonal_tip_alpha = max(3, int(round(spike_tip_alpha * 0.9)))
-
-                diagonal_thickness = spike_thickness * 0.92
-
-                self._draw_star_spike_gradient(sprite_painter, center, diagonal_extent, diagonal_thickness, spike_color, diagonal_center_alpha, diagonal_tip_alpha, rotation_deg=45.0)
-
-                self._draw_star_spike_gradient(sprite_painter, center, diagonal_extent, diagonal_thickness, spike_color, diagonal_center_alpha, diagonal_tip_alpha, rotation_deg=-45.0)
 
         core_glow = QRadialGradient(center, core_radius)
 
@@ -11903,7 +12341,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def _gpu_texture_for_sprite(
         self,
-        cache_key: tuple[str, int, int, int, str],
+        cache_key: tuple[str, int, int],
         sprite: QPixmap,
     ) -> QOpenGLTexture | None:
 
@@ -12119,6 +12557,16 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         self._sky_view_gl_milky_way_last_fallback_reason = str(error).strip() or error.__class__.__name__
 
         self._sky_view_gl_milky_way_fallback_count += 1
+
+        try:
+
+            if QOpenGLContext.currentContext() is None and self.context() is not None:
+
+                self.makeCurrent()
+
+        except Exception:
+
+            pass
 
         self._gl_milky_way_layer.release()
 
@@ -12424,6 +12872,39 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             logging.getLogger(__name__).warning("Unable to connect OpenGL aboutToBeDestroyed: %s", exc)
 
+    def _activate_star_renderer_compatibility(self, reason: object) -> None:
+
+        resolved_reason = " ".join(str(reason).split()) or "unknown GPU star renderer failure"
+
+        already_active = self._sky_view_star_renderer_disabled_for_session
+
+        if already_active:
+
+            return
+
+        self._sky_view_star_renderer_disabled_for_session = True
+
+        self._sky_view_gl_stars_last_qpainter_fallback = True
+
+        self._sky_view_last_star_renderer_log = (
+            f"backend={BACKEND_LEGACY} compatibility=active reason={resolved_reason}"
+        )
+
+        self._spatial_candidate_cache_key = None
+
+        self._visible_objects_cache_key = None
+
+        message = (
+            "Sky Atlas GPU star rendering is unavailable; explicit compatibility "
+            f"rendering is active and may be slower. {resolved_reason}"
+        )
+
+        logging.getLogger(__name__).error(message)
+
+        self.starRendererCompatibilityActivated.emit(message)
+
+        self.update()
+
     def _handle_gl_context_about_to_be_destroyed(self) -> None:
 
         logging.getLogger(__name__).info("Sky View OpenGL context aboutToBeDestroyed; releasing star renderer resources")
@@ -12438,7 +12919,47 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         try:
 
+            self._label_renderer.release()
+
+        except Exception as exc:
+
+            logging.getLogger(__name__).warning("Label renderer release during context destroy failed: %s", exc)
+
+        try:
+
             self._gl_star_field_layer.release()
+
+        except Exception:
+
+            pass
+
+        try:
+
+            self._release_gpu_star_textures()
+
+        except Exception:
+
+            pass
+
+        try:
+
+            self._gl_milky_way_layer.release()
+
+        except Exception:
+
+            pass
+
+        try:
+
+            self._gl_atmosphere_mask_layer.release()
+
+        except Exception:
+
+            pass
+
+        try:
+
+            self._gl_moon_renderer.release()
 
         except Exception:
 
@@ -12446,23 +12967,17 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._gl_functions = None
 
-        self._sky_view_star_geometry_content_key = None
-
-        self._sky_view_star_packed_compact = None
-
-        self._sky_view_star_packed_halo = None
-
     def _try_draw_unified_gpu_stars(self, painter: QPainter, scene: _SkyViewRenderScene) -> bool:
-
-        logger = logging.getLogger(__name__)
 
         if self._sky_view_star_renderer_disabled_for_session:
 
             reason = self._star_renderer.disabled_reason or "previously disabled for session"
 
-            self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
+            if not self._sky_view_last_star_renderer_log:
 
-            logger.warning("StarRenderer using legacy fallback: %s", reason)
+                self._sky_view_last_star_renderer_log = (
+                    f"backend={BACKEND_LEGACY} compatibility=active reason={reason}"
+                )
 
             return False
 
@@ -12470,65 +12985,22 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             reason = "OpenGL functions not ready on widget"
 
-            self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
-
-            logger.warning("StarRenderer legacy fallback: %s", reason)
+            self._activate_star_renderer_compatibility(reason)
 
             return False
 
         if (
             self._star_renderer.available
             and self._star_renderer.backend_name != BACKEND_INSTANCED
-            and not bool(getattr(self._star_renderer, "_require_vao", True))
         ):
 
-            self._sky_view_last_star_renderer_log = (
-                f"backend={BACKEND_LEGACY} reason=no_vao_expanded_visual_fallback"
+            self._activate_star_renderer_compatibility(
+                f"unsupported star backend {self._star_renderer.backend_name}"
             )
 
             return False
 
-        star_inputs: list[StarInstanceInput] = []
-
         ground_on = bool(self._show_ground)
-
-        for index, visible_object in enumerate(scene.visible_objects):
-
-            sky_object = visible_object.sky_object
-
-            if sky_object.object_type.casefold() != "star":
-
-                continue
-
-            visibility_alpha, _size = self._moon_focus_background_presentation(
-                sky_object,
-                visible_object.visibility_alpha,
-                visible_object.magnitude,
-            )
-
-            if visibility_alpha <= 0.015 and sky_object != self._selected_object:
-
-                continue
-
-            extinction = 1.0
-
-            if ground_on:
-
-                extinction = float(self._atmospheric_extinction_alpha(visible_object.altitude_deg))
-
-            star_inputs.append(
-                StarInstanceInput(
-                    x_px=float(visible_object.x),
-                    y_px=float(visible_object.y),
-                    magnitude=float(visible_object.magnitude),
-                    color=str(sky_object.color or "#f8fbff"),
-                    altitude_deg=float(visible_object.altitude_deg),
-                    visibility=float(visibility_alpha),
-                    star_id=index + 1,
-                    extinction=extinction,
-                    selected=sky_object is self._selected_object,
-                )
-            )
 
         settings = StarRendererSettings(
             field_width_deg=float(self._field_width_deg),
@@ -12536,6 +13008,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             star_size=float(self._star_size_scale),
             magnitude_size_contrast=max(0.4, float(self._star_magnitude_size_contrast)),
             limiting_magnitude=float(self._star_magnitude_limit),
+            visible_magnitude_limit=self._star_visible_magnitude_limit_for_current_fov(),
             twinkle_amount=float(self._star_twinkle_amount),
             device_pixel_ratio=max(1.0, float(scene.device_pixel_ratio)),
             interaction_stable=self._sky_view_interaction_state() == "stable",
@@ -12543,84 +13016,112 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
             moon_focus_dim=1.0,
         )
 
-        interaction_busy = self._sky_view_interaction_state() != "stable"
+        projection: StarCatalogProjection | None = None
 
-        # During interaction, positions change every frame — always repack.
-        # Only skip pack/upload on stable frames (e.g. twinkle-only updates).
-        if interaction_busy:
+        compact_instances: np.ndarray | None = None
 
-            compact, halo = self._star_renderer.pack_instances(star_inputs, settings)
+        halo_instances: np.ndarray | None = None
 
-            self._sky_view_star_geometry_content_key = None
+        geometry_content_key: tuple[object, ...] | None = None
 
-            self._sky_view_star_packed_compact = compact
+        if self._star_renderer.has_static_catalog:
 
-            self._sky_view_star_packed_halo = halo
+            selected_star_id = self._static_gpu_star_id_for_object(self._selected_object)
 
-            geometry_content_key = (
-                "busy",
-                len(star_inputs),
-                round(float(self._center_ra_deg), 3),
-                round(float(self._center_dec_deg), 3),
-                round(float(self._field_width_deg), 3),
+            projection = StarCatalogProjection(
+                equatorial_to_horizon_matrix=scene.equatorial_to_horizon_matrix,
+                camera_forward=scene.camera_forward,
+                camera_up=scene.camera_up,
+                camera_right=scene.camera_right,
+                half_width_rad=math.radians(max(1.0e-6, float(scene.field_width_deg)) / 2.0),
+                half_height_rad=math.radians(max(1.0e-6, float(scene.field_height_deg)) / 2.0),
+                visible_magnitude_limit=self._star_visible_magnitude_limit_for_current_fov(),
+                projection_margin=1.05,
+                ground_enabled=ground_on,
+                selected_star_id=selected_star_id,
+                moon_focus_zoom=self._moon_focus_zoom_fraction(),
+                moon_focus_extreme_zoom=self._moon_focus_extreme_zoom_fraction(),
             )
 
         else:
 
             geometry_content_key = (
-                len(star_inputs),
-                round(settings.field_width_deg, 4),
-                round(settings.star_brightness, 4),
-                round(settings.star_size, 4),
-                round(settings.magnitude_size_contrast, 4),
-                round(settings.limiting_magnitude, 4),
-                round(settings.device_pixel_ratio, 4),
-                round(settings.halo_threshold_magnitude, 4),
-                round(settings.halo_intensity, 4),
-                round(settings.halo_radius_scale, 4),
+                "dynamic-catalog",
+                id(self._objects),
+                self._visible_objects_cache_key,
+                scene.equatorial_to_horizon_matrix,
+                scene.camera_forward,
+                scene.camera_up,
+                scene.camera_right,
+                float(scene.field_width_deg),
+                float(scene.field_height_deg),
+                float(scene.viewport_rect.x()),
+                float(scene.viewport_rect.y()),
+                float(scene.viewport_rect.width()),
+                float(scene.viewport_rect.height()),
+                float(settings.star_brightness),
+                float(settings.star_size),
+                float(settings.magnitude_size_contrast),
+                float(settings.limiting_magnitude),
                 bool(ground_on),
-                id(self._selected_object) if self._selected_object is not None else 0,
-                round(float(self._center_ra_deg), 4),
-                round(float(self._center_dec_deg), 4),
-                # Cheap content fingerprint instead of per-star tuples.
-                int(
-                    round(
-                        sum(
-                            item.x_px + item.y_px * 0.019 + item.magnitude * 7.0 + item.visibility * 3.0
-                            for item in star_inputs
-                        )
-                        * 100.0
-                    )
-                )
-                if star_inputs
-                else 0,
+                id(self._selected_object),
+                self._moon_focus_zoom_fraction(),
+                self._moon_focus_extreme_zoom_fraction(),
             )
 
             if (
-                geometry_content_key == self._sky_view_star_geometry_content_key
-                and self._sky_view_star_packed_compact is not None
-                and self._sky_view_star_packed_halo is not None
+                geometry_content_key == self._dynamic_gpu_star_cache_key
+                and self._dynamic_gpu_star_compact is not None
+                and self._dynamic_gpu_star_halos is not None
             ):
 
-                compact = self._sky_view_star_packed_compact
+                compact_instances = self._dynamic_gpu_star_compact
 
-                halo = self._sky_view_star_packed_halo
-
-                self._star_renderer.apply_settings(
-                    twinkle_amount=settings.twinkle_amount,
-                    interaction_stable=settings.interaction_stable,
-                    time_seconds=settings.time_seconds,
-                )
+                halo_instances = self._dynamic_gpu_star_halos
 
             else:
 
-                compact, halo = self._star_renderer.pack_instances(star_inputs, settings)
+                star_inputs: list[StarInstanceInput] = []
 
-                self._sky_view_star_geometry_content_key = geometry_content_key
+                for index, visible_object in enumerate(scene.visible_objects):
 
-                self._sky_view_star_packed_compact = compact
+                    sky_object = visible_object.sky_object
 
-                self._sky_view_star_packed_halo = halo
+                    if sky_object.object_type.casefold() != "star":
+
+                        continue
+
+                    visibility, _size_scale = self._moon_focus_background_presentation(
+                        sky_object,
+                        visible_object.visibility_alpha,
+                        visible_object.magnitude,
+                    )
+
+                    star_inputs.append(
+                        StarInstanceInput(
+                            x_px=float(visible_object.x),
+                            y_px=float(visible_object.y),
+                            magnitude=float(visible_object.magnitude),
+                            color=str(sky_object.color or "#f8fbff"),
+                            altitude_deg=float(visible_object.altitude_deg),
+                            visibility=float(visibility),
+                            star_id=((id(sky_object) >> 4) & 0xFFFFFFFF) or (index + 1),
+                            extinction=(
+                                self._atmospheric_extinction_alpha(visible_object.altitude_deg)
+                                if ground_on
+                                else 1.0
+                            ),
+                            selected=sky_object == self._selected_object,
+                        )
+                    )
+
+                compact_instances, halo_instances = self._star_renderer.pack_instances(star_inputs, settings)
+
+                self._dynamic_gpu_star_cache_key = geometry_content_key
+
+                self._dynamic_gpu_star_compact = compact_instances
+
+                self._dynamic_gpu_star_halos = halo_instances
 
         native_started = False
 
@@ -12640,9 +13141,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                     reason = "OpenGL functions not ready on widget"
 
-                    self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
-
-                    logger.warning("StarRenderer legacy fallback: %s", reason)
+                    self._activate_star_renderer_compatibility(reason)
 
                     return False
 
@@ -12652,11 +13151,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                         reason = self._star_renderer.disabled_reason or "initialize returned False"
 
-                        self._sky_view_star_renderer_disabled_for_session = True
-
-                        self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
-
-                        logger.warning("StarRenderer initialize failed; legacy fallback: %s", reason)
+                        self._activate_star_renderer_compatibility(reason)
 
                         return False
 
@@ -12664,19 +13159,16 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
                     reason = f"initialize exception: {exc}"
 
-                    self._sky_view_star_renderer_disabled_for_session = True
-
-                    self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
-
-                    logger.warning("StarRenderer initialize exception; legacy fallback: %s", reason)
+                    self._activate_star_renderer_compatibility(reason)
 
                     return False
 
             metrics = self._star_renderer.draw(
                 viewport_rect=scene.viewport_rect,
                 device_pixel_ratio=float(scene.device_pixel_ratio),
-                compact_instances=compact,
-                halo_instances=halo,
+                compact_instances=compact_instances,
+                halo_instances=halo_instances,
+                catalog_projection=projection,
                 settings=settings,
                 default_framebuffer=default_fbo,
                 geometry_content_key=geometry_content_key,
@@ -12696,11 +13188,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             self._sky_view_last_star_renderer_log = self._star_renderer.metrics_log_line()
 
-            if metrics.backend != BACKEND_INSTANCED and not bool(getattr(self._star_renderer, "_require_vao", True)):
+            if metrics.backend != BACKEND_INSTANCED:
 
-                self._sky_view_gl_stars_last_qpainter_fallback = True
-
-                self._sky_view_last_star_renderer_log += " visual_fallback=qPainter_no_vao"
+                self._activate_star_renderer_compatibility(
+                    metrics.fallback_reason or f"unexpected backend {metrics.backend}"
+                )
 
                 return False
 
@@ -12712,9 +13204,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             # Do not destroy shaders/VAO every frame — that thrashing prevents
             # recovery and recreates resources on the wrong context timing.
-            self._sky_view_last_star_renderer_log = f"backend={BACKEND_LEGACY} reason={reason}"
-
-            logger.warning("Unified star renderer failed this frame; will retry: %s", reason)
+            self._activate_star_renderer_compatibility(reason)
 
             return False
 
@@ -12932,12 +13422,11 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                 1.35,
                 (
                     0.94
-                    + (self._star_bloom_strength - 1.0) * 0.18
                     + (twinkle_gain - 1.0) * 0.05
                     + (magnitude_brightness - 0.55) * 0.42
                 ),
             ),
-        ) * float(self._star_size_scale)
+        ) * float(self._star_size_scale) * star_fov_size_scale(self._field_width_deg)
 
         moon_focus_alpha, moon_focus_size_scale = self._moon_focus_background_presentation(sky_object, 1.0, magnitude)
 
@@ -14965,7 +15454,32 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         benchmark_token = benchmark_recorder.start_section("constellation.layer") if benchmark_recorder is not None else None
 
-        self._constellation_overlay.draw(painter, scene, settings)
+        def _draw_gpu_constellation_labels(
+            labels: tuple[tuple[QFont, QPointF, str, QColor, QColor], ...],
+            rect: QRectF,
+        ) -> bool:
+            if not labels:
+                return True
+            gpu_labels = tuple(
+                GpuLabelDraw(
+                    font=font,
+                    origin_x=float(origin.x()),
+                    origin_y=float(origin.y()),
+                    text=text,
+                    color=text_color,
+                    shadow_color=shadow_color,
+                    baseline=False,
+                )
+                for font, origin, text, text_color, shadow_color in labels
+            )
+            return self._try_draw_gpu_labels(painter, gpu_labels, rect)
+
+        self._constellation_overlay.draw(
+            painter,
+            scene,
+            settings,
+            gpu_label_drawer=_draw_gpu_constellation_labels,
+        )
 
         if benchmark_recorder is not None:
 
@@ -15158,7 +15672,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         prepared_tile_cache_budget_bytes = self._sky_view_gl_milky_way_cpu_tile_cache_budget_bytes()
 
-        if self._normalize_milky_way_render_mode(getattr(scene, "milky_way_render_mode", None)) == "advanced" and tile_requests:
+        if tile_requests:
 
             benchmark_stage_token = benchmark_recorder.start_section("milky_way.prepared_tile_warmup") if benchmark_recorder is not None else None
 
@@ -16270,7 +16784,14 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         if render_mode in {"basic", "full"}:
 
-            source_mode, source_image, source_cache_key, source_level = self._milky_way_render_mode_source_image(scene, render_mode=render_mode)
+            # Full mode used to stitch a 16k atlas (minute-long hang) and then
+            # briefly used the Advanced 32k tile path (GPU crash on open).
+            # Keep a single existing preview/base texture so the first paint
+            # stays fast and stable. Advanced still uses GPU tiles.
+            source_mode, source_image, source_cache_key, source_level = self._milky_way_render_mode_source_image(
+                scene,
+                render_mode="basic",
+            )
 
             self._sky_view_gl_milky_way_last_runtime_source_mode = source_mode
 
@@ -16420,14 +16941,6 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
         manifest_asset = asset_info.asset if isinstance(asset_info.asset, MilkyWayTilePyramidAsset) else None
 
         if asset_info.asset_mode == "tiled_manifest" and manifest_asset is not None:
-
-            if resolved_mode == "full":
-
-                full_image, full_cache_key, full_level = self._milky_way_manifest_full_image(manifest_asset, scene)
-
-                if full_image is not None and full_cache_key is not None and full_level is not None:
-
-                    return "manifest_full", full_image, full_cache_key, f"L{full_level.level} full"
 
             manifest_base_image, manifest_base_cache_key = self._milky_way_manifest_base_image(manifest_asset)
 
@@ -20950,15 +21463,55 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             painter.restore()
 
-    def _sync_horizon_transform_matrices(self) -> None:
+    def _horizon_collect_cache_key(self) -> tuple[float, float, float]:
 
-        # Quantize LST so tiny simulation ticks do not thrash collect/projection caches.
+        # Keep expensive object collect on a coarse sidereal grid; display
+        # reprojects those cached objects with the continuous matrix.
         local_sidereal_time_deg = self._local_sidereal_time_deg(self._observation_time_utc, self._observer_longitude_deg)
 
-        quantized_lst_deg = round(float(local_sidereal_time_deg) * 20.0) / 20.0  # 0.05 deg ≈ 12 s
+        return (
+            round(float(local_sidereal_time_deg) * 20.0) / 20.0,
+            round(float(self._observer_latitude_deg), 4),
+            round(float(self._observer_longitude_deg), 4),
+        )
+
+    def _reproject_cached_visible_objects(
+        self,
+        visible_objects: list[_SkyVisibleObject],
+        frame_state: _SkyViewCollectFrameState,
+    ) -> list[_SkyVisibleObject]:
+
+        for item in visible_objects:
+
+            sky_object = item.sky_object
+
+            equatorial_vector = self._equatorial_vector(float(sky_object.ra_deg), float(sky_object.dec_deg))
+
+            horizon_vector = self._matrix_vector_multiply(self._equatorial_to_horizon_matrix, equatorial_vector)
+
+            projected = self._project_normalized_horizon_vector_to_rect_with_frame_state(
+                horizon_vector,
+                frame_state,
+            )
+
+            if projected is None:
+
+                continue
+
+            item.x = float(projected[0])
+
+            item.y = float(projected[1])
+
+            item.altitude_deg = math.degrees(math.asin(max(-1.0, min(1.0, horizon_vector[2]))))
+
+        return visible_objects
+
+    def _sync_horizon_transform_matrices(self) -> None:
+
+        local_sidereal_time_deg = self._local_sidereal_time_deg(self._observation_time_utc, self._observer_longitude_deg)
 
         sync_key = (
-            quantized_lst_deg,
+            round(float(local_sidereal_time_deg), 8),
             round(float(self._observer_latitude_deg), 4),
             round(float(self._observer_longitude_deg), 4),
         )
@@ -20969,7 +21522,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         self._horizon_matrix_sync_key = sync_key
 
-        self._equatorial_to_horizon_matrix = self._build_equatorial_to_horizon_matrix_for_lst(quantized_lst_deg)
+        self._equatorial_to_horizon_matrix = self._build_equatorial_to_horizon_matrix_for_lst(local_sidereal_time_deg)
 
         self._horizon_to_equatorial_matrix = self._matrix_transpose(self._equatorial_to_horizon_matrix)
 
@@ -21418,7 +21971,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         alpha_scale = 0.18 + 0.82 * pow(max(0.0, min(1.0, float(visibility_alpha))), 0.8)
 
-        return max(0.35, min(2.6, base_width * alpha_scale))
+        return max(0.35, min(2.6, base_width * alpha_scale * star_fov_size_scale(self._field_width_deg)))
 
     def _draw_fast_star_groups(self, painter: QPainter, groups: dict[tuple[str, int, float], list[QPointF]]) -> None:
 
@@ -21808,11 +22361,13 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         best_match: tuple[float, float, SkyAtlasObject] | None = None
 
-        candidates = self._star_hit_grid.query(float(x), float(y))
+        candidates = list(self._star_hit_grid.query(float(x), float(y)))
 
         if not candidates:
 
-            candidates = self._last_projected_objects
+            candidates = list(self._last_projected_objects)
+
+        candidates.extend(self._static_gpu_star_hit_candidates(float(x), float(y)))
 
         for projected_x, projected_y, hit_radius, sky_object in candidates:
 
@@ -21831,6 +22386,145 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
                 best_match = (distance, magnitude, sky_object)
 
         return None if best_match is None else best_match[2]
+
+    def _static_gpu_star_hit_candidates(
+        self,
+        x: float,
+        y: float,
+    ) -> list[tuple[float, float, float, SkyAtlasObject]]:
+
+        if not self._static_gpu_star_projection_active() or not self._spatial_star_bins:
+
+            return []
+
+        rect = self._view_rect()
+
+        if rect.width() <= 0.0 or rect.height() <= 0.0 or not rect.adjusted(-1.0, -1.0, 1.0, 1.0).contains(x, y):
+
+            return []
+
+        horizon_vector = self._screen_point_to_horizon_vector(QPointF(x, y), rect)
+
+        equatorial_vector = self._horizon_to_equatorial_vector(horizon_vector)
+
+        ra_deg, dec_deg = self._equatorial_vector_to_radec(equatorial_vector)
+
+        degrees_per_pixel = max(
+            float(self._field_width_deg) / max(1.0, float(rect.width())),
+            float(self._field_height_deg(rect)) / max(1.0, float(rect.height())),
+        )
+
+        angular_radius_deg = max(0.05, degrees_per_pixel * self._STATIC_STAR_PICK_RADIUS_PX)
+
+        tile_size = float(self._SPATIAL_INDEX_TILE_DEG)
+
+        ra_bin_count = max(1, int(math.ceil(360.0 / tile_size)))
+
+        dec_bin_count = max(1, int(math.ceil(180.0 / tile_size)))
+
+        center_ra_index, center_dec_index = self._spatial_bin_key(ra_deg, dec_deg)
+
+        dec_steps = max(1, int(math.ceil(angular_radius_deg / tile_size)))
+
+        near_pole = abs(float(dec_deg)) + angular_radius_deg >= 88.0
+
+        if near_pole:
+
+            ra_indices = range(ra_bin_count)
+
+        else:
+
+            ra_span_deg = angular_radius_deg / max(0.08, math.cos(math.radians(float(dec_deg))))
+
+            ra_steps = max(1, int(math.ceil(ra_span_deg / tile_size)))
+
+            ra_indices = tuple(
+                (center_ra_index + offset) % ra_bin_count
+                for offset in range(-ra_steps, ra_steps + 1)
+            )
+
+        dec_start = max(0, center_dec_index - dec_steps)
+
+        dec_stop = min(dec_bin_count - 1, center_dec_index + dec_steps)
+
+        magnitude_scan_cutoff = self._star_visible_magnitude_limit_for_current_fov() + STAR_VISIBILITY_FADE_WINDOW_MAG
+
+        hit_candidates: list[tuple[float, float, float, SkyAtlasObject]] = []
+
+        for dec_index in range(dec_start, dec_stop + 1):
+
+            for ra_index in ra_indices:
+
+                for sky_object in self._spatial_star_bins.get((ra_index, dec_index), ()):
+
+                    magnitude = self._magnitude_sort_key(sky_object.magnitude)
+
+                    if magnitude > magnitude_scan_cutoff:
+
+                        break
+
+                    visibility = self._visibility_alpha_for_magnitude(sky_object, magnitude)
+
+                    visibility, _size_scale = self._moon_focus_background_presentation(
+                        sky_object,
+                        visibility,
+                        magnitude,
+                    )
+
+                    if visibility <= 0.01:
+
+                        continue
+
+                    star_horizon_vector = self._equatorial_to_horizon_vector(
+                        sky_object.ra_deg,
+                        sky_object.dec_deg,
+                    )
+
+                    altitude_deg = math.degrees(
+                        math.asin(max(-1.0, min(1.0, float(star_horizon_vector[2]))))
+                    )
+
+                    if self._show_ground and altitude_deg < -0.9 and sky_object != self._selected_object:
+
+                        continue
+
+                    projected = self._project_horizon_vector_to_rect(
+                        star_horizon_vector,
+                        rect,
+                        normalized_margin=1.02,
+                    )
+
+                    if projected is None:
+
+                        continue
+
+                    appearance = self._star_renderer.appearance_for_magnitude(
+                        magnitude,
+                        visibility=visibility,
+                    )
+
+                    hit_radius = max(
+                        5.5,
+                        min(
+                            12.0,
+                            float(appearance.compact_radius_px) + 3.0,
+                        ),
+                    )
+
+                    if abs(float(projected[0]) - x) > hit_radius or abs(float(projected[1]) - y) > hit_radius:
+
+                        continue
+
+                    hit_candidates.append(
+                        (
+                            float(projected[0]),
+                            float(projected[1]),
+                            hit_radius,
+                            sky_object,
+                        )
+                    )
+
+        return hit_candidates
 
     def _emit_info_for_object(self, sky_object: SkyAtlasObject | None) -> None:
 
@@ -21878,9 +22572,23 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         if sky_object.object_type.casefold() != "star":
 
+            catalog = sky_object.catalog.casefold()
+
+            if catalog in self._DENSE_DEEP_SKY_CATALOGS:
+
+                named_field_limit = (
+                    self._DENSE_NAMED_LABEL_FOV_DEG
+                    if sky_atlas_object_has_given_name(sky_object)
+                    else self._DENSE_ANONYMOUS_LABEL_FOV_DEG
+                )
+
+                return self._field_width_deg <= named_field_limit
+
             if sky_object.magnitude is None:
 
-                return self._field_width_deg <= 45.0
+                named_field_limit = 80.0 if sky_atlas_object_has_given_name(sky_object) else 45.0
+
+                return self._field_width_deg <= named_field_limit
 
             return self._field_width_deg <= 140.0 and magnitude <= self._object_label_magnitude_limit
 
@@ -21923,7 +22631,7 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
             return 0.0
 
-        fade_window = 0.55 if sky_object.object_type.casefold() == "star" else 0.7
+        fade_window = STAR_VISIBILITY_FADE_WINDOW_MAG if sky_object.object_type.casefold() == "star" else 0.7
 
         raw_alpha = (limit + fade_window - magnitude) / (fade_window * 2.0)
 
@@ -21950,13 +22658,14 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
     def _star_visible_magnitude_limit_for_current_fov(self) -> float:
 
-        # Stellarium-like LOD: wide fields keep only brighter stars; the user
-        # magnitude limit is reached when zooming in.
-        wide_limit = max(3.6, min(5.0, float(self._star_magnitude_limit) - 8.0))
+        configured_limit = float(self._star_magnitude_limit)
+        wide_limit = min(configured_limit, SKY_ATLAS_WIDE_FIELD_STAR_MAGNITUDE)
         return self._interpolated_magnitude_limit(
-            float(self._star_magnitude_limit),
+            configured_limit,
             wide_limit,
-            exponent=0.85,
+            exponent=self._SKY_VIEW_LOD_EXPONENT,
+            minimum_fov=self._SKY_VIEW_NARROW_LOD_FOV_DEG,
+            maximum_fov=self._SKY_VIEW_WIDE_LOD_FOV_DEG,
         )
 
     def _effective_star_visible_magnitude_limit(self, base_limit: float, magnitude: float) -> float:
@@ -21971,11 +22680,19 @@ class _SkyAtlasViewWidget(QOpenGLWidget):
 
         return 0.35 * self._smoothstep(normalized) * (1.0 - 0.6 * self._smoothstep(release))
 
-    def _interpolated_magnitude_limit(self, narrow_limit: float, wide_limit: float, *, exponent: float = 1.0) -> float:
+    def _interpolated_magnitude_limit(
+        self,
+        narrow_limit: float,
+        wide_limit: float,
+        *,
+        exponent: float = 1.0,
+        minimum_fov: float = 2.0,
+        maximum_fov: float = 360.0,
+    ) -> float:
 
-        minimum_fov = 2.0
+        minimum_fov = max(1.0e-6, float(minimum_fov))
 
-        maximum_fov = 360.0
+        maximum_fov = max(minimum_fov, float(maximum_fov))
 
         clamped_fov = max(minimum_fov, min(maximum_fov, self._field_width_deg))
 
@@ -23201,10 +23918,9 @@ class _LegacySkyViewLocationDialog(QDialog):
 class _SkyAtlasOverlayContainer(QWidget):
 
     _DOCK_MARGIN_PX = 16
-
     _DOCK_REVEAL_BAND_PX = 88
-
     _DOCK_HIDDEN_OFFSET_PX = 18
+    _DOCK_ANIMATION_MS = 240
 
     def __init__(
         self,
@@ -23213,158 +23929,156 @@ class _SkyAtlasOverlayContainer(QWidget):
         info_panel_widget: QWidget | None = None,
         parent: QWidget | None = None,
     ) -> None:
-
         super().__init__(parent)
-
         self.setObjectName("skyViewImmersiveCanvas")
-
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-
         self.setMouseTracking(True)
-
         self._canvas = canvas
-
         self._dock_widget = dock_widget
-
         self._info_panel_widget = info_panel_widget
-
+        self._download_banner = None
         self._popup_active = False
-
         self._dock_visible = False
-
+        self._dock_reveal = 0.0
+        self._dock_animation = QPropertyAnimation(self, b"dockReveal", self)
+        self._dock_animation.setDuration(self._DOCK_ANIMATION_MS)
+        self._dock_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         child_widgets = [self._canvas, self._dock_widget]
-
         if self._info_panel_widget is not None:
-
             child_widgets.append(self._info_panel_widget)
-
         for child_widget in child_widgets:
-
             child_widget.setParent(self)
-
             child_widget.setMouseTracking(True)
-
             child_widget.installEventFilter(self)
-
+        self._canvas.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.installEventFilter(self)
-
         self.setMinimumSize(self._canvas.minimumSize())
-
         self._canvas.lower()
-
         if self._info_panel_widget is not None:
-
             self._info_panel_widget.raise_()
-
         self._dock_widget.raise_()
+        if self._download_banner is not None:
+            self._download_banner.raise_()
 
-    def set_popup_active(self, active: bool) -> None:
+    def set_download_banner(self, banner: QWidget | None) -> None:
+        self._download_banner = banner
+        if banner is not None:
+            banner.setParent(self)
+            banner.setMouseTracking(True)
+            banner.raise_()
+        if self.rect().isValid() and self.width() > 0 and self.height() > 0:
+            self.reposition_overlays()
 
-        self._popup_active = bool(active)
+    def get_dock_reveal(self) -> float:
+        return self._dock_reveal
 
-        if self._popup_active:
-
-            self._dock_visible = True
-
-        else:
-
-            self._update_dock_visibility(self.mapFromGlobal(QCursor.pos()))
-
+    def set_dock_reveal(self, value: float) -> None:
+        resolved = max(0.0, min(1.0, float(value)))
+        if abs(resolved - self._dock_reveal) <= 1.0e-4:
+            return
+        self._dock_reveal = resolved
         self.reposition_overlays()
 
+    dockReveal = Property(float, get_dock_reveal, set_dock_reveal)
+
+    def set_popup_active(self, active: bool) -> None:
+        self._popup_active = bool(active)
+        if self._popup_active:
+            self._set_dock_visible(True)
+            return
+        self._update_dock_visibility(self.mapFromGlobal(QCursor.pos()))
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-
         if watched is self or watched is self._canvas or watched is self._dock_widget:
-
-            if event.type() in {QEvent.Type.MouseMove, QEvent.Type.Enter}:
-
+            if event.type() in {QEvent.Type.MouseMove, QEvent.Type.Enter, QEvent.Type.Leave}:
                 self._update_dock_visibility(self.mapFromGlobal(QCursor.pos()))
-
-            elif event.type() == QEvent.Type.Leave and not self._popup_active:
-
-                self._dock_visible = False
-
-                self.reposition_overlays()
-
         return False
 
     def resizeEvent(self, event: QResizeEvent) -> None:
-
         super().resizeEvent(event)
-
         self.reposition_overlays()
 
     def reposition_overlays(self) -> None:
-
         bounds = self.rect()
-
         self._canvas.setGeometry(bounds)
-
         if self._info_panel_widget is not None:
-
             panel_width = min(340, max(280, int(round(bounds.width() * 0.30))))
-
             if bounds.width() < 720:
-
                 panel_width = max(240, bounds.width() - self._DOCK_MARGIN_PX * 2)
-
             panel_height = min(
                 max(248, self._info_panel_widget.sizeHint().height()),
                 max(220, bounds.height() - self._DOCK_MARGIN_PX * 2),
             )
-
             self._info_panel_widget.setGeometry(
                 self._DOCK_MARGIN_PX,
                 self._DOCK_MARGIN_PX,
                 panel_width,
                 panel_height,
             )
-
         dock_width = min(max(240, self._dock_widget.sizeHint().width()), max(180, bounds.width() - self._DOCK_MARGIN_PX * 2))
-
         dock_height = max(44, self._dock_widget.sizeHint().height())
-
         dock_x = int(round((bounds.width() - dock_width) / 2.0))
-
         visible_y = bounds.height() - self._DOCK_MARGIN_PX - dock_height
-
         hidden_y = bounds.height() - 8
-
-        dock_y = visible_y if self._dock_visible or self._popup_active else hidden_y
-
+        dock_y = int(round(hidden_y + ((visible_y - hidden_y) * self._dock_reveal)))
         self._dock_widget.setGeometry(dock_x, dock_y, dock_width, dock_height)
-
+        if self._download_banner is not None and self._download_banner.isVisible():
+            hint = self._download_banner.sizeHint()
+            banner_width = min(max(360, hint.width() + 24), max(240, bounds.width() - 32))
+            banner_height = max(56, hint.height())
+            banner_x = int(round((bounds.width() - banner_width) / 2.0))
+            self._download_banner.setGeometry(banner_x, 12, banner_width, banner_height)
         self._canvas.lower()
-
         if self._info_panel_widget is not None:
-
             self._info_panel_widget.raise_()
-
         self._dock_widget.raise_()
+        if self._download_banner is not None:
+            self._download_banner.raise_()
+        self._canvas.setGeometry(bounds)
+
+    def reposition_download_banner(self) -> None:
+        banner = self._download_banner
+        if banner is None or banner.isHidden():
+            return
+        bounds = self.rect()
+        hint = banner.sizeHint()
+        banner_width = min(max(360, hint.width() + 24), max(240, bounds.width() - 32))
+        banner_height = max(56, hint.height())
+        banner_x = int(round((bounds.width() - banner_width) / 2.0))
+        banner.setGeometry(banner_x, 12, banner_width, banner_height)
+        banner.raise_()
+
+    def _set_dock_visible(self, visible: bool) -> None:
+        target = 1.0 if visible else 0.0
+        self._dock_visible = visible
+        if self._dock_animation.state() == QAbstractAnimation.State.Running:
+            try:
+                current_target = float(self._dock_animation.endValue())
+            except (TypeError, ValueError):
+                current_target = self._dock_reveal
+            if abs(current_target - target) <= 1.0e-6:
+                return
+        if abs(self._dock_reveal - target) <= 1.0e-3:
+            if self._dock_animation.state() == QAbstractAnimation.State.Running:
+                self._dock_animation.stop()
+            return
+        remaining = abs(target - self._dock_reveal)
+        self._dock_animation.stop()
+        self._dock_animation.setStartValue(self._dock_reveal)
+        self._dock_animation.setEndValue(target)
+        self._dock_animation.setDuration(max(60, int(round(self._DOCK_ANIMATION_MS * remaining))))
+        self._dock_animation.start()
 
     def _update_dock_visibility(self, position: QPoint) -> None:
-
         if self._popup_active:
-
-            self._dock_visible = True
-
-            self.reposition_overlays()
-
+            self._set_dock_visible(True)
             return
-
         reveal_threshold = self.height() - self._DOCK_REVEAL_BAND_PX
-
         dock_rect = self._dock_widget.geometry().adjusted(-8, -8, 8, 8)
-
         should_show = position.y() >= reveal_threshold or dock_rect.contains(position)
-
         if should_show == self._dock_visible:
-
             return
-
-        self._dock_visible = should_show
-
-        self.reposition_overlays()
+        self._set_dock_visible(should_show)
 
 
 class _SkyAtlasPopupOverlay(QWidget):
@@ -28089,6 +28803,7 @@ class MainWindow(QMainWindow):
         self._sky_explorer_roi_selection: _HrRoiSelection | None = None
         self._sky_explorer_active_roi_selection: _HrRoiSelection | None = None
         self._sky_explorer_roi_drag_origin: tuple[float, float] | None = None
+        self._sky_explorer_roi_tool_armed: bool = False
         self._sky_explorer_primary_survey_key: str | None = None
         self._sky_explorer_comparison_image_path: Path | None = None
         self._sky_explorer_survey_field_origin_ra_deg: float | None = None
@@ -28158,7 +28873,11 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_annotation_fill_color = "#38bdf8"
 
+        self._sky_explorer_annotation_show_fill = True
+
         self._sky_explorer_annotation_text_color = "#f8fafc"
+
+        self._active_color_picker_popup = None
 
         self._sky_explorer_annotation_text_font_family = ""
 
@@ -28200,6 +28919,14 @@ class MainWindow(QMainWindow):
 
         self._sky_view_catalog_objects = load_sky_atlas_objects(None, enabled_deep_sky_catalogs={"Messier", "NGC"})
 
+        self._sky_view_search_objects: tuple[SkyAtlasObject, ...] = ()
+
+        self._sky_view_search_lock = threading.Lock()
+
+        self._sky_view_search_pin_objects: tuple[SkyAtlasObject, ...] = ()
+
+        self._sky_view_search_dialog: SkyAtlasSearchDialog | None = None
+
         self._sky_view_search_results: tuple[SkyAtlasObject, ...] = ()
 
         self._sky_view_scientific_catalog_loaded = False
@@ -28209,6 +28936,12 @@ class MainWindow(QMainWindow):
         self._sky_view_loaded_deep_sky_catalogs: frozenset[str] = frozenset()
 
         self._sky_view_scientific_catalog_error: str | None = None
+
+        self._sky_atlas_catalog_worker: SkyAtlasCatalogLoadWorker | None = None
+
+        self._sky_view_committed_star_magnitude_limit: float | None = None
+
+        self._sky_view_pending_star_magnitude_limit: float | None = None
 
         self._sky_view_simulation_clock = SkyViewSimulationClock(datetime.now(UTC), time_rate=1.0, playing=True)
 
@@ -28734,6 +29467,8 @@ class MainWindow(QMainWindow):
 
         self._hr_source_wcs_cache_key: tuple[str, int, int] | None = None
 
+        self._current_hr_solved_field = None
+
         self._hr_star_details_cache: dict[tuple[str, str], CatalogTargetDetails | None] = {}
 
         self._hr_star_details_coordinate_cache: dict[tuple[int, int], CatalogTargetDetails | None] = {}
@@ -28935,7 +29670,9 @@ class MainWindow(QMainWindow):
 
         self._sync_app_mode_controls()
 
-        self._apply_app_mode(self._current_app_mode())
+        if not self._should_show_mode_launcher_on_startup():
+
+            self._apply_app_mode(self._current_app_mode())
 
         self._sync_manual_controls()
 
@@ -28977,6 +29714,8 @@ class MainWindow(QMainWindow):
 
         self._apply_cached_sky_explorer_layout_state()
 
+        self._sync_sky_explorer_goto_fields_from_settings()
+
         self._update_hr_prepare_button_text()
 
         self._sync_differential_primary_button()
@@ -29009,21 +29748,23 @@ class MainWindow(QMainWindow):
 
         self._mode_launcher.set_accent_color(str(accent))
 
+    def _should_show_mode_launcher_on_startup(self) -> bool:
+
+        settings = getattr(self, "_settings", None)
+
+        if settings is None:
+
+            return True
+
+        return bool(settings.show_mode_launcher_on_startup)
+
     def _sync_mode_launcher_visibility(self) -> None:
 
         if not hasattr(self, "_central_shell"):
 
             return
 
-        if self._settings is None:
-
-            show_launcher = True
-
-        else:
-
-            show_launcher = bool(self._settings.show_mode_launcher_on_startup)
-
-        if show_launcher:
+        if self._should_show_mode_launcher_on_startup():
 
             self._show_mode_launcher_screen()
 
@@ -34993,9 +35734,9 @@ class MainWindow(QMainWindow):
 
         self._sky_view_search_input = QLineEdit()
 
-        self._sky_view_search_input.setPlaceholderText("Search bright stars, Messier targets, constellations, Moon, and aliases")
+        self._sky_view_search_input.setPlaceholderText("Search stars, nebulae, galaxies, and catalog IDs")
 
-        self._sky_view_search_input.textChanged.connect(self._handle_sky_view_search_changed)
+        self._sky_view_search_input.hide()
 
         self._sky_view_magnitude_limit_spin = QDoubleSpinBox()
 
@@ -35009,24 +35750,9 @@ class MainWindow(QMainWindow):
 
         self._sky_view_magnitude_limit_spin.setValue(9.5)
 
-        self._sky_view_magnitude_limit_spin.valueChanged.connect(self._handle_sky_view_search_changed)
-
         self._sky_view_reset_button = QPushButton("Reset View")
 
         self._sky_view_reset_button.clicked.connect(self._handle_reset_sky_view)
-        self._sky_view_bloom_strength_spin = QDoubleSpinBox()
-        self._sky_view_bloom_strength_spin.setDecimals(2)
-        self._sky_view_bloom_strength_spin.setRange(0.45, 1.8)
-        self._sky_view_bloom_strength_spin.setSingleStep(0.05)
-        self._sky_view_bloom_strength_spin.setMinimumWidth(112)
-        self._sky_view_bloom_strength_spin.setValue(1.0)
-        self._sky_view_bloom_strength_spin.valueChanged.connect(self._handle_sky_view_bloom_strength_changed)
-        self._sky_view_spike_style_combo = QComboBox()
-        self._sky_view_spike_style_combo.addItem("Off", "off")
-        self._sky_view_spike_style_combo.addItem("Subtle", "subtle")
-        self._sky_view_spike_style_combo.addItem("Classic", "classic")
-        self._sky_view_spike_style_combo.setCurrentIndex(max(0, self._sky_view_spike_style_combo.findData("subtle")))
-        self._sky_view_spike_style_combo.currentIndexChanged.connect(self._handle_sky_view_spike_style_changed)
         self._sky_view_milky_way_enabled_checkbox = QCheckBox("Milky Way")
         self._sky_view_milky_way_enabled_checkbox.setChecked(True)
         self._sky_view_milky_way_enabled_checkbox.toggled.connect(self._handle_sky_view_milky_way_enabled_toggled)
@@ -35145,6 +35871,14 @@ class MainWindow(QMainWindow):
         self._sky_view_custom_overlay_feather_slider.valueChanged.connect(self._handle_sky_view_custom_overlay_feather_changed)
         self._sky_view_custom_overlay_feather_value_label = QLabel("0%")
         self._sky_view_custom_overlay_feather_value_label.setMinimumWidth(40)
+        self._sky_view_custom_overlay_black_as_alpha_checkbox = QCheckBox("Treat black as alpha")
+        self._sky_view_custom_overlay_black_as_alpha_checkbox.setToolTip(
+            "Make black and near-black pixels transparent so the overlay blends into the atlas sky."
+        )
+        self._sky_view_custom_overlay_black_as_alpha_checkbox.setChecked(False)
+        self._sky_view_custom_overlay_black_as_alpha_checkbox.toggled.connect(
+            self._handle_sky_view_custom_overlay_black_as_alpha_toggled
+        )
         self._sky_view_constellation_enabled_checkbox = QCheckBox("Constellations")
         self._sky_view_constellation_enabled_checkbox.setChecked(False)
         self._sky_view_constellation_enabled_checkbox.toggled.connect(self._handle_sky_view_constellation_enabled_toggled)
@@ -35406,18 +36140,6 @@ class MainWindow(QMainWindow):
         options_limit_row.addWidget(self._sky_view_magnitude_limit_spin)
 
         options_menu_layout.addLayout(options_limit_row)
-        bloom_row = QHBoxLayout()
-        bloom_row.setContentsMargins(0, 0, 0, 0)
-        bloom_row.setSpacing(8)
-        bloom_row.addWidget(QLabel("Bloom"))
-        bloom_row.addWidget(self._sky_view_bloom_strength_spin)
-        options_menu_layout.addLayout(bloom_row)
-        spike_row = QHBoxLayout()
-        spike_row.setContentsMargins(0, 0, 0, 0)
-        spike_row.setSpacing(8)
-        spike_row.addWidget(QLabel("Spikes"))
-        spike_row.addWidget(self._sky_view_spike_style_combo)
-        options_menu_layout.addLayout(spike_row)
         milky_way_header_row = QHBoxLayout()
         milky_way_header_row.setContentsMargins(0, 0, 0, 0)
         milky_way_header_row.setSpacing(8)
@@ -35634,6 +36356,7 @@ class MainWindow(QMainWindow):
         custom_overlay_feather_row.addWidget(self._sky_view_custom_overlay_feather_slider, 1)
         custom_overlay_feather_row.addWidget(self._sky_view_custom_overlay_feather_value_label)
         custom_overlay_menu_layout.addLayout(custom_overlay_feather_row)
+        custom_overlay_menu_layout.addWidget(self._sky_view_custom_overlay_black_as_alpha_checkbox)
         custom_overlay_menu_widget.setLayout(custom_overlay_menu_layout)
         self._sky_view_custom_overlay_menu_action = QWidgetAction(self)
         self._sky_view_custom_overlay_menu_action.setDefaultWidget(custom_overlay_menu_widget)
@@ -35795,7 +36518,7 @@ class MainWindow(QMainWindow):
 
         self._sky_view_search_button = QToolButton(dock_widget)
 
-        self._sky_view_search_button.setToolTip("Search sky catalog")
+        self._sky_view_search_button.setToolTip("Search the sky")
 
         self._sky_view_search_button.clicked.connect(self._show_sky_view_search_popup)
 
@@ -35935,12 +36658,20 @@ class MainWindow(QMainWindow):
 
         self._sky_view_canvas.objectInfoChanged.connect(self._handle_sky_view_canvas_object_info_changed)
 
+        self._sky_view_canvas.starRendererCompatibilityActivated.connect(
+            self._handle_sky_view_star_renderer_compatibility_activated
+        )
+
+        self._sky_view_catalog_download_banner = self._create_sky_atlas_catalog_download_banner()
+        self._sky_view_catalog_download_banner.hide()
+
         self._sky_view_overlay_container = _SkyAtlasOverlayContainer(
             self._sky_view_canvas,
             dock_widget,
             self._sky_view_object_panel,
             panel,
         )
+        self._sky_view_overlay_container.set_download_banner(self._sky_view_catalog_download_banner)
 
         self._sky_view_fullscreen_popup_overlay = _SkyAtlasPopupOverlay(
             self._hide_sky_view_fullscreen_popup,
@@ -36153,6 +36884,25 @@ class MainWindow(QMainWindow):
 
         self._sky_view_object_type_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        self._sky_view_literature_label = QLabel()
+
+        self._sky_view_literature_label.setObjectName("skyViewLiteratureLinks")
+
+        self._sky_view_literature_label.setWordWrap(True)
+
+        self._sky_view_literature_label.setOpenExternalLinks(True)
+
+        self._sky_view_literature_label.setTextFormat(Qt.TextFormat.RichText)
+
+        self._sky_view_literature_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction
+        )
+
+        self._sky_view_literature_label.setStyleSheet(
+            "QLabel#skyViewLiteratureLinks { color: #94a3b8; }"
+            "QLabel#skyViewLiteratureLinks a { color: #7dd3fc; }"
+        )
+
         self._sky_view_altitude_value_label = QLabel("-")
 
         self._sky_view_azimuth_value_label = QLabel("-")
@@ -36194,6 +36944,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._sky_view_object_catalog_label)
 
         layout.addWidget(self._sky_view_object_type_pill, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        layout.addWidget(self._sky_view_literature_label)
 
         layout.addWidget(parameter_table)
 
@@ -36261,6 +37013,12 @@ class MainWindow(QMainWindow):
 
             self._sky_view_constellation_value_label.setText("-")
 
+            if hasattr(self, "_sky_view_literature_label"):
+
+                self._sky_view_literature_label.clear()
+
+                self._sky_view_literature_label.hide()
+
         else:
 
             self._sky_view_object_name_label.setText(sky_object.name)
@@ -36282,6 +37040,26 @@ class MainWindow(QMainWindow):
             self._sky_view_dec_value_label.setText(self._format_sky_view_dec_value(sky_object.dec_deg))
 
             self._sky_view_constellation_value_label.setText(sky_object.constellation or "-")
+
+            self._sky_view_literature_label.setText(self._format_sky_view_literature_links(sky_object))
+
+            self._sky_view_literature_label.setVisible(bool(self._sky_view_literature_label.text()))
+
+    @staticmethod
+    def _format_sky_view_literature_links(sky_object: SkyAtlasObject) -> str:
+
+        from html import escape
+
+        links = sky_atlas_literature_links(sky_object)
+
+        if not links:
+
+            return ""
+
+        return " · ".join(
+            f'<a href="{escape(link.url, quote=True)}">{escape(link.label)}</a>'
+            for link in links
+        )
 
     @staticmethod
     def _format_sky_view_secondary_names(sky_object: SkyAtlasObject) -> str:
@@ -36383,140 +37161,397 @@ class MainWindow(QMainWindow):
 
         return altitude_deg, azimuth_deg
 
+    def _create_sky_atlas_catalog_download_banner(self, parent: QWidget | None = None) -> QWidget:
+        banner = QFrame(parent)
+        banner.setObjectName("skyAtlasCatalogDownloadBanner")
+        banner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QHBoxLayout(banner)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(10)
+        text_column = QVBoxLayout()
+        text_column.setContentsMargins(0, 0, 0, 0)
+        text_column.setSpacing(4)
+        self._sky_view_catalog_download_label = QLabel("Downloading Sky Atlas catalogs...")
+        self._sky_view_catalog_download_label.setWordWrap(True)
+        text_column.addWidget(self._sky_view_catalog_download_label)
+        self._sky_view_catalog_download_progress = QProgressBar()
+        self._sky_view_catalog_download_progress.setTextVisible(True)
+        self._sky_view_catalog_download_progress.setRange(0, 100)
+        self._sky_view_catalog_download_progress.setValue(0)
+        self._sky_view_catalog_download_progress.setMinimumWidth(220)
+        text_column.addWidget(self._sky_view_catalog_download_progress)
+        layout.addLayout(text_column, stretch=1)
+        self._sky_view_catalog_download_cancel_button = QPushButton("Cancel")
+        self._sky_view_catalog_download_cancel_button.clicked.connect(self._cancel_sky_atlas_catalog_download)
+        layout.addWidget(self._sky_view_catalog_download_cancel_button)
+        banner.setStyleSheet(
+            """
+            #skyAtlasCatalogDownloadBanner {
+                background-color: rgba(2, 7, 19, 230);
+                border: 1px solid rgba(148, 163, 184, 110);
+                border-radius: 12px;
+            }
+            #skyAtlasCatalogDownloadBanner QLabel {
+                color: #e2e8f0;
+            }
+            """
+        )
+        return banner
+
     def _sky_view_catalog_progress(self, message: str, percent: float | None) -> None:
+        now = monotonic()
+        last = float(getattr(self, "_sky_atlas_catalog_progress_monotonic", 0.0) or 0.0)
+        try:
+            resolved_percent = None if percent is None else float(percent)
+        except (TypeError, ValueError):
+            resolved_percent = None
+        banner = getattr(self, "_sky_view_catalog_download_banner", None)
+        banner_hidden = banner is None or not banner.isVisible()
+        is_complete = resolved_percent is not None and resolved_percent >= 99.5
+        if not banner_hidden and not is_complete and (now - last) < 0.25:
+            return
+        self._sky_atlas_catalog_progress_monotonic = now
+        self._update_sky_atlas_catalog_download_banner(str(message), resolved_percent)
 
-        if hasattr(self, "_sky_view_status_label"):
-
-            self._sky_view_status_label.setText(str(message))
-
-        progress_dialog = getattr(self, "_sky_view_catalog_progress_dialog", None)
-
-        if progress_dialog is not None:
-
-            progress_dialog.setLabelText(str(message))
-
+    def _update_sky_atlas_catalog_download_banner(self, message: str, percent: float | None) -> None:
+        banner = getattr(self, "_sky_view_catalog_download_banner", None)
+        if banner is None:
+            return
+        was_hidden = banner.isHidden()
+        if hasattr(self, "_sky_view_catalog_download_label"):
+            self._sky_view_catalog_download_label.setText(str(message))
+        if hasattr(self, "_sky_view_catalog_download_progress"):
             if percent is None:
-
-                progress_dialog.setRange(0, 0)
-
+                self._sky_view_catalog_download_progress.setRange(0, 0)
             else:
+                self._sky_view_catalog_download_progress.setRange(0, 100)
+                self._sky_view_catalog_download_progress.setValue(max(0, min(100, int(round(float(percent))))))
+        if was_hidden:
+            banner.show()
+            overlay = getattr(self, "_sky_view_overlay_container", None)
+            if overlay is not None and hasattr(overlay, "reposition_download_banner"):
+                overlay.reposition_download_banner()
+            elif overlay is not None and hasattr(overlay, "reposition_overlays"):
+                overlay.reposition_overlays()
+            banner.repaint()
+            QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
-                progress_dialog.setRange(0, 100)
+    def _hide_sky_atlas_catalog_download_banner(self) -> None:
+        banner = getattr(self, "_sky_view_catalog_download_banner", None)
+        if banner is not None:
+            banner.hide()
 
-                progress_dialog.setValue(max(0, min(100, int(round(float(percent))))))
+    def _committed_sky_atlas_star_magnitude_limit(self) -> float:
+        committed = getattr(self, "_sky_view_committed_star_magnitude_limit", None)
+        if committed is not None:
+            return float(committed)
+        settings = getattr(self, "_settings", None)
+        if settings is not None:
+            return float(settings.sky_atlas_star_magnitude_limit)
+        return 8.7
 
-        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+    def _set_sky_atlas_star_magnitude_controls(self, magnitude_limit: float) -> None:
+        if hasattr(self, "_sky_view_magnitude_limit_spin"):
+            self._sky_view_magnitude_limit_spin.blockSignals(True)
+            self._sky_view_magnitude_limit_spin.setValue(float(magnitude_limit))
+            self._sky_view_magnitude_limit_spin.blockSignals(False)
 
-    def _ensure_sky_view_scientific_catalog_loaded(self, *, use_wait_cursor: bool = True) -> None:
+    def _restore_committed_sky_atlas_star_magnitude(self) -> None:
+        committed = self._committed_sky_atlas_star_magnitude_limit()
+        self._commit_sky_atlas_star_magnitude(committed)
 
-        if self._settings is None:
+    def _commit_sky_atlas_star_magnitude(self, magnitude_limit: float) -> None:
+        committed = float(magnitude_limit)
+        self._sky_view_committed_star_magnitude_limit = committed
+        self._sky_view_pending_star_magnitude_limit = None
+        settings = self._ensure_sky_view_settings_loaded()
+        if abs(float(settings.sky_atlas_star_magnitude_limit) - committed) > 1.0e-6:
+            self._settings = replace(settings, sky_atlas_star_magnitude_limit=committed)
+        self._save_settings_snapshot()
+        self._set_sky_atlas_star_magnitude_controls(committed)
 
-            root_path = Path(self._root_path_input.text()).expanduser()
+    def _cancel_sky_atlas_catalog_download(self) -> None:
+        self._cancel_sky_atlas_catalog_worker(restore_working_magnitude=True)
+        if hasattr(self, "_sky_view_status_label"):
+            self._sky_view_status_label.setText("Catalog download cancelled. Last working magnitude kept.")
+        self.statusBar().showMessage("Sky Atlas catalog download cancelled.", 5000)
 
-            self._settings = AppSettings.from_root(root_path if root_path.exists() else Path.cwd())
+    def _cancel_sky_atlas_catalog_worker(self, *, restore_working_magnitude: bool) -> None:
+        worker = getattr(self, "_sky_atlas_catalog_worker", None)
+        if worker is not None:
+            try:
+                worker.blockSignals(True)
+            except Exception:
+                pass
+            try:
+                worker.request_cancel()
+            except Exception:
+                pass
+            self._sky_atlas_catalog_worker = None
+        self._hide_sky_atlas_catalog_download_banner()
+        if restore_working_magnitude:
+            self._restore_committed_sky_atlas_star_magnitude()
 
-        display_settings = SkyAtlasDisplaySettings.from_app_settings(self._settings)
+    def _apply_loaded_sky_atlas_catalog(
+        self,
+        objects: tuple[SkyAtlasObject, ...],
+        *,
+        achieved_star_limit: float,
+        enabled_catalogs: frozenset[str],
+        requested_display_limit: float | None = None,
+        persist_star_magnitude: bool = False,
+    ) -> None:
+        self._sky_view_catalog_objects = objects
+        self._sky_view_scientific_catalog_loaded = any(
+            item.catalog.casefold() == "hipparcos" for item in objects
+        )
+        if achieved_star_limit > 0.0:
+            self._sky_view_loaded_star_magnitude_limit = float(achieved_star_limit)
+        elif self._sky_view_scientific_catalog_loaded:
+            needed = max(9.5, float(requested_display_limit or self._committed_sky_atlas_star_magnitude_limit()))
+            self._sky_view_loaded_star_magnitude_limit = needed
+        else:
+            self._sky_view_loaded_star_magnitude_limit = 0.0
+        self._sky_view_loaded_deep_sky_catalogs = frozenset(enabled_catalogs)
+        self._sky_view_scientific_catalog_error = None
+        if persist_star_magnitude and requested_display_limit is not None:
+            requested = float(requested_display_limit)
+            loaded = float(self._sky_view_loaded_star_magnitude_limit)
+            if loaded + 1.0e-6 >= max(9.5, requested):
+                committed_display = requested
+            elif loaded > 0.0:
+                committed_display = min(requested, loaded)
+            else:
+                committed_display = requested
+            self._commit_sky_atlas_star_magnitude(committed_display)
+        if hasattr(self, "_sky_view_canvas") and self._sky_view_canvas is not None:
+            self._sky_view_canvas.set_objects(self._sky_view_catalog_objects)
+        self._rebuild_sky_view_search_index()
+        if hasattr(self, "_sky_view_canvas"):
+            self._sync_sky_view_object_panel(self._sky_view_canvas.selected_object())
+        self._refresh_sky_view_search_results(select_first=False)
+        self._refresh_sky_view_overlay_geometry()
+        if hasattr(self, "_sky_view_status_label"):
+            self._sky_view_status_label.setText(self._sky_view_status_summary())
 
-        needed_star_limit = max(9.5, float(display_settings.star_magnitude_limit))
-
-        loaded_star_limit = float(getattr(self, "_sky_view_loaded_star_magnitude_limit", 0.0) or 0.0)
-
-        loaded_catalogs = frozenset(getattr(self, "_sky_view_loaded_deep_sky_catalogs", frozenset()) or frozenset())
-
+    def _load_sky_atlas_catalogs_from_cache(self, display_settings: SkyAtlasDisplaySettings) -> None:
         needed_catalogs = display_settings.enabled_deep_sky_catalogs()
+        needed_star_limit = SKY_ATLAS_STARTUP_STAR_MAGNITUDE
+        achieved: list[float] = []
+        try:
+            objects = load_sky_atlas_objects(
+                application_install_path(),
+                download_if_missing=False,
+                maximum_scientific_magnitude=needed_star_limit,
+                enabled_deep_sky_catalogs=needed_catalogs,
+                star_magnitude_achieved=achieved,
+            )
+        except Exception:
+            objects = load_sky_atlas_objects(None, enabled_deep_sky_catalogs=needed_catalogs)
+            achieved = [0.0]
+        achieved_limit = float(achieved[0]) if achieved else 0.0
+        self._apply_loaded_sky_atlas_catalog(
+            objects,
+            achieved_star_limit=achieved_limit,
+            enabled_catalogs=needed_catalogs,
+            requested_display_limit=float(display_settings.star_magnitude_limit),
+            persist_star_magnitude=False,
+        )
 
-        catalogs_up_to_date = needed_catalogs.issubset(loaded_catalogs)
+    def _start_sky_atlas_catalog_worker(self, display_settings: SkyAtlasDisplaySettings) -> None:
+        worker = getattr(self, "_sky_atlas_catalog_worker", None)
+        if worker is not None and worker.isRunning():
+            self._cancel_sky_atlas_catalog_worker(restore_working_magnitude=False)
+        self._sky_view_pending_star_magnitude_limit = float(display_settings.star_magnitude_limit)
+        self._set_sky_atlas_star_magnitude_controls(float(display_settings.star_magnitude_limit))
+        self._update_sky_atlas_catalog_download_banner("Loading Sky Atlas catalogs...", None)
+        new_worker = SkyAtlasCatalogLoadWorker(
+            cache_dir=application_install_path(),
+            maximum_scientific_magnitude=max(9.5, float(display_settings.star_magnitude_limit)),
+            enabled_deep_sky_catalogs=display_settings.enabled_deep_sky_catalogs(),
+            parent=self,
+            loader=load_sky_atlas_objects,
+        )
+        new_worker.progress_updated.connect(
+            self._sky_view_catalog_progress,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        new_worker.startup_completed.connect(
+            self._handle_sky_atlas_catalog_startup_completed,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        new_worker.load_completed.connect(
+            self._handle_sky_atlas_catalog_load_completed,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        new_worker.load_failed.connect(
+            self._handle_sky_atlas_catalog_load_failed,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        new_worker.load_cancelled.connect(
+            self._handle_sky_atlas_catalog_load_cancelled,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._sky_atlas_catalog_worker = new_worker
+        new_worker.start()
 
+    def _handle_sky_atlas_catalog_startup_completed(
+        self,
+        objects: object,
+        achieved_star_limit: float,
+        enabled_catalogs: object,
+    ) -> None:
+        worker = getattr(self, "_sky_atlas_catalog_worker", None)
+        sender = self.sender()
+        if worker is None:
+            return
+        if sender is not None and sender is not worker:
+            return
+        catalog_objects = tuple(objects) if isinstance(objects, (tuple, list)) else ()
+        catalogs = enabled_catalogs if isinstance(enabled_catalogs, frozenset) else frozenset(enabled_catalogs or ())
+        requested = self._sky_view_pending_star_magnitude_limit
+        if requested is None:
+            requested = self._committed_sky_atlas_star_magnitude_limit()
+        self._apply_loaded_sky_atlas_catalog(
+            catalog_objects,
+            achieved_star_limit=float(achieved_star_limit),
+            enabled_catalogs=catalogs,
+            requested_display_limit=float(requested),
+            persist_star_magnitude=False,
+        )
+
+    def _handle_sky_atlas_catalog_load_completed(
+        self,
+        objects: object,
+        achieved_star_limit: float,
+        enabled_catalogs: object,
+    ) -> None:
+        worker = getattr(self, "_sky_atlas_catalog_worker", None)
+        sender = self.sender()
+        if worker is None:
+            return
+        if sender is not None and sender is not worker:
+            return
+        self._sky_atlas_catalog_worker = None
+        catalog_objects = tuple(objects) if isinstance(objects, (tuple, list)) else ()
+        catalogs = enabled_catalogs if isinstance(enabled_catalogs, frozenset) else frozenset(enabled_catalogs or ())
+        requested = self._sky_view_pending_star_magnitude_limit
+        if requested is None:
+            requested = self._committed_sky_atlas_star_magnitude_limit()
+        achieved = float(achieved_star_limit)
+        if achieved + 1.0e-6 >= max(9.5, float(requested)):
+            self._commit_sky_atlas_star_magnitude(float(requested))
+        elif achieved > 0.0:
+            self._commit_sky_atlas_star_magnitude(min(float(requested), achieved))
+        self._update_sky_atlas_catalog_download_banner("Applying star catalog to the sky...", None)
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        try:
+            self._apply_loaded_sky_atlas_catalog(
+                catalog_objects,
+                achieved_star_limit=achieved,
+                enabled_catalogs=catalogs,
+                requested_display_limit=float(requested),
+                persist_star_magnitude=True,
+            )
+        finally:
+            self._hide_sky_atlas_catalog_download_banner()
+        if achieved + 1.0e-6 < max(9.5, float(requested)):
+            self.statusBar().showMessage(
+                "Sky Atlas kept the last complete star catalog; the deeper download did not finish.",
+                7000,
+            )
+
+    def _handle_sky_atlas_catalog_load_failed(self, message: str) -> None:
+        worker = getattr(self, "_sky_atlas_catalog_worker", None)
+        sender = self.sender()
+        if worker is None:
+            return
+        if sender is not None and sender is not worker:
+            return
+        self._sky_atlas_catalog_worker = None
+        self._hide_sky_atlas_catalog_download_banner()
+        self._sky_view_scientific_catalog_error = str(message)
+        self._restore_committed_sky_atlas_star_magnitude()
+        self.statusBar().showMessage(f"Sky Atlas catalog update failed: {message}", 7000)
+
+    def _handle_sky_atlas_catalog_load_cancelled(self) -> None:
+        worker = getattr(self, "_sky_atlas_catalog_worker", None)
+        sender = self.sender()
+        if worker is None:
+            return
+        if sender is not None and sender is not worker:
+            return
+        self._sky_atlas_catalog_worker = None
+        self._hide_sky_atlas_catalog_download_banner()
+        self._restore_committed_sky_atlas_star_magnitude()
+
+    def _refresh_sky_atlas_catalogs(
+        self,
+        display_settings: SkyAtlasDisplaySettings,
+        *,
+        user_requested_download: bool,
+        use_wait_cursor: bool = False,
+    ) -> None:
+        needed_star_limit = max(9.5, float(display_settings.star_magnitude_limit))
+        loaded_star_limit = float(getattr(self, "_sky_view_loaded_star_magnitude_limit", 0.0) or 0.0)
+        needed_catalogs = display_settings.enabled_deep_sky_catalogs()
+        loaded_catalogs = frozenset(getattr(self, "_sky_view_loaded_deep_sky_catalogs", frozenset()) or frozenset())
         if (
             self._sky_view_scientific_catalog_loaded
             and loaded_star_limit + 1.0e-6 >= needed_star_limit
-            and catalogs_up_to_date
+            and needed_catalogs.issubset(loaded_catalogs)
+            and getattr(self, "_sky_atlas_catalog_worker", None) is None
         ):
-
+            self._sky_view_committed_star_magnitude_limit = float(display_settings.star_magnitude_limit)
             return
-
-        self._sky_view_status_label.setText("Loading the cached Hipparcos sky catalog for Sky Atlas...")
-
-        self._refresh_sky_view_overlay_geometry()
-
-        # Avoid a nested paint while the canvas may still be mid-frame / mode-switch.
-        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-
+        if user_requested_download:
+            self._start_sky_atlas_catalog_worker(display_settings)
+            return
         if use_wait_cursor:
-
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-
-        progress_dialog = self._create_sky_view_loading_progress_dialog("Loading Sky Atlas catalogs...")
-
-        progress_dialog.show()
-
-        self._sky_view_catalog_progress_dialog = progress_dialog
-
-        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-
         try:
-
-            self._sky_view_catalog_objects = load_sky_atlas_objects(
-                application_install_path(),
-                download_if_missing=True,
-                maximum_scientific_magnitude=needed_star_limit,
-                enabled_deep_sky_catalogs=needed_catalogs,
-                progress_callback=self._sky_view_catalog_progress,
-            )
-
-            self._sky_view_scientific_catalog_loaded = any(
-                item.catalog.casefold() == "hipparcos" for item in self._sky_view_catalog_objects
-            )
-
-            self._sky_view_loaded_star_magnitude_limit = needed_star_limit
-
-            self._sky_view_loaded_deep_sky_catalogs = needed_catalogs
-
-            self._sky_view_scientific_catalog_error = None
-
-        except Exception as exc:
-
-            # Keep Messier / packaged targets even when Hipparcos/Tycho download fails.
-            try:
-
-                self._sky_view_catalog_objects = load_sky_atlas_objects(
-                    None,
-                    enabled_deep_sky_catalogs=needed_catalogs,
-                )
-
-            except Exception:
-
-                self._sky_view_catalog_objects = load_local_sky_atlas_objects()
-
-            self._sky_view_scientific_catalog_loaded = False
-
-            self._sky_view_loaded_star_magnitude_limit = 0.0
-
-            self._sky_view_loaded_deep_sky_catalogs = frozenset()
-
-            self._sky_view_scientific_catalog_error = str(exc).strip() or exc.__class__.__name__
-
+            self._load_sky_atlas_catalogs_from_cache(display_settings)
         finally:
-
-            self._sky_view_catalog_progress_dialog = None
-
-            progress_dialog.close()
-
-            progress_dialog.deleteLater()
-
             if use_wait_cursor:
-
                 QApplication.restoreOverrideCursor()
+        loaded_star_limit = float(getattr(self, "_sky_view_loaded_star_magnitude_limit", 0.0) or 0.0)
+        loaded_catalogs = frozenset(getattr(self, "_sky_view_loaded_deep_sky_catalogs", frozenset()) or frozenset())
+        need_first_stars = not self._sky_view_scientific_catalog_loaded
+        need_deeper_stars = loaded_star_limit + 1.0e-6 < needed_star_limit
+        need_dso = not needed_catalogs.issubset(loaded_catalogs)
+        if not need_deeper_stars and not need_first_stars:
+            self._sky_view_committed_star_magnitude_limit = float(display_settings.star_magnitude_limit)
+            settings = self._ensure_sky_view_settings_loaded()
+            if abs(float(settings.sky_atlas_star_magnitude_limit) - float(display_settings.star_magnitude_limit)) > 1.0e-6:
+                self._settings = replace(
+                    settings,
+                    sky_atlas_star_magnitude_limit=float(display_settings.star_magnitude_limit),
+                )
+                self._save_settings_snapshot()
+        loader_is_test_double = hasattr(load_sky_atlas_objects, "assert_called")
+        # Do not pull Tycho/Gaia or re-parse the 55 MB Hipparcos JSON just
+        # because the saved magnitude is deeper than the bright startup set.
+        # The opening 60° view only needs mag 5; fainter catalogs load when
+        # the user asks for a download or no Hipparcos stars are on disk yet.
+        if need_first_stars or need_dso:
+            if loader_is_test_double and not user_requested_download:
+                return
+            self._start_sky_atlas_catalog_worker(display_settings)
+        elif need_deeper_stars:
+            self._sky_view_committed_star_magnitude_limit = float(display_settings.star_magnitude_limit)
 
-        self._sky_view_canvas.set_objects(self._sky_view_catalog_objects)
-
-        self._sync_sky_view_object_panel(self._sky_view_canvas.selected_object())
-
-        self._refresh_sky_view_search_results(select_first=False)
-
-        self._refresh_sky_view_overlay_geometry()
-
-        self._sky_view_status_label.setText(self._sky_view_status_summary())
+    def _ensure_sky_view_scientific_catalog_loaded(self, *, use_wait_cursor: bool = True) -> None:
+        if self._settings is None:
+            root_path = Path(self._root_path_input.text()).expanduser()
+            self._settings = AppSettings.from_root(root_path if root_path.exists() else Path.cwd())
+        if self._sky_view_committed_star_magnitude_limit is None:
+            self._sky_view_committed_star_magnitude_limit = float(self._settings.sky_atlas_star_magnitude_limit)
+        display_settings = SkyAtlasDisplaySettings.from_app_settings(self._settings)
+        self._refresh_sky_atlas_catalogs(
+            display_settings,
+            user_requested_download=False,
+            use_wait_cursor=use_wait_cursor,
+        )
 
     def _create_sky_view_loading_progress_dialog(self, message: str) -> QProgressDialog:
 
@@ -36550,51 +37585,21 @@ class MainWindow(QMainWindow):
 
             return
 
-        needs_catalog = not self._sky_view_scientific_catalog_loaded
-
-        progress_dialog: QProgressDialog | None = None
-
         canvas = self._sky_view_canvas
 
         updates_were_enabled = canvas.updatesEnabled()
 
         canvas.setUpdatesEnabled(False)
 
-        if needs_catalog:
-
-            progress_dialog = self._create_sky_view_loading_progress_dialog("Loading Sky Atlas...")
-
-            progress_dialog.show()
-
-            QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-
         try:
-
-            if progress_dialog is not None:
-
-                progress_dialog.setLabelText("Loading star catalog...")
-
-                QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
             self._ensure_sky_view_scientific_catalog_loaded(use_wait_cursor=False)
 
             self._sync_sky_view_canvas_context()
 
-            if progress_dialog is not None:
-
-                progress_dialog.setLabelText("Preparing Milky Way textures...")
-
-                QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-
             canvas.prepare_startup_milky_way_cache()
 
         finally:
-
-            if progress_dialog is not None:
-
-                progress_dialog.close()
-
-                progress_dialog.deleteLater()
 
             canvas.setUpdatesEnabled(updates_were_enabled)
 
@@ -36602,27 +37607,46 @@ class MainWindow(QMainWindow):
 
                 canvas.update()
 
-    def _handle_sky_view_search_changed(self, _value: object) -> None:
+    def _rebuild_sky_view_search_index(self) -> None:
 
-        self._refresh_sky_view_search_results(select_first=True)
+        cache_dir = None
 
-    def _refresh_sky_view_search_results(self, *, select_first: bool) -> None:
+        try:
 
-        query = self._sky_view_search_input.text().strip()
+            cache_dir = application_install_path()
 
-        magnitude_limit = float(self._sky_view_magnitude_limit_spin.value())
+        except Exception:
+
+            cache_dir = None
+
+        objects = load_sky_atlas_search_objects(
+            cache_dir,
+            displayed_objects=self._sky_view_catalog_objects,
+        )
+        with self._sky_view_search_lock:
+            self._sky_view_search_objects = objects
+
+    def _query_sky_view_search(self, query: str) -> tuple[SkyAtlasObject, ...]:
+
+        special_results = self._sky_view_special_search_results(query, magnitude_limit=99.0)
+
+        with self._sky_view_search_lock:
+            search_objects = getattr(self, "_sky_view_search_objects", ())
+
+        if not search_objects:
+
+            self._rebuild_sky_view_search_index()
+
+            with self._sky_view_search_lock:
+                search_objects = getattr(self, "_sky_view_search_objects", ())
 
         catalog_results = search_sky_atlas_objects(
-            self._sky_view_catalog_objects,
+            search_objects,
             query,
-            limit=24,
-            magnitude_limit=magnitude_limit,
-            deep_sky_magnitude_limit=float(
-                getattr(self._sky_view_canvas, "_object_magnitude_limit", max(16.0, magnitude_limit))
-            ),
+            limit=60,
+            require_searchable=False,
+            apply_magnitude_limits=False,
         )
-
-        special_results = self._sky_view_special_search_results(query, magnitude_limit=magnitude_limit)
 
         combined_results: list[SkyAtlasObject] = []
 
@@ -36644,35 +37668,33 @@ class MainWindow(QMainWindow):
 
             combined_results.append(sky_object)
 
-            if len(combined_results) >= 24:
+            if len(combined_results) >= 60:
 
                 break
 
-        self._sky_view_search_results = tuple(combined_results)
+        return tuple(combined_results)
 
-        selected_object = self._sky_view_canvas.selected_object()
+    def _perform_sky_view_search(self, query: str) -> SkyAtlasObject | None:
 
-        if query:
+        stripped = str(query or "").strip()
 
-            if self._sky_view_search_results:
+        if hasattr(self, "_sky_view_search_input"):
 
-                if select_first or selected_object is None or selected_object not in self._sky_view_search_results:
+            self._sky_view_search_input.blockSignals(True)
 
-                    selected_object = self._sky_view_search_results[0]
+            self._sky_view_search_input.setText(stripped)
 
-                    self._sky_view_canvas.set_selected_object(selected_object, center=True)
+            self._sky_view_search_input.blockSignals(False)
 
-                self._sync_sky_view_object_panel(selected_object)
+        self._sky_view_search_results = self._query_sky_view_search(stripped) if stripped else ()
 
-                self._sky_view_status_label.setText(
-                    f"Search matched {len(self._sky_view_search_results)} sky objects. Centered on {selected_object.name}."
-                )
+        if stripped and self._sky_view_search_results:
 
-                self._sky_view_detail_label.setText(self._format_sky_view_object_details(selected_object))
+            self._go_to_sky_view_search_result(self._sky_view_search_results[0])
 
-                self._refresh_sky_view_overlay_geometry()
+            return self._sky_view_search_results[0]
 
-                return
+        if stripped:
 
             self._sky_view_canvas.set_selected_object(None)
 
@@ -36680,11 +37702,13 @@ class MainWindow(QMainWindow):
 
             self._sky_view_detail_label.setText("")
 
-            self._sky_view_status_label.setText(f"No sky objects match '{query}'.")
+            self._sky_view_status_label.setText(f"No sky objects match '{stripped}'.")
 
             self._refresh_sky_view_overlay_geometry()
 
-            return
+            return None
+
+        selected_object = self._sky_view_canvas.selected_object()
 
         if selected_object is None:
 
@@ -36695,6 +37719,103 @@ class MainWindow(QMainWindow):
         self._sky_view_status_label.setText(self._sky_view_status_summary())
 
         self._refresh_sky_view_overlay_geometry()
+
+        return None
+
+    def _pin_sky_view_search_object(self, sky_object: SkyAtlasObject) -> None:
+
+        already_displayed = any(
+            item.name.casefold() == sky_object.name.casefold()
+            and abs(float(item.ra_deg) - float(sky_object.ra_deg)) < 1.0e-4
+            and abs(float(item.dec_deg) - float(sky_object.dec_deg)) < 1.0e-4
+            for item in self._sky_view_catalog_objects
+        )
+
+        if already_displayed:
+
+            return
+
+        self._sky_view_search_pin_objects = (sky_object,)
+
+        self._sky_view_canvas.set_objects((*self._sky_view_catalog_objects, sky_object))
+
+    def _go_to_sky_view_search_result(self, sky_object: SkyAtlasObject) -> None:
+
+        self._pin_sky_view_search_object(sky_object)
+
+        self._sky_view_canvas.set_selected_object(sky_object, center=True)
+
+        self._sync_sky_view_object_panel(sky_object)
+
+        self._sky_view_status_label.setText(f"Centered on {sky_object.name}.")
+
+        self._sky_view_detail_label.setText(self._format_sky_view_object_details(sky_object))
+
+        self._refresh_sky_view_overlay_geometry()
+
+    def _refresh_sky_view_search_results(self, *, select_first: bool) -> None:
+
+        query = self._sky_view_search_input.text().strip() if hasattr(self, "_sky_view_search_input") else ""
+
+        if query:
+
+            if select_first:
+
+                self._perform_sky_view_search(query)
+
+                return
+
+            self._sky_view_search_results = self._query_sky_view_search(query)
+
+        selected_object = self._sky_view_canvas.selected_object()
+
+        if selected_object is None:
+
+            self._sky_view_detail_label.setText("")
+
+        self._sync_sky_view_object_panel(selected_object)
+
+        self._sky_view_status_label.setText(self._sky_view_status_summary())
+
+        self._refresh_sky_view_overlay_geometry()
+
+    def _forget_sky_view_search_dialog(self, dialog: SkyAtlasSearchDialog) -> None:
+
+        if getattr(self, "_sky_view_search_dialog", None) is dialog:
+
+            self._sky_view_search_dialog = None
+
+    def _show_sky_view_search_popup(self) -> None:
+
+        existing = getattr(self, "_sky_view_search_dialog", None)
+
+        if existing is not None and qt_object_is_valid(existing):
+
+            if not existing.isVisible():
+
+                existing.show()
+
+            existing.raise_()
+
+            existing.activateWindow()
+
+            existing.search_input.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+
+            return
+
+        dialog = SkyAtlasSearchDialog(self._query_sky_view_search, parent=self)
+
+        dialog.objectChosen.connect(self._go_to_sky_view_search_result)
+
+        dialog.finished.connect(lambda _result, dialog_ref=dialog: self._forget_sky_view_search_dialog(dialog_ref))
+
+        self._sky_view_search_dialog = dialog
+
+        dialog.show()
+
+        dialog.raise_()
+
+        dialog.activateWindow()
 
     def _refresh_sky_view_overlay_geometry(self) -> None:
 
@@ -36763,12 +37884,6 @@ class MainWindow(QMainWindow):
         popup_point = QPoint(popup_x, popup_y)
 
         menu.popup(popup_point)
-
-    def _show_sky_view_search_popup(self) -> None:
-
-        self._show_sky_view_popup_menu(self._sky_view_search_button, self._sky_view_search_menu)
-
-        QTimer.singleShot(0, self._sky_view_search_input.setFocus)
 
     def _show_sky_view_date_time_popup(self) -> None:
 
@@ -37018,8 +38133,6 @@ class MainWindow(QMainWindow):
 
         self._sky_view_canvas.set_show_ground(self._sky_view_ground_button.isChecked())
 
-        self._sky_view_canvas.set_star_bloom_strength(self._sky_view_bloom_strength_spin.value())
-
         self._sky_view_canvas.set_milky_way_enabled(self._sky_view_milky_way_enabled_checkbox.isChecked())
 
         self._sky_view_canvas.set_milky_way_opacity(self._sky_view_milky_way_opacity_slider.value() / 100.0)
@@ -37060,9 +38173,11 @@ class MainWindow(QMainWindow):
 
             self._sky_view_canvas.set_custom_sky_overlay_feather(self._sky_view_custom_overlay_feather_slider.value() / 100.0)
 
-        spike_style = self._sky_view_spike_style_combo.currentData()
+        if hasattr(self, "_sky_view_custom_overlay_black_as_alpha_checkbox"):
 
-        self._sky_view_canvas.set_star_spike_style(str(spike_style) if isinstance(spike_style, str) else "subtle")
+            self._sky_view_canvas.set_custom_sky_overlay_black_as_alpha(
+                self._sky_view_custom_overlay_black_as_alpha_checkbox.isChecked()
+            )
 
         if self._sky_view_canvas._moon_debug_controls_enabled():
 
@@ -37097,7 +38212,7 @@ class MainWindow(QMainWindow):
 
         display_settings = dialog.current_settings()
 
-        self._persist_sky_atlas_display_settings(display_settings)
+        self._persist_sky_atlas_display_settings(display_settings, persist_star_magnitude=False)
 
         self._apply_sky_atlas_display_settings(display_settings, reload_catalogs=True)
 
@@ -37109,13 +38224,24 @@ class MainWindow(QMainWindow):
 
         self._apply_sky_atlas_display_settings(display_settings, reload_catalogs=False)
 
-    def _persist_sky_atlas_display_settings(self, display_settings: SkyAtlasDisplaySettings) -> None:
+    def _persist_sky_atlas_display_settings(
+        self,
+        display_settings: SkyAtlasDisplaySettings,
+        *,
+        persist_star_magnitude: bool = True,
+    ) -> None:
 
         settings = self._ensure_sky_view_settings_loaded()
 
+        star_magnitude_limit = (
+            float(display_settings.star_magnitude_limit)
+            if persist_star_magnitude
+            else float(self._committed_sky_atlas_star_magnitude_limit())
+        )
+
         self._settings = replace(
             settings,
-            sky_atlas_star_magnitude_limit=float(display_settings.star_magnitude_limit),
+            sky_atlas_star_magnitude_limit=star_magnitude_limit,
             sky_atlas_star_brightness=float(display_settings.star_brightness),
             sky_atlas_star_size=float(display_settings.star_size),
             sky_atlas_star_magnitude_size_contrast=float(display_settings.star_magnitude_size_contrast),
@@ -37126,6 +38252,10 @@ class MainWindow(QMainWindow):
             sky_atlas_show_vdb=bool(display_settings.show_vdb),
             sky_atlas_show_ldn=bool(display_settings.show_ldn),
             sky_atlas_show_lbn=bool(display_settings.show_lbn),
+            sky_atlas_show_barnard=bool(display_settings.show_barnard),
+            sky_atlas_show_sharpless=bool(display_settings.show_sharpless),
+            sky_atlas_show_rcw=bool(display_settings.show_rcw),
+            sky_atlas_show_hash_pn=bool(display_settings.show_hash_pn),
             sky_atlas_object_magnitude_limit=float(display_settings.object_magnitude_limit),
             sky_atlas_object_label_magnitude_limit=float(display_settings.object_label_magnitude_limit),
         )
@@ -37156,73 +38286,11 @@ class MainWindow(QMainWindow):
 
             return
 
-        settings = self._ensure_sky_view_settings_loaded()
-
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-
-        progress_dialog = self._create_sky_view_loading_progress_dialog("Updating Sky Atlas catalogs...")
-
-        progress_dialog.show()
-
-        self._sky_view_catalog_progress_dialog = progress_dialog
-
-        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-
-        try:
-
-            self._sky_view_catalog_objects = load_sky_atlas_objects(
-                application_install_path(),
-                download_if_missing=True,
-                maximum_scientific_magnitude=max(
-                    9.5,
-                    float(display_settings.star_magnitude_limit),
-                ),
-                enabled_deep_sky_catalogs=display_settings.enabled_deep_sky_catalogs(),
-                progress_callback=self._sky_view_catalog_progress,
-            )
-
-            self._sky_view_scientific_catalog_loaded = any(
-                item.catalog.casefold() == "hipparcos" for item in self._sky_view_catalog_objects
-            )
-
-            self._sky_view_loaded_star_magnitude_limit = max(
-                9.5,
-                float(display_settings.star_magnitude_limit),
-            )
-
-            self._sky_view_loaded_deep_sky_catalogs = display_settings.enabled_deep_sky_catalogs()
-
-            self._sky_view_canvas.set_objects(self._sky_view_catalog_objects)
-
-            if hasattr(self, "_sky_view_magnitude_limit_spin"):
-
-                self._sky_view_magnitude_limit_spin.blockSignals(True)
-
-                self._sky_view_magnitude_limit_spin.setValue(float(display_settings.star_magnitude_limit))
-
-                self._sky_view_magnitude_limit_spin.blockSignals(False)
-
-            self._refresh_sky_view_search_results(select_first=False)
-
-            if hasattr(self, "_sky_view_status_label"):
-
-                self._sky_view_status_label.setText(self._sky_view_status_summary())
-
-        except Exception as exc:
-
-            self._sky_view_scientific_catalog_error = str(exc)
-
-            self.statusBar().showMessage(f"Sky Atlas catalog update failed: {exc}", 6000)
-
-        finally:
-
-            self._sky_view_catalog_progress_dialog = None
-
-            progress_dialog.close()
-
-            progress_dialog.deleteLater()
-
-            QApplication.restoreOverrideCursor()
+        self._refresh_sky_atlas_catalogs(
+            display_settings,
+            user_requested_download=True,
+            use_wait_cursor=False,
+        )
 
     def _apply_sky_view_observing_site(
         self,
@@ -37778,6 +38846,12 @@ class MainWindow(QMainWindow):
 
         self._refresh_sky_view_overlay_geometry()
 
+    def _handle_sky_view_star_renderer_compatibility_activated(self, message: str) -> None:
+
+        self._sky_view_status_label.setText(message)
+
+        self.statusBar().showMessage(message, 15000)
+
     def _handle_reset_sky_view(self) -> None:
 
         self._sky_view_canvas.reset_view()
@@ -37838,6 +38912,12 @@ class MainWindow(QMainWindow):
 
         self._persist_sky_view_custom_overlay_settings()
 
+    def _handle_sky_view_custom_overlay_black_as_alpha_toggled(self, checked: bool) -> None:
+
+        self._sky_view_canvas.set_custom_sky_overlay_black_as_alpha(checked)
+
+        self._persist_sky_view_custom_overlay_settings()
+
     def _persist_sky_view_custom_overlay_settings(self) -> None:
 
         settings = self._ensure_sky_view_settings_loaded()
@@ -37849,6 +38929,7 @@ class MainWindow(QMainWindow):
             sky_atlas_custom_overlay_brightness=self._sky_view_custom_overlay_brightness_slider.value() / 100.0,
             sky_atlas_custom_overlay_saturation=self._sky_view_custom_overlay_saturation_slider.value() / 100.0,
             sky_atlas_custom_overlay_feather=self._sky_view_custom_overlay_feather_slider.value() / 100.0,
+            sky_atlas_custom_overlay_black_as_alpha=self._sky_view_custom_overlay_black_as_alpha_checkbox.isChecked(),
             sky_atlas_custom_overlay_surveys=list(settings.sky_atlas_custom_overlay_surveys or []),
             sky_atlas_custom_overlay_active_survey_id=settings.sky_atlas_custom_overlay_active_survey_id,
         )
@@ -37869,6 +38950,8 @@ class MainWindow(QMainWindow):
 
         self._sky_view_custom_overlay_feather_slider.blockSignals(True)
 
+        self._sky_view_custom_overlay_black_as_alpha_checkbox.blockSignals(True)
+
         self._sky_view_custom_overlay_enabled_checkbox.setChecked(bool(settings.sky_atlas_custom_overlays_enabled))
 
         self._sky_view_custom_overlay_opacity_slider.setValue(int(round(max(0.0, min(1.0, float(settings.sky_atlas_custom_overlay_opacity))) * 100.0)))
@@ -37879,6 +38962,8 @@ class MainWindow(QMainWindow):
 
         self._sky_view_custom_overlay_feather_slider.setValue(int(round(max(0.0, min(1.0, float(settings.sky_atlas_custom_overlay_feather))) * 100.0)))
 
+        self._sky_view_custom_overlay_black_as_alpha_checkbox.setChecked(bool(settings.sky_atlas_custom_overlay_black_as_alpha))
+
         self._sky_view_custom_overlay_enabled_checkbox.blockSignals(False)
 
         self._sky_view_custom_overlay_opacity_slider.blockSignals(False)
@@ -37888,6 +38973,8 @@ class MainWindow(QMainWindow):
         self._sky_view_custom_overlay_saturation_slider.blockSignals(False)
 
         self._sky_view_custom_overlay_feather_slider.blockSignals(False)
+
+        self._sky_view_custom_overlay_black_as_alpha_checkbox.blockSignals(False)
 
         self._sky_view_custom_overlay_opacity_value_label.setText(f"{self._sky_view_custom_overlay_opacity_slider.value()}%")
 
@@ -37901,6 +38988,15 @@ class MainWindow(QMainWindow):
 
         self._sky_view_custom_overlay_feather_value_label.setText(
             f"{self._sky_view_custom_overlay_feather_slider.value()}%"
+        )
+
+        self._sky_view_canvas.set_custom_sky_overlays_enabled(self._sky_view_custom_overlay_enabled_checkbox.isChecked())
+        self._sky_view_canvas.set_custom_sky_overlay_opacity(self._sky_view_custom_overlay_opacity_slider.value() / 100.0)
+        self._sky_view_canvas.set_custom_sky_overlay_brightness(self._sky_view_custom_overlay_brightness_slider.value() / 100.0)
+        self._sky_view_canvas.set_custom_sky_overlay_saturation(self._sky_view_custom_overlay_saturation_slider.value() / 100.0)
+        self._sky_view_canvas.set_custom_sky_overlay_feather(self._sky_view_custom_overlay_feather_slider.value() / 100.0)
+        self._sky_view_canvas.set_custom_sky_overlay_black_as_alpha(
+            self._sky_view_custom_overlay_black_as_alpha_checkbox.isChecked()
         )
 
         self._reload_sky_view_custom_overlays_on_canvas(sky_atlas_custom_overlays_for_active_survey(settings))
@@ -38230,10 +39326,6 @@ class MainWindow(QMainWindow):
 
         self._sky_view_canvas.set_constellation_label_size(float(value))
 
-    def _handle_sky_view_bloom_strength_changed(self, value: float) -> None:
-
-        self._sky_view_canvas.set_star_bloom_strength(value)
-
     def _handle_sky_view_milky_way_enabled_toggled(self, checked: bool) -> None:
 
         self._sky_view_canvas.set_milky_way_enabled(checked)
@@ -38343,12 +39435,6 @@ class MainWindow(QMainWindow):
     def _handle_sky_view_milky_way_flip_toggled(self, checked: bool) -> None:
 
         self._sky_view_canvas.set_milky_way_flip_horizontal(checked)
-
-    def _handle_sky_view_spike_style_changed(self, _index: int) -> None:
-
-        spike_style = self._sky_view_spike_style_combo.currentData()
-
-        self._sky_view_canvas.set_star_spike_style(str(spike_style) if isinstance(spike_style, str) else "subtle")
 
     def _handle_toggle_sky_view_full_screen(self) -> None:
 
@@ -38594,6 +39680,10 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_results_table.setSortingEnabled(False)
 
+        self._sky_explorer_results_table.setTextElideMode(Qt.TextElideMode.ElideNone)
+
+        self._sky_explorer_results_table.setWordWrap(True)
+
         self._sky_explorer_collapsed_result_groups: set[str] = set()
 
         self._sky_explorer_results_table.itemSelectionChanged.connect(self._handle_sky_explorer_result_selection_changed)
@@ -38745,6 +39835,35 @@ class MainWindow(QMainWindow):
             )
         )
 
+        self._sky_explorer_goto_ra_label = QLabel("RA")
+        self._sky_explorer_goto_ra_input = QLineEdit()
+        self._sky_explorer_goto_ra_input.setPlaceholderText("deg or hms")
+        self._sky_explorer_goto_ra_input.setToolTip(
+            "Right ascension in decimal degrees or sexagesimal hours (for example 270.63 or 18:02:31)."
+        )
+        self._sky_explorer_goto_dec_label = QLabel("Dec")
+        self._sky_explorer_goto_dec_input = QLineEdit()
+        self._sky_explorer_goto_dec_input.setPlaceholderText("deg or dms")
+        self._sky_explorer_goto_dec_input.setToolTip(
+            "Declination in decimal degrees or sexagesimal (for example -23.03 or -23:01:48)."
+        )
+        self._sky_explorer_goto_button = QPushButton("Goto")
+        self._sky_explorer_goto_button.setToolTip("Center the survey on these RA and Dec coordinates.")
+        self._sky_explorer_goto_button.clicked.connect(self._handle_sky_explorer_goto_clicked)
+        self._sky_explorer_goto_ra_input.returnPressed.connect(self._handle_sky_explorer_goto_clicked)
+        self._sky_explorer_goto_dec_input.returnPressed.connect(self._handle_sky_explorer_goto_clicked)
+        self._sky_explorer_goto_group = QFrame()
+        self._sky_explorer_goto_group.setObjectName("skyExplorerGotoGroup")
+        goto_group_layout = QHBoxLayout(self._sky_explorer_goto_group)
+        goto_group_layout.setContentsMargins(6, 3, 6, 3)
+        goto_group_layout.setSpacing(4)
+        goto_group_layout.addWidget(self._sky_explorer_goto_ra_label)
+        goto_group_layout.addWidget(self._sky_explorer_goto_ra_input)
+        goto_group_layout.addWidget(self._sky_explorer_goto_dec_label)
+        goto_group_layout.addWidget(self._sky_explorer_goto_dec_input)
+        goto_group_layout.addWidget(self._sky_explorer_goto_button)
+        self._sync_sky_explorer_goto_fields_from_settings()
+
         self._sky_explorer_center_object_button = QPushButton("Center Object")
 
         self._sky_explorer_center_object_button.setCheckable(True)
@@ -38785,7 +39904,17 @@ class MainWindow(QMainWindow):
         self._sky_explorer_annotation_ellipse_button.setToolTip("Draw manual ellipse annotations with the active object color and opacity.")
         self._sky_explorer_annotation_ruler_button.setToolTip("Draw a ruler between two points and show pixel or angular distance under the line.")
         self._sky_explorer_annotation_text_button.setToolTip("Place manual text annotations with the active text color and opacity.")
+        self._sky_explorer_roi_button = QPushButton("ROI")
+        self._sky_explorer_roi_button.setObjectName("skyExplorerRoiButton")
+        self._sky_explorer_roi_button.setText("")
+        self._sky_explorer_roi_button.setCheckable(False)
+        self._sky_explorer_roi_button.setIconSize(QSize(18, 18))
+        self._sky_explorer_roi_button.setToolTip(
+            "Draw a region of interest so Explore queries only that rectangle. Click again to remove it."
+        )
+        self._sky_explorer_roi_button.clicked.connect(self._handle_sky_explorer_roi_button_clicked)
         self._sync_sky_explorer_annotation_tool_buttons()
+        self._sync_sky_explorer_roi_button()
 
         self._sky_explorer_annotation_stroke_color_button = QPushButton("Stroke")
         self._sky_explorer_annotation_stroke_color_button.setToolTip("Choose the stroke color for newly drawn circle, ellipse, and ruler annotations.")
@@ -38793,7 +39922,9 @@ class MainWindow(QMainWindow):
         self._sky_explorer_annotation_stroke_label = QLabel("Stroke")
 
         self._sky_explorer_annotation_fill_color_button = QPushButton("Fill")
-        self._sky_explorer_annotation_fill_color_button.setToolTip("Choose the fill color for newly drawn circle and ellipse annotations.")
+        self._sky_explorer_annotation_fill_color_button.setToolTip(
+            "Choose the fill color for newly drawn circle and ellipse annotations. The checkerboard swatch turns fill off."
+        )
         self._sky_explorer_annotation_fill_color_button.clicked.connect(self._choose_sky_explorer_annotation_fill_color)
         self._sky_explorer_annotation_fill_label = QLabel("Fill")
 
@@ -38884,6 +40015,7 @@ class MainWindow(QMainWindow):
         self._sky_explorer_annotation_tools_layout.addWidget(self._sky_explorer_annotation_ellipse_button)
         self._sky_explorer_annotation_tools_layout.addWidget(self._sky_explorer_annotation_ruler_button)
         self._sky_explorer_annotation_tools_layout.addWidget(self._sky_explorer_annotation_text_button)
+        self._sky_explorer_annotation_tools_layout.addWidget(self._sky_explorer_roi_button)
         self._sky_explorer_annotation_tools_group.setLayout(self._sky_explorer_annotation_tools_layout)
 
         self._sky_explorer_annotation_properties_title = QLabel("Properties")
@@ -38938,16 +40070,21 @@ class MainWindow(QMainWindow):
         self._sky_explorer_export_image_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self._sky_explorer_export_image_button.setAutoRaise(False)
         self._sky_explorer_export_image_button.setToolTip(
-            "Export the current Sky Explorer view as a still image or a survey comparison animation."
+            "Export the annotated image, the annotated survey, or a survey comparison animation."
         )
         self._sky_explorer_export_menu = QMenu(self._sky_explorer_export_image_button)
         self._sky_explorer_export_image_action = QAction("Image...", self._sky_explorer_export_menu)
+        self._sky_explorer_export_image_action.setToolTip("Save the uploaded image with annotations.")
         self._sky_explorer_export_image_action.triggered.connect(self._export_sky_explorer_image_view)
+        self._sky_explorer_export_survey_action = QAction("Survey...", self._sky_explorer_export_menu)
+        self._sky_explorer_export_survey_action.setToolTip("Save the survey layer with annotations.")
+        self._sky_explorer_export_survey_action.triggered.connect(self._export_sky_explorer_survey_view)
         self._sky_explorer_export_animation_action = QAction("Animation...", self._sky_explorer_export_menu)
         self._sky_explorer_export_animation_action.triggered.connect(
             self._export_sky_explorer_comparison_animation
         )
         self._sky_explorer_export_menu.addAction(self._sky_explorer_export_image_action)
+        self._sky_explorer_export_menu.addAction(self._sky_explorer_export_survey_action)
         self._sky_explorer_export_menu.addAction(self._sky_explorer_export_animation_action)
         self._sky_explorer_export_image_button.setMenu(self._sky_explorer_export_menu)
 
@@ -38960,9 +40097,6 @@ class MainWindow(QMainWindow):
         self._sky_explorer_image_view = AnnotatedImageView(self)
 
         self._sky_explorer_image_view.set_message("Open a source image to explore the field.")
-        self._sky_explorer_image_view.setToolTip(
-            "Shift+left-drag to limit Explore to a region. Right-click that ROI to remove it."
-        )
         self._apply_sky_explorer_tile_feather()
 
         self._sky_explorer_image_view.imagePressed.connect(self._handle_sky_explorer_image_pressed)
@@ -39135,6 +40269,8 @@ class MainWindow(QMainWindow):
         image_controls_layout.addStretch(1)
 
         image_controls_layout.addWidget(self._sky_explorer_display_section_label)
+
+        image_controls_layout.addWidget(self._sky_explorer_goto_group)
 
         image_controls_layout.addWidget(self._sky_explorer_center_object_button)
 
@@ -39678,6 +40814,87 @@ class MainWindow(QMainWindow):
             int(settings.sky_explorer_survey_field_width_px),
             int(settings.sky_explorer_survey_field_height_px),
         )
+
+    def _sync_sky_explorer_goto_fields_from_settings(self) -> None:
+        if not hasattr(self, "_sky_explorer_goto_ra_input"):
+            return
+        settings = getattr(self, "_settings", None)
+        ra_deg = 270.63 if settings is None else float(settings.sky_explorer_survey_field_ra_deg)
+        dec_deg = -23.03 if settings is None else float(settings.sky_explorer_survey_field_dec_deg)
+        self._sky_explorer_goto_ra_input.setText(f"{ra_deg:.4f}")
+        self._sky_explorer_goto_dec_input.setText(f"{dec_deg:.4f}")
+
+    def _store_sky_explorer_survey_field_center(self, ra_deg: float, dec_deg: float) -> None:
+        settings = self._ensure_settings()
+        self._settings = replace(
+            settings,
+            sky_explorer_survey_field_ra_deg=float(ra_deg),
+            sky_explorer_survey_field_dec_deg=float(dec_deg),
+        )
+        self._sky_explorer_survey_field_center_ra_deg = float(ra_deg)
+        self._sky_explorer_survey_field_center_dec_deg = float(dec_deg)
+        self._sky_explorer_goto_ra_input.setText(f"{float(ra_deg):.4f}")
+        self._sky_explorer_goto_dec_input.setText(f"{float(dec_deg):.4f}")
+        self._save_settings_snapshot()
+
+    def _sky_explorer_image_point_for_world(self, ra_deg: float, dec_deg: float) -> tuple[float, float] | None:
+        if self._sky_explorer_is_survey_field_primary():
+            origin_ra = self._sky_explorer_survey_field_origin_ra_deg
+            origin_dec = self._sky_explorer_survey_field_origin_dec_deg
+            if origin_ra is None or origin_dec is None:
+                return None
+            _saved_ra, _saved_dec, fov_arcmin, width_px, height_px = self._sky_explorer_survey_field_settings()
+            return sky_explorer_survey_field_image_point_for_sky(
+                ra_deg=ra_deg,
+                dec_deg=dec_deg,
+                origin_ra_deg=float(origin_ra),
+                origin_dec_deg=float(origin_dec),
+                fov_arcmin=fov_arcmin,
+                width_px=width_px,
+                height_px=height_px,
+            )
+        return self._sky_explorer_pixel_coordinates_for_world(ra_deg, dec_deg)
+
+    def _handle_sky_explorer_goto_clicked(self) -> None:
+        parsed = parse_sky_explorer_ra_dec(
+            self._sky_explorer_goto_ra_input.text(),
+            self._sky_explorer_goto_dec_input.text(),
+        )
+        if parsed is None:
+            QMessageBox.warning(
+                self,
+                "Invalid coordinates",
+                "Enter RA and Dec as decimal degrees or sexagesimal coordinates "
+                "(for example 270.63 and -23.03, or 18:02:31 and -23:01:48).",
+            )
+            return
+        ra_deg, dec_deg = parsed
+        self._store_sky_explorer_survey_field_center(ra_deg, dec_deg)
+        image_point = self._sky_explorer_image_point_for_world(ra_deg, dec_deg)
+        if image_point is not None:
+            self._sky_explorer_image_view.focus_on(float(image_point[0]), float(image_point[1]))
+            if self._sky_explorer_is_survey_field_primary():
+                self._request_sky_explorer_survey_field_recenter()
+            self.statusBar().showMessage(
+                f"Centered on RA {ra_deg:.4f}°, Dec {dec_deg:.4f}°.",
+                5000,
+            )
+            return
+        survey_key = str(self._sky_explorer_primary_survey_key or "").strip().lower()
+        if survey_key:
+            self._load_sky_explorer_primary_survey_field(
+                SkyExplorerSourceChoice(kind="survey", survey_key=survey_key)
+            )
+            return
+        source_image = getattr(self, "_current_sky_explorer_source_image", None)
+        if source_image is not None:
+            QMessageBox.warning(
+                self,
+                "Cannot Goto",
+                "Those coordinates are not on the current image. Open a survey to view that sky position.",
+            )
+            return
+        self._open_sky_explorer_survey_picker(as_comparison=False)
 
     def _load_sky_explorer_primary_survey_field(self, choice: SkyExplorerSourceChoice) -> None:
         survey_key = str(choice.survey_key or "").strip().lower()
@@ -41646,6 +42863,52 @@ class MainWindow(QMainWindow):
 
         )
 
+        if hasattr(self, "_sky_explorer_goto_group"):
+
+            self._sky_explorer_goto_group.setStyleSheet(
+
+                "QFrame#skyExplorerGotoGroup {"
+
+                f"background-color: {secondary_base};"
+
+                f"border: 1px solid {secondary_border};"
+
+                "border-radius: 6px;"
+
+                "}"
+
+                "QFrame#skyExplorerGotoGroup QLabel {"
+
+                f"color: {secondary_text};"
+
+                "font-size: 10px;"
+
+                "font-weight: 700;"
+
+                "background: transparent;"
+
+                "border: none;"
+
+                "}"
+
+                "QFrame#skyExplorerGotoGroup QLineEdit {"
+
+                f"color: {secondary_text};"
+
+                f"background-color: {QColor(secondary_base).darker(108).name().lower()};"
+
+                f"border: 1px solid {secondary_border};"
+
+                "border-radius: 4px;"
+
+                "padding: 2px 6px;"
+
+                "min-width: 72px;"
+
+                "}"
+
+            )
+
         self._sky_explorer_object_type_mode_button.setStyleSheet(secondary_style)
 
         self._sky_explorer_select_all_button.setStyleSheet(secondary_style)
@@ -41653,6 +42916,8 @@ class MainWindow(QMainWindow):
         self._sky_explorer_filter_button.setStyleSheet(secondary_style)
 
         self._sky_explorer_center_object_button.setStyleSheet(secondary_style)
+
+        self._sky_explorer_goto_button.setStyleSheet(secondary_style)
 
         self._sky_explorer_show_auto_annotations_button.setStyleSheet(secondary_style)
 
@@ -41709,6 +42974,8 @@ class MainWindow(QMainWindow):
             tool_button.setStyleSheet(secondary_style)
 
         self._sync_sky_explorer_annotation_tool_icons()
+
+        self._sync_sky_explorer_roi_button()
 
         self._sync_sky_explorer_annotation_stroke_color_button()
 
@@ -41855,6 +43122,12 @@ class MainWindow(QMainWindow):
 
         header_control_height = _MODE_TOOLBAR_BUTTON_HEIGHT
 
+        goto_button_width = self.fontMetrics().horizontalAdvance("Goto") + button_padding_px
+
+        goto_coord_width = max(88, self.fontMetrics().horizontalAdvance("000.0000") + 18)
+
+        goto_inner_height = max(28, header_control_height - 10)
+
         self._sky_explorer_primary_button.setFixedWidth(primary_width)
 
         self._sky_explorer_object_type_mode_button.setFixedWidth(mode_width)
@@ -41871,6 +43144,12 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_export_image_button.setFixedWidth(auto_width)
 
+        self._sky_explorer_goto_button.setFixedWidth(goto_button_width)
+
+        self._sky_explorer_goto_ra_input.setFixedWidth(goto_coord_width)
+
+        self._sky_explorer_goto_dec_input.setFixedWidth(goto_coord_width)
+
         self._sky_explorer_primary_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_object_type_mode_button.setFixedHeight(header_control_height)
@@ -41885,6 +43164,14 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_center_object_button.setFixedHeight(header_control_height)
 
+        self._sky_explorer_goto_group.setFixedHeight(header_control_height)
+
+        self._sky_explorer_goto_button.setFixedHeight(goto_inner_height)
+
+        self._sky_explorer_goto_ra_input.setFixedHeight(goto_inner_height)
+
+        self._sky_explorer_goto_dec_input.setFixedHeight(goto_inner_height)
+
         self._sky_explorer_show_auto_annotations_button.setFixedHeight(header_control_height)
 
         self._sky_explorer_display_section_label.setFixedHeight(header_control_height)
@@ -41897,7 +43184,11 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_annotation_ellipse_button.setFixedSize(tool_button_size, tool_button_size)
 
+        self._sky_explorer_annotation_ruler_button.setFixedSize(tool_button_size, tool_button_size)
+
         self._sky_explorer_annotation_text_button.setFixedSize(tool_button_size, tool_button_size)
+
+        self._sky_explorer_roi_button.setFixedSize(tool_button_size, tool_button_size)
 
         self._sky_explorer_annotation_stroke_color_button.setFixedSize(24, 24)
 
@@ -43453,6 +44744,10 @@ class MainWindow(QMainWindow):
 
     def _sky_explorer_display_name_for_object(self, sky_object: SkyExplorerObject) -> str:
 
+        if self._sky_explorer_is_mag_limit_measurement_object(sky_object):
+
+            return self._sky_explorer_mag_limit_label_name(sky_object)
+
         if self._current_sky_explorer_object_type_mode() == "catalog":
 
             catalog_name = sky_explorer_catalog_display_name(
@@ -44042,7 +45337,7 @@ class MainWindow(QMainWindow):
 
             reset_view=False,
 
-            focus_selected=self._sky_explorer_center_object_button.isChecked(),
+            focus_selected=self._sky_explorer_should_center_selected_object(sky_object),
 
         )
 
@@ -44243,6 +45538,12 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_survey_display_controls.setEnabled(has_image and has_comparison)
 
+        self._sky_explorer_goto_ra_input.setEnabled(True)
+
+        self._sky_explorer_goto_dec_input.setEnabled(True)
+
+        self._sky_explorer_goto_button.setEnabled(True)
+
         self._sky_explorer_center_object_button.setEnabled(has_image and has_selection)
 
         self._sky_explorer_show_auto_annotations_button.setEnabled(has_image)
@@ -44250,6 +45551,10 @@ class MainWindow(QMainWindow):
         for tool_button in self._sky_explorer_annotation_tool_buttons.values():
 
             tool_button.setEnabled(has_image)
+
+        if hasattr(self, "_sky_explorer_roi_button"):
+
+            self._sky_explorer_roi_button.setEnabled(has_image)
 
         self._sky_explorer_annotation_stroke_color_button.setEnabled(has_image)
 
@@ -44275,17 +45580,13 @@ class MainWindow(QMainWindow):
 
             self._set_sky_explorer_annotation_tool("mouse", refresh=False)
 
+            self._set_sky_explorer_roi_tool_armed(False)
+
             self._selected_sky_explorer_manual_annotation_id = None
 
             self._sky_explorer_manual_annotation_drag = None
 
-        self._sky_explorer_export_image_button.setEnabled(has_image)
-
-        if hasattr(self, "_sky_explorer_export_animation_action"):
-
-            self._sky_explorer_export_animation_action.setEnabled(
-                self._sky_explorer_can_export_comparison_animation()
-            )
+        self._sync_sky_explorer_export_actions()
 
         self._sync_tools_menu_actions()
 
@@ -44499,13 +45800,83 @@ class MainWindow(QMainWindow):
 
     def _sky_explorer_default_export_path(self) -> Path:
 
+        return self._sky_explorer_default_still_export_path("image")
+
+    def _sky_explorer_default_still_export_path(self, kind: str) -> Path:
+
         image_path = getattr(self, "_current_sky_explorer_source_image", None)
+
+        if str(kind).strip().lower() == "image" and self._sky_explorer_primary_survey_key:
+
+            comparison_path = getattr(self, "_sky_explorer_comparison_image_path", None)
+
+            if comparison_path is not None:
+
+                image_path = comparison_path
+
+        if str(kind).strip().lower() == "survey":
+
+            if image_path is None:
+
+                return Path.cwd() / "sky_explorer_survey.png"
+
+            return image_path.with_name(f"{image_path.stem}_sky_explorer_survey.png")
 
         if image_path is None:
 
             return Path.cwd() / "sky_explorer_annotated.png"
 
         return image_path.with_name(f"{image_path.stem}_sky_explorer.png")
+
+    def _sky_explorer_can_export_image_still(self) -> bool:
+
+        return self._sky_explorer_has_loaded_user_image()
+
+    def _sky_explorer_can_export_survey_still(self) -> bool:
+
+        return self._sky_explorer_has_loaded_survey()
+
+    def _sky_explorer_still_export_background(self, kind: str) -> str:
+
+        if str(kind).strip().lower() == "survey":
+
+            return "primary" if self._sky_explorer_primary_survey_key else "comparison"
+
+        if self._sky_explorer_primary_survey_key and self._sky_explorer_has_loaded_user_image():
+
+            return "comparison"
+
+        return "primary"
+
+    def _sync_sky_explorer_export_actions(self) -> None:
+
+        image_path = getattr(self, "_current_sky_explorer_source_image", None)
+
+        has_source = image_path is not None and Path(image_path).exists()
+
+        export_button = getattr(self, "_sky_explorer_export_image_button", None)
+
+        if export_button is not None:
+
+            export_button.setEnabled(has_source)
+
+        image_action = getattr(self, "_sky_explorer_export_image_action", None)
+
+        if image_action is not None:
+
+            image_action.setEnabled(has_source and self._sky_explorer_can_export_image_still())
+
+        survey_action = getattr(self, "_sky_explorer_export_survey_action", None)
+
+        if survey_action is not None:
+
+            survey_action.setEnabled(has_source and self._sky_explorer_can_export_survey_still())
+
+        animation_action = getattr(self, "_sky_explorer_export_animation_action", None)
+
+        if animation_action is not None:
+
+            animation_action.setEnabled(self._sky_explorer_can_export_comparison_animation())
 
     def _sky_explorer_default_collage_export_path(self) -> Path:
 
@@ -44796,23 +46167,45 @@ class MainWindow(QMainWindow):
 
     def _export_sky_explorer_image_view(self) -> None:
 
-        image_path = getattr(self, "_current_sky_explorer_source_image", None)
+        self._export_sky_explorer_still("image")
 
-        if image_path is None or not image_path.exists():
+    def _export_sky_explorer_survey_view(self) -> None:
 
-            QMessageBox.information(self, "Nothing to export", "Open a Sky Explorer image before saving the annotated view.")
+        self._export_sky_explorer_still("survey")
+
+    def _export_sky_explorer_still(self, kind: str) -> None:
+
+        normalized_kind = "survey" if str(kind).strip().lower() == "survey" else "image"
+
+        can_export = (
+            self._sky_explorer_can_export_survey_still()
+            if normalized_kind == "survey"
+            else self._sky_explorer_can_export_image_still()
+        )
+
+        if not can_export:
+
+            if normalized_kind == "survey":
+
+                QMessageBox.information(self, "Nothing to export", "Load a Sky Explorer survey before saving the annotated survey.")
+
+            else:
+
+                QMessageBox.information(self, "Nothing to export", "Open a Sky Explorer image before saving the annotated view.")
 
             return
 
-        default_path = self._sky_explorer_default_export_path()
+        default_path = self._sky_explorer_default_still_export_path(normalized_kind)
 
         default_path.parent.mkdir(parents=True, exist_ok=True)
+
+        dialog_title = "Save Sky Explorer Survey" if normalized_kind == "survey" else "Save Sky Explorer Image"
 
         selected_path, _selected_filter = QFileDialog.getSaveFileName(
 
             self,
 
-            "Save Sky Explorer Image",
+            dialog_title,
 
             str(default_path),
 
@@ -44834,11 +46227,15 @@ class MainWindow(QMainWindow):
 
         self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
 
-        image = self._sky_explorer_image_view.capture_full_resolution_image()
+        image = self._sky_explorer_image_view.capture_full_resolution_image(
+            background=self._sky_explorer_still_export_background(normalized_kind)
+        )
 
         if image is None or image.isNull():
 
-            QMessageBox.warning(self, "Save failed", "Could not render the annotated Sky Explorer image at full resolution.")
+            layer_name = "survey" if normalized_kind == "survey" else "image"
+
+            QMessageBox.warning(self, "Save failed", f"Could not render the annotated Sky Explorer {layer_name} at full resolution.")
 
             return
 
@@ -44854,13 +46251,17 @@ class MainWindow(QMainWindow):
 
         if not saved:
 
-            QMessageBox.warning(self, "Save failed", f"Could not save the Sky Explorer image to {output_path}.")
+            layer_name = "survey" if normalized_kind == "survey" else "image"
+
+            QMessageBox.warning(self, "Save failed", f"Could not save the Sky Explorer {layer_name} to {output_path}.")
 
             return
 
-        self.statusBar().showMessage(f"Saved Sky Explorer image to {output_path}.", 5000)
+        layer_label = "survey" if normalized_kind == "survey" else "image"
 
-        self._append_sky_explorer_workflow_note(f"Saved Sky Explorer image to {output_path}.")
+        self.statusBar().showMessage(f"Saved Sky Explorer {layer_label} to {output_path}.", 5000)
+
+        self._append_sky_explorer_workflow_note(f"Saved Sky Explorer {layer_label} to {output_path}.")
 
     def _export_sky_explorer_comparison_animation(self) -> None:
 
@@ -45435,11 +46836,7 @@ class MainWindow(QMainWindow):
             self._sky_explorer_image_view.set_comparison_loading(False)
             self._sync_sky_explorer_comparison_divider_visibility()
 
-            if hasattr(self, "_sky_explorer_export_animation_action"):
-
-                self._sky_explorer_export_animation_action.setEnabled(
-                    self._sky_explorer_can_export_comparison_animation()
-                )
+            self._sync_sky_explorer_export_actions()
 
             return
 
@@ -45501,11 +46898,7 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_comparison_divider_visibility()
 
-        if hasattr(self, "_sky_explorer_export_animation_action"):
-
-            self._sky_explorer_export_animation_action.setEnabled(
-                self._sky_explorer_can_export_comparison_animation()
-            )
+        self._sync_sky_explorer_export_actions()
 
     def _set_sky_explorer_survey_action_checked(self, survey_key: str | None) -> None:
 
@@ -46775,6 +48168,14 @@ class MainWindow(QMainWindow):
 
             self._clear_sky_explorer_live_style_annotation()
 
+        if getattr(self, "_sky_explorer_roi_tool_armed", False):
+
+            self._sky_explorer_roi_tool_armed = False
+
+            self._apply_sky_explorer_roi_gesture_mode()
+
+            self._sync_sky_explorer_roi_button()
+
         self._sky_explorer_annotation_tool = normalized_tool
 
         self._sky_explorer_manual_annotation_drag = None
@@ -46903,6 +48304,14 @@ class MainWindow(QMainWindow):
 
             painter.drawLine(QPointF(14.8, 2.8), QPointF(17.5, 5.5))
 
+        elif normalized_tool == "roi":
+
+            pen.setStyle(Qt.PenStyle.DashLine)
+
+            painter.setPen(pen)
+
+            painter.drawRect(QRectF(3.5, 4.5, 13.0, 11.0))
+
         else:
 
             font = painter.font()
@@ -46919,47 +48328,150 @@ class MainWindow(QMainWindow):
 
         return QIcon(pixmap)
 
+    def _color_picker_theme_colors(self) -> dict[str, str]:
+
+        colors = dict(self._resolved_theme_editor_colors())
+
+        panel = colors.get("panel_bg", "#1e293b")
+
+        colors.setdefault("gridline", QColor(panel).lighter(140).name().lower())
+
+        return colors
+
+    def _popup_cast_color_picker(
+        self,
+        anchor: QWidget,
+        current: str | None,
+        *,
+        allow_none: bool,
+        on_color,
+        parent: QWidget | None = None,
+    ) -> None:
+
+        existing = getattr(self, "_active_color_picker_popup", None)
+
+        if existing is not None and isValid(existing):
+
+            existing.close()
+
+        popup = ColorPickerPopup(
+            parent or self,
+            allow_none=allow_none,
+            theme_colors=self._color_picker_theme_colors(),
+        )
+
+        popup.set_color(current)
+
+        popup.colorChanged.connect(on_color)
+
+        def _clear(_obj=None, watched=popup) -> None:
+
+            if getattr(self, "_active_color_picker_popup", None) is watched:
+
+                self._active_color_picker_popup = None
+
+        popup.destroyed.connect(_clear)
+
+        self._active_color_picker_popup = popup
+
+        popup.popup_below(anchor)
+
     def _choose_sky_explorer_annotation_stroke_color(self) -> None:
 
-        selected_color = QColorDialog.getColor(QColor(self._sky_explorer_annotation_stroke_color), self, "Choose Stroke Color")
+        button = getattr(self, "_sky_explorer_annotation_stroke_color_button", None)
 
-        if not selected_color.isValid():
+        if button is None:
 
             return
 
-        self._sky_explorer_annotation_stroke_color = selected_color.name().lower()
+        def apply_color(color: object) -> None:
 
-        self._sync_sky_explorer_annotation_stroke_color_button()
+            resolved = str(color or "").strip().lower()
 
-        self._apply_sky_explorer_annotation_properties_to_live_object()
+            if not resolved:
+
+                return
+
+            self._sky_explorer_annotation_stroke_color = resolved
+
+            self._sync_sky_explorer_annotation_stroke_color_button()
+
+            self._apply_sky_explorer_annotation_properties_to_live_object()
+
+        self._popup_cast_color_picker(
+            button,
+            self._sky_explorer_annotation_stroke_color,
+            allow_none=False,
+            on_color=apply_color,
+        )
 
     def _choose_sky_explorer_annotation_fill_color(self) -> None:
 
-        selected_color = QColorDialog.getColor(QColor(self._sky_explorer_annotation_fill_color), self, "Choose Fill Color")
+        button = getattr(self, "_sky_explorer_annotation_fill_color_button", None)
 
-        if not selected_color.isValid():
+        if button is None:
 
             return
 
-        self._sky_explorer_annotation_fill_color = selected_color.name().lower()
+        current = self._sky_explorer_annotation_fill_color if bool(getattr(self, "_sky_explorer_annotation_show_fill", True)) else None
 
-        self._sync_sky_explorer_annotation_fill_color_button()
+        def apply_color(color: object) -> None:
 
-        self._apply_sky_explorer_annotation_properties_to_live_object()
+            if color is None:
+
+                self._sky_explorer_annotation_show_fill = False
+
+            else:
+
+                resolved = str(color).strip().lower()
+
+                if not resolved:
+
+                    return
+
+                self._sky_explorer_annotation_show_fill = True
+
+                self._sky_explorer_annotation_fill_color = resolved
+
+            self._sync_sky_explorer_annotation_fill_color_button()
+
+            self._apply_sky_explorer_annotation_properties_to_live_object()
+
+        self._popup_cast_color_picker(
+            button,
+            current,
+            allow_none=True,
+            on_color=apply_color,
+        )
 
     def _choose_sky_explorer_annotation_text_color(self) -> None:
 
-        selected_color = QColorDialog.getColor(QColor(self._sky_explorer_annotation_text_color), self, "Choose Text Color")
+        button = getattr(self, "_sky_explorer_annotation_text_color_button", None)
 
-        if not selected_color.isValid():
+        if button is None:
 
             return
 
-        self._sky_explorer_annotation_text_color = selected_color.name().lower()
+        def apply_color(color: object) -> None:
 
-        self._sync_sky_explorer_annotation_text_color_button()
+            resolved = str(color or "").strip().lower()
 
-        self._apply_sky_explorer_annotation_properties_to_live_object()
+            if not resolved:
+
+                return
+
+            self._sky_explorer_annotation_text_color = resolved
+
+            self._sync_sky_explorer_annotation_text_color_button()
+
+            self._apply_sky_explorer_annotation_properties_to_live_object()
+
+        self._popup_cast_color_picker(
+            button,
+            self._sky_explorer_annotation_text_color,
+            allow_none=False,
+            on_color=apply_color,
+        )
 
     def _handle_sky_explorer_annotation_opacity_changed(self, value: int) -> None:
 
@@ -47040,6 +48552,10 @@ class MainWindow(QMainWindow):
             self._sky_explorer_annotation_stroke_color = annotation.stroke_color
 
             self._sky_explorer_annotation_fill_color = annotation.fill_color
+
+            if annotation.shape in {"circle", "ellipse"}:
+
+                self._sky_explorer_annotation_show_fill = bool(annotation.show_fill)
 
             self._sky_explorer_annotation_text_color = annotation.text_color
 
@@ -47123,6 +48639,8 @@ class MainWindow(QMainWindow):
 
                 opacity=max(0.05, min(1.0, float(self._sky_explorer_annotation_opacity))),
 
+                show_fill=False if annotation.shape == "ruler" else bool(getattr(self, "_sky_explorer_annotation_show_fill", True)),
+
             )
 
         if updated_annotation == annotation:
@@ -47131,7 +48649,7 @@ class MainWindow(QMainWindow):
 
         self._replace_sky_explorer_manual_annotation(updated_annotation)
 
-        self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
+        self._refresh_sky_explorer_dynamic_overlays()
 
     def _sync_sky_explorer_annotation_property_controls(self) -> None:
 
@@ -47225,14 +48743,7 @@ class MainWindow(QMainWindow):
 
             return
 
-        color_value = getattr(self, "_sky_explorer_annotation_stroke_color", "#38bdf8")
-
-        color_button.setStyleSheet(
-
-            f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
-
-        )
-        color_button.setText("")
+        apply_swatch_button(color_button, getattr(self, "_sky_explorer_annotation_stroke_color", "#38bdf8"))
 
     def _sync_sky_explorer_annotation_fill_color_button(self) -> None:
 
@@ -47242,14 +48753,12 @@ class MainWindow(QMainWindow):
 
             return
 
-        color_value = getattr(self, "_sky_explorer_annotation_fill_color", "#38bdf8")
+        show_fill = bool(getattr(self, "_sky_explorer_annotation_show_fill", True))
 
-        color_button.setStyleSheet(
-
-            f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
-
+        apply_swatch_button(
+            color_button,
+            getattr(self, "_sky_explorer_annotation_fill_color", "#38bdf8") if show_fill else None,
         )
-        color_button.setText("")
 
     def _sync_sky_explorer_annotation_text_color_button(self) -> None:
 
@@ -47259,14 +48768,7 @@ class MainWindow(QMainWindow):
 
             return
 
-        color_value = getattr(self, "_sky_explorer_annotation_text_color", "#f8fafc")
-
-        color_button.setStyleSheet(
-
-            f"background-color: {color_value}; border: 1px solid rgba(15, 23, 42, 0.45); border-radius: 6px; padding: 0;"
-
-        )
-        color_button.setText("")
+        apply_swatch_button(color_button, getattr(self, "_sky_explorer_annotation_text_color", "#f8fafc"))
 
     def _sky_explorer_is_manual_annotation_mode(self) -> bool:
 
@@ -47342,7 +48844,23 @@ class MainWindow(QMainWindow):
 
             mark_only_faintest=bool(getattr(settings, "sky_explorer_mag_limit_mark_only_faintest", False)),
 
-            max_magnitude=float(getattr(settings, "sky_explorer_gaia_max_magnitude", 17.0)),
+            faintest_count=max(1, int(getattr(settings, "sky_explorer_mag_limit_faintest_count", 1))),
+
+            start_magnitude=float(
+                getattr(
+                    settings,
+                    "sky_explorer_mag_limit_start_magnitude",
+                    getattr(settings, "sky_explorer_mag_limit_auto_start_magnitude", 12.0),
+                )
+            ),
+
+            max_magnitude=float(
+                getattr(
+                    settings,
+                    "sky_explorer_mag_limit_max_magnitude",
+                    getattr(settings, "sky_explorer_gaia_max_magnitude", 17.0),
+                )
+            ),
 
             auto_stars_per_bin=max(2, int(getattr(settings, "sky_explorer_mag_limit_auto_stars_per_bin", 10))),
 
@@ -47353,6 +48871,8 @@ class MainWindow(QMainWindow):
             auto_step_magnitude=float(getattr(settings, "sky_explorer_mag_limit_auto_step_magnitude", 0.5)),
 
             auto_snr_threshold=float(getattr(settings, "sky_explorer_mag_limit_auto_snr_threshold", 5.0)),
+
+            text_scale_mode=str(getattr(settings, "sky_explorer_mag_limit_text_scale_mode", "off") or "off"),
 
         )
 
@@ -47368,21 +48888,25 @@ class MainWindow(QMainWindow):
 
             "sky_explorer_mag_limit_mark_only_faintest": bool(options.mark_only_faintest),
 
+            "sky_explorer_mag_limit_faintest_count": max(1, int(options.faintest_count)),
+
+            "sky_explorer_mag_limit_start_magnitude": float(options.start_magnitude),
+
+            "sky_explorer_mag_limit_max_magnitude": float(options.max_magnitude),
+
+            "sky_explorer_mag_limit_text_scale_mode": str(options.text_scale_mode),
+
             "sky_explorer_mag_limit_auto_stars_per_bin": max(2, int(options.auto_stars_per_bin)),
 
             "sky_explorer_mag_limit_auto_required_visible_stars": max(1, int(options.auto_required_visible_stars)),
 
-            "sky_explorer_mag_limit_auto_start_magnitude": float(options.auto_start_magnitude),
+            "sky_explorer_mag_limit_auto_start_magnitude": float(options.start_magnitude),
 
-            "sky_explorer_mag_limit_auto_step_magnitude": float(options.auto_step_magnitude),
+            "sky_explorer_mag_limit_auto_step_magnitude": float(options.bin_size_mag),
 
             "sky_explorer_mag_limit_auto_snr_threshold": float(options.auto_snr_threshold),
 
         }
-
-        if options.mode == "ladder":
-
-            replacements["sky_explorer_gaia_max_magnitude"] = float(options.max_magnitude)
 
         self._settings = replace(settings, **replacements)
 
@@ -47490,6 +49014,50 @@ class MainWindow(QMainWindow):
 
         self._start_sky_explorer_mag_limit_query()
 
+    def _current_sky_explorer_solved_field(self):
+
+        source_path = self._current_sky_explorer_source_image
+
+        candidates = (
+
+            getattr(self, "_sky_explorer_mag_limit_result", None),
+
+            getattr(self, "_current_sky_explorer_result", None),
+
+        )
+
+        for result in candidates:
+
+            if result is None:
+
+                continue
+
+            solved_field = getattr(result, "solved_field", None)
+
+            if solved_field is None or not getattr(solved_field, "wcs_path", None):
+
+                continue
+
+            result_path = getattr(result, "source_path", None)
+
+            if source_path is not None and result_path is not None:
+
+                try:
+
+                    if Path(result_path).resolve() != Path(source_path).resolve():
+
+                        continue
+
+                except OSError:
+
+                    continue
+
+            if Path(solved_field.wcs_path).exists():
+
+                return solved_field
+
+        return None
+
     def _start_sky_explorer_mag_limit_auto_estimate(self, options: SkyExplorerMagLimitOptions) -> None:
 
         source_path = self._current_sky_explorer_source_image
@@ -47522,7 +49090,7 @@ class MainWindow(QMainWindow):
 
             snr_threshold=float(options.auto_snr_threshold),
 
-            start_magnitude=float(options.auto_start_magnitude),
+            start_magnitude=float(options.start_magnitude),
 
             stars_per_bin=int(options.auto_stars_per_bin),
 
@@ -47530,9 +49098,13 @@ class MainWindow(QMainWindow):
 
             annotate_lowest_mag_stars=bool(options.mark_only_faintest),
 
-            step_magnitude=float(options.auto_step_magnitude),
+            step_magnitude=float(options.bin_size_mag),
 
             annotate_all_visible_stars=not bool(options.mark_only_faintest),
+
+            max_magnitude=float(options.max_magnitude),
+
+            annotate_count=int(options.faintest_count) if options.mark_only_faintest else None,
 
         )
 
@@ -47551,6 +49123,8 @@ class MainWindow(QMainWindow):
             settings=self._ensure_settings(),
 
             options=estimate_options,
+
+            solved_field=self._current_sky_explorer_solved_field(),
 
             parent=self,
 
@@ -47911,6 +49485,16 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Applied Sky Explorer image curves.", 3000)
 
+    def _refresh_sky_explorer_dynamic_overlays(self) -> None:
+
+        image_view = getattr(self, "_sky_explorer_image_view", None)
+
+        if image_view is None:
+
+            return
+
+        image_view.set_dynamic_overlays(self._sky_explorer_manual_annotation_overlays())
+
     def _refresh_sky_explorer_image_view(
         self,
         *,
@@ -47944,6 +49528,9 @@ class MainWindow(QMainWindow):
         self._sky_explorer_image_view.set_hover_text_formatter(self._sky_explorer_hover_coordinate_formatter())
 
         automatic_overlays, manual_overlays = self._current_sky_explorer_image_overlay_parts()
+        direct_edit_enabled, direct_edit_draw_enabled, gesture_roi_shift_required = (
+            self._sky_explorer_image_interaction_flags()
+        )
 
         self._sky_explorer_image_view.set_content(
 
@@ -47963,11 +49550,13 @@ class MainWindow(QMainWindow):
 
             pre_rendered_qimage=pre_rendered_qimage,
 
-            direct_edit_enabled=self._sky_explorer_annotation_tool != "mouse",
+            direct_edit_enabled=direct_edit_enabled,
 
-            direct_edit_draw_enabled=self._sky_explorer_annotation_tool in {"circle", "ellipse", "ruler", "text"},
+            direct_edit_draw_enabled=direct_edit_draw_enabled,
 
             gesture_roi_enabled=True,
+
+            gesture_roi_shift_required=gesture_roi_shift_required,
 
             selection_overlays=self._current_sky_explorer_selection_overlays(),
 
@@ -47983,12 +49572,22 @@ class MainWindow(QMainWindow):
 
                 self._sky_explorer_image_view.focus_on(float(sky_object.pixel_x), float(sky_object.pixel_y), minimum_zoom_scale=3.0)
 
+    def _sky_explorer_image_interaction_flags(self) -> tuple[bool, bool, bool]:
+        armed = bool(getattr(self, "_sky_explorer_roi_tool_armed", False))
+        if armed:
+            return (False, False, False)
+        tool = str(getattr(self, "_sky_explorer_annotation_tool", "mouse") or "mouse").strip().lower()
+        return (
+            tool != "mouse",
+            tool in {"circle", "ellipse", "ruler", "text"},
+            True,
+        )
+
     def _sky_explorer_roi_color(self) -> str:
-        return str(self._resolved_theme_editor_colors().get("accent", "#3d8bfd"))
+        return _SKY_EXPLORER_ROI_STROKE_COLOR
 
     def _sky_explorer_roi_drag_color(self) -> str:
-        accent = QColor(self._sky_explorer_roi_color())
-        return accent.lighter(130).name().lower()
+        return _SKY_EXPLORER_ROI_DRAG_STROKE_COLOR
 
     def _sky_explorer_roi_selection_has_area(self, selection: _HrRoiSelection | None) -> bool:
         if selection is None:
@@ -48036,11 +49635,111 @@ class MainWindow(QMainWindow):
             x1=selection.x1,
             y1=selection.y1,
             color=self._sky_explorer_roi_drag_color() if active else self._sky_explorer_roi_color(),
+            fill=False,
+            stroke_width=2.0,
         )
 
     def _sync_sky_explorer_roi_overlays(self) -> None:
         if hasattr(self, "_sky_explorer_image_view"):
             self._sky_explorer_image_view.set_selection_overlays(self._current_sky_explorer_selection_overlays())
+
+    def _sky_explorer_roi_button_state(self) -> str:
+        if self._sky_explorer_committed_pixel_roi() is not None:
+            return "active"
+        if bool(getattr(self, "_sky_explorer_roi_tool_armed", False)):
+            return "armed"
+        return "off"
+
+    def _apply_sky_explorer_roi_gesture_mode(self) -> None:
+        if not hasattr(self, "_sky_explorer_image_view"):
+            return
+        direct_edit_enabled, direct_edit_draw_enabled, gesture_roi_shift_required = (
+            self._sky_explorer_image_interaction_flags()
+        )
+        self._sky_explorer_image_view.set_interaction_mode(
+            gesture_roi_enabled=True,
+            gesture_roi_shift_required=gesture_roi_shift_required,
+            direct_edit_enabled=direct_edit_enabled,
+            direct_edit_draw_enabled=direct_edit_draw_enabled,
+        )
+
+    def _set_sky_explorer_roi_tool_armed(self, armed: bool) -> None:
+        self._sky_explorer_roi_tool_armed = bool(armed)
+        self._apply_sky_explorer_roi_gesture_mode()
+        self._sync_sky_explorer_roi_button()
+        if self._sky_explorer_roi_tool_armed:
+            self.statusBar().showMessage(
+                "ROI tool selected. Drag on the image to limit Explore to that rectangle.",
+                5000,
+            )
+
+    def _handle_sky_explorer_roi_button_clicked(self) -> None:
+        if (
+            self._sky_explorer_committed_pixel_roi() is not None
+            or self._sky_explorer_active_roi_selection is not None
+        ):
+            self._set_sky_explorer_roi_tool_armed(False)
+            self._clear_sky_explorer_roi(refresh=True)
+            return
+        if bool(getattr(self, "_sky_explorer_roi_tool_armed", False)):
+            self._set_sky_explorer_roi_tool_armed(False)
+            self.statusBar().showMessage("ROI tool cancelled. Explore will use the full field.", 4000)
+            return
+        self._set_sky_explorer_annotation_tool("mouse", refresh=False)
+        self._set_sky_explorer_roi_tool_armed(True)
+
+    def _sync_sky_explorer_roi_button(self) -> None:
+        button = getattr(self, "_sky_explorer_roi_button", None)
+        if button is None:
+            return
+        colors = self._resolved_theme_editor_colors()
+        accent_color = QColor(colors.get("accent", "#3d8bfd"))
+        accent_name = accent_color.name().lower()
+        border_color = accent_color.darker(122).name().lower()
+        secondary_base = QColor(colors.get("panel_bg", "#2b2b2b")).lighter(108).name().lower()
+        secondary_hover = QColor(secondary_base).lighter(108).name().lower()
+        secondary_pressed = QColor(secondary_base).darker(108).name().lower()
+        secondary_border = QColor(colors.get("gridline", border_color)).darker(110).name().lower()
+        secondary_text = colors.get("text", "#f8fafc")
+        state = self._sky_explorer_roi_button_state()
+        if state == "active":
+            contrast = self._contrast_text_color(accent_name)
+            button.setStyleSheet(
+                "QPushButton#skyExplorerRoiButton {"
+                f"background-color: {accent_name};"
+                f"color: {contrast};"
+                f"border: 2px solid {border_color};"
+                "border-radius: 4px;"
+                "padding: 4px;"
+                "}"
+            )
+            icon_color = contrast
+        elif state == "armed":
+            button.setStyleSheet(
+                "QPushButton#skyExplorerRoiButton {"
+                f"background-color: {secondary_base};"
+                f"color: {secondary_text};"
+                f"border: 2px solid {accent_name};"
+                "border-radius: 4px;"
+                "padding: 4px;"
+                "}"
+                f"QPushButton#skyExplorerRoiButton:hover {{ background-color: {secondary_hover}; }}"
+            )
+            icon_color = accent_name
+        else:
+            button.setStyleSheet(
+                "QPushButton#skyExplorerRoiButton {"
+                f"background-color: {secondary_base};"
+                f"color: {secondary_text};"
+                f"border: 1px solid {secondary_border};"
+                "border-radius: 4px;"
+                "padding: 4px;"
+                "}"
+                f"QPushButton#skyExplorerRoiButton:hover {{ background-color: {secondary_hover}; }}"
+                f"QPushButton#skyExplorerRoiButton:pressed {{ background-color: {secondary_pressed}; }}"
+            )
+            icon_color = secondary_text
+        button.setIcon(self._create_sky_explorer_annotation_tool_icon("roi", color_hex=icon_color))
 
     def _start_sky_explorer_roi(self, image_x: float, image_y: float) -> None:
         self._sky_explorer_manual_annotation_drag = None
@@ -48062,20 +49761,26 @@ class MainWindow(QMainWindow):
         self._sky_explorer_active_roi_selection = None
         if self._sky_explorer_roi_selection_has_area(draft) and draft is not None:
             self._sky_explorer_roi_selection = draft
-            self.statusBar().showMessage("Explore will use the drawn ROI. Right-click the ROI to remove it.", 5000)
+            self._sky_explorer_roi_tool_armed = False
+            self.statusBar().showMessage("Explore will use the drawn ROI. Click ROI again or right-click it to remove it.", 5000)
             self._append_sky_explorer_workflow_note("Drew an Explore ROI.")
+        self._apply_sky_explorer_roi_gesture_mode()
         self._sync_sky_explorer_roi_overlays()
+        self._sync_sky_explorer_roi_button()
 
     def _clear_sky_explorer_roi(self, *, refresh: bool) -> None:
         had_roi = self._sky_explorer_roi_selection is not None or self._sky_explorer_active_roi_selection is not None
         self._sky_explorer_roi_selection = None
         self._sky_explorer_active_roi_selection = None
         self._sky_explorer_roi_drag_origin = None
+        self._sky_explorer_roi_tool_armed = False
+        self._apply_sky_explorer_roi_gesture_mode()
         if refresh:
             self._sync_sky_explorer_roi_overlays()
             if had_roi:
                 self.statusBar().showMessage("Removed the Explore ROI.", 4000)
                 self._append_sky_explorer_workflow_note("Removed the Explore ROI.")
+        self._sync_sky_explorer_roi_button()
 
     def _sky_explorer_current_manual_annotation_key(self) -> str | None:
 
@@ -48616,7 +50321,7 @@ class MainWindow(QMainWindow):
 
             show_label=bool(is_ruler),
 
-            show_fill=not is_ruler,
+            show_fill=False if is_ruler else bool(getattr(self, "_sky_explorer_annotation_show_fill", True)),
 
         )
 
@@ -48742,7 +50447,9 @@ class MainWindow(QMainWindow):
 
             return
 
-        if bool(self._coerce_keyboard_modifiers(modifiers) & Qt.KeyboardModifier.ShiftModifier):
+        if bool(self._coerce_keyboard_modifiers(modifiers) & Qt.KeyboardModifier.ShiftModifier) or bool(
+            getattr(self, "_sky_explorer_roi_tool_armed", False)
+        ):
 
             self._start_sky_explorer_roi(image_x, image_y)
 
@@ -49002,7 +50709,7 @@ class MainWindow(QMainWindow):
 
         drag.origin_y = float(image_y)
 
-        self._refresh_sky_explorer_image_view(reset_view=False, focus_selected=False)
+        self._refresh_sky_explorer_dynamic_overlays()
 
     def _handle_sky_explorer_image_released(self, button: object, _modifiers: object) -> None:
 
@@ -49418,7 +51125,9 @@ class MainWindow(QMainWindow):
 
         show_fill_checkbox = QCheckBox("Fill shape", dialog)
 
-        show_fill_checkbox.setChecked(True if annotation is None else annotation.show_fill)
+        show_fill_checkbox.setChecked(
+            bool(getattr(self, "_sky_explorer_annotation_show_fill", True)) if annotation is None else annotation.show_fill
+        )
 
 
         font_family_combo = QFontComboBox(dialog)
@@ -49459,33 +51168,70 @@ class MainWindow(QMainWindow):
 
         def sync_color_button(button: QPushButton, key: str) -> None:
 
-            color_value = color_values[key]
+            if key == "fill" and not show_fill_checkbox.isChecked():
 
-            button.setText(color_value)
+                apply_swatch_button(button, None)
 
-            text_color = self._contrast_text_color(color_value)
+                return
 
-            button.setStyleSheet(f"background-color: {color_value}; color: {text_color}; padding: 4px 8px;")
+            apply_swatch_button(button, color_values[key])
 
 
-        def make_color_button(key: str) -> QPushButton:
+        def make_color_button(key: str, *, allow_none: bool = False) -> QPushButton:
 
             button = QPushButton(dialog)
+
+            button.setFixedHeight(24)
 
             sync_color_button(button, key)
 
 
-            def choose_color() -> None:
+            def apply_color(color: object) -> None:
 
-                selected_color = QColorDialog.getColor(QColor(color_values[key]), dialog, "Choose Color")
+                if key == "fill" and color is None:
 
-                if not selected_color.isValid():
+                    show_fill_checkbox.blockSignals(True)
 
-                    return
+                    show_fill_checkbox.setChecked(False)
 
-                color_values[key] = selected_color.name().lower()
+                    show_fill_checkbox.blockSignals(False)
+
+                else:
+
+                    resolved = str(color or "").strip().lower()
+
+                    if not resolved:
+
+                        return
+
+                    color_values[key] = resolved
+
+                    if key == "fill":
+
+                        show_fill_checkbox.blockSignals(True)
+
+                        show_fill_checkbox.setChecked(True)
+
+                        show_fill_checkbox.blockSignals(False)
 
                 sync_color_button(button, key)
+
+
+            def choose_color() -> None:
+
+                current: str | None = color_values[key]
+
+                if key == "fill" and not show_fill_checkbox.isChecked():
+
+                    current = None
+
+                self._popup_cast_color_picker(
+                    button,
+                    current,
+                    allow_none=allow_none,
+                    on_color=apply_color,
+                    parent=dialog,
+                )
 
 
             button.clicked.connect(choose_color)
@@ -49495,9 +51241,11 @@ class MainWindow(QMainWindow):
 
         stroke_button = make_color_button("stroke")
 
-        fill_button = make_color_button("fill")
+        fill_button = make_color_button("fill", allow_none=True)
 
         text_button = make_color_button("text")
+
+        show_fill_checkbox.toggled.connect(lambda _checked: sync_color_button(fill_button, "fill"))
 
 
         def sync_shape_controls() -> None:
@@ -51108,7 +52856,7 @@ class MainWindow(QMainWindow):
 
             return preferred_display_name.strip()
 
-        return str(sky_object.short_label or sky_object.name or sky_object.source_id).strip()
+        return str(sky_object.name or sky_object.source_id or "").strip()
 
     def _sky_explorer_mag_limit_style_key(self) -> str:
 
@@ -51172,7 +52920,7 @@ class MainWindow(QMainWindow):
             target_size,
             text_size,
             fill_color,
-            stroke_color,
+            _stroke_color,
             stroke_width,
             text_color,
             text_stroke_color,
@@ -51181,13 +52929,25 @@ class MainWindow(QMainWindow):
 
         text_font = self._sky_explorer_object_type_font_for_key(style_key)
 
-        fill_opacity = self._sky_explorer_overlay_fill_opacity()
-
         stroke_opacity = self._sky_explorer_overlay_stroke_opacity()
 
         selected_object = self._selected_sky_explorer_object()
 
-        selected_accent_color = self._current_custom_theme_colors().get("accent", "#3d8bfd")
+        selected_accent_color = _SKY_EXPLORER_MAG_LIMIT_SELECTION_COLOR
+
+        options = self._sky_explorer_mag_limit_options or self._sky_explorer_mag_limit_options_from_settings()
+
+        text_scale_mode = str(getattr(options, "text_scale_mode", "off") or "off")
+
+        scaled_magnitudes = [
+            float(magnitude)
+            for magnitude in (_sky_explorer_numeric_magnitude(sky_object) for sky_object in selected_stars)
+            if magnitude is not None and math.isfinite(float(magnitude))
+        ]
+
+        min_marked_magnitude = min(scaled_magnitudes) if scaled_magnitudes else 0.0
+
+        max_marked_magnitude = max(scaled_magnitudes) if scaled_magnitudes else 0.0
 
         overlays: list[ImageOverlay] = []
 
@@ -51219,7 +52979,16 @@ class MainWindow(QMainWindow):
 
             rotation_degrees = 0.0
 
-            overlay_text_size = max(7.0, float(text_size))
+            overlay_text_size = max(
+                7.0,
+                float(text_size)
+                * mag_limit_text_scale_factor(
+                    float(magnitude),
+                    min_magnitude=min_marked_magnitude,
+                    max_magnitude=max_marked_magnitude,
+                    mode=text_scale_mode,
+                ),
+            )
 
             overlay_text_font = self._sky_explorer_overlay_font_with_size(
 
@@ -51249,13 +53018,17 @@ class MainWindow(QMainWindow):
 
                     annulus_outer_radius=aperture_radius,
 
-                    color=stroke_color,
+                    color=fill_color,
 
                     show_annulus=False,
 
                     marker_style=marker_style,
 
                     show_label=True,
+
+                    show_center_dot=False,
+
+                    soft_ring=True,
 
                     pen_width=overlay_pen_width,
 
@@ -51269,9 +53042,9 @@ class MainWindow(QMainWindow):
 
                     text_outline_width=text_stroke_width if text_stroke_width > 0.0 else 0.0,
 
-                    fill_color=fill_color,
+                    fill_color=None,
 
-                    fill_opacity=fill_opacity,
+                    fill_opacity=0.0,
 
                     stroke_opacity=stroke_opacity,
 
@@ -51301,11 +53074,21 @@ class MainWindow(QMainWindow):
 
         bin_size = max(0.1, float(options.bin_size_mag or getattr(settings, "sky_explorer_mag_limit_bin_size_mag", 0.5)))
 
+        start_magnitude = float(getattr(options, "start_magnitude", options.auto_start_magnitude))
+
         max_magnitude = float(options.max_magnitude)
+
+        if start_magnitude > max_magnitude:
+
+            start_magnitude, max_magnitude = max_magnitude, start_magnitude
 
         mark_only_faintest = bool(options.mark_only_faintest)
 
+        faintest_count = max(1, int(getattr(options, "faintest_count", 1) or 1))
+
         objects_by_bin: dict[float, list[tuple[SkyExplorerObject, float]]] = {}
+
+        ranged_objects: list[tuple[SkyExplorerObject, float]] = []
 
         for sky_object in objects:
 
@@ -51321,21 +53104,39 @@ class MainWindow(QMainWindow):
 
             magnitude_value = float(magnitude)
 
-            if magnitude_value > max_magnitude:
+            if magnitude_value < start_magnitude or magnitude_value > max_magnitude:
 
                 continue
+
+            ranged_objects.append((sky_object, magnitude_value))
 
             bin_start = math.floor(magnitude_value / bin_size) * bin_size
 
             objects_by_bin.setdefault(bin_start, []).append((sky_object, magnitude_value))
 
+        if mark_only_faintest:
+
+            ranked_faintest = sorted(
+
+                ranged_objects,
+
+                key=lambda item: (
+
+                    -item[1],
+
+                    item[0].angular_distance_arcmin if math.isfinite(float(item[0].angular_distance_arcmin)) else 1.0e9,
+
+                    str(item[0].short_label or item[0].name or item[0].source_id).casefold(),
+
+                ),
+
+            )
+
+            return tuple(sky_object for sky_object, _magnitude in ranked_faintest[:faintest_count])
+
         selected_objects: list[SkyExplorerObject] = []
 
         bin_starts = sorted(objects_by_bin)
-
-        if mark_only_faintest and bin_starts:
-
-            bin_starts = [bin_starts[-1]]
 
         for bin_start in bin_starts:
 
@@ -51989,6 +53790,16 @@ class MainWindow(QMainWindow):
                 return numeric_value
 
         return None
+
+    def _sky_explorer_should_center_selected_object(self, sky_object: SkyExplorerObject | None = None) -> bool:
+
+        if self._sky_explorer_center_object_button.isChecked():
+
+            return True
+
+        selected = sky_object if sky_object is not None else self._selected_sky_explorer_object()
+
+        return selected is not None and self._sky_explorer_is_mag_limit_measurement_object(selected)
 
     def _center_selected_sky_explorer_object(self) -> None:
 
@@ -57006,6 +58817,8 @@ class MainWindow(QMainWindow):
 
             self._load_sky_explorer_style_settings_from_settings()
 
+            self._sync_sky_explorer_goto_fields_from_settings()
+
             self._populate_sky_explorer_object_type_table(preserve_selection=True)
 
             if visible_mode == AppMode.SKY_EXPLORER:
@@ -57314,7 +59127,10 @@ class MainWindow(QMainWindow):
 
         enabled = self._interface_tips_are_enabled() and bool(tips)
 
-        show_status_label = enabled and self._visible_app_mode() == AppMode.DIFFERENTIAL_PHOTOMETRY
+        show_status_label = enabled and self._visible_app_mode() in {
+            AppMode.DIFFERENTIAL_PHOTOMETRY,
+            AppMode.SKY_EXPLORER,
+        }
 
         self._interface_tip_label.setVisible(show_status_label)
 
@@ -57381,6 +59197,10 @@ class MainWindow(QMainWindow):
         if mode == AppMode.HR_DIAGRAM:
 
             return _HR_INTERFACE_TIPS
+
+        if mode == AppMode.SKY_EXPLORER:
+
+            return _SKY_EXPLORER_INTERFACE_TIPS
 
         return ()
 
@@ -57498,6 +59318,7 @@ class MainWindow(QMainWindow):
 
             # Defer maximize until after loading so the GL widget is not resized mid-paint.
             QTimer.singleShot(0, self._ensure_sky_view_full_window_presentation)
+            QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
         else:
 
@@ -57898,6 +59719,8 @@ class MainWindow(QMainWindow):
 
             "_transient_preload_worker",
 
+            "_sky_atlas_catalog_worker",
+
         )
 
     def _force_stop_background_workers(self, *, wait_ms: int = 2000) -> None:
@@ -58111,7 +59934,15 @@ class MainWindow(QMainWindow):
 
         self._sky_view_catalog_objects = load_sky_atlas_objects(None, enabled_deep_sky_catalogs={"Messier", "NGC"})
 
+        self._sky_view_search_objects = ()
+
+        self._sky_view_search_pin_objects = ()
+
+        self._sky_view_search_dialog = None
+
         self._sky_view_search_results = ()
+
+        self._cancel_sky_atlas_catalog_worker(restore_working_magnitude=False)
 
         self._sky_view_scientific_catalog_loaded = False
 
@@ -58120,6 +59951,8 @@ class MainWindow(QMainWindow):
         self._sky_view_loaded_deep_sky_catalogs = frozenset()
 
         self._sky_view_scientific_catalog_error = None
+
+        self._sky_view_pending_star_magnitude_limit = None
 
         if canvas is not None and hasattr(canvas, "set_objects"):
 
@@ -58334,6 +60167,8 @@ class MainWindow(QMainWindow):
         self._hr_source_wcs = None
 
         self._hr_source_wcs_cache_key = None
+
+        self._current_hr_solved_field = None
 
         self._hr_roi_selections = []
 
@@ -59496,6 +61331,8 @@ class MainWindow(QMainWindow):
         self._hr_source_wcs = None
 
         self._hr_source_wcs_cache_key = None
+
+        self._current_hr_solved_field = None
 
         self._hr_roi_selections = []
 
@@ -69469,6 +71306,8 @@ class MainWindow(QMainWindow):
 
         self._hr_source_wcs_cache_key = None
 
+        self._current_hr_solved_field = None
+
         self._hr_roi_selections = []
 
         self._hr_applied_roi_selections = []
@@ -69693,7 +71532,12 @@ class MainWindow(QMainWindow):
 
             progress_callback("Measuring Gaia-matched sources and building the HR working table.")
 
-        hr_working_table = self._build_hr_working_table(source_image, field_catalog, progress_callback=progress_callback)
+        hr_working_table = self._build_hr_working_table(
+            source_image,
+            field_catalog,
+            progress_callback=progress_callback,
+            solved_field=solved_field,
+        )
 
         if progress_callback is not None:
 
@@ -69770,6 +71614,8 @@ class MainWindow(QMainWindow):
         self._current_hr_source_image = result.source_image
 
         self._current_hr_working_table = result.hr_working_table
+
+        self._current_hr_solved_field = result.solved_field
 
         self._hr_common_motion_row_keys.clear()
 
@@ -73032,9 +74878,39 @@ class MainWindow(QMainWindow):
 
             return self._hr_source_wcs
 
+        solved_field = getattr(self, "_current_hr_solved_field", None)
+
+        wcs_path = None
+
+        image_shape = (0, 0)
+
+        if solved_field is not None:
+
+            raw_wcs_path = getattr(solved_field, "wcs_path", None)
+
+            if raw_wcs_path:
+
+                wcs_path = Path(raw_wcs_path)
+
+            height = int(getattr(solved_field, "height", 0) or 0)
+
+            width = int(getattr(solved_field, "width", 0) or 0)
+
+            if height > 0 and width > 0:
+
+                image_shape = (height, width)
+
         try:
 
-            wcs = WCS(read_header(image_path))
+            wcs = resolve_hr_measurement_wcs(
+
+                image_path,
+
+                image_shape=image_shape,
+
+                wcs_path=wcs_path,
+
+            )
 
         except Exception:
 
@@ -74504,6 +76380,8 @@ class MainWindow(QMainWindow):
 
         progress_callback: Callable[[str], None] | None = None,
 
+        solved_field=None,
+
     ):
 
         root_path = Path(self._root_path_input.text()).expanduser()
@@ -74516,7 +76394,15 @@ class MainWindow(QMainWindow):
 
         self._settings.hr_max_sources = max(0, int(self._hr_max_sources_spin.value()))
 
-        return measure_hr_sources(source_image, field_catalog.gaia_stars, self._settings, progress_callback=progress_callback)
+        wcs_path = Path(solved_field.wcs_path) if solved_field is not None and getattr(solved_field, "wcs_path", None) else None
+
+        return measure_hr_sources(
+            source_image,
+            field_catalog.gaia_stars,
+            self._settings,
+            progress_callback=progress_callback,
+            wcs_path=wcs_path,
+        )
 
     def _hr_catalog_cache_dir(self) -> Path:
 
@@ -75153,6 +77039,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_sky_explorer_survey_field_shift_timer"):
 
             self._sky_explorer_survey_field_shift_timer.stop()
+
+        self._restore_committed_sky_atlas_star_magnitude()
 
         self._force_stop_background_workers()
 
@@ -80088,11 +81976,13 @@ class MainWindow(QMainWindow):
 
             return
 
-        root_path = Path(self._root_path_input.text()).expanduser()
-
-        if root_path.exists():
-
-            self._settings.save(root_path)
+        root_text = ""
+        if hasattr(self, "_root_path_input"):
+            root_text = str(self._root_path_input.text() or "").strip()
+        root_path = Path(root_text).expanduser() if root_text else Path.cwd()
+        if not root_path.exists():
+            root_path = Path.cwd()
+        self._settings.save(root_path)
 
     def _catalog_source_key(self, entry: CatalogStar) -> str:
 
@@ -84351,11 +86241,24 @@ class MainWindow(QMainWindow):
             star_aspect=resolved.star_aspect,
             plot_aspect=resolved.plot_aspect,
         )
-        image, _layout = self._render_target_field_plot_bundle(resolved.video_width, plot_height)
+        image, _layout = self._render_target_field_plot_bundle(
+            resolved.video_width,
+            plot_height,
+            label_font_size=resolved.plot_label_font_size,
+        )
         return image
 
-    def _render_target_field_plot_at_size(self, width: int, height: int) -> QImage | None:
-        image, layout = self._render_target_field_plot_bundle(width, height)
+    def _render_target_field_plot_at_size(
+        self,
+        width: int,
+        height: int,
+        label_font_size: float | None = None,
+    ) -> QImage | None:
+        image, layout = self._render_target_field_plot_bundle(
+            width,
+            height,
+            label_font_size=label_font_size,
+        )
         if image is None:
             return None
         payload = self._light_curve_widget.current_payload()
@@ -84370,6 +86273,8 @@ class MainWindow(QMainWindow):
         self,
         width: int,
         height: int,
+        *,
+        label_font_size: float | None = None,
     ) -> tuple[QImage | None, object | None]:
         from photometry_app.core.plotting import resolve_light_curve_theme_colors
         from photometry_app.core.target_field_animation import TargetFieldPlotScanLayout
@@ -84390,6 +86295,8 @@ class MainWindow(QMainWindow):
                 recent_period_error_bars_only=self._phase_recent_error_bars_only_checkbox.isChecked(),
                 series=self._light_curve_widget.current_series(),
             )
+            if label_font_size is not None:
+                export_widget.apply_label_font_size(float(label_font_size))
             view_ranges = self._light_curve_widget.current_view_ranges()
             rendered = export_widget.render_at_size(
                 max(2, int(width)),
@@ -84531,7 +86438,11 @@ class MainWindow(QMainWindow):
             star_aspect=options.star_aspect,
             plot_aspect=options.plot_aspect,
         )
-        plot_image, plot_scan_layout = self._render_target_field_plot_bundle(options.video_width, plot_height)
+        plot_image, plot_scan_layout = self._render_target_field_plot_bundle(
+            options.video_width,
+            plot_height,
+            label_font_size=options.plot_label_font_size,
+        )
         worker = TargetFieldAnimationExportWorker(
             self._current_processing_report,
             source_id,
@@ -97407,7 +99318,7 @@ class MainWindow(QMainWindow):
 
             moon_object = self._current_sky_view_moon_search_object()
 
-            if moon_object is not None and (moon_object.magnitude is None or moon_object.magnitude <= magnitude_limit):
+            if moon_object is not None:
 
                 results.append(moon_object)
 
@@ -97434,26 +99345,44 @@ class MainWindow(QMainWindow):
             )
         except Exception:
 
-            return None
+            moon_state = None
 
         if moon_state is None:
 
             moon_state = canvas._sky_view_moon_last_state
 
-        if moon_state is None:
+        if moon_state is not None:
+
+            illuminated_fraction = max(1.0e-3, min(1.0, float(moon_state.illuminated_fraction)))
+
+            apparent_magnitude = -12.7 - 2.5 * math.log10(illuminated_fraction)
+
+            return SkyAtlasObject(
+                name="Moon",
+                object_type="Natural Satellite",
+                ra_deg=float(moon_state.ra_deg) % 360.0,
+                dec_deg=float(moon_state.dec_deg),
+                magnitude=apparent_magnitude,
+                catalog="Solar System",
+                aliases=("Luna", "Earth's Moon"),
+                color="#f3f0df",
+                description="Live topocentric Moon position from the current observer location and Sky View time.",
+            )
+
+        try:
+
+            moon = get_body("moon", Time(canvas._observation_time_utc))
+
+        except Exception:
 
             return None
-
-        illuminated_fraction = max(1.0e-3, min(1.0, float(moon_state.illuminated_fraction)))
-
-        apparent_magnitude = -12.7 - 2.5 * math.log10(illuminated_fraction)
 
         return SkyAtlasObject(
             name="Moon",
             object_type="Natural Satellite",
-            ra_deg=float(moon_state.ra_deg) % 360.0,
-            dec_deg=float(moon_state.dec_deg),
-            magnitude=apparent_magnitude,
+            ra_deg=float(moon.ra.degree) % 360.0,
+            dec_deg=float(moon.dec.degree),
+            magnitude=-12.7,
             catalog="Solar System",
             aliases=("Luna", "Earth's Moon"),
             color="#f3f0df",

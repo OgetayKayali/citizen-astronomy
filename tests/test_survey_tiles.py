@@ -17,6 +17,7 @@ from photometry_app.core.survey_tiles import (
     make_survey_tile_key,
     make_survey_tile_placeholder_rgba,
     render_survey_tile_display_rgba,
+    sky_explorer_survey_field_image_point_for_sky,
     survey_tile_draw_rect,
     survey_tile_feather_crop_and_draw,
     survey_tile_fetch_fov_arcmin,
@@ -36,6 +37,44 @@ class SurveyTilesTest(unittest.TestCase):
         self.assertEqual((x0, y0, width, height), (-100.0, -160.0, 100.0, 80.0))
         tile_i, tile_j = survey_tile_indices_for_image_point(-50.0, -120.0, width_px=100, height_px=80)
         self.assertEqual((tile_i, tile_j), (1, -2))
+
+    def test_survey_field_image_point_maps_origin_and_east_tile(self) -> None:
+        origin = sky_explorer_survey_field_image_point_for_sky(
+            ra_deg=270.63,
+            dec_deg=-23.03,
+            origin_ra_deg=270.63,
+            origin_dec_deg=-23.03,
+            fov_arcmin=45.0,
+            width_px=1024,
+            height_px=1024,
+        )
+        self.assertIsNotNone(origin)
+        assert origin is not None
+        self.assertAlmostEqual(origin[0], 511.5, delta=1.0)
+        self.assertAlmostEqual(origin[1], 511.5, delta=1.0)
+
+        from photometry_app.core.survey_images import sky_explorer_survey_field_tile_spec
+
+        east_spec = sky_explorer_survey_field_tile_spec(
+            origin_ra_deg=270.63,
+            origin_dec_deg=-23.03,
+            fov_arcmin=45.0,
+            tile_i=1,
+            tile_j=0,
+        )
+        east = sky_explorer_survey_field_image_point_for_sky(
+            ra_deg=east_spec.ra_deg,
+            dec_deg=east_spec.dec_deg,
+            origin_ra_deg=270.63,
+            origin_dec_deg=-23.03,
+            fov_arcmin=45.0,
+            width_px=1024,
+            height_px=1024,
+        )
+        self.assertIsNotNone(east)
+        assert east is not None
+        self.assertAlmostEqual(east[0], -512.5, delta=2.0)
+        self.assertAlmostEqual(east[1], 511.5, delta=2.0)
 
     def test_tile_keys_differ_by_survey_and_grid(self) -> None:
         a = make_survey_tile_key(

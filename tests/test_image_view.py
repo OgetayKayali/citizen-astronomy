@@ -411,6 +411,23 @@ class ImageViewInfoPanelTest(unittest.TestCase):
 
         self.assertEqual(captured.height(), 480)
 
+    def test_capture_full_resolution_image_can_use_comparison_background(self) -> None:
+        view = AnnotatedImageView()
+        primary = QImage(24, 16, QImage.Format.Format_ARGB32)
+        primary.fill(QColor("#ff0000"))
+        comparison = QImage(24, 16, QImage.Format.Format_ARGB32)
+        comparison.fill(QColor("#0000ff"))
+        view._qimage = primary
+        view._comparison_qimage = comparison
+        view._comparison_target_rect = QRectF(0.0, 0.0, 24.0, 16.0)
+        captured_primary = view.capture_full_resolution_image()
+        captured_comparison = view.capture_full_resolution_image(background="comparison")
+        self.assertIsNotNone(captured_primary)
+        self.assertIsNotNone(captured_comparison)
+        assert captured_primary is not None
+        assert captured_comparison is not None
+        self.assertEqual(captured_primary.pixelColor(4, 4).name(), "#ff0000")
+        self.assertEqual(captured_comparison.pixelColor(4, 4).name(), "#0000ff")
 
     def test_on_screen_overlay_appearance_scale_is_inverse_of_view_scale(self) -> None:
 
@@ -1381,6 +1398,59 @@ class ImageViewInfoPanelTest(unittest.TestCase):
             self.assertEqual(len(pressed), 1)
             self.assertTrue(view._gesture_roi_active)
 
+    def test_left_drag_starts_roi_when_shift_is_not_required(self) -> None:
+        view = AnnotatedImageView()
+        view.resize(900, 600)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "demo.fit"
+            image_path.write_text("placeholder", encoding="utf-8")
+            data = np.arange(400, dtype=float).reshape(20, 20)
+            with patch("photometry_app.core.plotting.read_image_data", return_value=data):
+                display = build_annotated_image_display(image_path)
+
+            pressed: list[tuple[float, float]] = []
+            view.imagePressed.connect(lambda x, y, _button, _mods: pressed.append((x, y)))
+            view.set_content(
+                display,
+                [],
+                [],
+                False,
+                gesture_roi_enabled=True,
+                gesture_roi_shift_required=False,
+            )
+
+            class _FakeMouseEvent:
+                def __init__(self, x: float, y: float, button: object, buttons: object, modifiers: object) -> None:
+                    self._point = QPointF(x, y)
+                    self._button = button
+                    self._buttons = buttons
+                    self._modifiers = modifiers
+
+                def position(self) -> QPointF:
+                    return self._point
+
+                def button(self) -> object:
+                    return self._button
+
+                def buttons(self) -> object:
+                    return self._buttons
+
+                def modifiers(self) -> object:
+                    return self._modifiers
+
+            view.mousePressEvent(
+                _FakeMouseEvent(
+                    200.0,
+                    180.0,
+                    Qt.MouseButton.LeftButton,
+                    Qt.MouseButton.LeftButton,
+                    Qt.KeyboardModifier.NoModifier,
+                )
+            )
+            self.assertEqual(len(pressed), 1)
+            self.assertTrue(view._gesture_roi_active)
+
     def test_selection_overlay_refresh_invalidates_only_changed_region(self) -> None:
 
         class TrackingImageView(AnnotatedImageView):
@@ -2143,6 +2213,46 @@ class ImageViewInfoPanelTest(unittest.TestCase):
         self.assertEqual(len(no_dot_painter.ellipse_calls), 1)
 
         self.assertEqual(len(with_dot_painter.ellipse_calls), 2)
+
+    def test_soft_ring_overlay_draws_empty_shaded_circle_without_center_dot(self) -> None:
+        view = AnnotatedImageView()
+
+        class _FakePainter:
+            def __init__(self) -> None:
+                self.ellipse_calls: list[tuple[object, ...]] = []
+                self.brushes: list[object] = []
+
+            def setPen(self, _pen: object) -> None:
+                return None
+
+            def setBrush(self, brush: object) -> None:
+                self.brushes.append(brush)
+
+            def drawEllipse(self, *args: object) -> None:
+                self.ellipse_calls.append(args)
+
+        painter = _FakePainter()
+        view._draw_overlay(
+            painter,
+            ImageOverlay(
+                source_id="mag-limit:demo",
+                name="Demo\nG 16.2",
+                x=20.0,
+                y=20.0,
+                aperture_radius=8.0,
+                annulus_inner_radius=8.0,
+                annulus_outer_radius=8.0,
+                color="#3d8bfd",
+                show_annulus=False,
+                show_center_dot=False,
+                soft_ring=True,
+                fill_color=None,
+            ),
+        )
+
+        self.assertGreaterEqual(len(painter.ellipse_calls), 4)
+        self.assertTrue(all(call[1] == 8.0 and call[2] == 8.0 for call in painter.ellipse_calls))
+        self.assertTrue(any(brush == Qt.BrushStyle.NoBrush for brush in painter.brushes))
 
     def test_draw_overlay_target_marker_draws_square_and_guides(self) -> None:
 
@@ -2932,6 +3042,115 @@ class ImageViewInfoPanelTest(unittest.TestCase):
             self.assertEqual(view._overlays[0].color, "#ff0000")
             self.assertEqual(view._overlays[0].fill_color, "#00ff00")
             self.assertEqual(view._overlays[0].text_color, "#0000ff")
+
+    def test_set_content_keeps_static_overlay_cache_when_only_dynamic_overlays_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "dynamic_overlay.fit"
+            image_path.write_text("frame", encoding="utf-8")
+            display = build_annotated_image_display_from_array(
+                np.ones((32, 32), dtype=np.float32),
+                image_path=image_path,
+            )
+            view = AnnotatedImageView()
+            view.resize(200, 160)
+            static_overlay = ImageOverlay(
+                source_id="galaxy-1",
+                name="Galaxy",
+                x=10.0,
+                y=12.0,
+                aperture_radius=6.0,
+                annulus_inner_radius=6.0,
+                annulus_outer_radius=6.0,
+                color="#112233",
+            )
+            drawn = ImageOverlay(
+                source_id="manual-1",
+                name="Circle",
+                x=20.0,
+                y=22.0,
+                aperture_radius=4.0,
+                annulus_inner_radius=4.0,
+                annulus_outer_radius=4.0,
+                color="#38bdf8",
+                fill_color="#38bdf8",
+            )
+            view.set_content(
+                display,
+                overlays=[static_overlay, drawn],
+                grid_overlays=[],
+                editor_enabled=False,
+                static_overlay_count=1,
+            )
+            cache_key = ("keep-static",)
+            cache_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+            view._static_overlay_cache_key = cache_key
+            view._static_overlay_shape_cache_image = cache_image
+            view._static_overlay_label_cache_image = cache_image
+            resized = ImageOverlay(
+                source_id="manual-1",
+                name="Circle",
+                x=20.0,
+                y=22.0,
+                aperture_radius=18.0,
+                annulus_inner_radius=18.0,
+                annulus_outer_radius=18.0,
+                color="#38bdf8",
+                fill_color="#38bdf8",
+            )
+            view.set_content(
+                display,
+                overlays=[static_overlay, resized],
+                grid_overlays=[],
+                editor_enabled=False,
+                static_overlay_count=1,
+            )
+            self.assertEqual(view._static_overlay_cache_key, cache_key)
+            self.assertIs(view._static_overlay_shape_cache_image, cache_image)
+            self.assertEqual(view._overlays[1].aperture_radius, 18.0)
+
+    def test_set_dynamic_overlays_does_not_rebuild_static_cache(self) -> None:
+        static_overlay = ImageOverlay(
+            source_id="galaxy-1",
+            name="Galaxy",
+            x=10.0,
+            y=12.0,
+            aperture_radius=6.0,
+            annulus_inner_radius=6.0,
+            annulus_outer_radius=6.0,
+            color="#112233",
+        )
+        drawn = ImageOverlay(
+            source_id="manual-1",
+            name="Circle",
+            x=20.0,
+            y=22.0,
+            aperture_radius=4.0,
+            annulus_inner_radius=4.0,
+            annulus_outer_radius=4.0,
+            color="#38bdf8",
+        )
+        view = AnnotatedImageView()
+        view._overlays = [static_overlay, drawn]
+        view._static_overlay_count = 1
+        cache_key = ("keep-static",)
+        cache_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+        view._static_overlay_cache_key = cache_key
+        view._static_overlay_shape_cache_image = cache_image
+        view._static_overlay_label_cache_image = cache_image
+        resized = ImageOverlay(
+            source_id="manual-1",
+            name="Circle",
+            x=20.0,
+            y=22.0,
+            aperture_radius=18.0,
+            annulus_inner_radius=18.0,
+            annulus_outer_radius=18.0,
+            color="#38bdf8",
+        )
+        view.set_dynamic_overlays([resized])
+        self.assertEqual(view._static_overlay_cache_key, cache_key)
+        self.assertIs(view._static_overlay_shape_cache_image, cache_image)
+        self.assertEqual(view._overlays[1].aperture_radius, 18.0)
 
     def test_static_overlay_cache_key_includes_stroke_fill_and_text_style(self) -> None:
         first = ImageOverlay(

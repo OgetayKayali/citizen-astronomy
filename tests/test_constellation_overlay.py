@@ -195,6 +195,27 @@ class ConstellationOverlayRenderTest(unittest.TestCase):
 
         self.assertEqual(projected_labels, ())
 
+    def test_gpu_label_drawer_can_take_over_constellation_names(self) -> None:
+        overlay = ConstellationOverlay()
+        scene = _scene(field_width_deg=70.0, field_height_deg=40.0)
+        settings = ConstellationOverlaySettings(enabled=True, show_lines=False, show_labels=True)
+        captured: list[int] = []
+
+        def _gpu_drawer(labels, rect):
+            captured.append(len(labels))
+            self.assertGreater(len(labels), 0)
+            self.assertEqual(rect, scene.viewport_rect)
+            return True
+
+        image = QImage(800, 450, QImage.Format.Format_RGBA8888)
+        image.fill(0)
+        painter = QPainter(image)
+        metrics = overlay.draw(painter, scene, settings, gpu_label_drawer=_gpu_drawer)
+        painter.end()
+
+        self.assertEqual(captured[0], metrics.drawn_label_count)
+        self.assertGreater(metrics.drawn_label_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ import numpy as np
 
 from PySide6.QtCore import QRectF
 from PySide6.QtCore import QRect, QRectF
-from PySide6.QtGui import QImage, QPainter
+from PySide6.QtGui import QImage, QOpenGLContext, QPainter
 from PySide6.QtOpenGL import QOpenGLFunctions_2_0, QOpenGLShader, QOpenGLShaderProgram, QOpenGLTexture
 
 from photometry_app.core.benchmarking import BENCHMARK_ENABLED, get_benchmark_recorder
@@ -1126,21 +1126,7 @@ void main() {
 
         if texture is not None:
 
-            try:
-
-                texture.release()
-
-            except Exception:
-
-                pass
-
-            try:
-
-                texture.destroy()
-
-            except Exception:
-
-                pass
+            self._release_texture(texture)
 
         program = self._program
 
@@ -2058,21 +2044,7 @@ void main() {
 
         if self._texture is not None:
 
-            try:
-
-                self._texture.release()
-
-            except Exception:
-
-                pass
-
-            try:
-
-                self._texture.destroy()
-
-            except Exception:
-
-                pass
+            self._release_texture(self._texture)
 
             self._texture = None
 
@@ -3778,6 +3750,10 @@ void main() {
         except Exception:
 
             pass
+
+        if isinstance(texture, QOpenGLTexture) and QOpenGLContext.currentContext() is None:
+
+            return
 
         try:
 

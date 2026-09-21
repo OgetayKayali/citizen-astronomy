@@ -657,6 +657,45 @@ class LightCurvePlotWidgetTest(unittest.TestCase):
         finally:
             widget.close()
 
+    def test_apply_label_font_size_updates_axis_and_title_fonts(self) -> None:
+        start = datetime(2025, 1, 1, 0, 0, 0)
+        series = LightCurveSeries(
+            object_name="Demo",
+            source_id="target-1",
+            source_name="Target",
+            filter_name="V",
+            points=[
+                LightCurvePoint(
+                    observation_time=start,
+                    file_path=Path("frame_01.fits"),
+                    differential_magnitude=12.10,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.05,
+                ),
+                LightCurvePoint(
+                    observation_time=start + timedelta(minutes=15),
+                    file_path=Path("frame_02.fits"),
+                    differential_magnitude=12.35,
+                    instrumental_magnitude=None,
+                    flux=None,
+                    flux_error=None,
+                    differential_magnitude_error=0.04,
+                ),
+            ],
+        )
+        self.widget.plot_series(series, empty_message="No data available.")
+        self.widget.apply_label_font_size(22)
+        left = self.widget._plot_item.getAxis("left")
+        bottom = self.widget._plot_item.getAxis("bottom")
+        self.assertIsNotNone(left.style.get("tickFont"))
+        self.assertAlmostEqual(float(left.style["tickFont"].pointSizeF()), 22.0)
+        self.assertAlmostEqual(float(bottom.style["tickFont"].pointSizeF()), 22.0)
+        self.assertEqual(left.labelStyle.get("font-size"), "22pt")
+        self.assertEqual(bottom.labelStyle.get("font-size"), "22pt")
+        self.assertEqual(self.widget._plot_item.titleLabel.opts.get("size"), "22pt")
+
     def test_show_payload_keeps_custom_icon_and_color(self) -> None:
         from PySide6.QtGui import QColor
 

@@ -16,6 +16,7 @@ from photometry_app.core.settings import (
 from photometry_app.core.sky_atlas_custom_overlay import (
     _downscale_overlay_arrays,
     _array_to_overlay_rgb_alpha,
+    apply_overlay_black_as_alpha,
     apply_overlay_edge_feather,
     apply_overlay_tone_controls,
     build_overlay_display_qimage,
@@ -217,6 +218,43 @@ class SkyAtlasCustomOverlayDisplayImageTest(unittest.TestCase):
         feathered = apply_overlay_edge_feather(alpha, width=16, height=16, feather_amount=0.8)
         self.assertLess(int(feathered[0, 8]), 255)
         self.assertEqual(int(feathered[8, 8]), 255)
+
+    def test_apply_overlay_black_as_alpha_uses_peak_channel(self) -> None:
+        rgb = np.zeros((2, 2, 3), dtype=np.uint8)
+        rgb[0, 0] = (0, 0, 0)
+        rgb[0, 1] = (40, 0, 0)
+        rgb[1, 0] = (0, 90, 20)
+        rgb[1, 1] = (255, 255, 255)
+        alpha = apply_overlay_black_as_alpha(rgb)
+        self.assertEqual(int(alpha[0, 0]), 0)
+        self.assertEqual(int(alpha[0, 1]), 40)
+        self.assertEqual(int(alpha[1, 0]), 90)
+        self.assertEqual(int(alpha[1, 1]), 255)
+
+    def test_build_overlay_display_qimage_black_as_alpha_clears_black_pixels(self) -> None:
+        from astropy.wcs import WCS
+
+        rgb = np.zeros((8, 12, 3), dtype=np.uint8)
+        rgb[2:6, 3:9] = (180, 40, 20)
+        overlay = LoadedSkyAtlasCustomOverlay(
+            overlay_id="overlay-black-alpha",
+            display_name="tile.png",
+            image_rgb=rgb,
+            image_alpha=None,
+            wcs=WCS(naxis=2),
+            width=12,
+            height=8,
+        )
+        image = build_overlay_display_qimage(
+            overlay,
+            brightness=1.0,
+            saturation=1.0,
+            black_as_alpha=True,
+        )
+        self.assertFalse(image.isNull())
+        self.assertTrue(image.hasAlphaChannel())
+        self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
+        self.assertGreater(image.pixelColor(6, 4).alpha(), 0)
 
 
 if __name__ == "__main__":

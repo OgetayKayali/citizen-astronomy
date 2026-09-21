@@ -77,6 +77,7 @@ from photometry_app.core.target_field_animation import (
     MAX_TARGET_FIELD_MARKER_GAP_PERCENT,
     MAX_TARGET_FIELD_MARKER_LENGTH_PERCENT,
     MAX_TARGET_FIELD_MARKER_LINE_WIDTH,
+    MAX_TARGET_FIELD_PLOT_LABEL_FONT_SIZE,
     MAX_TARGET_FIELD_STAR_HEIGHT_PERCENT,
     MIN_TARGET_FIELD_DURATION_SECONDS,
     MIN_TARGET_FIELD_FOV_PX,
@@ -84,6 +85,7 @@ from photometry_app.core.target_field_animation import (
     MIN_TARGET_FIELD_MARKER_GAP_PERCENT,
     MIN_TARGET_FIELD_MARKER_LENGTH_PERCENT,
     MIN_TARGET_FIELD_MARKER_LINE_WIDTH,
+    MIN_TARGET_FIELD_PLOT_LABEL_FONT_SIZE,
     MIN_TARGET_FIELD_STAR_HEIGHT_PERCENT,
     TARGET_FIELD_ALIGN_ALIGN_THEN_CROP,
     TARGET_FIELD_ALIGN_CROP_THEN_ALIGN,
@@ -117,6 +119,7 @@ from photometry_app.core.target_field_animation import (
     normalize_target_field_marker_line_color,
     normalize_target_field_marker_line_width,
     normalize_target_field_marker_style,
+    normalize_target_field_plot_label_font_size,
     normalize_target_field_stretch_mode,
     normalize_target_field_video_height,
     normalize_target_field_video_width,
@@ -125,6 +128,7 @@ from photometry_app.core.target_field_animation import (
     target_field_duration_frame_ms,
     target_field_panel_heights,
     target_field_progress_stage_title,
+    target_field_scaled_plot_label_font_size,
     target_field_star_height_percent,
 )
 from photometry_app.core.target_markers import (
@@ -556,7 +560,7 @@ class TargetFieldAnimationExportDialog(QDialog):
         preview_x: float | None = None,
         preview_y: float | None = None,
         preview_plot_image: QImage | None = None,
-        plot_renderer: Callable[[int, int], QImage | None] | None = None,
+        plot_renderer: Callable[..., QImage | None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -570,7 +574,7 @@ class TargetFieldAnimationExportDialog(QDialog):
         self._preview_plot_image = None if preview_plot_image is None or preview_plot_image.isNull() else preview_plot_image.copy()
         self._plot_renderer = plot_renderer
         self._preview_mode = "combined"
-        self._preview_plot_cache: tuple[tuple[int, int], QImage] | None = None
+        self._preview_plot_cache: tuple[tuple[int, int, float, int], QImage] | None = None
         options = (initial_options or TargetFieldAnimationExportOptions()).normalized()
 
         self._fov_input = QSpinBox(self)
@@ -664,6 +668,18 @@ class TargetFieldAnimationExportDialog(QDialog):
         self._plot_fit_input.setCurrentIndex(0 if plot_fit_index < 0 else plot_fit_index)
         self._plot_fit_input.setToolTip("How the light curve is placed in its panel. Stretch to fit fills the full width.")
 
+        self._plot_label_size_input = QSpinBox(self)
+        self._plot_label_size_input.setRange(
+            MIN_TARGET_FIELD_PLOT_LABEL_FONT_SIZE,
+            MAX_TARGET_FIELD_PLOT_LABEL_FONT_SIZE,
+        )
+        self._plot_label_size_input.setSuffix(" pt")
+        self._plot_label_size_input.setValue(options.plot_label_font_size)
+        self._plot_label_size_input.setToolTip(
+            "Font size for the light-curve title, axis labels, and tick labels. "
+            "The preview matches the selected export resolution."
+        )
+
         self._save_star_checkbox = QCheckBox("Save star field separately", self)
         self._save_star_checkbox.setChecked(bool(options.save_star_separately))
         self._save_star_checkbox.setToolTip("Also write a star-only animation next to the combined file.")
@@ -717,6 +733,7 @@ class TargetFieldAnimationExportDialog(QDialog):
             self._resolution_input,
             self._star_fit_input,
             self._plot_fit_input,
+            self._plot_label_size_input,
             self._marker_input,
             self._marker_length_input,
             self._marker_gap_input,
@@ -777,6 +794,7 @@ class TargetFieldAnimationExportDialog(QDialog):
         split_layout.addWidget(self._split_slider)
         split_layout.addWidget(self._split_value)
         inspector_form.addRow("Panel split", split_field)
+        inspector_form.addRow("Plot label size", self._plot_label_size_input)
 
         inspector_form.addRow(self._section_title("Target Marker", padded=True))
         inspector_form.addRow("Marker style", self._marker_input)
@@ -900,12 +918,13 @@ class TargetFieldAnimationExportDialog(QDialog):
         self._duration_input.valueChanged.connect(lambda _value: self._update_summary())
         self._loop_input.valueChanged.connect(lambda _value: self._update_summary())
         self._format_input.currentIndexChanged.connect(lambda _index: self._handle_format_changed())
-        self._resolution_input.currentIndexChanged.connect(lambda _index: self._update_summary())
+        self._resolution_input.currentIndexChanged.connect(lambda _index: self._handle_resolution_changed())
         self._fov_input.valueChanged.connect(lambda _value: self._schedule_preview())
         self._stretch_input.currentIndexChanged.connect(lambda _index: self._schedule_preview())
         self._split_slider.valueChanged.connect(lambda _value: self._handle_split_changed())
         self._star_fit_input.currentIndexChanged.connect(lambda _index: self._schedule_preview())
         self._plot_fit_input.currentIndexChanged.connect(lambda _index: self._schedule_preview())
+        self._plot_label_size_input.valueChanged.connect(lambda _value: self._schedule_preview())
         self._marker_input.currentIndexChanged.connect(lambda _index: self._handle_marker_changed())
         self._marker_length_input.valueChanged.connect(lambda _value: self._schedule_preview())
         self._marker_gap_input.valueChanged.connect(lambda _value: self._schedule_preview())
@@ -992,6 +1011,7 @@ class TargetFieldAnimationExportDialog(QDialog):
             plot_aspect=plot_aspect,
             star_fit=normalize_target_field_fit_mode(self._star_fit_input.currentData()),
             plot_fit=normalize_target_field_fit_mode(self._plot_fit_input.currentData()),
+            plot_label_font_size=normalize_target_field_plot_label_font_size(self._plot_label_size_input.value()),
             save_star_separately=self._save_star_checkbox.isChecked(),
             save_plot_separately=self._save_plot_checkbox.isChecked(),
         ).normalized()
@@ -1024,6 +1044,11 @@ class TargetFieldAnimationExportDialog(QDialog):
     def _handle_format_changed(self) -> None:
         self._sync_loop_controls()
         self._update_summary()
+
+    def _handle_resolution_changed(self) -> None:
+        self._preview_plot_cache = None
+        self._update_summary()
+        self._schedule_preview()
 
     def _handle_split_changed(self) -> None:
         self._sync_split_labels()
@@ -1088,14 +1113,20 @@ class TargetFieldAnimationExportDialog(QDialog):
         )
 
     def _render_preview_plot(self, width: int, height: int) -> QImage:
-        key = (max(2, int(width)), max(2, int(height)))
+        options = self.selected_options()
+        label_font_size = target_field_scaled_plot_label_font_size(
+            options.plot_label_font_size,
+            max(2, int(width)),
+            options.video_width,
+        )
+        key = (max(2, int(width)), max(2, int(height)), round(label_font_size, 2), int(options.video_width))
         cached = self._preview_plot_cache
         if cached is not None and cached[0] == key and not cached[1].isNull():
             return cached[1]
         plot = None
         if self._plot_renderer is not None:
             try:
-                plot = self._plot_renderer(key[0], key[1])
+                plot = self._call_plot_renderer(key[0], key[1], label_font_size)
             except Exception:
                 plot = None
         if plot is None or plot.isNull():
@@ -1105,6 +1136,15 @@ class TargetFieldAnimationExportDialog(QDialog):
             plot.fill(QColor("#1b1d23"))
         self._preview_plot_cache = (key, plot)
         return plot
+
+    def _call_plot_renderer(self, width: int, height: int, label_font_size: float) -> QImage | None:
+        renderer = self._plot_renderer
+        if renderer is None:
+            return None
+        try:
+            return renderer(width, height, label_font_size=label_font_size)
+        except TypeError:
+            return renderer(width, height)
 
     def _refresh_preview(self) -> None:
         options = self.selected_options()
@@ -14055,19 +14095,19 @@ class SettingsDialog(QDialog):
             sky_explorer_visual_form_layout,
             "Mag Limit Marker",
             self._sky_explorer_mag_limit_marker_color_button,
-            "Fill color used for Mag Limit representative star markers on the Sky Explorer image.",
+            "Ring color for empty Mag Limit circles on the Sky Explorer image.",
         )
         self._add_tooltip_form_row(
             sky_explorer_visual_form_layout,
             "Mag Limit Marker Stroke",
             self._sky_explorer_mag_limit_marker_stroke_color_button,
-            "Stroke color used around Mag Limit representative star markers.",
+            "Optional saved stroke swatch. Mag Limit rings use Marker color and stay empty so the star stays visible.",
         )
         self._add_tooltip_form_row(
             sky_explorer_visual_form_layout,
             "Mag Limit Marker Stroke Width",
             self._sky_explorer_mag_limit_marker_stroke_width_input,
-            "Stroke width for Mag Limit representative star markers. Set to 0 to hide the marker outline.",
+            "Thickness of the empty Mag Limit ring. Set to 0 for a hairline ring.",
         )
         self._add_tooltip_form_row(
             sky_explorer_visual_form_layout,

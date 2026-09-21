@@ -4,7 +4,7 @@
 
 Most sky maps show you the heavens as a catalog. **Sky Atlas** tries to make them feel inhabited.
 
-Sky Atlas is CAst's immersive all-sky exploration mode. You can search bright stars, Messier targets, constellations, and the live Moon; change time and observer location; tune star density and Milky Way rendering; and layer your own sky-registered imagery on top of the atlas. It is the mode you use when you want context: where an object sits, what surrounds it, and how the sky changes with time and location.
+Sky Atlas is CAst's immersive all-sky exploration mode. You can search every catalog from a centered window, inspect the live Moon, change time and observer location, tune star density and Milky Way rendering, and layer your own sky-registered imagery on top of the atlas. It is the mode you use when you want context: where an object sits, what surrounds it, and how the sky changes with time and location.
 
 Some internal controls still use the older phrase **Sky View**. In the launcher, mode menu, and user-facing documentation, this mode should be understood as **Sky Atlas**.
 
@@ -29,24 +29,20 @@ A star chart is most useful when it becomes personal. The question is not only �
 
 Open **Sky Atlas** from the mode launcher or the mode menu.
 
-On first use, the mode starts with packaged named targets and then loads the brighter full-sky Hipparcos catalog for broader coverage. The initial status message explains:
-
-`Sky View starts with packaged named targets and loads the brighter full-sky Hipparcos catalog the first time you open it.`
+On first use, the mode opens on a 60° Orion field and shows stars down to about magnitude 5, like Stellarium. Fainter catalog stars fade in gradually as you zoom in, and the already-visible stars get brighter so the step between magnitudes stays even. All-sky views keep stars small. The first paint loads only the bright Hipparcos subset and the existing Milky Way preview, so the atlas appears immediately instead of stitching a 16k texture or reloading Gaia.
 
 ### Step 2: Search for a Target
 
-Use **Search sky catalog** to look for:
+Click **Search the sky** to open a centered search window. Type a name, catalog ID, or alias. The window stays responsive while catalogs are scanned; the status line shows **Searching…** until matches appear. Results come from every catalog — including layers you have turned off — and are listed from most relevant to least. Each row starts with the object type, for example `Galaxy  Andromeda Galaxy`.
 
-- bright stars
-- Messier targets
-- constellations and aliases
+Search includes:
+
+- named stars
+- Messier, NGC, IC, VdB, LDN, LBN, Barnard, Sharpless, RCW, and HASH PN objects already on disk
+- packaged atlas targets
 - the live **Moon**
 
-The search field placeholder is:
-
-`Search bright stars, Messier targets, constellations, Moon, and aliases`
-
-Choosing a result centers the atlas on that object and pins its details in the left-hand object panel.
+Choosing a result centers the atlas on that object and pins its details in the left-hand object panel. If the object belongs to a hidden catalog, Sky Atlas still pins it so you can inspect it.
 
 ### Step 3: Set Time
 
@@ -113,22 +109,19 @@ After you click a target, the panel can show:
 - **Constellation**
 - object name / aliases
 - magnitude and related metadata where available
+- literature links: **SIMBAD**, **ADS**, **VizieR**, and **HASH** when the object is a HASH PN
+
+The links open in your browser. SIMBAD is the object record, ADS searches papers, and VizieR opens the catalog identifier. HASH PN objects also get a VizieR row for catalogue V/163.
 
 The footer interaction hint reads:
 
 `FOV ... | Drag to pan | Wheel to zoom | Click star/object for details`
 
+Mouse-wheel zoom glides the field of view continuously instead of jumping a step at a time.
+
 ### What can be searched
 
-Sky Atlas emphasizes recognizable and useful objects rather than surfacing every star by default. Search is designed for:
-
-- bright named stars
-- Messier objects
-- packaged atlas targets
-- constellation names / aliases
-- the Moon
-
-Deeper scientific stars can still be rendered, but the search UX is intentionally biased toward named or familiar targets.
+The search window scans every catalog that is already downloaded, even when those catalogs are disabled in Sky Atlas Settings. Named stars stay searchable; unnamed catalog stars are left out so the list stays useful. Hidden deep-sky objects still appear, with their type at the start of the name.
 
 ---
 
@@ -158,8 +151,12 @@ The built-in deep-sky object families include:
 - **VdB**
 - **LDN**
 - **LBN**
+- **Barnard** dark nebulae
+- **Sharpless** HII regions
+- **RCW** southern HII regions
+- **HASH PN** planetary nebulae and known mimics (VizieR V/163)
 
-These can be enabled or disabled independently in **Sky Atlas Settings**.
+These can be enabled or disabled independently in **Sky Atlas Settings**. Barnard, Sharpless, RCW, and HASH PN are especially useful for checking whether a nebula is already catalogued. HASH PN labels use the usual name when HASH provides one — including amateur discoverer names such as **StDr-1**, Pa, Kn, and Ou — and keep the HASH number as an alias. Search accepts common spellings (`StDr-1`, `StDr 1`, `StDr1`). Object names, constellation names, and the deep-sky marker circles are drawn on the GPU. Dense catalogues such as HASH PN wait for a closer zoom before showing labels, and only the most relevant names are drawn so the view stays responsive. CAst downloads these catalogues from CDS/VizieR when you enable them; it does not redistribute the HASH database.
 
 ### The Moon
 
@@ -190,7 +187,9 @@ Controls include:
 
 The dialog also warns:
 
-`Click OK to download any missing catalog data for the selected magnitude.`
+`Click OK to download any missing catalog data in the background. You can keep using Sky Atlas; Cancel or quitting the app keeps the last working magnitude.`
+
+Faint-star downloads (especially Gaia DR3 past Tycho-2) show a cancellable progress bar as soon as you click OK. The current star field stays on screen and only refreshes when the new catalog is ready. Gaia is streamed as one catalog file from the Flatiron Gaia DR3 mirror, so progress follows stars and megabytes actually received. A finished download keeps the new magnitude the next time you open Sky Atlas. Closing the app mid-download restores the last working magnitude so the next launch does not immediately retry a stuck download.
 
 ### Deep-Sky Objects page
 
@@ -224,6 +223,8 @@ Spike modes:
 - **Classic**
 
 ### Milky Way
+
+The background is the previous all-sky Milky Way texture (ESA Gaia Sky 2020), not the later starless Gaia glow. Resolution settings stay Low = 4k, Medium = 8k, and High = full 32k tiles.
 
 Milky Way detail modes include:
 
@@ -329,6 +330,7 @@ Once imported:
    - **Brightness**
    - **Saturation**
    - **Feather**
+   - **Treat black as alpha** to make black and near-black pixels transparent so the overlay blends into the atlas sky
 
 ### How the data is stored
 
@@ -406,7 +408,7 @@ This is especially useful for:
 
 ### Practical caveats
 
-- Deep star catalogs can be large, especially when Gaia DR3 depth is enabled.
+- Deep star catalogs can be large, especially when Gaia DR3 depth is enabled. Those downloads stay in the background with a cancellable progress bar, and quitting keeps the last working magnitude.
 - Some data is downloaded on first use.
 - Search returns a limited number of combined results and favors recognizable targets.
 - Custom overlays need valid sky registration through WCS or solving.

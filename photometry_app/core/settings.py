@@ -534,6 +534,10 @@ class AppSettings:
     sky_explorer_mag_limit_bin_size_mag: float = 0.5
 
     sky_explorer_mag_limit_mark_only_faintest: bool = False
+    sky_explorer_mag_limit_faintest_count: int = 1
+    sky_explorer_mag_limit_start_magnitude: float = 12.0
+    sky_explorer_mag_limit_max_magnitude: float = 17.0
+    sky_explorer_mag_limit_text_scale_mode: str = "off"
 
     sky_explorer_mag_limit_auto_stars_per_bin: int = 10
 
@@ -818,6 +822,8 @@ class AppSettings:
 
     sky_atlas_custom_overlay_feather: float = 0.0
 
+    sky_atlas_custom_overlay_black_as_alpha: bool = False
+
     sky_atlas_custom_overlay_cache_max_long_edge: int = 2048
 
     sky_atlas_custom_overlays: list[SkyAtlasCustomOverlayRecord] | None = None
@@ -847,6 +853,14 @@ class AppSettings:
     sky_atlas_show_ldn: bool = False
 
     sky_atlas_show_lbn: bool = False
+
+    sky_atlas_show_barnard: bool = False
+
+    sky_atlas_show_sharpless: bool = False
+
+    sky_atlas_show_rcw: bool = False
+
+    sky_atlas_show_hash_pn: bool = False
 
     sky_atlas_object_magnitude_limit: float = 10.0
 
@@ -1357,6 +1371,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
     sky_atlas_custom_overlay_feather = _coerce_optional_float(payload.get("sky_atlas_custom_overlay_feather"), minimum=0.0, maximum=1.0) or 0.0
 
+    sky_atlas_custom_overlay_black_as_alpha = bool(payload.get("sky_atlas_custom_overlay_black_as_alpha", False))
+
     sky_atlas_custom_overlay_cache_max_long_edge = max(
         512,
         min(8192, int(payload.get("sky_atlas_custom_overlay_cache_max_long_edge", 2048) or 2048)),
@@ -1401,6 +1417,14 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
     sky_atlas_show_ldn = bool(payload.get("sky_atlas_show_ldn", False))
 
     sky_atlas_show_lbn = bool(payload.get("sky_atlas_show_lbn", False))
+
+    sky_atlas_show_barnard = bool(payload.get("sky_atlas_show_barnard", False))
+
+    sky_atlas_show_sharpless = bool(payload.get("sky_atlas_show_sharpless", False))
+
+    sky_atlas_show_rcw = bool(payload.get("sky_atlas_show_rcw", False))
+
+    sky_atlas_show_hash_pn = bool(payload.get("sky_atlas_show_hash_pn", False))
 
     sky_atlas_object_magnitude_limit = (
         _coerce_optional_float(payload.get("sky_atlas_object_magnitude_limit"), minimum=1.0, maximum=16.0) or 10.0
@@ -1975,6 +1999,22 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         sky_explorer_mag_limit_examples_per_bin=_coerce_sky_explorer_mag_limit_examples_per_bin(payload.get("sky_explorer_mag_limit_examples_per_bin", 1)),
         sky_explorer_mag_limit_bin_size_mag=_coerce_sky_explorer_mag_limit_bin_size_mag(payload.get("sky_explorer_mag_limit_bin_size_mag", 0.5)),
         sky_explorer_mag_limit_mark_only_faintest=bool(payload.get("sky_explorer_mag_limit_mark_only_faintest", False)),
+        sky_explorer_mag_limit_faintest_count=_coerce_sky_explorer_mag_limit_faintest_count(payload.get("sky_explorer_mag_limit_faintest_count", 1)),
+        sky_explorer_mag_limit_start_magnitude=_coerce_sky_explorer_mag_limit_auto_start_magnitude(
+            payload.get(
+                "sky_explorer_mag_limit_start_magnitude",
+                payload.get("sky_explorer_mag_limit_auto_start_magnitude", 12.0),
+            )
+        ),
+        sky_explorer_mag_limit_max_magnitude=_coerce_sky_explorer_gaia_max_magnitude(
+            payload.get(
+                "sky_explorer_mag_limit_max_magnitude",
+                payload.get("sky_explorer_gaia_max_magnitude", 17.0),
+            )
+        ),
+        sky_explorer_mag_limit_text_scale_mode=_coerce_sky_explorer_mag_limit_text_scale_mode(
+            payload.get("sky_explorer_mag_limit_text_scale_mode", "off")
+        ),
         sky_explorer_mag_limit_auto_stars_per_bin=_coerce_sky_explorer_mag_limit_auto_stars_per_bin(payload.get("sky_explorer_mag_limit_auto_stars_per_bin", 10)),
         sky_explorer_mag_limit_auto_required_visible_stars=_coerce_sky_explorer_mag_limit_auto_required_visible_stars(
             payload.get("sky_explorer_mag_limit_auto_required_visible_stars", 7),
@@ -2250,6 +2290,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
         sky_atlas_custom_overlay_feather=sky_atlas_custom_overlay_feather,
 
+        sky_atlas_custom_overlay_black_as_alpha=sky_atlas_custom_overlay_black_as_alpha,
+
         sky_atlas_custom_overlay_cache_max_long_edge=sky_atlas_custom_overlay_cache_max_long_edge,
 
         sky_atlas_custom_overlays=sky_atlas_custom_overlays,
@@ -2279,6 +2321,14 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         sky_atlas_show_ldn=sky_atlas_show_ldn,
 
         sky_atlas_show_lbn=sky_atlas_show_lbn,
+
+        sky_atlas_show_barnard=sky_atlas_show_barnard,
+
+        sky_atlas_show_sharpless=sky_atlas_show_sharpless,
+
+        sky_atlas_show_rcw=sky_atlas_show_rcw,
+
+        sky_atlas_show_hash_pn=sky_atlas_show_hash_pn,
 
         sky_atlas_object_magnitude_limit=sky_atlas_object_magnitude_limit,
 
@@ -2672,6 +2722,10 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "sky_explorer_mag_limit_examples_per_bin": _coerce_sky_explorer_mag_limit_examples_per_bin(settings.sky_explorer_mag_limit_examples_per_bin),
         "sky_explorer_mag_limit_bin_size_mag": _coerce_sky_explorer_mag_limit_bin_size_mag(settings.sky_explorer_mag_limit_bin_size_mag),
         "sky_explorer_mag_limit_mark_only_faintest": bool(settings.sky_explorer_mag_limit_mark_only_faintest),
+        "sky_explorer_mag_limit_faintest_count": _coerce_sky_explorer_mag_limit_faintest_count(settings.sky_explorer_mag_limit_faintest_count),
+        "sky_explorer_mag_limit_start_magnitude": _coerce_sky_explorer_mag_limit_auto_start_magnitude(settings.sky_explorer_mag_limit_start_magnitude),
+        "sky_explorer_mag_limit_max_magnitude": _coerce_sky_explorer_gaia_max_magnitude(settings.sky_explorer_mag_limit_max_magnitude),
+        "sky_explorer_mag_limit_text_scale_mode": _coerce_sky_explorer_mag_limit_text_scale_mode(settings.sky_explorer_mag_limit_text_scale_mode),
         "sky_explorer_mag_limit_auto_stars_per_bin": _coerce_sky_explorer_mag_limit_auto_stars_per_bin(settings.sky_explorer_mag_limit_auto_stars_per_bin),
         "sky_explorer_mag_limit_auto_required_visible_stars": _coerce_sky_explorer_mag_limit_auto_required_visible_stars(
             settings.sky_explorer_mag_limit_auto_required_visible_stars,
@@ -2973,6 +3027,8 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
 
         "sky_atlas_custom_overlay_feather": max(0.0, min(1.0, float(settings.sky_atlas_custom_overlay_feather))),
 
+        "sky_atlas_custom_overlay_black_as_alpha": bool(settings.sky_atlas_custom_overlay_black_as_alpha),
+
         "sky_atlas_custom_overlay_cache_max_long_edge": max(
             512,
             min(8192, int(settings.sky_atlas_custom_overlay_cache_max_long_edge)),
@@ -3000,6 +3056,10 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "sky_atlas_show_vdb": bool(settings.sky_atlas_show_vdb),
         "sky_atlas_show_ldn": bool(settings.sky_atlas_show_ldn),
         "sky_atlas_show_lbn": bool(settings.sky_atlas_show_lbn),
+        "sky_atlas_show_barnard": bool(settings.sky_atlas_show_barnard),
+        "sky_atlas_show_sharpless": bool(settings.sky_atlas_show_sharpless),
+        "sky_atlas_show_rcw": bool(settings.sky_atlas_show_rcw),
+        "sky_atlas_show_hash_pn": bool(settings.sky_atlas_show_hash_pn),
         "sky_atlas_object_magnitude_limit": max(1.0, min(16.0, float(settings.sky_atlas_object_magnitude_limit))),
         "sky_atlas_object_label_magnitude_limit": max(
             1.0, min(16.0, float(settings.sky_atlas_object_label_magnitude_limit))
@@ -3587,6 +3647,20 @@ def _coerce_sky_explorer_mag_limit_examples_per_bin(value: object) -> int:
         return max(1, min(20, int(value)))
     except (TypeError, ValueError):
         return 1
+
+
+def _coerce_sky_explorer_mag_limit_faintest_count(value: object) -> int:
+    try:
+        return max(1, min(50, int(value)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _coerce_sky_explorer_mag_limit_text_scale_mode(value: object) -> str:
+    mode = str(value or "off").strip().lower()
+    if mode in {"off", "fainter", "brighter"}:
+        return mode
+    return "off"
 
 
 def _coerce_sky_explorer_mag_limit_bin_size_mag(value: object) -> float:

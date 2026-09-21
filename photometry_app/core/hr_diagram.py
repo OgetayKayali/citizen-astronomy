@@ -38,6 +38,8 @@ from photometry_app.core.image_io import read_header, read_photometry_image_data
 
 from photometry_app.core.models import CatalogStar, ObservationMetadata, PhotometryMeasurement
 
+from photometry_app.core.wcs import celestial_wcs, scale_wcs_pixel_grid, validate_wcs
+
 from photometry_app.core.photometry import (
 
     _coerce_pixel_coordinates,
@@ -296,6 +298,55 @@ class _MeasuredHrRow:
 
 
 
+def resolve_hr_measurement_wcs(
+    source_path: Path,
+    *,
+    image_shape: tuple[int, ...],
+    wcs_path: Path | None = None,
+    source_header=None,
+) -> WCS:
+    """Load a celestial WCS for HR matching, preferring a recovered solve file.
+
+    PNG/JPEG headers do not carry FITS WCS, so measurement must use the solved
+    FITS written by astrometry.net or local Gaia matching.
+    """
+    candidates: list[tuple[object, Path | None]] = []
+    if wcs_path is not None and Path(wcs_path).exists():
+        candidates.append((read_header(Path(wcs_path)), Path(wcs_path)))
+    header = source_header if source_header is not None else read_header(source_path)
+    candidates.append((header, source_path))
+
+    selected_header = None
+    last_reasons: list[str] = []
+    for candidate_header, candidate_path in candidates:
+        valid, reasons = validate_wcs(candidate_header, candidate_path)
+        last_reasons = list(reasons)
+        if valid:
+            selected_header = candidate_header
+            break
+    if selected_header is None:
+        reason_text = " ".join(reason.strip() for reason in last_reasons if str(reason).strip())
+        raise ValueError(
+            "Selected source image does not contain a usable celestial WCS."
+            + (f" {reason_text}" if reason_text else "")
+        )
+
+    wcs = celestial_wcs(selected_header)
+    height = int(image_shape[0]) if len(image_shape) >= 1 else 0
+    width = int(image_shape[1]) if len(image_shape) >= 2 else 0
+    source_width = int(selected_header.get("NAXIS1") or 0)
+    source_height = int(selected_header.get("NAXIS2") or 0)
+    if width > 0 and height > 0 and source_width > 0 and source_height > 0:
+        wcs = scale_wcs_pixel_grid(
+            wcs,
+            source_width=source_width,
+            source_height=source_height,
+            target_width=width,
+            target_height=height,
+        )
+    return wcs
+
+
 def measure_hr_sources(
 
     source_path: Path,
@@ -308,6 +359,8 @@ def measure_hr_sources(
 
     progress_callback: Callable[[str], None] | None = None,
 
+    wcs_path: Path | None = None,
+
 ) -> HrWorkingTable:
 
     header = read_header(source_path)
@@ -318,7 +371,12 @@ def measure_hr_sources(
 
     centroid_plane = _centroid_plane_from_named_planes(planes)
 
-    wcs = WCS(header)
+    wcs = resolve_hr_measurement_wcs(
+        source_path,
+        image_shape=centroid_plane.shape,
+        wcs_path=wcs_path,
+        source_header=header,
+    )
 
     sigma_clip = SigmaClip(sigma=3.0)
 
@@ -738,7 +796,19 @@ def _match_detected_sources_to_gaia(
 
     detected_ra, detected_dec = wcs.pixel_to_world_values(detected_x, detected_y)
 
-    detected_coords = SkyCoord(detected_ra * u.deg, detected_dec * u.deg)
+    valid_sky = (
+        np.isfinite(detected_ra)
+        & np.isfinite(detected_dec)
+        & (np.abs(detected_dec) <= 90.0)
+    )
+
+    if not np.any(valid_sky):
+
+        return []
+
+    detected_sources = [source for source, keep in zip(detected_sources, valid_sky, strict=False) if keep]
+
+    detected_coords = SkyCoord(detected_ra[valid_sky] * u.deg, detected_dec[valid_sky] * u.deg)
 
     gaia_coords = SkyCoord(
 

@@ -43,6 +43,10 @@ class SkyAtlasDisplaySettings:
     show_vdb: bool = False
     show_ldn: bool = False
     show_lbn: bool = False
+    show_barnard: bool = False
+    show_sharpless: bool = False
+    show_rcw: bool = False
+    show_hash_pn: bool = False
     object_magnitude_limit: float = 10.0
     object_label_magnitude_limit: float = 8.0
 
@@ -60,6 +64,10 @@ class SkyAtlasDisplaySettings:
             show_vdb=bool(settings.sky_atlas_show_vdb),
             show_ldn=bool(settings.sky_atlas_show_ldn),
             show_lbn=bool(settings.sky_atlas_show_lbn),
+            show_barnard=bool(settings.sky_atlas_show_barnard),
+            show_sharpless=bool(settings.sky_atlas_show_sharpless),
+            show_rcw=bool(settings.sky_atlas_show_rcw),
+            show_hash_pn=bool(settings.sky_atlas_show_hash_pn),
             object_magnitude_limit=float(settings.sky_atlas_object_magnitude_limit),
             object_label_magnitude_limit=float(settings.sky_atlas_object_label_magnitude_limit),
         )
@@ -78,6 +86,14 @@ class SkyAtlasDisplaySettings:
             enabled.add("LDN")
         if self.show_lbn:
             enabled.add("LBN")
+        if self.show_barnard:
+            enabled.add("Barnard")
+        if self.show_sharpless:
+            enabled.add("Sharpless")
+        if self.show_rcw:
+            enabled.add("RCW")
+        if self.show_hash_pn:
+            enabled.add("HASH PN")
         return normalize_sky_atlas_deep_sky_catalogs(enabled)
 
 
@@ -95,7 +111,7 @@ class SkyAtlasSettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Sky Atlas Settings")
         self.setModal(True)
-        self.resize(580, 560)
+        self.resize(580, 640)
 
         if isinstance(settings, AppSettings):
             display_settings = SkyAtlasDisplaySettings.from_app_settings(settings)
@@ -156,6 +172,10 @@ class SkyAtlasSettingsDialog(QDialog):
             show_vdb=self._catalog_checks["VdB"].isChecked(),
             show_ldn=self._catalog_checks["LDN"].isChecked(),
             show_lbn=self._catalog_checks["LBN"].isChecked(),
+            show_barnard=self._catalog_checks["Barnard"].isChecked(),
+            show_sharpless=self._catalog_checks["Sharpless"].isChecked(),
+            show_rcw=self._catalog_checks["RCW"].isChecked(),
+            show_hash_pn=self._catalog_checks["HASH PN"].isChecked(),
             object_magnitude_limit=self._object_magnitude_limit_slider.value() / 10.0,
             object_label_magnitude_limit=self._object_label_limit_slider.value() / 10.0,
         )
@@ -199,7 +219,10 @@ class SkyAtlasSettingsDialog(QDialog):
         self._catalog_path_label.setWordWrap(True)
         self._catalog_path_label.setStyleSheet("color: #94a3b8;")
         catalog_layout.addWidget(self._catalog_path_label)
-        estimate_hint = QLabel("Click OK to download any missing catalog data for the selected magnitude.")
+        estimate_hint = QLabel(
+            "Click OK to download any missing catalog data in the background. "
+            "You can keep using Sky Atlas; Cancel or quitting the app keeps the last working magnitude."
+        )
         estimate_hint.setWordWrap(True)
         estimate_hint.setStyleSheet("color: #94a3b8;")
         catalog_layout.addWidget(estimate_hint)
@@ -262,7 +285,9 @@ class SkyAtlasSettingsDialog(QDialog):
         catalogs_label = QLabel("Catalogs to show")
         catalogs_label.setObjectName("skyAtlasSettingsSectionTitle")
         layout.addWidget(catalogs_label)
-        catalogs_hint = QLabel("Enable the deep-sky catalogs you want plotted on the sky.")
+        catalogs_hint = QLabel(
+            "Enable catalogs to plot known objects and check whether a nebula is already catalogued."
+        )
         catalogs_hint.setWordWrap(True)
         catalogs_hint.setStyleSheet("color: #94a3b8;")
         layout.addWidget(catalogs_hint)
@@ -275,6 +300,10 @@ class SkyAtlasSettingsDialog(QDialog):
             "VdB": settings.show_vdb,
             "LDN": settings.show_ldn,
             "LBN": settings.show_lbn,
+            "Barnard": settings.show_barnard,
+            "Sharpless": settings.show_sharpless,
+            "RCW": settings.show_rcw,
+            "HASH PN": settings.show_hash_pn,
         }
         catalog_descriptions = {
             "Messier": "M1–M110 showpieces",
@@ -283,6 +312,10 @@ class SkyAtlasSettingsDialog(QDialog):
             "VdB": "van den Bergh reflection nebulae",
             "LDN": "Lynds Dark Nebulae",
             "LBN": "Lynds Bright Nebulae",
+            "Barnard": "Barnard dark nebulae",
+            "Sharpless": "Sharpless HII regions",
+            "RCW": "Southern HII regions (Rodgers, Campbell & Whiteoak)",
+            "HASH PN": "HASH planetary nebulae and mimics, including names such as StDr, Pa, Kn, and Ou",
         }
         for catalog_name in SKY_ATLAS_DEEP_SKY_CATALOG_NAMES:
             checkbox = QCheckBox(f"{catalog_name}  —  {catalog_descriptions[catalog_name]}")
@@ -440,6 +473,10 @@ class SkyAtlasSettingsDialog(QDialog):
         self._catalog_checks["VdB"].setChecked(defaults.show_vdb)
         self._catalog_checks["LDN"].setChecked(defaults.show_ldn)
         self._catalog_checks["LBN"].setChecked(defaults.show_lbn)
+        self._catalog_checks["Barnard"].setChecked(defaults.show_barnard)
+        self._catalog_checks["Sharpless"].setChecked(defaults.show_sharpless)
+        self._catalog_checks["RCW"].setChecked(defaults.show_rcw)
+        self._catalog_checks["HASH PN"].setChecked(defaults.show_hash_pn)
         self._object_magnitude_limit_slider.setValue(int(round(defaults.object_magnitude_limit * 10.0)))
         self._object_label_limit_slider.setValue(int(round(defaults.object_label_magnitude_limit * 10.0)))
 

@@ -360,6 +360,16 @@ class MilkyWayLevelSelectionTest(unittest.TestCase):
         self.assertEqual(medium_level.width, 8192)
         self.assertEqual(high_level.width, 32768)
 
+        zoomed_medium = select_milky_way_level(
+            self.levels,
+            viewport_width_px=1600,
+            viewport_height_px=900,
+            field_width_deg=20.0,
+            field_height_deg=11.25,
+            resolution_mode="medium",
+        )
+        self.assertEqual(zoomed_medium.width, 8192)
+
     def test_hysteresis_keeps_previous_level_near_threshold(self) -> None:
         selected_level = select_milky_way_level_with_hysteresis(
             self.levels,

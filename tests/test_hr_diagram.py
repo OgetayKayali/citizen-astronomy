@@ -22,6 +22,7 @@ from photometry_app.core.hr_diagram import (
     measure_hr_sources,
     resolve_hr_gaia_query_limits,
     resolve_hr_gaia_tile_options,
+    resolve_hr_measurement_wcs,
 )
 from photometry_app.core.models import CatalogStar
 from photometry_app.core.settings import AppSettings
@@ -296,11 +297,16 @@ class HrDiagramHelperTest(unittest.TestCase):
             flux_luminance=1000.0,
         )
         progress_messages: list[str] = []
+        resolved_kwargs: dict[str, object] = {}
+
+        def _capture_measurement_wcs(*_args, **kwargs):
+            resolved_kwargs.update(kwargs)
+            return object()
 
         with (
             patch("photometry_app.core.hr_diagram.read_header", return_value={}),
             patch("photometry_app.core.hr_diagram.read_photometry_image_data", return_value=np.zeros((8, 8), dtype=float)),
-            patch("photometry_app.core.hr_diagram.WCS", return_value=object()),
+            patch("photometry_app.core.hr_diagram.resolve_hr_measurement_wcs", side_effect=_capture_measurement_wcs),
             patch("photometry_app.core.hr_diagram._resolve_saturation_threshold", return_value=None),
             patch("photometry_app.core.hr_diagram._detect_hr_image_sources", return_value=[object()]),
             patch("photometry_app.core.hr_diagram._match_detected_sources_to_gaia", return_value=[object()]),
@@ -312,15 +318,92 @@ class HrDiagramHelperTest(unittest.TestCase):
                 [],
                 settings,
                 progress_callback=progress_messages.append,
+                wcs_path=Path("solved.fits"),
             )
 
         self.assertEqual(table.measured_count, 1)
+        self.assertEqual(resolved_kwargs.get("wcs_path"), Path("solved.fits"))
         self.assertIn("[H-R 1/1] Finalizing measurements and building the H-R working table.", progress_messages)
         finalizing_index = progress_messages.index("[H-R 1/1] Finalizing measurements and building the H-R working table.")
         completion_index = progress_messages.index(
             "H-R source measurement complete: 1 row(s) measured, 1 usable, 1 zero-point source(s)."
         )
         self.assertLess(finalizing_index, completion_index)
+
+    def test_resolve_hr_measurement_wcs_uses_solved_fits_for_png_header(self) -> None:
+        import tempfile
+
+        from astropy.io import fits
+        from astropy.io.fits import Header
+
+        solved = WCS(naxis=2)
+        solved.wcs.crpix = [50.0, 40.0]
+        solved.wcs.cdelt = np.array([-0.0002777778, 0.0002777778])
+        solved.wcs.crval = [284.88, -36.64]
+        solved.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        solved_header = solved.to_header()
+        solved_header["NAXIS"] = 2
+        solved_header["NAXIS1"] = 100
+        solved_header["NAXIS2"] = 80
+        png_header = Header()
+        png_header["NAXIS"] = 2
+        png_header["NAXIS1"] = 100
+        png_header["NAXIS2"] = 80
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wcs_path = Path(temp_dir) / "solved.fits"
+            fits.PrimaryHDU(data=np.zeros((80, 100), dtype=np.float32), header=solved_header).writeto(wcs_path)
+            png_path = Path(temp_dir) / "download.png"
+            png_path.write_bytes(b"png")
+            resolved = resolve_hr_measurement_wcs(
+                png_path,
+                image_shape=(80, 100),
+                wcs_path=wcs_path,
+                source_header=png_header,
+            )
+            _ra, dec = resolved.pixel_to_world_values(50.0, 40.0)
+            self.assertAlmostEqual(float(dec), -36.64, places=2)
+
+    def test_resolve_hr_measurement_wcs_rejects_png_header_without_solved_wcs(self) -> None:
+        from astropy.io.fits import Header
+
+        png_header = Header()
+        png_header["NAXIS"] = 2
+        png_header["NAXIS1"] = 100
+        png_header["NAXIS2"] = 80
+        with self.assertRaises(ValueError) as raised:
+            resolve_hr_measurement_wcs(
+                Path("download.png"),
+                image_shape=(80, 100),
+                source_header=png_header,
+            )
+        self.assertIn("usable celestial WCS", str(raised.exception))
+
+    def test_match_detected_sources_to_gaia_skips_invalid_world_coordinates(self) -> None:
+        class _MixedWcs:
+            def pixel_to_world_values(self, x, y):
+                ra = np.full(np.shape(x), 120.0, dtype=float)
+                dec = np.where(np.asarray(x, dtype=float) < 40.0, -15.0, 200.0)
+                return ra, dec
+
+        detected_sources = [
+            _DetectedSource(x=30.0, y=50.0, peak=900.0),
+            _DetectedSource(x=80.0, y=50.0, peak=800.0),
+        ]
+        gaia_stars = [
+            CatalogStar(
+                catalog="gaia-dr3",
+                source_id="A",
+                name="A",
+                ra_deg=120.0,
+                dec_deg=-15.0,
+                magnitude=12.0,
+                is_variable=False,
+            ),
+        ]
+        matches = _match_detected_sources_to_gaia(detected_sources, gaia_stars, _MixedWcs(), aperture_radius=5.0)
+        self.assertEqual([match.star.source_id for match in matches], ["A"])
+        self.assertAlmostEqual(matches[0].x, 30.0, places=2)
 
 
 if __name__ == "__main__":

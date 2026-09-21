@@ -13,7 +13,7 @@ Every deep image is denser than it looks. Behind the obvious bright star or the 
 - **Compare with survey imaging.** Overlay DSS2, PanSTARRS, SDSS, 2MASS, WISE, GALEX, SHS, IPHAS, or NSNS DR0.2 cutouts with an interactive divider so you can compare your frame to public survey data.
 - **Annotate by hand.** Draw circles, ellipses, rulers, and text labels; edit stroke, fill, weight, opacity, and fonts; keep automatic catalog overlays on or off.
 - **Probe magnitude reach.** Use **Tools → Estimate magnitude limit...** to mark a Gaia magnitude ladder or estimate the actual detection limit from SNR probing.
-- **Export the view.** Save still images of the annotated field at the original image resolution, with overlay text and strokes sized to match the on-screen view (not a window screenshot), GIF/MP4 comparison animations when a survey layer is loaded, or **Tools → Create collage** for catalog objects that have usable angular-size metadata.
+- **Export the view.** Save the annotated **Image** or annotated **Survey** at the original image resolution, with overlay text and strokes sized to match the on-screen view (not a window screenshot), GIF/MP4 comparison animations when a survey layer is loaded, or **Tools → Create collage** for catalog objects that have usable angular-size metadata.
 
 ### Why this matters
 
@@ -30,7 +30,7 @@ Enter **Sky Explorer** from the mode launcher or the mode menu.
 Use **Image** or **Survey** (or `File > Open File` for an image) to choose how to start. Those two source buttons sit together on the left of the workflow row with accent styling.
 
 - **Image** opens the usual file picker for a FITS, XISF, TIFF, PNG, JPEG, or camera RAW source image. If an image is already loaded, you can **Replace** it or add a new file as a **Comparison**.
-- **Survey** asks you to pick a public sky survey, then downloads that field as the primary image using the initial RA, Dec, FOV, and pixel size from **Settings → Sky Explorer** (default center: Trifid Nebula / M20). The center tile loads as a low-res preview, then its detail refine starts before surrounding tiles; neighbors follow with the same preview→detail pattern. Each tile keeps its own stretch, so brightness does not jump when neighbors arrive. Loaded tiles stay available when you pan away and return; empty survey coverage shows a hatched “No survey coverage” tile instead of a black square. Panning stays responsive because network and stretch work run off the UI thread. **Explore** catalogs the full visible mosaic (not only the center cell), and markers are not clipped at tile edges. If a survey is already loaded, you can **Replace** it or add another survey as a **Comparison**; the wipe bar spans the full view, and a comparison survey loads with the same center-first tiled path as the primary field. If an image is already loaded, the first **Survey** click overlays that survey as the comparison.
+- **Survey** asks you to pick a public sky survey, then downloads that field as the primary image using the initial RA, Dec, FOV, and pixel size from **Settings → Sky Explorer** (default center: Trifid Nebula / M20), or from the **Goto** fields if you already entered coordinates. The center tile loads as a low-res preview, then its detail refine starts before surrounding tiles; neighbors follow with the same preview→detail pattern. Each tile keeps its own stretch, so brightness does not jump when neighbors arrive. Loaded tiles stay available when you pan away and return; empty survey coverage shows a hatched “No survey coverage” tile instead of a black square. Panning stays responsive because network and stretch work run off the UI thread. **Explore** catalogs the full visible mosaic (not only the center cell), and markers are not clipped at tile edges. If a survey is already loaded, you can **Replace** it or add another survey as a **Comparison**; the wipe bar spans the full view, and a comparison survey loads with the same center-first tiled path as the primary field. If an image is already loaded, the first **Survey** click overlays that survey as the comparison.
 
 Supported upload formats:
 
@@ -43,7 +43,7 @@ Supported upload formats:
 
 The image preview loads into the panel. **Explore** stays on the workflow row and becomes active once a source is loaded. After a successful Explore, selecting additional object types changes that button to **Update** so only the newly enabled layers are queried.
 
-**Shift+left-drag** on the image draws a rectangular ROI. While an ROI is present, **Explore** queries only that region. Right-click inside the ROI and choose **Remove ROI** to search the full field again. Loading a new image or survey clears the ROI.
+Use the **ROI** tool (next to Text) to limit Explore to part of the image. Click **ROI** once: the button shows an accent outline. Click-drag on the image to draw a dashed green rectangle (outline only, no fill). After you release, the button fills with the accent color to show the ROI is active, and **Explore** queries only that rectangle. Click **ROI** again to remove it and search the full field. **Shift+left-drag** still draws an ROI without using the button. You can also right-click inside the ROI and choose **Remove ROI**. Loading a new image or survey clears it. ROI help rotates in the bottom status-bar tips (Settings → Interface Tips); it is not shown as a hover popup over the image.
 
 Sky Explorer works on **one image at a time** (not a time-series folder). Prefer a frame with a valid celestial WCS already written into the headers. If WCS is missing, CAst recovers a plate solution from local Gaia matching and, when configured, astrometry.net, keeping whichever finishes first.
 
@@ -175,6 +175,10 @@ The **Display** menu controls how your source image (including survey-field tile
 
 Also available: **Curves**, **Invert**, **Feather** (0–100% soft-blend using overlapping sky on tile edges; default 55%), and **Reset**. Feather fetches each tile with extra sky around its true center and blends only that shared coverage, so stars stay aligned; it does not stretch tile edges. Curves refine the already-stretched preview (including survey tiles) for viewing only; catalog positions come from WCS, not from the display transform.
 
+### Goto
+
+The **Goto** group sits between **Display** and **Center Object**. Enter RA and Dec in decimal degrees (for example `270.63`, `-23.03`) or sexagesimal hours/degrees (`18:02:31`, `-23:01:48`), then click **Goto** to center the loaded survey on those coordinates. If no survey is open, Goto saves the coordinates as the Sky Explorer field center and opens the survey picker so the field loads there.
+
 ### Comparison
 
 **Image** and **Survey** also add comparison layers after a source is already loaded:
@@ -190,10 +194,10 @@ When a comparison is active, an interactive divider lets you wipe between the pr
 
 Use **Tools → Estimate magnitude limit...** to open the magnitude-limit dialog. Two modes are available:
 
-- **Mark magnitude ladder** — query Gaia up to a chosen max magnitude and annotate representative stars in configurable magnitude bins (bin size, stars per bin, and optional “mark only the faintest” bin).
-- **Find actual magnitude limit** — probe Gaia stars at each magnitude step with an SNR detection test and mark confirmed detections at the estimated limit (all visible stars, or only the faintest).
+- **Mark magnitude ladder** — query Gaia across the shared start/increment/final magnitude range and annotate representative stars in each increment (stars per bin, optional “mark only the faintest N”, and optional label scaling by magnitude).
+- **Find actual magnitude limit** — probe Gaia stars from the same starting magnitude to the same final magnitude, stepping by the shared increment, and mark confirmed detections at the estimated limit (all visible stars, or the faintest N). If Explore or a magnitude ladder already recovered a WCS for this image, Find faintest reuses that solve instead of plate-solving again. Recovered JPEG/PNG solves are loaded as 2D celestial WCS so SIP plus a color axis does not abort the estimate.
 
-Marker colors, stroke, text, and sizes remain configurable in Settings. **Tools → Clear magnitude limit markers** removes active Mag Limit annotations.
+Markers are empty highlighted rings with a soft shade and no center dot, so the star itself stays visible. Selecting a Mag Limit row in the results list centers that star and highlights its ring in gold. Marker and results-list names stay in full instead of being shortened with “...”. Labels can stay a fixed size or grow toward either the faintest or the brightest stars. Marker color, ring thickness, text, and sizes remain configurable in Settings. **Tools → Clear magnitude limit markers** removes active Mag Limit annotations.
 
 While Mag Limit markers are active, Explore includes Gaia even if the Gaia Star type row is unchecked, so the ladder has data to draw.
 
@@ -216,7 +220,7 @@ Toolbar tools (icon buttons):
 - **Ruler** — drag between two points; shows pixel distance, or angular distance (arcsec / arcmin / degrees) when WCS is available, with units chosen automatically by magnitude
 - **Text**
 
-The **Properties** strip edits **Stroke**, **Fill**, **Text**, **Weight**, and **Opacity** (opacity can be adjusted by dragging, and is available for text as well as shapes). After you draw a mark, those edits update that last mark until you switch tools. Clicking a mark again (for example switching back to Circle and selecting the circle) makes further edits apply to that selected mark. Text styles include Regular, Bold, Italic, and Bold Italic.
+The **Properties** strip edits **Stroke**, **Fill**, **Text**, **Weight**, and **Opacity** (opacity can be adjusted by dragging, and is available for text as well as shapes). Click a color swatch for a compact picker with live preview; Fill includes a checkerboard **No fill** tile so the stroke stays visible. Opacity is overall strength, not a substitute for turning fill off. After you draw a mark, those edits update that last mark until you switch tools. Clicking a mark again (for example switching back to Circle and selecting the circle) makes further edits apply to that selected mark. Text styles include Regular, Bold, Italic, and Bold Italic.
 
 Right-click the image for:
 
@@ -229,7 +233,7 @@ Right-click the image for:
 | **Clear Manual Annotations** | Remove hand-drawn marks |
 | **Clear Detections** | Remove Detect hits |
 
-The **Manual Annotation** dialog edits geometry (X, Y, radii, rotation), line width, font, opacity, colors, and whether text/fill are shown. Manual annotations are stored **per image** for the session.
+The **Manual Annotation** dialog edits geometry (X, Y, radii, rotation), line width, font, opacity, colors (same picker, including no-fill), and whether text/fill are shown. Manual annotations are stored **per image** for the session.
 
 ---
 
@@ -237,7 +241,11 @@ The **Manual Annotation** dialog edits geometry (X, Y, radii, rotation), line wi
 
 ### Image...
 
-**Export → Image...** saves the current view (source stretch, overlays, and survey comparison if visible) as PNG, JPEG, or BMP. Default name pattern: `{stem}_sky_explorer.png`.
+**Export → Image...** saves the uploaded image plus annotations (source stretch and overlays; no survey wipe) as PNG, JPEG, or BMP. Default name pattern: `{stem}_sky_explorer.png`.
+
+### Survey...
+
+**Export → Survey...** saves the loaded survey layer plus annotations as PNG, JPEG, or BMP. Default name pattern: `{stem}_sky_explorer_survey.png`. Available when a survey is the primary field or a comparison survey is loaded.
 
 ### Create collage
 
@@ -300,7 +308,7 @@ Intro text in the dialog: *Sky Explorer settings are split into General (field/q
 
 | Setting | What it does |
 |---------|----------------|
-| Mag Limit marker / text colors and sizes | Appearance of Mag Limit annotations |
+| Mag Limit marker / text colors and sizes | Appearance of Mag Limit annotations. Marker color is the empty ring; circles use a soft shade and no center mark |
 | **Extended Nebula Scale** | Enlarge nebula overlays for visibility |
 | **Scale Stroke Width** | Thicken outlines on large objects |
 | **Marker Color Relation** | Generated fill bright / stroke dark (or the inverse). Does not rewrite a type you already customized. |
@@ -343,7 +351,7 @@ Results and plate-solves are cached under Sky Explorer catalog / WCS directories
 4. Switch to **Advanced** or **Scientific** and re-Explore if you need stars, variables, AGN, or SSO.
 5. Use **Tools → Estimate magnitude limit...** to judge depth; switch to **Manual** and delete individual catalog marks if overlays clutter a presentation frame.
 6. Click **Survey** to load **DSS2 Blue**, NSNS DR0.2 Hα, or another public survey, or **Image** for a second uploaded frame, then scrub the divider for a before/after comparison.
-7. Add a few manual labels for teaching slides; **Export → Image...** or **Animation...**. Use **Tools → Create collage** when you want a multi-object size-aware figure of galaxies/nebulae from the same frame.
+7. Add a few manual labels for teaching slides; **Export → Image...**, **Survey...**, or **Animation...**. Use **Tools → Create collage** when you want a multi-object size-aware figure of galaxies/nebulae from the same frame.
 
 ---
 

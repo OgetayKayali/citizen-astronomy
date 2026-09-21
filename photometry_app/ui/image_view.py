@@ -119,6 +119,8 @@ class ImageOverlay:
 
     show_center_dot: bool = True
 
+    soft_ring: bool = False
+
     outline_color: str | None = None
 
     outline_width: float = 0.0
@@ -219,6 +221,10 @@ class SelectionOverlay:
     y1: float
 
     color: str = "#ff9f1c"
+
+    fill: bool = True
+
+    stroke_width: float = 0.0
 
 
 
@@ -542,6 +548,43 @@ class AnnotatedImageView(QWidget):
 
         self._static_overlay_label_cache_image = None
 
+    def _adopt_overlays(
+        self,
+        overlays: list[ImageOverlay],
+        *,
+        static_overlay_count: int | None = None,
+    ) -> None:
+
+        next_count = (
+            self._static_overlay_count
+            if static_overlay_count is None
+            else max(0, min(len(overlays), int(static_overlay_count)))
+        )
+
+        static_changed = next_count != self._static_overlay_count or overlays[:next_count] != self._overlays[: self._static_overlay_count]
+
+        self._overlays = overlays
+
+        self._static_overlay_count = next_count
+
+        if static_changed:
+
+            self.invalidate_static_overlay_cache()
+
+    def set_dynamic_overlays(self, overlays: list[ImageOverlay]) -> None:
+
+        static_count = max(0, min(len(self._overlays), self._static_overlay_count))
+
+        next_overlays = [*self._overlays[:static_count], *list(overlays)]
+
+        if next_overlays == self._overlays:
+
+            return
+
+        self._overlays = next_overlays
+
+        self.update()
+
 
 
     def set_overlay_label_formatter(self, formatter: Callable[[ImageOverlay], str] | None) -> None:
@@ -802,15 +845,7 @@ class AnnotatedImageView(QWidget):
 
         self._hover_image_point = None
 
-        overlays_changed = overlays != self._overlays
-
-        self._overlays = overlays
-
-        self._static_overlay_count = max(0, min(len(self._overlays), int(static_overlay_count)))
-
-        if overlays_changed:
-
-            self.invalidate_static_overlay_cache()
+        self._adopt_overlays(overlays, static_overlay_count=static_overlay_count)
 
         self._grid_overlays = grid_overlays
 
@@ -1152,9 +1187,7 @@ class AnnotatedImageView(QWidget):
 
             return
 
-        self._overlays = next_overlays
-
-        self.invalidate_static_overlay_cache()
+        self._adopt_overlays(next_overlays)
 
         self.update()
 
@@ -1419,7 +1452,7 @@ class AnnotatedImageView(QWidget):
         return image
 
 
-    def capture_full_resolution_image(self) -> QImage | None:
+    def capture_full_resolution_image(self, *, background: str = "primary") -> QImage | None:
 
         if self._qimage is None:
 
@@ -1439,13 +1472,7 @@ class AnnotatedImageView(QWidget):
 
             appearance_scale = self._on_screen_overlay_appearance_scale()
 
-            if self._survey_tile_layers:
-
-                self._draw_survey_tile_layers(painter, self._survey_tile_layers)
-
-            else:
-
-                painter.drawImage(QPoint(0, 0), self._qimage)
+            self._draw_full_resolution_background(painter, background)
 
             self._draw_safe_margin(painter)
 
@@ -1526,7 +1553,29 @@ class AnnotatedImageView(QWidget):
 
         return image
 
+    def _draw_full_resolution_background(self, painter: QPainter, background: str) -> None:
 
+        if str(background or "primary").strip().lower() == "comparison":
+
+            if self._comparison_has_tile_layers():
+
+                self._draw_survey_tile_layers(painter, self._comparison_survey_tile_layers)
+
+                return
+
+            if self._comparison_has_survey_raster() and self._comparison_target_rect is not None and self._comparison_qimage is not None:
+
+                painter.drawImage(self._comparison_target_rect, self._comparison_qimage)
+
+                return
+
+        if self._survey_tile_layers:
+
+            self._draw_survey_tile_layers(painter, self._survey_tile_layers)
+
+            return
+
+        painter.drawImage(QPoint(0, 0), self._qimage)
 
     def composite_info_panel_onto_image(self, base_image: QImage, info_panel: ImageInfoPanel) -> QImage:
 
@@ -2368,6 +2417,8 @@ class AnnotatedImageView(QWidget):
                     overlay.show_label,
                     overlay.show_marker,
                     overlay.marker_style,
+                    overlay.show_center_dot,
+                    overlay.soft_ring,
                     overlay.accent_color,
                     overlay.outline_color,
                     round(float(overlay.outline_width), 3),
@@ -3220,6 +3271,25 @@ class AnnotatedImageView(QWidget):
 
 
 
+    @staticmethod
+    def _draw_soft_circle_shade(
+        painter: QPainter,
+        center: QPointF,
+        radius: float,
+        color: QColor,
+        pen_width: float,
+    ) -> None:
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        base_alpha = max(0.35, min(1.0, float(color.alphaF())))
+        for alpha, extra_width in ((0.10, 4.8), (0.18, 3.1), (0.32, 1.6)):
+            glow = QColor(color)
+            glow.setAlphaF(max(0.0, min(1.0, alpha * base_alpha)))
+            glow_pen = QPen(glow, max(1.0, float(pen_width) + extra_width))
+            glow_pen.setCosmetic(True)
+            glow_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(glow_pen)
+            painter.drawEllipse(center, radius, radius)
+
     def _draw_overlay(self, painter: QPainter, overlay: ImageOverlay, *, stroke_scale: float = 1.0) -> None:
 
         if not overlay.show_marker:
@@ -3773,23 +3843,46 @@ class AnnotatedImageView(QWidget):
 
             return
 
+        center = QPointF(overlay.x, overlay.y)
+
+        if overlay.soft_ring:
+            ring_color = QColor(overlay.accent_color) if overlay.accent_color else color
+            if ring_color.isValid():
+                ring_color.setAlphaF(max(0.0, min(1.0, float(overlay.stroke_opacity))))
+            ring_pen = QPen(ring_color, pen_width)
+            ring_pen.setCosmetic(True)
+            self._draw_soft_circle_shade(painter, center, overlay.aperture_radius, ring_color, pen_width)
+            painter.setPen(ring_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(center, overlay.aperture_radius, overlay.aperture_radius)
+
+            if overlay.show_handles:
+
+                handle_radii = (overlay.aperture_radius, overlay.annulus_inner_radius, overlay.annulus_outer_radius) if overlay.show_annulus else (overlay.aperture_radius,)
+
+                for radius in handle_radii:
+
+                    painter.drawEllipse(QPointF(overlay.x + radius, overlay.y), 0.8, 0.8)
+
+            return
+
         if outline_pen is not None:
 
             painter.setPen(outline_pen)
 
-            painter.drawEllipse(QPointF(overlay.x, overlay.y), overlay.aperture_radius, overlay.aperture_radius)
+            painter.drawEllipse(center, overlay.aperture_radius, overlay.aperture_radius)
 
             if overlay.show_annulus:
 
-                painter.drawEllipse(QPointF(overlay.x, overlay.y), overlay.annulus_inner_radius, overlay.annulus_inner_radius)
+                painter.drawEllipse(center, overlay.annulus_inner_radius, overlay.annulus_inner_radius)
 
-                painter.drawEllipse(QPointF(overlay.x, overlay.y), overlay.annulus_outer_radius, overlay.annulus_outer_radius)
+                painter.drawEllipse(center, overlay.annulus_outer_radius, overlay.annulus_outer_radius)
 
         painter.setPen(pen)
 
         painter.setBrush(fill_brush_color if fill_brush_color is not None else Qt.BrushStyle.NoBrush)
 
-        painter.drawEllipse(QPointF(overlay.x, overlay.y), overlay.aperture_radius, overlay.aperture_radius)
+        painter.drawEllipse(center, overlay.aperture_radius, overlay.aperture_radius)
 
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
@@ -5035,17 +5128,29 @@ class AnnotatedImageView(QWidget):
 
         for overlay in self._selection_overlays:
 
-            pen = QPen(QColor(overlay.color), 0.0)
+            stroke_width = max(0.0, float(overlay.stroke_width))
+
+            pen = QPen(QColor(overlay.color), stroke_width)
 
             pen.setStyle(Qt.PenStyle.DashLine)
 
+            if stroke_width > 0.0:
+
+                pen.setCosmetic(True)
+
             painter.setPen(pen)
 
-            fill_color = QColor(overlay.color)
+            if overlay.fill:
 
-            fill_color.setAlpha(48)
+                fill_color = QColor(overlay.color)
 
-            painter.setBrush(fill_color)
+                fill_color.setAlpha(48)
+
+                painter.setBrush(fill_color)
+
+            else:
+
+                painter.setBrush(Qt.BrushStyle.NoBrush)
 
             if overlay.shape == "circle":
 
