@@ -6,7 +6,7 @@ Windows remains the primary shipping platform (signed Velopack Setup).
 
 ## GitHub Actions build (no Mac needed)
 
-`.github/workflows/macos-unsigned.yml` builds the app on a GitHub-hosted Apple Silicon runner and attaches `CitizenAstronomy-macos-arm64-unsigned.zip` to the release. It runs automatically when a `v*` release is published, or manually from Windows:
+`.github/workflows/macos-unsigned.yml` builds the app on a GitHub-hosted Apple Silicon runner and attaches `CitizenAstronomy-macos-arm64-unsigned.zip` to the release. When that release is the newest one, the workflow then marks it as GitHub's **Latest** release so the README download buttons (`releases/latest/download/...`) point to it. Until the Mac zip is attached, the buttons stay on the previous release, so Windows and macOS always download the same version. It runs automatically when a `v*` release is published, or manually from Windows:
 
 ```powershell
 gh workflow run macos-unsigned.yml --repo OgetayKayali/citizen-astronomy -f tag=v0.1.1-alpha.16

@@ -108,9 +108,19 @@ jobs:
               echo
               echo "1. Download \`$MAC_ZIP_NAME\` and unzip it."
               echo "2. Move \`Citizen Astronomy.app\` to Applications (optional)."
-              echo "3. The first time, right-click the app, choose **Open**, then **Open** again."
+              echo "3. The first time, right-click the app, choose **Open**, then **Open** again. On macOS 15 or newer, click **Done**, then go to **System Settings > Privacy & Security** and click **Open Anyway**."
               echo
               echo "The Mac build is not signed or notarized and has no in-app updater. To update, download the new zip from the latest release."
             } > "$notes_file"
             gh release edit "$RELEASE_TAG" --notes-file "$notes_file"
+          fi
+
+      - name: Mark newest release as Latest
+        run: |
+          set -euo pipefail
+          newest_tag="$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName')"
+          if [[ "$newest_tag" == "$RELEASE_TAG" ]]; then
+            gh release edit "$RELEASE_TAG" --prerelease=false --latest
+          else
+            echo "$RELEASE_TAG is not the newest release ($newest_tag); leaving Latest unchanged."
           fi

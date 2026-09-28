@@ -1,8 +1,28 @@
 # <img src="assets/citizen_astronomy.ico" alt="CAst" width="40" height="40"> Citizen Astronomy (CAst)
 
+## Download
+
+[![Download for Windows](https://img.shields.io/badge/Download_for-Windows-0078D6?style=for-the-badge)](https://github.com/OgetayKayali/citizen-astronomy/releases/latest/download/CitizenAstronomy.CAst-alpha-Setup.exe)
+&nbsp;
+[![Download for macOS](https://img.shields.io/badge/Download_for-macOS-111111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/OgetayKayali/citizen-astronomy/releases/latest/download/CitizenAstronomy-macos-arm64-unsigned.zip)
+
+Clicking a button downloads the newest version directly. Each file is about 2 GB.
+
+**Windows 10 or 11 (64-bit):** open the downloaded `CitizenAstronomy.CAst-alpha-Setup.exe`. CAst installs and starts on its own.
+
+**macOS (Apple silicon: M1 or newer):**
+
+1. Open the downloaded zip. `Citizen Astronomy.app` appears next to it.
+2. Drag `Citizen Astronomy.app` into **Applications**.
+3. Open it. The Mac version is not signed by Apple, so the first launch is blocked. Right-click the app and choose **Open**, then **Open** again. On macOS 15 or newer, click **Done**, go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway**.
+
+Intel Macs are not supported yet.
+
+---
+
 Every clear night, amateur telescopes around the world capture photons that professional observatories never will -- the right patch of sky, at the right moment, with enough patience to notice something change. Citizen Astronomy turns those images into science.
 
-**CAst** is a desktop application (Windows installer primary; unsigned macOS `.app` zip available for alpha testers) that takes folders of FITS and XISF images and gives you the tools to measure variable stars, discover moving asteroids, build Hertzsprung-Russell diagrams, and explore the sky -- all from one guided interface, no command-line scripting required.
+**CAst** is a desktop application for Windows and macOS that takes folders of FITS and XISF images and gives you the tools to measure variable stars, discover moving asteroids, build Hertzsprung-Russell diagrams, and explore the sky -- all from one guided interface, no command-line scripting required.
 
 Project docs: [Version history](version.md) · [Contributing](CONTRIBUTING.md) · [License](LICENSE)
 
@@ -98,9 +118,13 @@ Images can be plate-solved beforehand or solved on the fly through astrometry.ne
 
 ## Installation
 
-**For alpha reviewers (Windows):** Download the Setup executable from the [Releases](../../releases) page. After installation, use **File > Check for Updates**. CAst downloads a small delta for compatible hotfixes and automatically falls back to a verified full package when required.
+Most users only need the buttons in [Download](#download). They always point to the newest version.
 
-**For alpha reviewers (macOS, unsigned):** Download the macOS zip when published, unzip, then **right-click → Open** the first time (Gatekeeper). See [packaging/MACOS_UNSIGNED.md](packaging/MACOS_UNSIGNED.md). In-app updates are Windows-only for now.
+**All versions:** every release, with its notes, the Windows update packages (`.nupkg`), and the macOS zip, is on the [Releases](../../releases) page.
+
+**Updating on Windows:** use **File > Check for Updates**. CAst downloads a small delta for compatible hotfixes and automatically falls back to a verified full package when required.
+
+**Updating on macOS:** there is no in-app updater yet. Download the new zip and replace the app in Applications. Build details are in [packaging/MACOS_UNSIGNED.md](packaging/MACOS_UNSIGNED.md).
 
 **For developers:**
 
