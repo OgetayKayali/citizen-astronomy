@@ -1,0 +1,116 @@
+name: macOS unsigned build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the macOS zip to (for example v0.1.1-alpha.16)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-unsigned-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  ASSETS_DRAFT_TAG: macos-build-assets
+  MAC_ZIP_NAME: CitizenAstronomy-macos-arm64-unsigned.zip
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download large build assets
+        run: |
+          set -euo pipefail
+          release_id="$(gh api "repos/$GH_REPO/releases" --paginate \
+            --jq ".[] | select(.draft and .tag_name == \"$ASSETS_DRAFT_TAG\") | .id" | head -n 1)"
+          if [[ -z "$release_id" ]]; then
+            echo "Draft release '$ASSETS_DRAFT_TAG' with the large assets was not found." >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/assets"
+          gh api "repos/$GH_REPO/releases/$release_id/assets" --paginate --jq '.[] | "\(.id) \(.name)"' |
+            while read -r asset_id asset_name; do
+              echo "Downloading $asset_name"
+              curl -fsSL --retry 3 \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/octet-stream" \
+                -o "$RUNNER_TEMP/assets/$asset_name" \
+                "https://api.github.com/repos/$GH_REPO/releases/assets/$asset_id"
+              unzip -q -o "$RUNNER_TEMP/assets/$asset_name" -d "$GITHUB_WORKSPACE"
+              rm -f "$RUNNER_TEMP/assets/$asset_name"
+            done
+          du -sh textures/milky_way_tiles_32k_padded_lzw_benchmark assets/moon_tiles \
+            textures/moon_lroc_color_16bit_srgb_8k.tif textures/moon_ldem_16.tif
+
+      - name: Check tag matches app version
+        run: |
+          set -euo pipefail
+          app_version="$(python -c 'import re, pathlib; print(re.search(r"APP_VERSION\s*=\s*\"([^\"]+)\"", pathlib.Path("photometry_app/app_metadata.py").read_text()).group(1))')"
+          if [[ "v$app_version" != "$RELEASE_TAG" ]]; then
+            echo "Tag $RELEASE_TAG does not match APP_VERSION $app_version." >&2
+            exit 1
+          fi
+          echo "APP_VERSION=$app_version" >> "$GITHUB_ENV"
+
+      - name: Build app
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          .venv/bin/python -m pip install -U pip
+          chmod +x packaging/build_macos_unsigned.sh
+          PYTHON_BIN="$GITHUB_WORKSPACE/.venv/bin/python" ./packaging/build_macos_unsigned.sh
+
+      - name: Smoke test packaged app
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          "_tmp_macos_unsigned_dist/Citizen Astronomy.app/Contents/MacOS/CitizenAstronomy" \
+            --packaged-format-smoke \
+            --packaged-format-smoke-fixtures packaging/fixtures
+
+      - name: Attach zip to release
+        run: |
+          set -euo pipefail
+          zip_path="packaging/dist/macos-unsigned/$MAC_ZIP_NAME"
+          mv packaging/dist/macos-unsigned/CitizenAstronomy-macos-unsigned.zip "$zip_path"
+          ls -lh "$zip_path"
+          gh release upload "$RELEASE_TAG" "$zip_path" --clobber
+
+          body="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
+          if [[ "$body" != *"## macOS"* ]]; then
+            notes_file="$RUNNER_TEMP/release-notes.md"
+            {
+              printf '%s\n\n' "$body"
+              echo "## macOS (unsigned alpha, Apple Silicon)"
+              echo
+              echo "1. Download \`$MAC_ZIP_NAME\` and unzip it."
+              echo "2. Move \`Citizen Astronomy.app\` to Applications (optional)."
+              echo "3. The first time, right-click the app, choose **Open**, then **Open** again."
+              echo
+              echo "The Mac build is not signed or notarized and has no in-app updater. To update, download the new zip from the latest release."
+            } > "$notes_file"
+            gh release edit "$RELEASE_TAG" --notes-file "$notes_file"
+          fi

@@ -4,6 +4,23 @@ This is the free alpha path for Mac testers: a PyInstaller `.app` zipped for dow
 
 Windows remains the primary shipping platform (signed Velopack Setup).
 
+## GitHub Actions build (no Mac needed)
+
+`.github/workflows/macos-unsigned.yml` builds the app on a GitHub-hosted Apple Silicon runner and attaches `CitizenAstronomy-macos-arm64-unsigned.zip` to the release. It runs automatically when a `v*` release is published, or manually from Windows:
+
+```powershell
+gh workflow run macos-unsigned.yml --repo OgetayKayali/citizen-astronomy -f tag=v0.1.1-alpha.16
+```
+
+The gitignored Sky Atlas / Moon assets come from the draft release `macos-build-assets` (drafts are visible only to repository collaborators). It holds two zips created from the repo root:
+
+```powershell
+tar.exe -a -cf cast-macos-assets-milkyway.zip textures/milky_way_tiles_32k_padded_lzw_benchmark
+tar.exe -a -cf cast-macos-assets-moon.zip assets/moon_tiles textures/moon_lroc_color_16bit_srgb_8k.tif textures/moon_ldem_16.tif
+```
+
+Re-upload them with `gh release upload macos-build-assets <zip> --clobber` only when those assets change. Keep the draft unpublished.
+
 ## Transfer kit (Windows → Drive → Mac)
 
 Large Sky Atlas / Moon assets are gitignored, so a normal git clone on the Mac is not enough. Pack everything on Windows into **one zip**, upload that zip to Drive, then download it on the Mac.
