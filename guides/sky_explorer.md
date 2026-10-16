@@ -43,9 +43,9 @@ Supported upload formats:
 
 The image preview loads into the panel. **Explore** stays on the workflow row and becomes active once a source is loaded. After a successful Explore, selecting additional object types changes that button to **Update** so only the newly enabled layers are queried.
 
-Use the **ROI** tool (next to Text) to limit Explore to part of the image. Click **ROI** once: the button shows an accent outline. Click-drag on the image to draw a dashed green rectangle (outline only, no fill). After you release, the button fills with the accent color to show the ROI is active, and **Explore** queries only that rectangle. Click **ROI** again to remove it and search the full field. **Shift+left-drag** still draws an ROI without using the button. You can also right-click inside the ROI and choose **Remove ROI**. Loading a new image or survey clears it. ROI help rotates in the bottom status-bar tips (Settings → Interface Tips); it is not shown as a hover popup over the image.
+Use the **ROI** tool (next to Text) to limit Explore to part of the image. Click **ROI** once: the button shows an accent outline. Click-drag on the image to draw a dashed green rectangle (outline only, no fill). After you release, the button fills with the accent color to show the ROI is active, and **Explore** and **Mag Limit** query only that rectangle. Once the image is plate-solved, the rectangle’s field of view (width × height) appears at its top-left corner. If the frame is not solved yet, that label stays hidden until a solution exists. Turn it off under **Settings → Sky Explorer → Visuals → ROI Field of View**. Click **ROI** again to remove it and search the full field. **Shift+left-drag** still draws an ROI without using the button. You can also right-click inside the ROI and choose **Remove ROI**. Loading a new image or survey clears it. ROI help rotates in the bottom status-bar tips (Settings → Interface Tips); it is not shown as a hover popup over the image.
 
-Sky Explorer works on **one image at a time** (not a time-series folder). Prefer a frame with a valid celestial WCS already written into the headers. If WCS is missing, CAst recovers a plate solution from local Gaia matching and, when configured, astrometry.net, keeping whichever finishes first.
+Sky Explorer works on **one image at a time** (not a time-series folder). Prefer a frame with a valid celestial WCS already written into the headers. A starless PNG, JPEG, or TIFF uses a same-name FITS beside it when the pixel width and height match. If WCS is missing and the frame still has stars, CAst recovers a plate solution from local Gaia matching and, when configured, astrometry.net, keeping whichever finishes first.
 
 ### Step 2: Choose Object Types
 
@@ -68,9 +68,9 @@ Click a stroke/fill/text cell to customize how that type is drawn. Those three c
 
 ### Step 3: Explore
 
-Click **Explore**. The button shows **Terminate** while CAst is querying catalogs, so you can abort a long search. When the query finishes or is terminated, the button returns to **Explore** (or **Update** if extra types were selected after a previous run). While it runs, CAst:
+Click **Explore**. That same button changes to **Terminate** as soon as the query starts and stays clickable until the search stops, so you can abort a long catalog lookup. **Mag Limit** faint-star search uses that same **Terminate** button while its catalog query is running. When the query finishes or is terminated, the button returns to **Explore** (or **Update** if extra types were selected after a previous run). While it runs, CAst:
 
-1. Validates (or solves) WCS and computes the field footprint (or the drawn ROI, if one is present)
+1. Validates (or solves) WCS and computes the field footprint (or the drawn ROI, if one is present). A frame with almost no stars opens **This image looks starless** instead of uploading to astrometry.net: use this image's WCS, pick another solved file of the same pixel size, or plate-solve anyway. That choice is remembered until you load a different image. Mag Limit uses the same prompt.
 2. Queries each enabled catalog layer for objects inside that footprint
 3. Filters and sorts results
 4. Builds automatic overlays and fills the results table
@@ -91,7 +91,7 @@ You need at least one selected object type whose catalog layer is enabled under 
 | Observing site in Settings | Improves Horizons geometry for SSO search |
 | Catalog Sources enabled | Layers you want must be checked in Sky Explorer settings |
 
-Without WCS, and if both local Gaia matching and astrometry.net fail (or no key is set and local matching cannot recover a solution), Explore cannot place catalogs on the image.
+Without a WCS, and if the image has no stars to plate-solve, Explore asks for an existing solution before it gives up. If Gaia matching and astrometry.net both fail on a starred frame (or no key is set and local matching cannot recover a solution), Explore cannot place catalogs on the image.
 
 ---
 
@@ -101,7 +101,7 @@ Sky Explorer’s core call is `explore_sky_image` in the application core. Conce
 
 ### 1. Resolve WCS and footprint
 
-CAst validates embedded celestial WCS keywords. If they are missing or unusable, it recovers a plate solution from metadata-seeded Gaia matching and, when an astrometry.net key is set, from nova at the same time, keeping the first success (cached under the Sky Explorer WCS cache). From the solved frame it derives center, search radius, and corner sky coordinates for catalog queries. A drawn ROI shrinks that footprint to the selected rectangle.
+CAst validates embedded celestial WCS keywords. A PNG, JPEG, or TIFF with a same-name FITS, FIT, FTS, or FZ file beside it uses that solution when the pixel size matches; the Work Log names the file. If the header is missing or unusable and the image still contains stars, CAst recovers a plate solution from metadata-seeded Gaia matching and, when an astrometry.net key is set, from nova at the same time, keeping the first success (cached under the Sky Explorer WCS cache). If almost no stars are detected, Explore and Mag Limit ask whether to trust a parseable WCS already in the file (including one set aside because a PixInsight `.xdrz` sidecar is present), use a same-size solved file you pick, or plate-solve anyway. From the solved frame CAst derives center, search radius, and corner sky coordinates for catalog queries. A drawn ROI shrinks that footprint to the selected rectangle.
 
 ### 2. Query catalog layers
 
@@ -128,9 +128,9 @@ Gaia rows shown in the UI are capped (brightest first; display limited to a few 
 
 Automatic annotations use catalog angular sizes and position angles when available (ellipses for galaxies, scaled nebulae when enabled). Labels use short names. Colors follow object-group settings and any per-type overrides from the type table.
 
-### Dense HyperLEDA exception
+### Dense galaxy catalogs
 
-When object-type mode is **Scientific** and **every** Scientific type is selected, unnamed HyperLEDA galaxies are included for a denser galaxy census. Otherwise HyperLEDA entries generally need a usable name/alias to appear.
+Scientific and Advanced galaxy searches include HyperLEDA PGC galaxies plus a faint photometric census: **DES DR1** south of Dec −30° (SkyMapper fallback) and **Pan-STARRS DR1** farther north, using star/galaxy class or PSF−Kron extendedness. That is what marks the many faint background galaxies visible in a deep image; SIMBAD and HyperLEDA only include the brightest named objects. Simple mode still keeps HyperLEDA to named aliases (NGC, IC, MCG, and similar). The Work Log reports how many photometric galaxies were added.
 
 ---
 
@@ -146,7 +146,7 @@ Rows are grouped (Nebulae / ISM, Galaxies, Stars, Variable Stars, Solar System, 
 |--------|--------|
 | Click a row | Fills **Inspector**; highlights the object on the image |
 | Ctrl/Shift-click rows | Multi-select for **Tools → Create collage** (the current row still drives Inspector, centering, and overlay highlighting) |
-| Double-click a row | Opens the object’s catalog page in your browser (Gaia → VizieR, VSX → AAVSO, exoplanets → NASA archive, otherwise SIMBAD) |
+| Double-click a row | Opens the object’s catalog or literature page (Gaia → VizieR, VSX → AAVSO, exoplanets → NASA archive, DES/Pan-STARRS/SkyMapper galaxies → NED, those survey stars → VizieR, HyperLEDA → HyperLEDA, otherwise SIMBAD) |
 | **Center Object** | Pans the image so the selection sits near the view center |
 
 ### Inspector and Work Log
@@ -192,10 +192,12 @@ When a comparison is active, an interactive divider lets you wipe between the pr
 
 ### Estimate magnitude limit
 
-Use **Tools → Estimate magnitude limit...** to open the magnitude-limit dialog. Two modes are available:
+Use **Tools → Estimate magnitude limit...** to open the magnitude-limit dialog. A selector at the top switches between two modes. **Magnitude range** (bright limit, faint limit, and step) stays visible for both.
 
-- **Mark magnitude ladder** — query Gaia across the shared start/increment/final magnitude range and annotate representative stars in each increment (stars per bin, optional “mark only the faintest N”, and optional label scaling by magnitude).
-- **Find actual magnitude limit** — probe Gaia stars from the same starting magnitude to the same final magnitude, stepping by the shared increment, and mark confirmed detections at the estimated limit (all visible stars, or the faintest N). If Explore or a magnitude ladder already recovered a WCS for this image, Find faintest reuses that solve instead of plate-solving again. Recovered JPEG/PNG solves are loaded as 2D celestial WCS so SIP plus a color axis does not abort the estimate.
+- **Magnitude ladder** — mark representative catalog sources in each step (**Sources per step**, **Label size**, and optional **Show only faintest**). Gaia is used to about G = 21; fainter sources come from Pan-STARRS DR1 (Dec ≥ −30°) or DES DR1 farther south, with SkyMapper DR4 as a fallback outside the DES footprint. Sources that do not fall on the image are omitted. With **Only sources that appear** off, the ladder marks a catalog source in each step even when it is too faint to see. Turn that option on to keep only sources detected at the minimum SNR, using the same test as Automatic limit. If the requested faint limit is fainter than the catalog sources actually returned, the Work Log states that catalog limit. Labels show the catalog band (`G` or `r`).
+- **Automatic limit** — test those same catalog sources from the bright limit to the faint limit and mark confirmed detections at the estimated limit. A step needs the chosen number of detections at the minimum SNR. If Explore or a magnitude ladder already recovered a WCS for this image, the estimate reuses that solve instead of plate-solving again. Recovered JPEG/PNG solves are loaded as 2D celestial WCS so SIP plus a color axis does not abort the estimate.
+
+The dialog summarizes the current search above **Mark** or **Estimate limit**. **Clear** removes active Mag Limit markers.
 
 Markers are empty highlighted rings with a soft shade and no center dot, so the star itself stays visible. Selecting a Mag Limit row in the results list centers that star and highlights its ring in gold. Marker and results-list names stay in full instead of being shortened with “...”. Labels can stay a fixed size or grow toward either the faintest or the brightest stars. Marker color, ring thickness, text, and sizes remain configurable in Settings. **Tools → Clear magnitude limit markers** removes active Mag Limit annotations.
 
@@ -249,7 +251,7 @@ The **Manual Annotation** dialog edits geometry (X, Y, radii, rotation), line wi
 
 ### Create collage
 
-**Tools → Create collage** builds a figure from catalog objects that have usable angular-size metadata (`catalog_major_axis_arcmin`, `catalog_minor_axis_arcmin`, or `catalog_size_arcmin`). Objects without size data are skipped and counted in the dialog summary and Work Log.
+**Tools → Create collage** builds a figure from catalog objects that have usable angular-size metadata (`catalog_major_axis_arcmin`, `catalog_minor_axis_arcmin`, or `catalog_size_arcmin`). Faint DES / Pan-STARRS / SkyMapper galaxies from Scientific or Advanced galaxy search are included even when those catalogs omit a measured size; they use a 30″ default crop. Other objects without size data are skipped and counted in the dialog summary and Work Log.
 
 The collage dialog offers:
 

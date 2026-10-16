@@ -4346,7 +4346,12 @@ def _stamp_catalog_bands_onto_measurements(
     """Copy enriched catalog band magnitudes onto measurement rows (including cache hits)."""
     if not measurements or not catalog_by_source_id:
         return 0
-    from photometry_app.core.standard_magnitude import copy_band_magnitudes, seed_gaia_g_band_magnitude
+    from photometry_app.core.standard_magnitude import (
+        apply_comparison_catalog_display_name,
+        copy_band_magnitudes,
+        measurement_may_use_comparison_catalog_name,
+        seed_gaia_g_band_magnitude,
+    )
 
     stamped = 0
     for index, measurement in enumerate(measurements):
@@ -4354,16 +4359,25 @@ def _stamp_catalog_bands_onto_measurements(
         if catalog_star is None:
             continue
         seed_gaia_g_band_magnitude(catalog_star)
+        apply_comparison_catalog_display_name(catalog_star)
         band_magnitudes = copy_band_magnitudes(catalog_star)
         catalog_magnitude = (
             float(catalog_star.magnitude) if catalog_star.magnitude is not None else measurement.catalog_magnitude
         )
-        if not band_magnitudes and catalog_magnitude is None:
+        source_name = measurement.source_name
+        if measurement_may_use_comparison_catalog_name(measurement) and catalog_star.name:
+            source_name = catalog_star.name
+        if not band_magnitudes and catalog_magnitude is None and source_name == measurement.source_name:
             continue
-        if measurement.band_magnitudes == band_magnitudes and measurement.catalog_magnitude == catalog_magnitude:
+        if (
+            measurement.band_magnitudes == band_magnitudes
+            and measurement.catalog_magnitude == catalog_magnitude
+            and measurement.source_name == source_name
+        ):
             continue
         measurements[index] = replace(
             measurement,
+            source_name=source_name,
             catalog_magnitude=catalog_magnitude,
             band_magnitudes=band_magnitudes or dict(measurement.band_magnitudes or {}),
         )

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import unittest
+
+from astropy.time import Time
 
 from photometry_app.core.aavso_aid import (
     AidFilterRejectedAllError,
@@ -13,6 +16,7 @@ from photometry_app.core.aavso_aid import (
     format_aid_download_notes,
     parse_official_aid_page,
     parse_vsx_aid_document,
+    recent_aid_jd_range,
 )
 
 
@@ -53,6 +57,17 @@ class _FakeResponse:
 
 
 class AavsoAidTest(unittest.TestCase):
+    def test_recent_jd_range_ends_at_the_given_time_and_starts_30_days_earlier(self) -> None:
+        now = datetime(2026, 1, 15, 18, 30, tzinfo=UTC)
+        start_jd, end_jd = recent_aid_jd_range(now=now)
+        self.assertAlmostEqual(end_jd, float(Time(now, scale="utc").jd), places=6)
+        self.assertAlmostEqual(end_jd - start_jd, 30.0, places=6)
+
+    def test_recent_jd_range_rejects_a_negative_span(self) -> None:
+        now = datetime(2026, 1, 15, 0, 0, tzinfo=UTC)
+        start_jd, end_jd = recent_aid_jd_range(days=-5, now=now)
+        self.assertAlmostEqual(end_jd - start_jd, 30.0, places=6)
+
     def test_parse_official_page_and_filters(self) -> None:
         observations, next_url, available = parse_official_aid_page(
             {

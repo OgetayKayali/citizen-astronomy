@@ -15,6 +15,7 @@ from photometry_app.core.image_io import (
     is_raw_camera_image_path,
     is_supported_image_path,
     photometry_xisf_scale_factor,
+    read_differential_photometry_image_data,
     read_header,
     read_header_and_shape,
     read_image_data,
@@ -101,6 +102,42 @@ class ImageIoTest(unittest.TestCase):
         self.assertAlmostEqual(float(header["CRPIX1"]), 1371.10375286)
         self.assertAlmostEqual(float(header["CRPIX2"]), 1230.00944601)
 
+    def test_read_header_and_shape_reads_unprefixed_pixinsight_astrometric_solution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "frame.xisf"
+            path.write_text("placeholder", encoding="utf-8")
+            metadata = {
+                "geometry": (100, 80, 1),
+                "FITSKeywords": {
+                    "RA": [{"value": 187.78079}],
+                    "DEC": [{"value": 12.98641}],
+                },
+                "XISFProperties": {
+                    "AstrometricSolution:ProjectionSystem": {"value": "Gnomonic"},
+                    "AstrometricSolution:ReferenceCelestialCoordinates": {
+                        "value": np.asarray([187.78079023, 12.98641097], dtype=np.float64)
+                    },
+                    "AstrometricSolution:ReferenceImageCoordinates": {
+                        "value": np.asarray([50.0, 40.0], dtype=np.float64)
+                    },
+                    "AstrometricSolution:LinearTransformationMatrix": {
+                        "value": np.asarray(
+                            [[-2.29880377e-05, -2.87631494e-04], [2.87607264e-04, -2.29609858e-05]],
+                            dtype=np.float64,
+                        )
+                    },
+                },
+            }
+            with patch("photometry_app.core.image_io._read_xisf_metadata", return_value=metadata):
+                header, width, height = read_header_and_shape(path)
+
+        self.assertEqual((width, height), (100, 80))
+        self.assertEqual(header["CTYPE1"], "RA---TAN")
+        self.assertEqual(header["CTYPE2"], "DEC--TAN")
+        self.assertAlmostEqual(float(header["CRVAL1"]), 187.78079023)
+        self.assertAlmostEqual(float(header["CRVAL2"]), 12.98641097)
+        self.assertAlmostEqual(float(header["CD1_2"]), -2.87631494e-04)
+
     def test_read_header_and_shape_promotes_timezone_aware_xisf_observation_time(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "frame.xisf"
@@ -172,6 +209,25 @@ class ImageIoTest(unittest.TestCase):
         self.assertEqual(header["DATE-OBS"], "2023-11-14T22:13:20Z")
         self.assertEqual(data.shape, (3, 4, 3))
         np.testing.assert_allclose(data[0, 0], np.asarray([0.0, 1.0, 2.0], dtype=np.float32))
+
+    def test_read_differential_photometry_raw_collapses_rgb_to_luminance(self) -> None:
+        path = Path("frame.cr2")
+        rgb = np.asarray(
+            [
+                [[30.0, 60.0, 90.0], [3.0, 6.0, 9.0]],
+                [[12.0, 24.0, 36.0], [100.0, 200.0, 300.0]],
+            ],
+            dtype=np.float32,
+        )
+
+        with patch("photometry_app.core.image_io.read_photometry_image_data", return_value=rgb):
+            data = read_differential_photometry_image_data(path, dtype=np.float32)
+
+        self.assertEqual(data.shape, (2, 2))
+        np.testing.assert_allclose(
+            data,
+            np.asarray([[60.0, 6.0], [24.0, 200.0]], dtype=np.float32),
+        )
 
     def test_read_header_and_shape_reads_standard_raster_image_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

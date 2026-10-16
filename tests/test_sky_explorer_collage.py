@@ -111,6 +111,40 @@ class SkyExplorerCollageCoreTest(unittest.TestCase):
         self.assertEqual([obj.name for obj in eligible], ["M 31", "Ellipse"])
         self.assertEqual([obj.name for obj in skipped], ["Star", "Zero"])
 
+    def test_photometric_galaxies_are_eligible_without_catalog_size(self) -> None:
+        wcs = _make_wcs()
+        world = wcs.pixel_to_world(100.0, 80.0)
+        des_galaxy = SkyExplorerObject(
+            "deep_sky",
+            "des-dr1",
+            "J220948.74-471448.0",
+            "DES J220948.74-471448.0",
+            "Galaxy",
+            float(world.ra.deg),
+            float(world.dec.deg),
+            100.0,
+            80.0,
+            18.85,
+            6.0,
+            "DES J220948.74-471448.0",
+            {"catalog_type": "G"},
+        )
+        self.assertTrue(sky_explorer_object_has_catalog_size(des_galaxy))
+        axes = sky_explorer_catalog_size_axes(des_galaxy)
+        assert axes is not None
+        self.assertGreater(axes.major_axis_arcmin, 0.0)
+        eligible, skipped = partition_sky_explorer_collage_objects((des_galaxy,))
+        self.assertEqual([obj.name for obj in eligible], ["DES J220948.74-471448.0"])
+        self.assertEqual(skipped, ())
+        bounds = sky_explorer_object_crop_pixel_bounds(
+            des_galaxy,
+            wcs,
+            margin_fraction=0.15,
+            image_width=200,
+            image_height=160,
+        )
+        self.assertIsNotNone(bounds)
+
     def test_default_margin_expands_crop_by_fifteen_percent(self) -> None:
         wcs = _make_wcs()
         sky_object = _sky_object(

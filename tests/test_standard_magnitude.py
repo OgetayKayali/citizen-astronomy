@@ -12,9 +12,11 @@ from photometry_app.core.pipeline import (
     _stamp_catalog_bands_onto_measurements,
 )
 from photometry_app.core.standard_magnitude import (
+    catalog_needs_comparison_identifiers,
     get_band_magnitudes,
     merge_band_magnitudes_by_sky_match,
     normalize_photometric_band,
+    preferred_comparison_catalog_name,
     resolve_band_catalog_magnitude,
     set_band_magnitude,
 )
@@ -73,6 +75,77 @@ class StandardMagnitudeTest(unittest.TestCase):
         self.assertAlmostEqual(mag or 0.0, 12.2, places=6)
         self.assertAlmostEqual(error or 0.0, 0.04, places=6)
         self.assertEqual(source, "apass")
+
+    def test_merge_band_magnitudes_labels_gaia_comps_with_auid_over_apass(self) -> None:
+        target = CatalogStar("gaia-dr3", "3017367151399567872", "3017367151399567872", 146.27, 56.63, 13.0, False)
+        apass_donor = CatalogStar(
+            "apass9",
+            "a1",
+            "A1",
+            146.2701,
+            56.6301,
+            12.2,
+            False,
+            metadata={"band_magnitudes": {"V": {"mag": 12.2, "error": 0.04, "source": "apass"}}},
+        )
+        vsp_donor = CatalogStar(
+            "aavso-vsp",
+            "000-BBX-619",
+            "114",
+            146.27005,
+            56.63005,
+            12.1,
+            False,
+            metadata={
+                "band_magnitudes": {"V": {"mag": 12.1, "error": 0.01, "source": "vsp"}},
+                "auid": "000-BBX-619",
+                "vsp_label": "114",
+            },
+        )
+
+        self.assertEqual(merge_band_magnitudes_by_sky_match([target], [apass_donor], source="apass"), 1)
+        self.assertTrue(str(target.metadata.get("apass_id") or "").startswith("APASS J"))
+        self.assertTrue(target.name.startswith("APASS J"))
+        self.assertTrue(catalog_needs_comparison_identifiers([]) is False)
+
+        self.assertEqual(merge_band_magnitudes_by_sky_match([target], [vsp_donor], source="vsp"), 1)
+        self.assertEqual(target.metadata.get("auid"), "000-BBX-619")
+        self.assertEqual(target.name, "000-BBX-619")
+        self.assertEqual(preferred_comparison_catalog_name(target), "000-BBX-619")
+        self.assertFalse(catalog_needs_comparison_identifiers([target]))
+
+    def test_merge_band_magnitudes_keeps_user_assigned_comparison_names(self) -> None:
+        target = CatalogStar("manual", "manual-comp-1", "Comp 1", 146.27, 56.63, None, False)
+        vsp_donor = CatalogStar(
+            "aavso-vsp",
+            "000-BBX-619",
+            "114",
+            146.27005,
+            56.63005,
+            12.1,
+            False,
+            metadata={"band_magnitudes": {"V": {"mag": 12.1, "source": "vsp"}}, "auid": "000-BBX-619"},
+        )
+
+        self.assertEqual(merge_band_magnitudes_by_sky_match([target], [vsp_donor], source="vsp"), 1)
+        self.assertEqual(target.name, "Comp 1")
+        self.assertEqual(target.metadata.get("auid"), "000-BBX-619")
+
+    def test_catalog_needs_comparison_identifiers_for_legacy_gaia_labels(self) -> None:
+        star = CatalogStar(
+            "gaia-dr3",
+            "3017367151399567872",
+            "3017367151399567872",
+            146.27,
+            56.63,
+            12.2,
+            False,
+            metadata={"band_magnitudes": {"V": {"mag": 12.2, "source": "apass"}}},
+        )
+        self.assertTrue(catalog_needs_comparison_identifiers([star]))
+        star.metadata["apass_id"] = "APASS J094827.1+563748.0"
+        star.name = "APASS J094827.1+563748.0"
+        self.assertFalse(catalog_needs_comparison_identifiers([star]))
 
     def test_enrich_manual_catalog_entries_seeds_gaia_g_from_magnitude_only_donors(self) -> None:
         manual_comp = CatalogStar("manual", "manual-comp-1", "Comp 1", 146.2702, 56.6302, None, False)
@@ -194,6 +267,49 @@ class StandardMagnitudeTest(unittest.TestCase):
         self.assertEqual(stamped, 1)
         self.assertAlmostEqual(rows[0].catalog_magnitude or 0.0, 11.6, places=6)
         self.assertEqual(rows[0].band_magnitudes["V"]["source"], "vsp")
+        self.assertEqual(rows[0].source_name, "Comp 1")
+
+    def test_stamp_catalog_bands_renames_gaia_reference_measurements(self) -> None:
+        measurement = PhotometryMeasurement(
+            source_id="3017367151399567872",
+            source_name="3017367151399567872",
+            catalog="gaia-dr3",
+            object_name="DY Her",
+            file_path=Path("C:/synthetic/frame.fit"),
+            observation_time=datetime(2026, 3, 16, 1, 0, 0),
+            filter_name="V",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            x=100.0,
+            y=100.0,
+            flux=2000.0,
+            flux_error=8.0,
+            instrumental_magnitude=-8.2,
+            differential_magnitude=None,
+            is_variable=False,
+            is_reference=True,
+            catalog_magnitude=13.0,
+            band_magnitudes={},
+            flags=[],
+        )
+        catalog_star = CatalogStar(
+            "gaia-dr3",
+            "3017367151399567872",
+            "3017367151399567872",
+            10.0,
+            20.0,
+            11.6,
+            False,
+            metadata={
+                "band_magnitudes": {"V": {"mag": 11.6, "error": 0.02, "source": "vsp"}},
+                "auid": "000-BBX-619",
+            },
+        )
+        rows = [measurement]
+        stamped = _stamp_catalog_bands_onto_measurements(rows, {"3017367151399567872": catalog_star})
+        self.assertEqual(stamped, 1)
+        self.assertEqual(rows[0].source_name, "000-BBX-619")
+        self.assertEqual(catalog_star.name, "000-BBX-619")
 
     def test_apply_differential_photometry_uses_gaia_g_fallback_for_standard_on_bv_filters(self) -> None:
         root = Path("C:/synthetic")
@@ -381,7 +497,7 @@ class StandardMagnitudeTest(unittest.TestCase):
             height=1000,
             wcs_path=Path("C:/synthetic/field.wcs"),
         )
-        gaia = [CatalogStar("gaia-dr3", "g1", "G1", 146.27, 56.63, 12.5, False)]
+        gaia = [CatalogStar("gaia-dr3", "3017367151399567872", "3017367151399567872", 146.27, 56.63, 12.5, False)]
         apass_donor = CatalogStar(
             "apass9",
             "a1",
@@ -394,13 +510,13 @@ class StandardMagnitudeTest(unittest.TestCase):
         )
         vsp_donor = CatalogStar(
             "aavso-vsp",
-            "v1",
+            "000-BBX-619",
             "114",
             146.27004,
             56.63004,
             12.1,
             False,
-            metadata={"band_magnitudes": {"V": {"mag": 12.1, "source": "vsp"}}},
+            metadata={"band_magnitudes": {"V": {"mag": 12.1, "source": "vsp"}}, "auid": "000-BBX-619"},
         )
         with (
             patch("photometry_app.core.standard_magnitude.query_apass_field", return_value=[apass_donor]),
@@ -412,6 +528,8 @@ class StandardMagnitudeTest(unittest.TestCase):
         mag, _error, source = resolve_band_catalog_magnitude(gaia[0], "V")
         self.assertAlmostEqual(mag or 0.0, 12.1, places=6)
         self.assertEqual(source, "vsp")
+        self.assertEqual(gaia[0].name, "000-BBX-619")
+        self.assertEqual(gaia[0].metadata.get("auid"), "000-BBX-619")
 
 
 if __name__ == "__main__":

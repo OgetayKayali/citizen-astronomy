@@ -28,6 +28,8 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from photometry_app.core.hr_diagram import HrMeasurementRow, HrWorkingTable
 
+from photometry_app.core.hr_diagram_filter import HrDiagramFilter, row_passes_hr_diagram_filter
+
 from photometry_app.core.plotting import resolve_light_curve_theme_colors
 
 
@@ -293,6 +295,8 @@ class HrDiagramPlotWidget(QWidget):
         self._hide_saturated = True
 
         self._require_parallax = True
+
+        self._diagram_filter = HrDiagramFilter()
 
         self._apparent_magnitude_min = _DEFAULT_APPARENT_MAG_MIN
 
@@ -1145,6 +1149,14 @@ class HrDiagramPlotWidget(QWidget):
 
 
 
+    def set_diagram_filter(self, diagram_filter: HrDiagramFilter | None) -> None:
+
+        self._diagram_filter = HrDiagramFilter() if diagram_filter is None else diagram_filter
+
+        self._rerender_working_table()
+
+
+
     def set_apparent_magnitude_filter(self, minimum_magnitude: float, maximum_magnitude: float) -> None:
 
         normalized_minimum, normalized_maximum = self._normalized_apparent_magnitude_range(
@@ -1235,6 +1247,8 @@ class HrDiagramPlotWidget(QWidget):
 
         highlighted_row_keys: set[tuple[str, str]] | None = None,
 
+        diagram_filter: HrDiagramFilter | None = None,
+
     ) -> None:
 
         previous_table = self._working_table
@@ -1254,6 +1268,8 @@ class HrDiagramPlotWidget(QWidget):
         self._hide_saturated = hide_saturated
 
         self._require_parallax = require_parallax
+
+        self._diagram_filter = HrDiagramFilter() if diagram_filter is None else diagram_filter
 
         self._apparent_magnitude_min, self._apparent_magnitude_max = self._normalized_apparent_magnitude_range(
 
@@ -1858,6 +1874,10 @@ class HrDiagramPlotWidget(QWidget):
             if apparent_magnitude < self._apparent_magnitude_min or apparent_magnitude > self._apparent_magnitude_max:
 
                 return False
+
+        if not row_passes_hr_diagram_filter(row, self._diagram_filter):
+
+            return False
 
         return True
 

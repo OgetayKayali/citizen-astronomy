@@ -16,6 +16,10 @@ from pathlib import Path
 
 
 
+from photometry_app.assistant.providers import DEFAULT_PROVIDER_ID as DEFAULT_AI_PROVIDER_ID
+from photometry_app.assistant.providers import PROVIDER_IDS as AI_PROVIDER_IDS
+from photometry_app.assistant.providers import REASONING_EFFORT_DEFAULT as DEFAULT_AI_REASONING_EFFORT
+from photometry_app.assistant.providers import normalize_provider_id, normalize_reasoning_effort
 from photometry_app.core.target_markers import coerce_asteroid_visual_marker_style
 from photometry_app.core.models import (
 
@@ -538,6 +542,7 @@ class AppSettings:
     sky_explorer_mag_limit_start_magnitude: float = 12.0
     sky_explorer_mag_limit_max_magnitude: float = 17.0
     sky_explorer_mag_limit_text_scale_mode: str = "off"
+    sky_explorer_mag_limit_only_detected_sources: bool = False
 
     sky_explorer_mag_limit_auto_stars_per_bin: int = 10
 
@@ -570,6 +575,8 @@ class AppSettings:
     sky_explorer_scale_extended_nebulae: bool = True
 
     sky_explorer_scale_overlay_strokes: bool = True
+
+    sky_explorer_show_roi_fov_label: bool = True
 
     sky_explorer_marker_color_relation: str = "stroke_dark_fill_bright"
 
@@ -931,6 +938,14 @@ class AppSettings:
     calculated_period_cache: dict[str, dict[str, dict[str, object]]] | None = None
 
     oc_extrema_logs: dict[str, dict[str, object]] | None = None
+
+    ai_provider: str = DEFAULT_AI_PROVIDER_ID
+
+    ai_models: dict[str, str] | None = None
+
+    ai_openai_compatible_base_url: str = ""
+
+    ai_reasoning_effort: str = DEFAULT_AI_REASONING_EFFORT
 
 
 
@@ -2015,6 +2030,7 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         sky_explorer_mag_limit_text_scale_mode=_coerce_sky_explorer_mag_limit_text_scale_mode(
             payload.get("sky_explorer_mag_limit_text_scale_mode", "off")
         ),
+        sky_explorer_mag_limit_only_detected_sources=bool(payload.get("sky_explorer_mag_limit_only_detected_sources", False)),
         sky_explorer_mag_limit_auto_stars_per_bin=_coerce_sky_explorer_mag_limit_auto_stars_per_bin(payload.get("sky_explorer_mag_limit_auto_stars_per_bin", 10)),
         sky_explorer_mag_limit_auto_required_visible_stars=_coerce_sky_explorer_mag_limit_auto_required_visible_stars(
             payload.get("sky_explorer_mag_limit_auto_required_visible_stars", 7),
@@ -2034,6 +2050,7 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         sky_explorer_hide_objects_without_magnitude=bool(payload.get("sky_explorer_hide_objects_without_magnitude", False)),
         sky_explorer_scale_extended_nebulae=bool(payload.get("sky_explorer_scale_extended_nebulae", True)),
         sky_explorer_scale_overlay_strokes=bool(payload.get("sky_explorer_scale_overlay_strokes", True)),
+        sky_explorer_show_roi_fov_label=bool(payload.get("sky_explorer_show_roi_fov_label", True)),
         sky_explorer_marker_color_relation=_coerce_sky_explorer_marker_color_relation(payload.get("sky_explorer_marker_color_relation")),
         sky_explorer_text_color_relation=_coerce_sky_explorer_text_color_relation(payload.get("sky_explorer_text_color_relation")),
         sky_explorer_default_text_font_family=_coerce_sky_explorer_default_text_font_family(payload.get("sky_explorer_default_text_font_family", "")),
@@ -2400,6 +2417,14 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
         oc_extrema_logs=_coerce_oc_extrema_logs(payload.get("oc_extrema_logs")),
 
+        ai_provider=normalize_provider_id(payload.get("ai_provider")),
+
+        ai_models=_coerce_ai_models(payload.get("ai_models")),
+
+        ai_openai_compatible_base_url=_coerce_ai_base_url(payload.get("ai_openai_compatible_base_url")),
+
+        ai_reasoning_effort=normalize_reasoning_effort(payload.get("ai_reasoning_effort")),
+
     )
 
 
@@ -2726,6 +2751,7 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "sky_explorer_mag_limit_start_magnitude": _coerce_sky_explorer_mag_limit_auto_start_magnitude(settings.sky_explorer_mag_limit_start_magnitude),
         "sky_explorer_mag_limit_max_magnitude": _coerce_sky_explorer_gaia_max_magnitude(settings.sky_explorer_mag_limit_max_magnitude),
         "sky_explorer_mag_limit_text_scale_mode": _coerce_sky_explorer_mag_limit_text_scale_mode(settings.sky_explorer_mag_limit_text_scale_mode),
+        "sky_explorer_mag_limit_only_detected_sources": bool(settings.sky_explorer_mag_limit_only_detected_sources),
         "sky_explorer_mag_limit_auto_stars_per_bin": _coerce_sky_explorer_mag_limit_auto_stars_per_bin(settings.sky_explorer_mag_limit_auto_stars_per_bin),
         "sky_explorer_mag_limit_auto_required_visible_stars": _coerce_sky_explorer_mag_limit_auto_required_visible_stars(
             settings.sky_explorer_mag_limit_auto_required_visible_stars,
@@ -2745,6 +2771,7 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "sky_explorer_hide_objects_without_magnitude": bool(settings.sky_explorer_hide_objects_without_magnitude),
         "sky_explorer_scale_extended_nebulae": bool(settings.sky_explorer_scale_extended_nebulae),
         "sky_explorer_scale_overlay_strokes": bool(settings.sky_explorer_scale_overlay_strokes),
+        "sky_explorer_show_roi_fov_label": bool(settings.sky_explorer_show_roi_fov_label),
         "sky_explorer_marker_color_relation": _coerce_sky_explorer_marker_color_relation(settings.sky_explorer_marker_color_relation),
         "sky_explorer_text_color_relation": _coerce_sky_explorer_text_color_relation(settings.sky_explorer_text_color_relation),
         "sky_explorer_default_text_font_family": _coerce_sky_explorer_default_text_font_family(settings.sky_explorer_default_text_font_family),
@@ -3132,6 +3159,14 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "calculated_period_cache": _period_cache_to_payload(settings.calculated_period_cache or {}),
 
         "oc_extrema_logs": _oc_extrema_logs_to_payload(settings.oc_extrema_logs or {}),
+
+        "ai_provider": normalize_provider_id(settings.ai_provider),
+
+        "ai_models": _coerce_ai_models(settings.ai_models),
+
+        "ai_openai_compatible_base_url": _coerce_ai_base_url(settings.ai_openai_compatible_base_url),
+
+        "ai_reasoning_effort": normalize_reasoning_effort(settings.ai_reasoning_effort),
 
     }
 
@@ -4402,6 +4437,23 @@ def _oc_extrema_logs_to_payload(value: dict[str, dict[str, object]]) -> dict[str
         for star_key, payload in value.items()
         if isinstance(star_key, str) and isinstance(payload, dict)
     }
+
+
+def _coerce_ai_models(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    models: dict[str, str] = {}
+    for provider_id, model in value.items():
+        if provider_id not in AI_PROVIDER_IDS or not isinstance(model, str):
+            continue
+        name = " ".join(model.split())
+        if name:
+            models[provider_id] = name
+    return models
+
+
+def _coerce_ai_base_url(value: object) -> str:
+    return str(value or "").strip().rstrip("/")
 
 
 def _period_cache_to_payload(value: dict[str, dict[str, dict[str, object]]]) -> dict[str, dict[str, dict[str, object]]]:

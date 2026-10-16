@@ -1,507 +1,1043 @@
 # Differential Photometry
 
-## Introduction
+Differential photometry measures how a target changes relative to stars in the same field. The target and comparison stars pass through nearly the same atmosphere and optical path, so much of the shared transparency variation divides out.
 
-Somewhere in your images, a star is changing brightness -- and you might be the first person to notice.
+CAst turns an image sequence into a reviewable measurement workspace. It can identify cataloged variables and exoplanet hosts in the field, select comparison stars for each target, measure every frame, build light curves, estimate periods, search uncataloged field stars for variability, and write a science report with an AAVSO Extended Format file and preflight review.
 
-Differential photometry is the technique of measuring how a star's brightness changes over time by comparing it to nearby stars in the same field. Because those comparison stars share the same atmosphere, the same clouds, and the same telescope optics, most of the noise cancels out. What remains is the signal: a light curve that tells the story of what is happening to the star.
-
-**Citizen Astronomy (CAst)** implements a complete differential photometry pipeline. You provide a folder of FITS or XISF images, and CAst handles the rest -- scanning your frames, identifying stars, measuring fluxes, selecting comparisons, computing differential magnitudes, estimating periods, and packaging your results in formats ready for the scientific community.
-
-### What you can do with this mode
-
-- **Measure variable stars.** Generate light curves for eclipsing binaries, pulsating stars, rotational variables, and other types of stellar variability.
-- **Detect exoplanet transits.** Measure the subtle dip in a star's brightness as a planet passes in front of it.
-- **Discover new variables.** CAst includes a discovery pipeline that systematically measures non-cataloged Gaia stars in your field, scores them for variability, and flags candidates that may have never been reported. You could be the one to find them.
-- **Submit to AAVSO.** CAst generates AAVSO Extended Format exports with preflight validation, ready for upload to the American Association of Variable Star Observers database. Many cataloged variable stars have sparse or no observations at all. Every observation you submit fills a gap.
-- **Build science-ready reports.** Full export bundles include accepted and rejected observation tables, reduction manifests, reference-star manifests, provenance records, and annotated images -- everything a reviewer or collaborator needs to evaluate your work.
-
-### Why this matters
-
-Professional observatories cannot watch every star, every night. Thousands of known variable stars have fewer than a handful of observations in the AAVSO International Database. Tens of thousands more have never been observed at all. And for every cataloged variable, there are unlisted stars quietly varying in brightness, waiting to be noticed by someone pointing a telescope at the right patch of sky.
-
-Your images already contain these signals. This tool helps you extract them.
+The automation is a starting point, not a black box. You can inspect the source frame behind a point, change comparison stars, place apertures manually, review rejected measurements, and trace every exported result back to its inputs.
 
 ---
 
-## How It Works
+## What makes this mode useful
 
-### Step 1: Image Scanning and Metadata Extraction
+Professional differential-photometry programs already exist. CAst is useful for a different reason: differential photometry is one part of a broader, linked astronomy workspace.
 
-When you open a folder, CAst scans for `.fit`, `.fits`, `.xisf`, and TIFF frames. JPG, PNG, and camera RAW files in the folder are ignored, and CAst shows how many of each type were excluded because they are not suitable for differential photometry. For each accepted frame it reads:
-
-- **Observation timestamp** from `DATE-OBS` (or PixInsight's `Observation:Time:Start` / `Observation:Time:End` UTC properties when available). Naive timestamps without timezone information are interpreted using the configured Image Timestamp Timezone setting.
-- **Exposure time** from `EXPTIME`, `EXPOSURE`, `EXPOSURE_TIME`, `DARKTIME`, or `EXPOSUREMS` (milliseconds, scaled by 0.001).
-- **Filter** from `FILTER`.
-- **WCS** (World Coordinate System) for mapping pixel coordinates to sky coordinates.
-- **Saturation threshold** from header keywords (`SATURATE`, `SATLEVEL`, `DATAMAX`, etc.), falling back to bit-depth estimates (65,535 for 16-bit unsigned).
-
-After scanning, a Loaded Results dialog lets you choose which object to analyze.
-
-![Opening a folder in Differential Photometry](images/dif_phot_openfolder.jpg)
-
-### Step 2: WCS Validation and Plate Solving
-
-Every frame needs a valid World Coordinate System so that CAst can identify which star is which across multiple images. CAst validates the WCS by checking for `CTYPE1`/`CTYPE2` keywords containing RA/DEC projections, along with `CRVAL`, `CRPIX`, and CD or PC matrix keywords.
-
-For a multi-frame folder, CAst picks one **folder WCS reading method** from the first frame using a central-field detection→Gaia check (bright magnitude bins first: G≈5–10, then 10–12, then 12–14…). It scores a sample of moderately bright image detections against isolated Gaia stars (skipping the very brightest/saturated peaks by default), optionally subtracts a small coherent shift, and can hard-pass or soft-accept a stable moderate match. **Settings → Advanced** exposes sample size, skip-brightest, match tolerance, isolation, shift subtraction, and soft-accept limits. That method is then applied independently to every frame:
-
-- **Accept embedded CRVAL/WCS** when the header sky solution already matches Gaia.
-- **Repair CRVAL from CCVALS** when the pointing keywords disagree with the WCS (common on some NINA headers with non-standard float cards).
-- **Re-solve each frame** by running **local Gaia matching** and **astrometry.net** together when a key is set, keeping whichever solution finishes first.
-
-**Settings → Advanced** exposes the bin thresholds and approval fraction; the Work Log records per-bin pass/fail so you can see why a method was chosen. Generate/Apply reuse the chosen method and skip repeating the full Gaia probe when you are only re-measuring with preserved views.
-
-If a frame still lacks a usable WCS, CAst recovers one from metadata-seeded Gaia matching and, when configured, the **astrometry.net** API at the same time. The solver that succeeds first is used; the other is stopped. Astrometry uploads the image with hints (center coordinates, scale bounds, parity) and caches the solved WCS. For large images (6000+ pixels), a 4x downsample is used. Frames sharing the same alignment (e.g., PixInsight StarAlignment outputs) can share a single solved WCS.
-
-### Step 3: Catalog Queries
-
-Using the solved WCS, CAst queries external catalogs to identify stars in your field:
-
-- **Gaia DR3** -- positions, magnitudes (G, BP, RP), proper motions, and parallaxes for reference star selection.
-- **VSX** (AAVSO Variable Star Index) -- known variable star designations, types, periods, and magnitude ranges.
-- **NASA Exoplanet Archive** -- known exoplanet host stars for transit monitoring.
-
-Any Gaia star within 30 arcseconds of a known variable is excluded from the reference star pool.
-
-### Step 4: Frame Calibration (Optional)
-
-If you have calibration frames, CAst applies the standard CCD reduction formula:
-
-$$
-\text{calibrated} = \frac{\text{light} - \text{bias} - s \cdot \text{dark}}{\text{flat}_{\text{norm}}}
-$$
-
-Where:
-
-- **Master bias** is the pixel-wise median of all bias frames.
-- **Master dark** is the pixel-wise median of dark frames, bias-subtracted, and scaled by the exposure ratio: $s = t_{\text{science}} / t_{\text{dark}}$.
-- **Master flat** is the pixel-wise median of flat frames, bias- and dark-subtracted, then normalized by dividing by its own median positive value. Pixels at or below zero are set to 1.0 to prevent division artifacts.
-
-Non-finite pixels in the calibrated output are set to zero. Calibrated frames can optionally be WCS-aligned onto a common grid.
-
-![Calibration screen](images/calibration.jpg)
+- **The image and the result stay connected.** Select a target or measurement, inspect its aperture on the original frame, and compare it with the light curve and measurement table.
+- **It is built for exploration and teaching.** Phase-folded curves, period fits, target-field animations, and O-C diagrams show the physical behavior behind a changing brightness measurement.
+- **It analyzes the field, not only one typed coordinate.** CAst returns cataloged variables and exoplanet hosts and can run a separate discovery pass over eligible Gaia stars.
+- **Automation does not remove manual control.** Accept the automatic ensemble, use Scan Comps, or construct an independent target/comparison/check-star reduction with Aperture Editor.
+- **AAVSO preparation is part of the workflow.** The report includes an Extended Format file, accepted and rejected observations, reference-star records, provenance, and a preflight report. You review and revise before uploading.
+- **CAst is free and open source.** The methods, limitations, and exported intermediate records can be inspected rather than hidden behind a proprietary reduction.
+- **Differential Photometry is not the whole application.** The same desktop program also contains tools for HR diagrams, sky exploration, asteroid/comet work, and other image-based astronomy.
 
 ---
 
-## The Measurement Pipeline
+# Tutorial
 
-### FWHM Estimation
+Follow this section in order for a first reduction. Settings are collected later in a separate reference; the tutorial links to the relevant setting only when it first matters.
 
-Before measuring any star, CAst estimates the seeing by measuring the Full Width at Half Maximum (FWHM) of bright stars in the frame.
+## 1. Start Differential Photometry mode
 
-**Per-star FWHM** is measured in a 15x15 pixel cutout:
+1. Launch CAst.
+2. Open **Mode**.
+3. Choose **Differential Photometry**.
 
-1. Background is estimated using sigma-clipped statistics (3-sigma clipping).
-2. The stellar signal is isolated above a threshold of max(3% of peak, 1.5x background scatter).
-3. A signal-weighted centroid is computed within the cutout.
-4. **Primary method (radial profile):** Pixel values are binned by radial distance from the centroid in 0.5-pixel steps. The radius where the median annular signal drops below half the peak is found by linear interpolation. FWHM = 2x that radius.
-5. **Fallback (second moments):** If the radial profile method fails, weighted second moments are computed, and FWHM = 2.355 x sigma (the Gaussian conversion constant $2\sqrt{2 \ln 2}$).
+The window title changes to **Citizen Astronomy - Differential Photometry**. The main action at the top left is **Open**.
 
-Only values between 0.8 and 14 pixels are accepted.
+> **Screenshot needed:** Mode menu or launcher with Differential Photometry selected.
 
-**Per-frame FWHM** is the median of individual measurements from up to 24 of the brightest stars in the frame.
+Use this mode for a time series: repeated observations of the same field. HR Diagram mode is for measuring many stars in one image and is a different workflow.
 
-### Aperture Photometry
+## 2. Prepare the image sequence
 
-CAst uses circular aperture photometry, implemented with `photutils`. Two sizing modes are available:
+### Supported inputs
 
-**Fixed mode** uses pixel-valued radii directly:
+The differential scanner accepts:
 
+- `.fit`
+- `.fits`
+- `.xisf`
+- `.tif`
+- `.tiff`
+- camera RAW formats decoded by LibRaw, including `.cr2`, `.cr3`, `.nef`, `.arw`, `.dng`, `.orf`, `.rw2`, `.raf`, and `.pef`
 
-| Parameter       | Default |
-| --------------- | ------- |
-| Aperture radius | 5.0 px  |
-| Inner annulus   | 8.0 px  |
-| Outer annulus   | 12.0 px |
+JPG and PNG files in the selected folder are reported and ignored.
 
+Each useful frame should contain:
 
-**FWHM-scaled mode** (recommended) adapts apertures to the measured seeing:
+- an observation time, normally `DATE-OBS`;
+- an exposure time;
+- a filter name when filters need to remain separate;
+- enough stars for registration, plate solving, and comparison photometry;
+- valid celestial WCS, or enough pointing/scale information for CAst to solve the frame.
 
+If a timestamp has no timezone, CAst interprets it using **Settings → Open Settings → Differential Photometry → Image Timestamp Timezone**. Set this before processing if the camera wrote local time.
 
-| Parameter       | Default scale |
-| --------------- | ------------- |
-| Aperture radius | 1.6x FWHM     |
-| Inner annulus   | 3.0x FWHM     |
-| Outer annulus   | 4.5x FWHM     |
+### Monochrome and color-camera data
 
+Differential measurement requires a two-dimensional image plane. A monochrome FITS/XISF/TIFF sequence is the normal input.
 
-Minimum separations are enforced: the inner annulus is at least 1 pixel larger than the aperture, and the outer annulus is at least 1 pixel larger than the inner.
+When the scan finds camera RAW files, CAst shows a warning before loading the dataset. Choose **Yes** only after reviewing the limitations. CAst decodes each RAW file as linear 16-bit RGB, then averages the demosaiced red, green, and blue channels into one synthetic luminance plane for aperture photometry.
 
-![Aperture radius, inner annulus, and outer annulus on W UMa](images/WUMa_rings.jpg)
+This direct RAW path is convenient, but it is not equivalent to monochrome measurements through a defined photometric filter. Bayer demosaicing, camera white balance and channel response, differences between the colors of target and comparison stars, and incomplete filter or exposure metadata can introduce systematic error. Treat direct RAW results as provisional until they are validated. Do not submit them to AAVSO as a standard passband merely because CAst produced an export file.
 
-#### Flux Extraction
+For precision work with one-shot-color or other multichannel data:
 
-For each star in each frame:
+1. calibrate and debayer the frames in the usual preprocessing software;
+2. extract one consistent channel or a linear luminance plane;
+3. save each result as a two-dimensional scientific image;
+4. place one filter/channel sequence in the folder you will open.
 
-1. **Centroid recentering:** The star's position is refined using a signal-weighted centroid within a local cutout. The shift is capped at 8 pixels from the WCS-predicted position.
-2. **Aperture sum:** A `CircularAperture` is placed at the recentered position and the total pixel signal is summed.
-3. **Sky background:** A `CircularAnnulus` is placed around the star. The annulus pixels are sigma-clipped (3-sigma) and the **median** of the remaining pixels is taken as the local sky background per pixel.
-4. **Background subtraction:**
+Do not mix red, green, blue, and luminance measurements as if they were one filter. Process them as separate, consistently named series when color-dependent photometry is required.
+
+Other multichannel FITS, XISF, or TIFF data are not collapsed automatically by the Differential Photometry measurement engine. Export a two-dimensional channel or luminance plane first.
+
+### Calibrated versus uncalibrated frames
+
+You can provide already calibrated light frames. Alternatively, enable **Calibration** in the Differential Photometry Workflow and supply bias, dark, and flat frames when prompted.
+
+For camera RAW precision work, calibrate the sensor data before demosaicing in software designed for the camera format, then export one consistent linear channel or luminance sequence. CAst's direct RAW path begins with a demosaiced RGB decode, so applying masters afterward is not equivalent to calibration on the original Bayer samples.
+
+Already aligned frames can be marked through **Settings → Alignment**. Do not claim a stack is aligned merely because the telescope tracked well; this option means the images share the same pixel geometry.
+
+## 3. Open the folder
+
+1. Click **Open** at the top left.
+2. In **Differential Photometry Workflow**, find section **1. Folder**.
+3. Click **Folder**.
+4. Choose the directory containing the image sequence.
+5. Wait while CAst scans the folder.
+
+> **Screenshot needed:** The top-left Open button and the complete Differential Photometry Workflow window.
+
+**File → Open Folder** is an alternative route to a folder scan. For a first run, use **Open** because it keeps the folder, pipeline options, progress, and **Generate** action in one window.
+
+Do not use **File → Open File** for a differential sequence. Differential Photometry operates on a folder.
+
+### Loaded Results
+
+If CAst finds more than one object grouping, **Loaded Results** opens after the scan.
+
+1. Review the Object, Files, Solved, Needs Solve, and Invalid columns.
+2. Select the object you want.
+3. Click **Use Selected Object**.
+
+**Clear Cache for Selected Object** removes that object's saved scan/reduction state. Use it when the source files or saved manual apertures no longer match the intended reduction.
+
+> **Screenshot needed:** Loaded Results with one object selected.
+
+## 4. Configure the workflow
+
+Section **2. Pipeline** contains the reduction stages.
+
+### Pipeline options
+
+- **Calibration** — opens the calibration workflow before science measurement.
+- **Star Alignment** — uses the alignment path for the sequence.
+- **Plate-solving** — required and kept on. Embedded WCS may be accepted or repaired; otherwise CAst solves the frame.
+- **Filter Targets** — required and kept on.
+- **Light Curves** — required and kept on.
+- **Pull Periods** — requests catalog/literature periods where available.
+- **Calculate Periods** — lets CAst infer periods from measured data.
+- **Create Measurements Table** — prepares the detailed table during the run. Leave it off when first-run speed matters; the Measurements tab can load it later.
+
+Calibration and alignment are optional. Plate solving, target filtering, and light-curve construction are core stages.
+
+### Target filters
+
+Designation filters limit which catalog naming families enter the run. The available families include named variables and survey-style designations such as Gaia, ASAS-SN, ATLAS, and ZTF.
+
+**Brightest Variables** limits processing to a percentage of the brightest eligible variables.
+
+**Analyze Best** uses a field-screening path intended to keep the most useful measurable targets, including an AAVSO-friendly signal range. It is an alternative to the ordinary brightest-variable selection, not an extra brightness filter to stack on top.
+
+For a first run:
+
+1. leave the designation families enabled;
+2. keep **Brightest Variables** at a manageable percentage if the field is very dense;
+3. leave **Pull Periods** and **Calculate Periods** on;
+4. leave **Create Measurements Table** off unless you need every measurement row immediately.
+
+> **Screenshot needed:** Filter Targets with Brightest Variables and Analyze Best visible.
+
+## 5. Generate the reduction
+
+Click **Generate** in the workflow window.
+
+Section **3. Progress** shows the current stage. The main workspace also records detail in **Work Log**. While processing, **Close** changes to **Terminate** so you can stop the run.
+
+The pipeline:
+
+1. reads image metadata;
+2. validates, repairs, or solves WCS;
+3. queries Gaia DR3, VSX, and the NASA Exoplanet Archive for the field;
+4. builds target-specific comparison pools;
+5. estimates seeing and aperture sizes;
+6. measures target and comparison fluxes in every usable frame;
+7. constructs differential, calibrated, and standard-magnitude contexts;
+8. applies measurement-quality analysis;
+9. builds one light-curve series per source and filter;
+10. pulls and/or calculates periods when requested.
+
+### Select Sources To Process
+
+Some runs show **Select Sources To Process** before full measurement.
+
+- Filter by designation family or source type.
+- Source types can include variables, checks, exoplanets, and references.
+- **Process Default** applies the configured preview limits.
+- **Process All Visible** takes every row remaining after the dialog filters.
+- **Process Selected** takes only the highlighted rows.
+
+Use **Process Default** for a first pass. Use **Process Selected** when you already know the objects of interest.
+
+> **Screenshot needed:** Select Sources To Process with source-type filters and all three process buttons.
+
+## 6. Read the workspace
+
+After Generate, the workspace normally opens with:
+
+- **Filter: Overview**
+- Y axis **Standard Magnitude**
+
+Overview is a quality-control view. It can show the selected target, filters, comparison stars, and check star together.
+
+### Results tabs
+
+- **Source Results** — catalog targets, discovery candidates, and the comparison rows connected to the selected target.
+- **File Results** — per-frame processing and QA.
+- **Measurements** — detailed measurement rows. Click **Measure** if the table was not created during Generate.
+- **Run History** — previous runs and their metadata.
+
+The gear next to Source Results opens **Filter Source Results**. Use this instead of looking for a permanent search row.
+
+### Image panel
+
+The image panel contains:
+
+- **Display** options, including stretch, **Curves**, **Invert**, and zoom reset;
+- frame selection and **Blink**;
+- **Center** on the selected target;
+- catalog shortcuts;
+- **Aperture Editor** and **Apply**.
+
+Display stretch changes the preview only. It does not change the measured pixel values.
+
+### Light-curve panel
+
+The light-curve toolbar includes:
+
+- series navigation and Reset;
+- **Fold**;
+- **O-C**;
+- fit controls and **Fit Period**;
+- **Filter**;
+- **Export**.
+
+Open **Settings → Light Curve** for axes, fit mode, inference method, phase controls, grid, valid-only display, and aperture-tracking options.
+
+> **Screenshot needed:** Complete Differential Photometry workspace with Source Results, annotated image, Overview, and Work Log visible.
+
+## 7. Select and inspect a target
+
+1. Click a target in **Source Results**.
+2. Confirm that the image updates to the target and its apertures.
+3. Confirm that the light curve updates to the selected source.
+4. Use **Center** if the star is outside the current image view.
+5. Change the frame selector or use **Blink** to inspect motion, clouds, tracking, or saturation across the sequence.
+6. Click or navigate to a light-curve point and compare it with the corresponding frame and measurement detail.
+
+Comparison stars used by the target remain connected to the result and appear as comparison rows. In Overview, keep the target, comparisons, and check star visible long enough to decide whether a trend is astrophysical or shared by the field.
+
+Right-click a Source Results row for available catalog actions such as **Simbad**, **VSX**, **CDS**, and **Gaia**. Period pull/calculate and **Change Name...** actions are also available where applicable.
+
+Right-click a plot series to change its **Icon** or **Color...**.
+
+## 8. Review measurement quality
+
+Start with the automatic result, then investigate rather than deleting a point only because it looks inconvenient.
+
+Check:
+
+- saturation and near-saturation;
+- SNR;
+- centroid shift;
+- comparison-star scatter;
+- background level;
+- flux and flux error;
+- global and local outlier flags;
+- the original image at the same epoch;
+- whether comparison and check stars show the same structure.
+
+Use **Filter** to open **Filtering Settings**. This changes which points are shown/used in a view; it does not erase the source measurement record.
+
+The report preserves accepted and rejected observations separately with rejection reasons.
+
+## 9. Choose comparison stars
+
+CAst begins with an automatic target-specific ensemble. Three levels of control are available.
+
+### Automatic ensemble
+
+For each variable, CAst ranks eligible Gaia stars primarily by magnitude similarity and then by separation. Known variables and stars near known variables are excluded from the comparison pool.
+
+Comparison stars are labeled with the AAVSO Unique Identifier (AUID / UID) when they match the VSP sequence, or with an APASS designation when only APASS photometry is available. Gaia source numbers remain only when neither catalog has a match. Manual aperture names that you assign are kept.
+
+Use the automatic result when the comparison series and check star remain stable and the target signal is convincing.
+
+### Scan Comps
+
+1. Select the target.
+2. Click **Scan Comps**.
+3. In **1. Limits**, optionally constrain magnitude difference, color difference, or separation.
+4. In **2. Favourites**, mark promising stars.
+5. In **3. Combinations**, inspect candidate ensembles.
+6. Click **Use Selected** to apply the chosen set.
+
+The hard delta-magnitude, color, and separation constraints default to off. This avoids rejecting all useful comparisons before the field has been inspected.
+
+> **Screenshot needed:** Scan Comps showing Limits, Favourites, Combinations, and Use Selected.
+
+### Independent manual reduction
+
+1. Turn on **Aperture Editor** above the image.
+2. Double-click to place the target.
+3. Shift-click to place a comparison star.
+4. Ctrl-click to place a check star.
+5. Drag an aperture to move it.
+6. Drag its handles to change aperture and annulus sizes.
+7. Right-click an aperture or its Source Results row for **Delete** or **Change Name**.
+8. Click **Apply**.
+
+The manual editor begins as an independent configuration. **Keep Comparison Stars** in **Settings → Light Curve** can seed comparisons from the automatic result when wanted.
+
+Apply remeasures the manual set. Existing curves remain visible until the new result is ready.
+
+> **Screenshot needed:** Aperture Editor with target, comparison, and check apertures plus the Apply button.
+
+## 10. Improve SNR without hiding time structure
+
+Click **Increase SNR** to bin adjacent observations. The button becomes **Reset SNR** after a binned dataset is created.
+
+CAst limits bin duration using the period and variability type:
+
+- sharp variables and transits: 1.5% of the period;
+- smooth variables: 5% of the period;
+- other/default: 3% of the period;
+- absolute default cap: 600 seconds.
+
+The target number of frames is estimated from the SNR deficit and capped at 15 by default.
+
+Outlier rejection inside bins is optional and is **off by default**. Configure binning under **Settings → Open Settings → Advanced → Increase SNR**.
+
+Use Reset SNR to return to the unbinned cached series.
+
+## 11. Periods, folding, and fits
+
+### Pull versus calculate
+
+- **Pull Periods** uses catalog/literature information where available.
+- **Calculate Periods** infers a period from the measured series.
+
+The same ideas are available from Source Results context actions for an individual object.
+
+### Inference methods
+
+Open **Settings → Light Curve → Infer**:
+
+- **Harmonic Fit** is the default general method.
+- **Box Least Squares** is designed for transit- or eclipse-like box-shaped signals.
+
+Generalized Lomb-Scargle exists in internal analysis code, but it is not a third user-facing Infer choice in the current workspace.
+
+### Display fits
+
+The fit mode can be Polynomial, Periodic, Spline, or Auto. Periodic is the normal choice for a repeating variable. Use **Fit Period** after setting or calculating a plausible period.
+
+### Fold
+
+Click **Fold** to plot phase rather than chronological time. Phase is:
 
 $$
-F = S_{\text{aperture}} - \tilde{B} \cdot A_{\text{aperture}}
+\phi = \left(\frac{t-t_0}{P}\right) \bmod 1
 $$
 
-Where $S_{\text{aperture}}$ is the raw aperture sum, $\tilde{B}$ is the sigma-clipped median background, and $A_{\text{aperture}}$ is the aperture area in pixels.
+where \(P\) is the period and \(t_0\) is the selected phase anchor. A coherent repeated signal should align from cycle to cycle.
 
-1. **Instrumental magnitude:**
+For an exoplanet host, start with BLS, inspect the inferred duration, fold the result, and verify that comparison/check stars do not show the same dip.
 
-$$
-m_{\text{inst}} = -2.5 \log_{10}(F)
-$$
+## 12. O-C diagrams
 
-### Comparison Star Selection
+An O-C diagram compares an observed extremum time with the time predicted by an ephemeris.
 
-Good comparison stars are critical. CAst selects them automatically from the Gaia DR3 catalog **per variable**:
+1. Select the variable light curve.
+2. Click **O-C**.
+3. Confirm the star name.
+4. Enter \(T_0\) in HJD and the period in days.
+5. Choose whether the ephemeris refers to a minimum or maximum.
+6. Use **Mark Extrema** and click measured extrema, **Import...** a file, or **Pull AAVSO...**.
+7. Review the extrema log.
+8. Use **Export...** to save the O-C records.
 
-- **Per-variable pools:** Each variable star gets its own comparison-star pool of up to **N** stars (Settings → Comparison Stars per Variable, default 5).
-- **Magnitude matching:** Candidates are ranked by how close their Gaia G magnitude is to that variable, with sky distance as a tie-breaker. Bright variables therefore get brighter comps; faint variables get fainter ones.
-- **Union for measurement:** The unique union of those per-variable pools is measured on every frame.
-- **Magnitude range:** Optional Settings limits still apply. When unset, per-variable selection uses a wide window (−1 to 18) so similar-brightness comps remain available; saturated comps are dropped later.
-- **Variable exclusion:** Any star within 30 arcseconds of a known VSX variable is excluded.
-- **Ensemble:** For each target measurement, up to N surviving comps (again closest in magnitude, then nearest on sky) are combined with inverse-variance weighting:
-
-$$
-F_{\text{ref}} = \frac{\sum_i w_i  F_i}{\sum_i w_i}, \quad w_i = \frac{1}{\sigma_{F_i}^2}
-$$
-
-This ensemble approach minimizes the noise contribution from any single comparison star. If no valid flux errors are available, an unweighted median is used as a fallback.
-
-**Scan Comps** uses the same magnitude-first ranking on the measured reference pool (optional Δmag / color / separation hard filters default to off).
-
-### Manual Aperture Editor
-
-Automatic Source Results remain available when you select a catalog target. For a fully custom reduction, turn on **Aperture Editor** (top-right of the image panel):
-
-- The editor starts **empty and independent** of the currently selected automatic target and comparison stars. Enabling it clears any previous manual apertures for that folder so you begin a new entry.
-- **Double-click** places a manual target; **Shift-click** a comparison; **Ctrl-click** a check star. Drag to move; use the handles to resize aperture and annulus.
-- Right-click a manual aperture (or its Source Results row) for **Delete** and **Change Name**.
-- Optional **Keep Comparison Stars** can seed comparisons from the automatic ensemble later; it is off by default when the editor opens.
-- Place and drag keep the aperture on the clicked pixels on the reference frame (sky coordinates are derived with the same repaired/solved WCS used for photometry so apertures do not jump).
-
-**Apply** remeasures with your manual set while keeping existing light curves and Source Results on screen until the new results arrive. Before measuring, CAst refreshes each manual aperture’s RA/Dec from its reference pixels using the folder’s repaired/solved WCS (so NINA CRVAL/CCVALS offsets do not leave comps off-star), then sky-matches comparisons to AAVSO VSP / APASS / Gaia for scientific Standard Magnitude.
-
-**Clear Cache for This Folder** (Open workflow) also resets that folder’s saved apertures so the next Generate rebuilds catalog targets instead of keeping a stale manual “Target”. **File → Clear All Cache…** hard-clears cached data (with a warning) while keeping settings.
-
-### Differential Magnitude
-
-The differential magnitude is computed as:
+For cycle \(E\):
 
 $$
-\Delta m = -2.5 \log_{10}\left(\frac{F_{\text{target}}}{F_{\text{ref}}}\right)
+C_E = T_0 + E P
 $$
 
-This is the core measurement. Because both the target and comparison stars are observed through the same atmosphere at the same time, first-order atmospheric extinction cancels out. Thin clouds, haze, and transparency variations affect all stars equally and divide away.
-
-### Zero-Point Calibration and Magnitude Axes
-
-When comparison stars have known catalog magnitudes, CAst can compute a photometric zero point:
+and:
 
 $$
-\text{ZP} = m_{\text{catalog}} - m_{\text{inst}}
+O-C = T_{\mathrm{observed}} - C_E
 $$
 
-If multiple reference stars have catalog magnitudes with valid uncertainties, the zero point is an **inverse-variance weighted average**. Otherwise, the **median** is used.
+A flat sequence near zero is consistent with the adopted ephemeris. A slope indicates a period/epoch mismatch. Curvature or structured changes can motivate a refined physical analysis, but do not by themselves prove a period-change mechanism.
 
-The light-curve Y-axis offers three related views:
+**Pull AAVSO...** uses the API token in Science Export when supplied and can fall back to the supported public/catalog route.
 
-- **Differential Magnitude** -- $\Delta m$ relative to the comparison ensemble (no absolute scale).
-- **Calibrated Magnitude** -- instrumental magnitude plus a Gaia G-based zero point:
+> **Screenshot needed:** O-C dialog with ephemeris fields, extrema table, Mark Extrema, and Pull AAVSO.
 
-$$
-m_{\text{cal}} = m_{\text{inst}} + \text{ZP}_{\text{Gaia G}}
-$$
+## 13. Variable Ephemeris
 
-- **Standard Magnitude** (default after Generate/Apply) -- zero-points each filter against **band-matched** comparison-star catalog magnitudes, preferring AAVSO VSP charts, then APASS, then Gaia G when a scientific band match is unavailable. Overview comparison and check series use the target’s standard zero-point on this axis so the QC view stays consistent.
+Click **Ephemeris** to inspect event visibility without first opening an image sequence. Site coordinates and minimum altitude come from **Settings → Open Settings → Setup**.
 
-When a zero point is available, the AAVSO export uses `MTYPE=STD` (standard). Otherwise, it falls back to `MTYPE=DIF` (differential).
+Use this before observing to decide when a predicted eclipse, transit, maximum, or minimum is observable from the configured site.
 
-![W UMa results](images/WUMa.jpg)
+**Light Curve** downloads other observers' AAVSO photometry, the same source as **Pull AAVSO…** in O-C. CAst folds those magnitudes on the VSX period and reference epoch, fits a smooth periodic curve, and draws it on the **Light curve** tab. Drag to pan and scroll to zoom, as on a measured light curve. The horizontal axis is epoch. A marker shows the current epoch, and the curve to the right of that marker is the expected future light curve, cycle by cycle.
 
-After Generate finishes, Source Results lists the known variables (and discovery candidates) found in the field. Selecting a row shows that target on the image with its automatically selected comparison stars (sticky rows at the bottom of Source Results) and updates the light curve to that selection. Use **Scan Comps** to build a mag/color/distance candidate pool, favourite comparison stars, browse unordered combination light curves, and apply a chosen set (comps appear in sticky Source Results rows). Filter → **Overview** plots the selected target in every filter plus its comparison stars and check star (legend on, no period fit) for a Phoranso/AAVSO-style QC view; right-click any series to change Icon and Color. Export → Animation can reveal all Overview series together over time. Export → Target Field Animation crops the selected target from every frame (star field size, Crop + Align or Align + Crop keeps the target centered and can apply a left–right, up–down, or 180° crop flip when matched stars agree, stretch, and GIF or MP4 timing), measures an ensemble of non-central stars directly in the aligned crop to remove common cloud and transparency changes, uses the catalog comparison measurements or background matching when the crop is sparse, and builds a 16:9 GIF or MP4 with a star-field crop above a full-width still of the on-screen light curve (icon, color, and a moving vertical scanner). The export window is a visual editor: a large Combined / Star Field / Light Curve preview on the left, composition (including plot label size), marker, and export settings in a right-hand inspector, Advanced fit and separate-file options collapsed by default, and a footer with the output summary plus Export Animation. Use **Aperture Editor** (above) when you want a fully manual, independent reduction instead of the automatic ensemble.
+The download opens on the latest 30 days. The end JD is the current time, and the start JD is 30 days earlier. Edit either date before downloading if you want a different window. It uses the API token in Science Export when one is saved, and otherwise uses the public VSX route. Choose one band when you want the curve in a single filter. If several bands come back, each band is drawn on its own. AID dates are JD. The VSX epoch is often HJD, so the marker can sit a few minutes off the true phase.
 
----
+> **Screenshot needed:** Ephemeris Light curve tab with the current-epoch marker and upcoming cycles.
 
-## Uncertainty and Error Analysis
+## 14. Search the field for variable candidates
 
-CAst computes a complete error budget for every measurement. The total uncertainty combines three independent components in quadrature:
+Generate handles cataloged variables and exoplanet hosts. **Discover** is a separate search over eligible non-cataloged Gaia stars.
 
-$$
-\sigma_{\text{total}} = \sqrt{\sigma_{\text{CCD}}^2 + \sigma_{\text{empirical}}^2 + \sigma_{\text{scintillation}}^2}
-$$
+1. Complete an ordinary Generate run first.
+2. Click **Discover**.
+3. In **Run Discover**, leave the whole field selected or Shift-drag a region of interest.
+4. Use **Clear ROI** to return to the full field.
+5. Enable **Try multiple comparison-star pools** only when the additional search cost is justified.
+6. Click **Start Discover**.
 
-### CCD Noise Model
+Candidates receive variability metrics and a 0–100 candidate score. A high score is a triage signal, not a discovery claim. Check VSX, SIMBAD, survey data, artifacts, and additional nights.
 
-The theoretical flux error follows the standard CCD equation:
+**Label** / **Train Model** supports local detectability labels such as Easy, Possible, Difficult, and Artifact. The optional Random Forest is trained only when labeled examples exist; it is not a universal pretrained classifier.
 
-$$
-\sigma_F = \sqrt{S \cdot g + n_{\text{ap}} \cdot \left( B_{\text{sky}} \cdot g + D \cdot t + R^2 \right) + \frac{n_{\text{ap}}^2}{n_{\text{sky}}} \cdot \left( B_{\text{sky}} \cdot g + D \cdot t + R^2 \right)}
-$$
+> **Screenshot needed:** Run Discover with ROI preview and the multiple-comparison-pools option.
 
-Where:
+## 15. Export plots and animations
 
-- $S \cdot g$ = source photon noise (flux times gain, in electrons)
-- $B_{\text{sky}} \cdot g$ = sky background noise (per pixel, in electrons)
-- $D \cdot t$ = dark current noise (dark current rate times exposure time)
-- $R^2$ = readout noise variance (read noise in electrons, squared)
-- $n_{\text{ap}}$ = number of pixels in the aperture
-- $n_{\text{sky}}$ = number of pixels in the sky annulus
+The light-curve **Export** menu includes:
 
-The third term accounts for uncertainty in the background estimate itself -- the finite number of sky pixels means the background level is measured with some noise, and this propagates into every aperture measurement.
+- theme-based plot;
+- scientific plot;
+- light-curve animation;
+- **Target Field Animation**.
 
-If gain is specified in ADU, the result is divided by gain to convert back to flux units.
+Target Field Animation is a visual editor. It can crop and align the target through the sequence, apply a display stretch, produce GIF or MP4, and combine the moving field with a still light curve and moving time marker.
 
-### Magnitude Error Conversion
+Use animations to show whether the target itself changes, whether transparency moves through the field, and how an event maps to the measured curve. They are educational and diagnostic; the measurement table remains the quantitative result.
 
-Flux error is converted to magnitude error using the standard propagation:
+> **Screenshot needed:** Target Field Animation editor with Combined, Star Field, and Light Curve previews.
 
-$$
-\sigma_m = \frac{2.5}{\ln 10} \cdot \frac{\sigma_F}{F} \approx 1.0857 \cdot \frac{\sigma_F}{F}
-$$
+## 16. Review and export for AAVSO
 
-### Differential Magnitude Error
+CAst prepares the files; the observer remains responsible for reviewing and submitting them.
 
-The error on the differential magnitude combines the target and reference uncertainties:
+### One-time metadata
 
-$$
-\sigma_{\Delta m} = \frac{2.5}{\ln 10} \cdot \sqrt{\left(\frac{\sigma_{F_{\text{target}}}}{F_{\text{target}}}\right)^2 + \left(\frac{\sigma_{F_{\text{ref}}}}{F_{\text{ref}}}\right)^2}
-$$
+Open **Settings → Open Settings → Differential Photometry → Science Export** and set:
 
-### Scintillation
+- Observer Code;
+- Observer Name and Organization when wanted;
+- AAVSO Export Filter fallback;
+- AAVSO Sequence/Chart ID;
+- AAVSO API Token when using AAVSO data tools;
+- Image Timestamp Timezone;
+- Transformed Data only when the observations truly are transformed;
+- Reduction Notes.
 
-Atmospheric scintillation (twinkling) adds noise that the CCD equation does not capture. CAst estimates it using the Young approximation:
+Open **Setup** and enter observing-site latitude, longitude, and elevation. CAst uses them to estimate airmass when an image header does not contain it.
 
-$$
-\sigma_{\text{scint}} = \frac{0.09 \cdot D^{-2/3} \cdot X^{1.75} \cdot e^{-h/8000}}{\sqrt{2t}} \cdot \sqrt{1 + \frac{1}{N_{\text{comp}}}}
-$$
+### Quality-control sequence
 
-Where $D$ is the telescope aperture in cm, $X$ is the airmass, $h$ is the observatory altitude in meters, $t$ is the exposure time in seconds, and $N_{\text{comp}}$ is the number of comparison stars. The last factor accounts for scintillation in the comparison ensemble.
+1. Generate the reduction.
+2. Select **Overview**.
+3. Use **Standard Magnitude** when a valid band-matched zero point exists.
+4. Inspect target, comparisons, check star, exclusions, filters, and suspicious frames.
+5. Select the source row or rows to export.
+6. Choose **File → Export Report**.
+7. Read **AAVSO Preflight Review**.
+8. Correct metadata or reduction issues when possible.
+9. Use **Export Anyway** only after understanding remaining warnings.
 
-### Empirical Scatter
+> **Screenshot needed:** AAVSO Preflight Review with STD/DIF counts, warnings, skipped rows, and Export Anyway.
 
-Real data often has noise sources not captured by theory (tracking errors, flat-field residuals, focus drift). CAst estimates this from the data itself using a robust MAD (Median Absolute Deviation) estimator with iterative 4-sigma clipping:
+The app does not upload observations automatically. Open the Extended Format file, make any required revisions, and upload it through AAVSO's submission system.
 
-$$
-\sigma_{\text{empirical}} = 1.4826 \cdot \text{median}\left(|x_i - \tilde{x}|\right)
-$$
+### Preflight warnings to review
 
-The factor 1.4826 scales the MAD to be consistent with the standard deviation of a Gaussian distribution.
+- missing observer code;
+- missing sequence/chart ID;
+- DIF rows where STD was expected;
+- unrecognized filter mapped to `O`;
+- missing airmass;
+- skipped or rejected measurements;
+- mixed or incomplete metadata.
 
----
+`TRANS=YES` is written only when the row is standard (`MTYPE=STD`) and **Transformed Data** is enabled. CAst does not calculate transformation coefficients for you.
 
-## Quality Assurance
+### Report location and contents
 
-Every measurement passes through a multi-criterion quality analysis. Each starts with a quality score of 1.0, which is reduced by penalties:
+Reports are written under a `science/<source-name>/` directory derived from the first source frame.
 
-
-| Check                         | Threshold         | Penalty             |
-| ----------------------------- | ----------------- | ------------------- |
-| Low SNR                       | < 5               | -0.18               |
-| Very low SNR                  | < 3               | **Excluded**        |
-| Centroid shift                | > 2.5 px          | -0.10               |
-| Large centroid shift          | > 4.0 px          | **Excluded**        |
-| Comparison scatter            | > 8%              | -0.15               |
-| Extreme comparison scatter    | > 18%             | **Excluded**        |
-| Global outlier (MAD)          | z > 4.5           | -0.28, **Excluded** |
-| Local outlier (Hampel filter) | z > 4.5, window=2 | -0.28, **Excluded** |
-| Saturated pixels              | Any               | **Excluded**        |
-| Non-positive flux             | Any               | **Excluded**        |
-| Quality score below floor     | < 0.35            | **Excluded**        |
-
-
-Outlier detection uses a robust z-score: $z = |x - \tilde{x}| / (1.4826 \cdot \text{MAD})$. The Hampel filter applies this locally in a sliding window to catch isolated bad points without biasing the global statistics.
-
-Near-saturation is flagged at 95% of the saturation threshold.
-
-### Check Star Validation
-
-When check stars are available (a star with a known magnitude that is treated as if it were a variable), CAst computes per-frame check residuals:
-
-$$
-\Delta_{\text{check}} = m_{\text{check,calibrated}} - m_{\text{check,catalog}}
-$$
-
-and the per-series RMS of those residuals. This provides an independent assessment of the photometric accuracy: if your check star shows a stable residual RMS of 0.01 mag, your measurements of the target are likely accurate to a similar level.
-
----
-
-## Period Analysis
-
-CAst includes three period-detection methods:
-
-### Generalized Lomb-Scargle (GLS)
-
-The default astronomical periodogram for unevenly sampled data. CAst uses `astropy.timeseries.LombScargle.autopower()` with 10 samples per peak. The frequency with the highest power is selected, and subharmonic frequencies (at 1/2, 1/3, 1/4 of the detected frequency) are tested and promoted if they produce a better fit.
-
-### Harmonic Fit (Default Method)
-
-A more thorough search that fits a truncated Fourier series at each candidate period:
-
-$$
-f(t) = a_0 + \sum_{k=1}^{K} \left[ a_k \cos\left(\frac{2\pi k  t}{P}\right) + b_k \sin\left(\frac{2\pi k  t}{P}\right) \right]
-$$
-
-with up to $K = 6$ harmonics. The search proceeds in three stages:
-
-1. **Coarse scan:** 240 logarithmically spaced candidate periods.
-2. **Refinement:** Three progressively narrower windows around the best candidate, each testing 180-200 periods.
-3. **Subharmonic check:** Periods at 2x, 3x, and 4x the best candidate are tested and accepted if they reduce the BIC (Bayesian Information Criterion).
-
-The best period is selected by residual score, and eclipsing binary convention (doubled period) is tested with a BIC tolerance of 6.0.
-
-### Box Least Squares (BLS)
-
-Optimized for detecting flat-bottomed transits and eclipses. Uses `astropy.timeseries.BoxLeastSquares.autopower()` with a frequency factor of 8 and a grid of trial durations. Returns both the orbital period and the eclipse/transit duration. Harmonics at 2x, 3x, and 4x are also tested.
-
-### Search Bounds
-
-The minimum search period is the larger of the user-configured minimum and twice the median observing cadence. The maximum is the smaller of the user-configured maximum and 95% of the total time span. Results that fall within 0.5% of either search boundary are rejected as unreliable.
-
----
-
-## Light Curve Fitting
-
-After a period is determined, CAst can overlay a fit curve for visual interpretation.
-
-### Polynomial Fit
-
-Fits a polynomial of configurable degree (default 3) with robust iterative re-weighting (Huber-style, 4 iterations). The time axis is centered and normalized to prevent numerical instability.
-
-### Periodic Fit
-
-Fits a Fourier series at the determined period (default 2 harmonics, up to 6). Coefficients are solved using robust weighted linear least squares. This is the natural fit for periodic variables.
-
----
-
-## Variable Star Discovery
-
-The **Discover** action systematically searches for unreported variable stars among the non-cataloged Gaia stars in your field. For each candidate:
-
-1. The star is measured across all frames as if it were a variable target.
-2. A magnitude-matched comparison-star pool is selected for that star (same closest-Gaia-mag rule as Generate), and an optimized subset is used for the light curve.
-3. A differential light curve is constructed.
-4. Variability metrics are computed:
-  - **Reduced chi-squared** -- how much the light curve deviates from a constant.
-  - **MAD** (Median Absolute Deviation) -- robust scatter measure.
-  - **Amplitude** -- the 5th to 95th percentile brightness range.
-  - **Stetson J index** -- a correlated-variability statistic that rewards pairs of consecutive measurements that deviate together.
-  - **Stetson K index** -- measures the kurtosis of the magnitude distribution.
-  - **Von Neumann ratio** -- sensitive to smooth versus erratic variations.
-5. These metrics are combined into a **candidate score** (0 to 100) via weighted contributions.
-
-A trained **Random Forest classifier** (160 trees, balanced class weighting) can also score candidates if you have labeled previous examples as real or artifact. Labels and feature vectors are stored in a local database, and the model retrains as you label more candidates.
-
-High-scoring candidates may represent genuinely unreported variable stars. Cross-check them against VSX and the literature before claiming a discovery.
-
----
-
-## AAVSO Export
-
-CAst generates an AAVSO Extended Format text file, the standard for submitting observations to the AAVSO International Database.
-
-### Format
-
-The export writes a comma-delimited file with 15 columns:
+The bundle includes:
+
+- `_measurements.csv`
+- `_light_curves.csv`
+- `_accepted_observations.csv` and `.json`
+- `_rejected_observations.csv` and `.json`
+- `_reference_manifest.csv`
+- `_reduction_manifest.json`
+- `_provenance_manifest.json`
+- `_aavso_extended.txt`
+- `_aavso_preflight.json`
+- `_README.txt`
+- `_summary.json`
+- `_plots/`
+- `_annotated_images/`
+
+The AAVSO file uses:
 
 `NAME, DATE, MAG, MERR, FILT, TRANS, MTYPE, CNAME, CMAG, KNAME, KMAG, AMASS, GROUP, CHART, NOTES`
 
-- **DATE** is the Julian Date at mid-exposure (observation time + half the exposure duration).
-- **MTYPE** is `STD` when a zero-point calibration is available, `DIF` otherwise.
-- **TRANS** is `YES` only when MTYPE is STD and the user has flagged their data as transformed.
-- **FILT** is mapped from ~60 recognized filter aliases (Johnson, Sloan, clear, etc.) to AAVSO codes. Unrecognized filters default to code `O`.
-- **NOTES** include instrumental magnitudes, comparison reference magnitudes, and zero-point metadata as AAVSO sub-fields.
+DATE is Julian Date at mid-exposure. FILT is mapped from recognized aliases; unknown values use `O`. MTYPE is STD when a suitable standard-magnitude context exists, otherwise DIF.
 
-### Airmass
+---
 
-Airmass is read from header keywords (`AIRMASS`, `SECZ`, `SECAIRM`). If absent, CAst computes a geometric estimate:
+# Settings reference
+
+This section collects settings so the operating tutorial can remain coherent.
+
+## General
+
+- **Astrometry API Key** — enables astrometry.net as a parallel solving path.
+- **Astrometry Timeout** — default 300 seconds.
+- Cache and settings locations — diagnostic paths and reset actions.
+
+Local Gaia matching and embedded WCS validation can still succeed without an astrometry.net key.
+
+## Advanced: WCS Sanity Check
+
+The current dialog exposes quality-sample controls rather than the old documented magnitude-bin controls:
+
+- Enable — on;
+- Frame Margin — 25%;
+- Probe Start Radius — 10%;
+- Quality Sample Cap — 32;
+- Minimum Source SNR — 8;
+- Hard Approval — 90%;
+- Match Tolerance — 3 px;
+- Residual Limit — 2 px;
+- Isolation Radius — 2.5 × FWHM;
+- Subtract Coherent Shift — on;
+- Soft Accept — on;
+- Soft Approval — 65%;
+- Soft Residual — 1.5 px;
+- Soft Shift — 2 px;
+- CCVALS Difference — 5 px;
+- Max Gaia Magnitude — 18;
+- CCVALS Repair — on.
+
+Change these only when Work Log shows that the default WCS sanity decision is unsuitable for a repeatable dataset.
+
+## Advanced: Increase SNR
+
+Important defaults:
+
+- maximum default period fraction: 0.03;
+- maximum duration: 600 s;
+- target SNR: 30;
+- maximum frames per bin: 15;
+- type-aware fractions: sharp 0.015, smooth 0.05;
+- inverse-variance flux weighting: on;
+- in-bin outlier rejection: off;
+- output dataset: derived, preserving the original series.
+
+## Differential Photometry
+
+- **Comparison Stars per Variable** — 5.
+- **Frame Edge Margin** — 5%.
+- **Saturation Filter** — on.
+- **Reference-Star Magnitude Range** — off unless enabled.
+- **Adaptive Aperture Scale** — 1.6 × FWHM.
+- **Adaptive Annulus Inner Scale** — 3.0 × FWHM.
+- **Adaptive Annulus Outer Scale** — 4.5 × FWHM.
+- **Variable Star Limit Mode** — Percentage.
+- **Brightest Variable Stars to Analyze** — 100% unless changed.
+- **Preview Variable-Star Max Count** — 0, meaning no extra count limit.
+- preview magnitude range — off unless enabled;
+- designation families — all enabled when no saved subset exists.
+
+The active settings UI uses adaptive FWHM-scaled apertures. Legacy fixed-radius values remain in code paths but are not the normal current mode.
+
+## Science Export
+
+See the AAVSO tutorial for observer, chart, filter, timestamp, transformed-data, and notes fields.
+
+The Time Standard selector records the intended reporting context. Core differential reduction orders measurements from the observation timestamp, and AAVSO DATE is written as UTC Julian Date at mid-exposure. O-C imports can contain JD, HJD, or BJD values supplied by the source. The differential pipeline does not calculate a barycentric correction for each frame.
+
+## Setup
+
+Enter telescope/camera details and observing-site latitude, longitude, and elevation. The site is used for ephemeris altitude and computed airmass.
+
+## Settings → Light Curve
+
+This menu controls:
+
+- X and Y axes;
+- fit mode;
+- Infer method;
+- phase convention and anchor;
+- harmonics and smoothing;
+- plot grid and valid-only display;
+- comparison retention;
+- equatorial image grid;
+- aperture tracking/recentering;
+- WCS fallback behavior.
+
+Automatic catalog photometry can recenter by up to 8 px. The interactive Light Curve recenter control has its own default maximum-shift setting of 6 px.
+
+## Alignment
+
+Choose **Aligned** only for a sequence placed on a shared pixel grid. Otherwise keep **Non-Aligned** so each frame is mapped correctly.
+
+## Catalog Cache
+
+Refresh or clear the field catalog cache when a catalog response is incomplete or no longer matches the intended query. Do not clear it routinely; cached field data makes repeat runs faster.
+
+---
+
+# How the calculations work
+
+This section follows the implemented reduction in calculation order.
+
+## 1. Observation times
+
+The scanner reads `DATE-OBS`. XISF metadata can supply its observation start through the image reader. Naive timestamps use the configured Image Timestamp Timezone.
+
+The light-curve sequence uses the observation time converted to UTC-based Julian Date. The AAVSO exporter shifts the timestamp by half the exposure:
 
 $$
-X = \sec(z)
+JD_{\mathrm{mid}} = JD_{\mathrm{start}} + \frac{t_{\mathrm{exp}}}{2 \times 86400}
 $$
 
-where $z$ is the zenith distance, computed by transforming the target's RA/Dec to the local altitude-azimuth frame at the observation time using the configured observatory coordinates (latitude, longitude, elevation).
+The core reduction does not calculate BJD/TDB. O-C data may be imported with JD, HJD, or BJD labels, so compare like time standards.
 
-### Preflight Validation
+## 2. Optional calibration
 
-Before the export file is written, a preflight JSON report is generated listing:
+Master frames are pixel-wise medians. The science frame is:
 
-- Whether observer code and chart ID are present.
-- How many rows are STD versus DIF.
-- Warnings for missing airmass, unrecognized filter codes, missing observer code, etc.
-- Skipped measurements with reasons.
+$$
+I_{\mathrm{cal}} =
+\frac{I_{\mathrm{light}} - I_{\mathrm{bias}} - s I_{\mathrm{dark}}}
+{I_{\mathrm{flat,norm}}}
+$$
 
-This lets you review potential issues before uploading to AAVSO.
+with:
+
+$$
+s = \frac{t_{\mathrm{light}}}{t_{\mathrm{dark}}}
+$$
+
+when dark scaling is valid.
+
+The flat is bias/dark corrected as configured, then divided by the median of its positive pixels. Flat values at or below the safety threshold are replaced by 1 to prevent division artifacts. Non-finite calibrated science pixels are set to zero.
+
+## 3. WCS selection and recovery
+
+CAst validates celestial axis types and the CRVAL, CRPIX, and CD/PC transformation. It then chooses a folder policy from a representative frame:
+
+1. accept embedded WCS when image detections agree with Gaia;
+2. repair CRVAL from CCVALS when the alternate pointing is coherent;
+3. solve with local Gaia matching and, when configured, astrometry.net in parallel.
+
+The first successful valid solver result is used. Each frame still receives its own policy application unless aligned-stack reuse is valid.
+
+## 4. FWHM
+
+For a candidate star, CAst uses a 15 × 15 pixel cutout.
+
+1. Estimate local background with 3-sigma clipping.
+2. Subtract the background and clip negative signal to zero.
+3. Keep a core above:
+
+$$
+\max(0.03 I_{\mathrm{peak}},\ 1.5\sigma_{\mathrm{background}})
+$$
+
+4. Compute a signal-weighted centroid.
+5. Bin signal in 0.5-pixel radial intervals.
+6. Interpolate the radius at half the central peak estimate:
+
+$$
+\mathrm{FWHM} = 2r_{1/2}
+$$
+
+If the radial estimate fails, weighted second moments provide:
+
+$$
+\mathrm{FWHM} = 2.35482\sigma
+$$
+
+Accepted values are 0.8–14 px. Frame FWHM is the median from up to 24 bright stars. A valid per-star FWHM is preferred, with frame FWHM as fallback.
+
+## 5. Aperture geometry and recentring
+
+Default adaptive radii are:
+
+$$
+r_{\mathrm{ap}} = 1.6\,\mathrm{FWHM}
+$$
+
+$$
+r_{\mathrm{in}} = 3.0\,\mathrm{FWHM}
+$$
+
+$$
+r_{\mathrm{out}} = 4.5\,\mathrm{FWHM}
+$$
+
+The annuli are forced to remain separated from the aperture.
+
+The automatic catalog position is refined with a local signal-weighted centroid. Automatic displacement is capped at 8 px from the WCS prediction.
+
+## 6. Background-subtracted flux
+
+Photutils circular apertures and annuli are used. Annulus pixels are 3-sigma clipped, and the median surviving sky level is subtracted:
+
+$$
+F = S_{\mathrm{ap}} - \widetilde{B}A_{\mathrm{ap}}
+$$
+
+where \(S_{\mathrm{ap}}\) is the aperture sum, \(\widetilde{B}\) is local background per pixel, and \(A_{\mathrm{ap}}\) is aperture area.
+
+For positive flux:
+
+$$
+m_{\mathrm{inst}} = -2.5\log_{10}(F)
+$$
+
+## 7. Active flux and magnitude uncertainty
+
+The live photometry pipeline estimates:
+
+$$
+\sigma_F =
+\sqrt{
+|F| +
+n_{\mathrm{ap}}\sigma_B^2 +
+\left(\frac{n_{\mathrm{ap}}^2}{n_{\mathrm{sky}}}\right)\sigma_B^2
+}
+$$
+
+Here \(\sigma_B\) is the local annulus scatter, \(n_{\mathrm{ap}}\) is aperture area, and \(n_{\mathrm{sky}}\) is annulus area.
+
+Magnitude propagation is:
+
+$$
+\sigma_m =
+\frac{2.5}{\ln 10}\frac{\sigma_F}{F}
+\approx
+1.085736\frac{\sigma_F}{F}
+$$
+
+This is the uncertainty used by current measurements and exports.
+
+`error_calculations.py` also contains tested routines for a gain/read-noise/dark CCD equation, scintillation, and empirical-scatter quadrature. Those routines are not currently connected to `PhotometryMeasurement` or AAVSO MERR. They must not be described as part of the active error budget.
+
+## 8. Comparison ensemble
+
+Comparison candidates are selected per target. Ranking is primarily by closeness to the target's catalog magnitude and then by angular distance. A Gaia source within 30 arcsec of a known variable is excluded.
+
+For valid comparison flux errors:
+
+$$
+w_i = \frac{1}{\sigma_{F_i}^2}
+$$
+
+$$
+F_{\mathrm{ref}} =
+\frac{\sum_i w_iF_i}{\sum_i w_i}
+$$
+
+If no useful flux errors exist, the ensemble falls back to an unweighted median.
+
+## 9. Differential magnitude
+
+$$
+\Delta m =
+-2.5\log_{10}\left(\frac{F_{\mathrm{target}}}{F_{\mathrm{ref}}}\right)
+$$
+
+Its propagated error is:
+
+$$
+\sigma_{\Delta m} =
+\frac{2.5}{\ln 10}
+\sqrt{
+\left(\frac{\sigma_{F_t}}{F_t}\right)^2+
+\left(\frac{\sigma_{F_r}}{F_r}\right)^2
+}
+$$
+
+Shared first-order transparency changes cancel to the extent that target and comparisons experience them equally. Color-dependent extinction, gradients, and local clouds need not cancel perfectly.
+
+## 10. Calibrated and standard magnitude
+
+Each usable reference gives:
+
+$$
+ZP_i = m_{\mathrm{catalog},i} - m_{\mathrm{inst},i}
+$$
+
+When every reference has a usable uncertainty:
+
+$$
+ZP =
+\frac{\sum_i ZP_i/\sigma_i^2}{\sum_i1/\sigma_i^2}
+$$
+
+Otherwise CAst uses the arithmetic mean of the available zero points, not the median. Its fallback uncertainty is the standard error when more than one zero point exists.
+
+The target magnitude is:
+
+$$
+m = m_{\mathrm{inst,target}} + ZP
+$$
+
+**Calibrated Magnitude** uses the comparison's available catalog magnitude context. **Standard Magnitude** resolves the measurement filter against band-matched catalog values, preferring AAVSO VSP and APASS where available and falling back toward Gaia when a scientific band match is unavailable.
+
+Standard-magnitude error combines target instrumental error and zero-point error in quadrature when both exist.
+
+## 11. Quality analysis
+
+Every measurement starts with quality score 1.0.
+
+| Condition | Score change | Excluded |
+| --- | ---: | --- |
+| SNR < 5 | −0.18 | No |
+| SNR < 3 | — | Yes |
+| Centroid shift > 2.5 px | −0.10 | No |
+| Centroid shift > 4.0 px | — | Yes |
+| Comparison scatter > 8% | −0.15 | No |
+| Comparison scatter > 18% | — | Yes |
+| Global MAD z > 4.5 | −0.28 | Yes |
+| Local Hampel z > 4.5, window 2 | −0.28 | Yes |
+| Each other soft flag | −0.05 | Depends on final score |
+| Saturated/non-positive hard flag | — | Yes |
+| Final score < 0.35 | — | Yes |
+
+The global robust scale is:
+
+$$
+\sigma_{\mathrm{robust}} = 1.4826\,\mathrm{median}(|x-\widetilde{x}|)
+$$
+
+Near-saturation begins at 95% of the resolved saturation threshold.
+
+The quality weight used where needed is:
+
+$$
+w_q = \frac{q}{\sigma^2}
+$$
+
+or \(q\) alone when no positive error is available.
+
+## 12. Period search and fitting
+
+The search lower bound is the larger of the configured minimum and twice median cadence. The upper bound is the smaller of the configured maximum and 95% of the observed span. Solutions within 0.5% of a boundary are rejected.
+
+### Harmonic Fit
+
+At trial period \(P\):
+
+$$
+f(t)=a_0+\sum_{k=1}^{K}
+\left[
+a_k\cos\left(\frac{2\pi kt}{P}\right)+
+b_k\sin\left(\frac{2\pi kt}{P}\right)
+\right]
+$$
+
+with up to six harmonics.
+
+The search uses 240 logarithmically spaced coarse periods, then three narrower refinements. Candidate multiples 2P, 3P, and 4P are tested. Selection uses Bayesian Information Criterion, not residual RMS alone. Eclipsing-binary doubled-period convention is accepted within the implemented BIC tolerance.
+
+### Box Least Squares
+
+BLS tests box-like transit/eclipsing models over period and duration grids with frequency factor 8. It returns a period and event duration and also checks period multiples.
+
+## 13. SNR binning
+
+The desired frames per bin are:
+
+$$
+n =
+\left\lceil
+\left(\frac{\mathrm{SNR}_{\mathrm{target}}}
+{\mathrm{median\ SNR}}\right)^2
+\right\rceil
+$$
+
+subject to the frame cap and the period-derived duration cap.
+
+Fluxes are inverse-variance averaged when enabled. Optional 3.5-sigma MAD clipping inside bins is off by default.
+
+## 14. Discovery metrics
+
+Discovery uses cleaned values when possible and calculates:
+
+- RMS: sample standard deviation;
+- MAD: median absolute deviation;
+- amplitude: 95th minus 5th percentile, or max minus min for fewer than five points;
+- typical error: median finite positive point error;
+- reduced chi-square around the inverse-variance weighted mean;
+- von Neumann ratio:
+
+$$
+\eta = \frac{\mathrm{mean}[(x_{i+1}-x_i)^2]}{\mathrm{Var}(x)}
+$$
+
+- Stetson residuals:
+
+$$
+\delta_i =
+\sqrt{\frac{N}{N-1}}\frac{x_i-\bar{x}}{\sigma_i}
+$$
+
+- Stetson J from adjacent products:
+
+$$
+J = \mathrm{mean}\left[
+\mathrm{sign}(\delta_i\delta_{i+1})
+\sqrt{|\delta_i\delta_{i+1}|}
+\right]
+$$
+
+- Stetson K:
+
+$$
+K =
+\frac{\mathrm{mean}(|\delta|)}
+{\sqrt{\mathrm{mean}(\delta^2)}}
+$$
+
+The 0–100 candidate score adds capped contributions:
+
+$$
+30\min\left(\frac{\log_{10}\chi_r^2}{1.4},1\right)
+$$
+
+for \(\chi_r^2>1\);
+
+$$
+20\min\left(\frac{\mathrm{MAD}/\sigma_{\mathrm{typ}}}{6},1\right)
+$$
+
+$$
+20\min\left(\frac{A/\sigma_{\mathrm{typ}}}{10},1\right)
+$$
+
+$$
+20\min\left(\frac{J}{4},1\right)
+$$
+
+for positive J; and:
+
+$$
+10\min\left(\frac{\max(0,2-\eta)}{1.5},1\right)
+$$
+
+The total is clipped to 0–100. Stetson K is reported but is not a direct term in this score.
+
+The optional classifier uses a 160-tree Random Forest with balanced-subsample class weighting after the user has created labels.
+
+## 15. Check-star diagnostics
+
+For a check star with catalog magnitude:
+
+$$
+r_{\mathrm{check}} =
+m_{\mathrm{check,cal}}-m_{\mathrm{check,catalog}}
+$$
+
+The report calculates the RMS of these residuals by series. This is an independent diagnostic; it is not added to each point's MERR.
+
+## 16. Airmass
+
+CAst first checks image-header airmass values. If absent and site/target coordinates are available, it transforms the target to altitude/azimuth and estimates:
+
+$$
+X = \sec z
+$$
+
+where \(z\) is zenith distance. This simple geometric form becomes less reliable close to the horizon.
 
 ---
 
-## SNR Binning
+# Limitations
 
-The **Increase SNR** action temporally bins adjacent measurements to improve the signal-to-noise ratio, trading time resolution for precision. This is useful for faint targets or noisy data.
-
-### How it works
-
-1. Measurements are sorted chronologically.
-2. The variability type is classified as **sharp** (eclipsing binaries, RR Lyrae, delta Scuti, transits) or **smooth** (rotational, semi-regular, sinusoidal).
-3. A maximum bin duration is computed from the period to avoid smearing real variability:
-  - Sharp variables: 1.5% of the period.
-  - Smooth variables: 5% of the period.
-  - Default: 3% of the period.
-  - Absolute cap: 600 seconds.
-4. The target number of frames per bin is estimated from the SNR deficit: $n = \lceil (\text{target SNR} / \text{median SNR})^2 \rceil$, capped at 15.
-5. Frames within each bin are combined using inverse-variance weighted flux averaging, with optional 3.5-sigma MAD clipping to reject outliers within the bin.
-
-**Reset SNR** restores the original unbinned data from a cached copy.
+- Photometry requires 2D image data; CAst does not perform a complete debayer/channel-extraction workflow inside Differential Photometry.
+- Aperture photometry is not PSF fitting. Crowded and blended fields can require another program.
+- First-order shared transparency can cancel, but second-order color extinction is not modeled.
+- CAst does not calculate transformation coefficients. The Transformed Data flag is for coefficients established and applied by the observer.
+- Standard Magnitude is only as reliable as filter matching, comparison catalogs, and field conditions.
+- The active error pipeline does not yet include configured gain/read noise/dark current, scintillation, or empirical series scatter in each MERR.
+- Core reduction times are not barycentrically corrected.
+- Sub-millimagnitude work is limited by flat-field residuals, fringing, detector nonlinearity, scintillation, guiding, and other systematics not fully modeled here.
+- Discovery scores prioritize inspection. They do not establish novelty or astrophysical class.
+- AAVSO export is preparation, not automatic validation or submission. The observer must review the file.
 
 ---
 
-## Export Bundle
+# Troubleshooting
 
-A full `File > Export Report` produces a comprehensive science bundle:
+## No useful frames were loaded
 
+- Confirm the folder contains FITS/FIT/XISF/TIFF, not rendered PNG/JPG files.
+- Confirm the images are two-dimensional.
+- Check DATE-OBS and exposure metadata.
+- Review **Loaded Results** and Work Log.
 
-| File                                 | Contents                                             |
-| ------------------------------------ | ---------------------------------------------------- |
-| `_measurements.csv`                  | Raw per-frame photometry (28 columns)                |
-| `_light_curves.csv`                  | Time-ordered differential magnitudes per series      |
-| `_accepted_observations.csv / .json` | Science-ready rows (51-field schema v3)              |
-| `_rejected_observations.csv / .json` | Excluded rows with rejection reasons                 |
-| `_reference_manifest.csv`            | Per-reference-star usage, magnitudes, saturation     |
-| `_reduction_manifest.json`           | Observation metadata, aperture settings, star counts |
-| `_provenance_manifest.json`          | File paths, calibration states, comparison methods   |
-| `_aavso_extended.txt`                | AAVSO upload file                                    |
-| `_aavso_preflight.json`              | Pre-upload validation report                         |
-| `_plots/`                            | Light curve PNGs in the current theme                |
-| `_annotated_images/`                 | Field images with aperture overlays                  |
+## WCS fails
 
+- Confirm the header contains a real celestial solution.
+- Set an astrometry.net API key when remote solving is needed.
+- Verify approximate scale and pointing metadata.
+- Inspect Advanced WCS sanity settings only after reading the probe result in Work Log.
 
----
+## The target is missing
 
-## Limitations
+- Check designation-family filters and preview limits.
+- Reopen **Select Sources To Process** on a new run.
+- Try Process All Visible.
+- Confirm the object is returned by VSX or the NASA Exoplanet Archive for the solved field.
+- Use Discover only for eligible non-cataloged Gaia candidates; it is not a replacement for a missing catalog query.
 
-### What differential photometry does not do
+## The light curve follows the comparisons
 
-- **Absolute photometry.** Without photometric standard fields observed at multiple airmasses, the zero point is still approximate. **Standard Magnitude** prefers band-matched AAVSO VSP / APASS comparison magnitudes when available, and otherwise falls back toward Gaia G; **Calibrated Magnitude** remains Gaia G–based and may not match your filter precisely.
-- **Atmospheric extinction correction.** First-order extinction cancels in the differential, but second-order (color-dependent) extinction is not modeled. For wide-band filters on targets with extreme colors, this can introduce systematic errors at the ~0.01 mag level.
-- **Transformation to standard systems.** The export supports a `TRANS` flag, but CAst does not yet compute color transformation coefficients. True transformed photometry requires standard field observations.
-- **Crowded-field photometry.** Aperture photometry works well in uncrowded fields but struggles when stars overlap. PSF-fitting photometry, which models the point-spread function to deblend overlapping sources, is not implemented.
-- **Sub-millimagnitude precision.** For bright, well-measured stars, systematic effects (flat-field residuals, fringing, intra-pixel sensitivity) become the dominant noise source. CAst does not model these.
+- Inspect Overview.
+- Check clouds, gradients, meridian flip, focus, and alignment.
+- Use Scan Comps.
+- Add a check star.
+- Try a manual independent ensemble.
 
-### What could be improved
+## Standard Magnitude is unavailable
 
-- **PSF photometry** for crowded fields and faint targets where aperture photometry wastes signal.
-- **Color transformation** to place measurements on a standard photometric system (Johnson-Cousins, Sloan).
-- **Differential extinction correction** using measured color terms and airmass.
-- **Ensemble photometry weighting** using star-by-star stability metrics rather than inverse-variance flux weighting alone.
-- **Automated variability classification** beyond the current scoring metrics -- light curve shape classification using template matching or neural networks.
-- **Multi-night trending** to detect long-period variables and secular brightness changes across observing sessions.
+- Confirm the filter name is recognizable.
+- Confirm comparison stars have usable band-matched VSP/APASS/catalog values.
+- Differential Magnitude remains valid as a relative view when no standard zero point exists.
 
----
+## AAVSO preflight reports DIF
 
-## Conclusion
+The row lacks a suitable standard-magnitude calibration. Do not rename DIF to STD manually. Fix the filter/catalog/comparison context or submit it as the measurement type it actually is.
 
-Differential photometry is one of the most accessible and scientifically productive techniques available to amateur astronomers. With a modest telescope, a CCD or CMOS camera, and patience, you can produce measurements that contribute to our understanding of stellar physics, binary star orbits, exoplanet atmospheres, and the discovery of objects no one has cataloged before.
+## Clear cache choices
 
-CAst is designed to lower the barrier between capturing images and doing science with them. The algorithms are grounded in established photometric methods. The exports speak the language of professional databases. And the discovery pipeline offers a systematic way to search for the unknown in data you already have.
+- **Clear Cache for This Folder** resets the current folder and saved manual apertures.
+- **Clear Cache for Selected Object** resets one Loaded Results object.
+- **File → Clear All Cache...** removes all cached application data while retaining settings.
 
-Every light curve begins with someone deciding to look.
+Use the narrowest action that solves the mismatch.

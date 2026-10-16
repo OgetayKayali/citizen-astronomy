@@ -44,15 +44,18 @@ from photometry_app.core.observation_deck import (
     KIND_LABELS,
     ObservationDeckLibrary,
     build_deck_stats,
+    carry_observation_deck_exclusions,
     header_keyword_rows,
     load_observation_deck_library,
     merge_observation_deck_libraries,
     observation_map_from_stats,
+    path_is_inside,
     path_key,
     relative_path_parts,
     remove_observation_deck_root,
     save_observation_deck_library,
     scan_observation_deck,
+    set_observation_deck_exclusions,
 )
 from photometry_app.core.observation_map import (
     ObservationMapDay,
@@ -712,6 +715,7 @@ class ObservationDeckWorkspace(QWidget):
         self._worker: ObservationDeckScanWorker | None = None
         self._load_worker: ObservationDeckCacheWorker | None = None
         self._cache_load_started = False
+        self._cache_load_pending = False
         self._progress_dialog: QProgressDialog | None = None
         self._scan_merge = False
         self._folder_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
@@ -782,9 +786,35 @@ class ObservationDeckWorkspace(QWidget):
         self._path_label.setText("Loading saved library…")
         self._summary_label.setText("Restoring the cached library. Folders are not being scanned.")
         self._set_headline("Restoring your archive…")
+        self._cache_load_pending = True
         QTimer.singleShot(0, self._start_cache_load)
 
+    @property
+    def library(self) -> ObservationDeckLibrary | None:
+        return self._library
+
+    def is_busy(self) -> bool:
+        """True while the saved library is loading or a folder scan is running."""
+        return self._cache_load_pending or any(
+            worker is not None and worker.isRunning() for worker in (self._worker, self._load_worker)
+        )
+
+    def set_images_excluded(self, paths, *, excluded: bool) -> int:
+        """Leave images out of the statistics, or count them again. The files themselves are not touched."""
+        if self._library is None:
+            return 0
+        library, changed = set_observation_deck_exclusions(self._library, paths, excluded=excluded)
+        if not changed:
+            return 0
+        self._library = library
+        self._restyle_file_items()
+        self._update_summary_label()
+        self._handle_tree_selection()
+        self._persist_library()
+        return changed
+
     def _start_cache_load(self) -> None:
+        self._cache_load_pending = False
         if self._library is not None:
             return
         if self._load_worker is not None and self._load_worker.isRunning():
@@ -1001,17 +1031,62 @@ class ObservationDeckWorkspace(QWidget):
             save()
 
     def _show_library_menu(self, global_pos) -> None:
+        menu = self._build_library_menu()
+        menu.exec(global_pos)
+        menu.deleteLater()
+
+    def _build_library_menu(self) -> QMenu:
         menu = QMenu(self)
         add_action = menu.addAction("Add Master Folder…")
         add_action.triggered.connect(self.browse_for_folder)
         remove_action = menu.addAction("Remove Folder")
         remove_action.setEnabled(bool(self._selected_master_roots()))
         remove_action.triggered.connect(self.remove_selected_master_folder)
+        selected = self._selected_images()
+        if selected and self._library is not None:
+            menu.addSeparator()
+            excluded = sum(1 for image in selected if self._library.is_excluded(image.path))
+            if excluded < len(selected):
+                count = len(selected) - excluded
+                exclude_action = menu.addAction(f"Exclude from Statistics ({count:,})")
+                exclude_action.setToolTip("Skip these images in totals, nights, and targets. The files are not changed.")
+                exclude_action.triggered.connect(lambda: self.set_images_excluded([image.path for image in selected], excluded=True))
+            if excluded:
+                include_action = menu.addAction(f"Include in Statistics ({excluded:,})")
+                include_action.triggered.connect(lambda: self.set_images_excluded([image.path for image in selected], excluded=False))
         menu.addSeparator()
         rescan_action = menu.addAction("Rescan")
         rescan_action.setEnabled(self._library is not None and bool(self._library.root_paths))
         rescan_action.triggered.connect(self.rescan)
-        menu.exec(global_pos)
+        return menu
+
+    def _selected_images(self) -> list[DeckImage]:
+        if self._library is None:
+            return []
+        chosen: dict[str, DeckImage] = {}
+        folders: list[Path] = []
+        by_key: dict[str, DeckImage] | None = None
+        for item in self._tree.selectedItems():
+            if bool(item.data(0, _ROLE_LAZY_PLACEHOLDER)):
+                continue
+            if bool(item.data(0, _ROLE_IS_LIBRARY)):
+                return list(self._library.images)
+            raw = item.data(0, _ROLE_PATH)
+            if not raw:
+                continue
+            if bool(item.data(0, _ROLE_IS_FOLDER)):
+                folders.append(Path(str(raw)))
+                continue
+            if by_key is None:
+                by_key = {path_key(image.path): image for image in self._library.images}
+            image = by_key.get(path_key(str(raw)))
+            if image is not None:
+                chosen[path_key(image.path)] = image
+        if folders:
+            for image in self._library.images:
+                if any(path_is_inside(image.path, folder) for folder in folders):
+                    chosen.setdefault(path_key(image.path), image)
+        return list(chosen.values())
 
     def _sync_library_actions(self) -> None:
         has_roots = self._library is not None and bool(self._library.root_paths)
@@ -1194,6 +1269,8 @@ class ObservationDeckWorkspace(QWidget):
         library = result
         if self._scan_merge:
             library = merge_observation_deck_libraries(self._library, result)
+        else:
+            library = carry_observation_deck_exclusions(self._library, result)
         self._apply_library(library)
 
     def _apply_library(self, library: ObservationDeckLibrary, *, persist: bool = True) -> None:
@@ -1201,19 +1278,59 @@ class ObservationDeckWorkspace(QWidget):
         self._path_label.setText(self._folder_count_label(library.root_paths))
         self._path_label.setToolTip(self._roots_label(library.root_paths))
         self._populate_tree(library)
-        self._set_stats(build_deck_stats(library.images, scope_label="All targets"), "All targets")
+        self._set_stats(self._stats(library.images, "All targets"), "All targets")
         self._show_metadata_placeholder("Select an image to inspect its headers.")
-        extra = f" · {library.unreadable_files} unreadable" if library.unreadable_files else ""
-        self._summary_label.setText(
-            f"{library.scanned_files:,} image{'s' if library.scanned_files != 1 else ''}{extra}"
-        )
+        self._update_summary_label()
         self.library_changed.emit()
         self._sync_library_actions()
         if persist:
-            try:
-                save_observation_deck_library(library)
-            except OSError as exc:
-                QMessageBox.warning(self, "Observation Deck", f"Could not save the library database:\n{exc}")
+            self._persist_library()
+
+    def _stats(self, images, scope: str) -> DeckStats:
+        assert self._library is not None
+        return build_deck_stats(self._library.counted(images), scope_label=scope)
+
+    def _update_summary_label(self) -> None:
+        library = self._library
+        if library is None:
+            return
+        extra = f" · {library.unreadable_files} unreadable" if library.unreadable_files else ""
+        if library.excluded_keys:
+            extra += f" · {len(library.excluded_keys):,} excluded"
+        self._summary_label.setText(
+            f"{library.scanned_files:,} image{'s' if library.scanned_files != 1 else ''}{extra}"
+        )
+
+    def _persist_library(self) -> None:
+        if self._library is None:
+            return
+        try:
+            save_observation_deck_library(self._library)
+        except OSError as exc:
+            QMessageBox.warning(self, "Observation Deck", f"Could not save the library database:\n{exc}")
+
+    def _style_file_item(self, item: QTreeWidgetItem, path: Path) -> None:
+        excluded = self._library is not None and self._library.is_excluded(path)
+        font = QFont(item.font(0))
+        font.setItalic(excluded)
+        brush = self.palette().brush(QPalette.ColorRole.PlaceholderText if excluded else QPalette.ColorRole.Text)
+        for column in range(item.columnCount()):
+            item.setFont(column, font)
+            item.setForeground(column, brush)
+        item.setToolTip(0, f"{path}\nExcluded from statistics" if excluded else str(path))
+
+    def _restyle_file_items(self) -> None:
+        def visit(item: QTreeWidgetItem) -> None:
+            for index in range(item.childCount()):
+                child = item.child(index)
+                raw = child.data(0, _ROLE_PATH)
+                if raw and not bool(child.data(0, _ROLE_IS_FOLDER)):
+                    self._style_file_item(child, Path(str(raw)))
+                else:
+                    visit(child)
+
+        for index in range(self._tree.topLevelItemCount()):
+            visit(self._tree.topLevelItem(index))
 
     def _handle_scan_failed(self, message: str) -> None:
         self._worker = None
@@ -1294,6 +1411,8 @@ class ObservationDeckWorkspace(QWidget):
             file_item.setData(0, _ROLE_IS_FOLDER, False)
             file_item.setData(0, _ROLE_KIND, image.kind)
             item.addChild(file_item)
+            if self._library is not None and self._library.excluded_keys:
+                self._style_file_item(file_item, image.path)
 
     def _materialize_visible_files(self) -> None:
         query = self._search.text().strip()
@@ -1338,7 +1457,7 @@ class ObservationDeckWorkspace(QWidget):
             return
         items = self._tree.selectedItems()
         if not items:
-            self._set_stats(build_deck_stats(self._library.images, scope_label="All targets"), "All targets")
+            self._set_stats(self._stats(self._library.images, "All targets"), "All targets")
             self._show_metadata_placeholder("Select an image to inspect its headers.")
             return
         folders: list[Path] = []
@@ -1357,7 +1476,7 @@ class ObservationDeckWorkspace(QWidget):
             else:
                 images.append(path)
         if library_selected and not folders and not images:
-            self._set_stats(build_deck_stats(self._library.images, scope_label="All targets"), "All targets")
+            self._set_stats(self._stats(self._library.images, "All targets"), "All targets")
             self._show_metadata_placeholder("Select an image to inspect its headers.")
             return
         if folders:
@@ -1375,7 +1494,7 @@ class ObservationDeckWorkspace(QWidget):
             master_roots = {path_key(path) for path in self._library.root_paths}
             if len(folders) == 1 and path_key(folders[0]) in master_roots:
                 scope = folders[0].name
-            self._set_stats(build_deck_stats(tuple(selected_images), scope_label=scope), scope)
+            self._set_stats(self._stats(selected_images, scope), scope)
         elif images:
             first = self._library.image_by_path(images[0])
             scope = first.target_name if first is not None else images[0].parent.name
@@ -1389,7 +1508,7 @@ class ObservationDeckWorkspace(QWidget):
                 target_images = tuple(
                     image for image in self._library.images if image.target_name == scope
                 )
-            self._set_stats(build_deck_stats(target_images, scope_label=scope), scope)
+            self._set_stats(self._stats(target_images, scope), scope)
         if len(images) == 1 and not folders:
             self._load_metadata(images[0])
         elif images and not folders:
@@ -1566,7 +1685,7 @@ class ObservationDeckWorkspace(QWidget):
     def _show_orbit_day(self, day: object) -> None:
         if not isinstance(day, date) or self._library is None:
             return
-        images = [image for image in self._library.images if image.observation_date == day]
+        images = [image for image in self._library.counted() if image.observation_date == day]
         names = sorted({image.target_name for image in images}, key=str.casefold)
         detail = f"{day.isoformat()}: {len(images)} image{'s' if len(images) != 1 else ''}"
         if names:
@@ -1578,7 +1697,7 @@ class ObservationDeckWorkspace(QWidget):
             return ()
         images = [
             image
-            for image in self._library.images
+            for image in self._library.counted()
             if image.observation_date == day and image.exposure_seconds
         ]
         if not images:

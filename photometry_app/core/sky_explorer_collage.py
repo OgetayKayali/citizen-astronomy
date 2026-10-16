@@ -13,7 +13,11 @@ from astropy.wcs import WCS
 from PIL import Image, ImageDraw, ImageFont
 
 from photometry_app.core.plotting import AnnotatedImageRenderSettings, render_image_path_for_display
-from photometry_app.core.sky_explorer import SkyExplorerObject
+from photometry_app.core.sky_explorer import (
+    DEFAULT_PHOTOMETRIC_GALAXY_SIZE_ARCMIN,
+    SkyExplorerObject,
+    sky_explorer_is_photometric_galaxy,
+)
 
 SkyExplorerCollageLayout = Literal["uniform", "natural", "mosaic"]
 SkyExplorerCollageScope = Literal["selected", "all_eligible_visible"]
@@ -103,6 +107,13 @@ def sky_explorer_catalog_size_axes(sky_object: SkyExplorerObject) -> SkyExplorer
     if major is None and minor is not None:
         major = minor
     if major is None or minor is None:
+        if sky_explorer_is_photometric_galaxy(sky_object):
+            fallback = DEFAULT_PHOTOMETRIC_GALAXY_SIZE_ARCMIN
+            return SkyExplorerCatalogSizeAxes(
+                major_axis_arcmin=fallback,
+                minor_axis_arcmin=fallback,
+                position_angle_deg=0.0,
+            )
         return None
     if minor > major:
         major, minor = minor, major

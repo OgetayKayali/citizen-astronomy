@@ -168,7 +168,7 @@ def search_transients_in_folder(
     files = [file_result for summary in scan_report.object_summaries for file_result in summary.files]
     files.sort(key=_file_sort_key)
     if not files:
-        notes.append("No supported FITS/XISF images were found in the selected folder.")
+        notes.append("No supported images were found in the selected folder.")
         return _build_result(root_path, (), 0, 0, 0, 0, 0, (), notes)
 
     frame_results: list[TransientFrameResult] = []

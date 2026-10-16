@@ -285,6 +285,107 @@ class ObservationDeckScanTest(unittest.TestCase):
                 self.assertEqual(removed.root_paths, ())
 
 
+class ObservationDeckExclusionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temp = tempfile.TemporaryDirectory()
+        self.root = Path(self._temp.name) / "Astro"
+        _write_fits(self.root / "M13" / "Lights" / "a.fits", exptime=300.0, date_obs="2024-06-01T01:00:00", filter_name="L")
+        _write_fits(self.root / "M13" / "Lights" / "b.fits", exptime=300.0, date_obs="2024-06-01T01:05:00", filter_name="L")
+        _write_fits(self.root / "M13" / "Lights" / "copy of a.fits", exptime=300.0, date_obs="2024-06-01T01:00:00", filter_name="L")
+        self.library = scan_observation_deck(self.root)
+        self.copy = self.root.resolve() / "M13" / "Lights" / "copy of a.fits"
+
+    def tearDown(self) -> None:
+        self._temp.cleanup()
+
+    def test_excluded_images_leave_the_statistics_but_stay_in_the_library(self) -> None:
+        from photometry_app.core.observation_deck import set_observation_deck_exclusions
+
+        before = build_deck_stats(self.library.counted(), scope_label="All targets")
+        library, changed = set_observation_deck_exclusions(self.library, [str(self.copy).upper(), "D:/not/in/deck.fits"], excluded=True)
+        after = build_deck_stats(library.counted(), scope_label="All targets")
+
+        self.assertEqual(changed, 1)
+        self.assertEqual((before.subframe_count, after.subframe_count), (3, 2))
+        self.assertEqual(after.total_exposure_seconds, 600.0)
+        self.assertEqual(len(library.images), 3)
+        self.assertTrue(library.is_excluded(self.copy))
+        self.assertEqual(set_observation_deck_exclusions(library, [self.copy], excluded=True)[1], 0)
+        restored, changed = set_observation_deck_exclusions(library, [self.copy], excluded=False)
+        self.assertEqual((changed, restored.excluded_keys), (1, frozenset()))
+
+    def test_exclusions_survive_saving_rescanning_and_merging(self) -> None:
+        from photometry_app.core.observation_deck import (
+            carry_observation_deck_exclusions,
+            set_observation_deck_exclusions,
+        )
+
+        library, _changed = set_observation_deck_exclusions(self.library, [self.copy], excluded=True)
+        db_path = Path(self._temp.name) / "observation_deck.json"
+        save_observation_deck_library(library, db_path)
+        loaded = load_observation_deck_library(db_path)
+        assert loaded is not None
+        self.assertTrue(loaded.is_excluded(self.copy))
+
+        rescanned = carry_observation_deck_exclusions(loaded, scan_observation_deck(self.root))
+        self.assertTrue(rescanned.is_excluded(self.copy))
+
+        other = Path(self._temp.name) / "More"
+        _write_fits(other / "M92" / "Lights" / "c.fits", exptime=120.0, date_obs="2024-07-01T01:00:00")
+        merged = merge_observation_deck_libraries(rescanned, scan_observation_deck(other))
+        self.assertTrue(merged.is_excluded(self.copy))
+        self.assertEqual(len(merged.counted()), 3)
+
+        removed = remove_observation_deck_root(merged, self.root.resolve())
+        self.assertEqual(removed.excluded_keys, frozenset())
+
+    def test_workspace_excludes_selected_images_and_saves_the_choice(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        from photometry_app.ui.astro_tools_panel import ObservationDeckWorkspace
+
+        QApplication.instance() or QApplication([])
+        with patch("photometry_app.ui.astro_tools_panel.save_observation_deck_library") as save:
+            workspace = ObservationDeckWorkspace()
+            workspace._apply_library(self.library, persist=False)
+            frames = workspace._stat_strip._values[3]
+            self.assertEqual(frames.text(), "3")
+            changed = workspace.set_images_excluded([self.copy], excluded=True)
+
+            self.assertEqual(changed, 1)
+            self.assertEqual(frames.text(), "2")
+            save.assert_called_once()
+            self.assertTrue(save.call_args.args[0].is_excluded(self.copy))
+            self.assertIn("1 excluded", workspace._summary_label.text())
+            self.assertFalse(workspace.is_busy())
+            workspace.deleteLater()
+
+    def test_right_click_menu_offers_exclude_and_include_for_the_selection(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        from photometry_app.ui.astro_tools_panel import ObservationDeckWorkspace
+
+        QApplication.instance() or QApplication([])
+        with patch("photometry_app.ui.astro_tools_panel.save_observation_deck_library"):
+            workspace = ObservationDeckWorkspace()
+            workspace._apply_library(self.library, persist=False)
+            master = workspace._tree.topLevelItem(0).child(0)
+            workspace._tree.clearSelection()
+            master.setSelected(True)
+            self.assertEqual(len(workspace._selected_images()), 3)
+            workspace.set_images_excluded([self.copy], excluded=True)
+
+            menu = workspace._build_library_menu()
+            actions = {action.text(): action for action in menu.actions()}
+            self.assertIn("Exclude from Statistics (2)", actions)
+            self.assertIn("Include in Statistics (1)", actions)
+
+            actions["Include in Statistics (1)"].trigger()
+            self.assertFalse(workspace.library.is_excluded(self.copy))
+            menu.deleteLater()
+            workspace.deleteLater()
+
+
 class ObservationDeckWorkspaceLoadTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

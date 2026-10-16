@@ -155,6 +155,31 @@ def read_photometry_image_data(path: Path, dtype: type[np.floating] | type[float
     return image
 
 
+def read_differential_photometry_image_data(
+    path: Path,
+    dtype: type[np.floating] | type[float] = float,
+) -> np.ndarray:
+    """Load a Differential Photometry frame as one measurable image plane.
+
+    Camera RAW files are decoded as linear 16-bit RGB by LibRaw. Differential
+    aperture photometry needs one two-dimensional plane, so the three
+    demosaiced color channels are averaged into a synthetic luminance plane.
+    """
+
+    image = np.asarray(read_photometry_image_data(path, dtype=dtype))
+    if not is_raw_camera_image_path(path) or image.ndim == 2:
+        return image
+    if image.ndim != 3:
+        raise ValueError("Camera RAW data could not be converted to a two-dimensional luminance plane.")
+    if image.shape[-1] in {1, 3, 4}:
+        channels = image[..., :3]
+        return np.asarray(np.mean(channels, axis=-1), dtype=dtype)
+    if image.shape[0] in {1, 3, 4}:
+        channels = image[:3]
+        return np.asarray(np.mean(channels, axis=0), dtype=dtype)
+    raise ValueError("Camera RAW data does not expose a recognizable RGB channel axis.")
+
+
 def photometry_xisf_scale_factor(metadata: dict) -> float | None:
     sample_format = str(metadata.get("sampleFormat") or "").strip().lower()
     bounds = str(metadata.get("bounds") or "").strip()
@@ -304,15 +329,28 @@ def _sanitize_header_for_fits(header: Header) -> Header:
     return sanitized
 
 
+def _xisf_astrometric_property(properties: dict, name: str) -> object | None:
+    """Read a PixInsight solution property.
+
+    ImageSolver 6 / PixInsight 1.9 writes ``AstrometricSolution:*``. Older files
+    use the ``PCL:AstrometricSolution:*`` prefix.
+    """
+    for key in (f"AstrometricSolution:{name}", f"PCL:AstrometricSolution:{name}"):
+        value = _xisf_property_value(properties, key)
+        if value is not None:
+            return value
+    return None
+
+
 def _apply_xisf_astrometric_solution(header: Header, metadata: dict) -> None:
     if "CTYPE1" in header and "CTYPE2" in header:
         return
 
     properties = metadata.get("XISFProperties", {})
-    projection_name = _xisf_property_value(properties, "PCL:AstrometricSolution:ProjectionSystem")
-    reference_celestial = _xisf_property_value(properties, "PCL:AstrometricSolution:ReferenceCelestialCoordinates")
-    reference_image = _xisf_property_value(properties, "PCL:AstrometricSolution:ReferenceImageCoordinates")
-    linear_matrix = _xisf_property_value(properties, "PCL:AstrometricSolution:LinearTransformationMatrix")
+    projection_name = _xisf_astrometric_property(properties, "ProjectionSystem")
+    reference_celestial = _xisf_astrometric_property(properties, "ReferenceCelestialCoordinates")
+    reference_image = _xisf_astrometric_property(properties, "ReferenceImageCoordinates")
+    linear_matrix = _xisf_astrometric_property(properties, "LinearTransformationMatrix")
     observation_ra = _xisf_property_value(properties, "Observation:Center:RA")
     observation_dec = _xisf_property_value(properties, "Observation:Center:Dec")
 

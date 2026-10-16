@@ -112,9 +112,9 @@ A more detailed guide can be found at [Distance Map Guide](guides/distance_map.m
 - `.fit` / `.fits` (FITS)
 - `.xisf` (PixInsight XISF)
 - Common rasters in exploration modes: TIFF, PNG, JPEG
-- Camera RAW in the same places JPEG is accepted (for example DNG, CR2/CR3, NEF, ARW, ORF, RW2, RAF, PEF), decoded via LibRaw
+- Camera RAW (for example DNG, CR2/CR3, NEF, ARW, ORF, RW2, RAF, PEF), decoded via LibRaw; Differential Photometry requires confirmation before using RAW color-camera data
 
-Images can be plate-solved beforehand or solved on the fly through astrometry.net (API key required for unsolved images). Differential Photometry still expects FITS/XISF/TIFF science frames and skips JPG/PNG/RAW.
+Images can be plate-solved beforehand or solved on the fly through astrometry.net (API key required for unsolved images). Differential Photometry accepts FITS/XISF/TIFF science frames and supported camera RAW files, while JPG and PNG remain excluded. Direct RAW measurements use a synthetic luminance plane and should be validated before precision or AAVSO use.
 
 ## Installation
 

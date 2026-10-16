@@ -20,7 +20,7 @@ from photutils.aperture import CircularAnnulus, CircularAperture, ApertureStats,
 
 
 
-from photometry_app.core.image_io import read_header, read_image_data, read_photometry_image_data
+from photometry_app.core.image_io import read_differential_photometry_image_data, read_header, read_image_data
 
 from photometry_app.core.models import (
 
@@ -136,7 +136,7 @@ def resolve_aperture_profile(
 
     header = read_header(wcs_path)
 
-    data = read_photometry_image_data(source_path)
+    data = read_differential_photometry_image_data(source_path)
 
     if data.ndim != 2:
 
@@ -222,7 +222,7 @@ def measure_targets(
 
         source_header = read_header(source_path)
 
-        data = read_photometry_image_data(source_path)
+        data = read_differential_photometry_image_data(source_path)
 
         is_2d = data.ndim == 2
 
@@ -572,7 +572,7 @@ def measure_manual_sources(
 
     source_header = read_header(source_path)
 
-    data = read_photometry_image_data(source_path)
+    data = read_differential_photometry_image_data(source_path)
 
 
 

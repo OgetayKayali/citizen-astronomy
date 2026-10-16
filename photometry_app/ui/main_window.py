@@ -128,6 +128,12 @@ from photometry_app.core.exporters import (
     measurement_check_diagnostics,
 )
 from photometry_app.core.hr_diagram import *
+from photometry_app.core.hr_diagram_filter import (
+    HrDiagramFilter,
+    hr_diagram_filter_tooltip,
+    hr_diagram_filter_work_log_lines,
+    summarize_hr_diagram_filter,
+)
 from photometry_app.core.hr_motion_groups import *
 from photometry_app.core.image_io import *
 from photometry_app.core.matching import *
@@ -226,12 +232,21 @@ from photometry_app.core.survey_tiles import (
     survey_tile_sky_center,
     sky_explorer_survey_field_image_point_for_sky,
 )
+from photometry_app.core.catalogs import DEEP_STAR_OVERLAP_MAGNITUDE
 from photometry_app.core.snr_binning import *
 from photometry_app.core.solar_system import *
 from photometry_app.core.synthetic_tracking import *
 from photometry_app.core.transient import *
 from photometry_app.core.wcs import *
 from photometry_app.ui.dialogs import *
+from photometry_app.assistant.app_tools import app_tools
+from photometry_app.assistant.deck_tools import deck_tools
+from photometry_app.assistant.guide_tools import guide_tools
+from photometry_app.assistant.guides import GuideLibrary
+from photometry_app.assistant.image_tools import image_tools
+from photometry_app.assistant.tools import ToolRegistry
+from photometry_app.ui.assistant_bridge import MainWindowAssistantBridge
+from photometry_app.ui.assistant_panel import AssistantPanel
 from photometry_app.ui.distance_map_view import DistanceMapPanel
 from photometry_app.ui.differential_label_dialog import DifferentialQuickLabelDialog
 from photometry_app.ui.sky_explorer_collage_dialog import SkyExplorerCollageDialog
@@ -241,6 +256,8 @@ from photometry_app.ui.sky_explorer_mag_limit_dialog import (
     mag_limit_text_scale_factor,
 )
 from photometry_app.ui.sky_explorer_source_dialog import SkyExplorerSourceChoice, SkyExplorerSourceDialog
+from photometry_app.ui.sky_explorer_starless_wcs_dialog import SkyExplorerStarlessWcsDialog
+from photometry_app.ui.hr_diagram_filter_dialog import HrDiagramFilterDialog
 from photometry_app.ui.hr_plot_widget import *
 from photometry_app.ui.image_view import *
 from photometry_app.ui.levels_dialog import CurvesDialog
@@ -26051,6 +26068,12 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_worker: SkyExplorerWorker | None = None
 
+        self._sky_explorer_starless_wcs_memory: tuple[str, SkyExplorerStarlessWcsChoice] | None = None
+
+        self._sky_explorer_query_active = False
+
+        self._sky_explorer_mag_limit_query_active = False
+
         self._distance_map_worker: DistanceMapWorker | None = None
 
         self._sky_atlas_custom_overlay_surveys_dialog: SkyAtlasCustomOverlaySurveysDialog | None = None
@@ -26071,9 +26094,9 @@ class MainWindow(QMainWindow):
 
         self._pending_sky_explorer_result_gaia_query_signature: tuple[float, bool, int | None] | None = None
 
-        self._sky_explorer_mag_limit_query_signature: tuple[float,] | None = None
+        self._sky_explorer_mag_limit_query_signature: tuple[float, float, bool, tuple[float, float, float, float] | None] | None = None
 
-        self._pending_sky_explorer_mag_limit_query_signature: tuple[float,] | None = None
+        self._pending_sky_explorer_mag_limit_query_signature: tuple[float, float, bool, tuple[float, float, float, float] | None] | None = None
 
         self._calculate_period_worker: CalculatePeriodWorker | None = None
 
@@ -26246,6 +26269,14 @@ class MainWindow(QMainWindow):
         self._hr_motion_group_advanced_button.setToolTip("Adjust Motion Group Detection presets and optional expert controls.")
 
         self._hr_motion_group_advanced_button.clicked.connect(self._open_hr_motion_group_dialog)
+
+        self._hr_diagram_filter = HrDiagramFilter()
+
+        self._hr_diagram_filter_button = QPushButton("Filter...")
+
+        self._hr_diagram_filter_button.clicked.connect(self._open_hr_diagram_filter_dialog)
+
+        self._update_hr_diagram_filter_button()
 
         self._hr_motion_group_filter_checkbox = QCheckBox("Only Group")
 
@@ -27074,6 +27105,10 @@ class MainWindow(QMainWindow):
         self._next_series_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
 
         self._next_series_shortcut.activated.connect(self._handle_next_series_shortcut)
+
+        self._assistant_dock: QDockWidget | None = None
+
+        self._assistant_panel: AssistantPanel | None = None
 
 
 
@@ -29925,6 +29960,8 @@ class MainWindow(QMainWindow):
         plot_primary_controls_layout.addWidget(self._hr_find_motion_group_button)
 
         plot_primary_controls_layout.addWidget(self._hr_motion_group_advanced_button)
+
+        plot_primary_controls_layout.addWidget(self._hr_diagram_filter_button)
 
         plot_primary_controls_layout.addWidget(self._hr_motion_group_filter_checkbox)
 
@@ -40938,6 +40975,7 @@ class MainWindow(QMainWindow):
             return
         self._sky_explorer_image_input.setText(str(canvas_path))
         self._current_sky_explorer_source_image = canvas_path
+        self._forget_sky_explorer_starless_wcs_if_image_changed(canvas_path)
         try:
             display = self._cached_annotated_image_display(canvas_path)
         except Exception:
@@ -42018,6 +42056,8 @@ class MainWindow(QMainWindow):
 
         self._current_sky_explorer_source_image = source_image
 
+        self._forget_sky_explorer_starless_wcs_if_image_changed(source_image)
+
         self._current_sky_explorer_result = None
 
         self._sky_explorer_hidden_object_identities = set()
@@ -42099,7 +42139,7 @@ class MainWindow(QMainWindow):
 
         if self._sky_explorer_mag_limit_worker is not None and self._sky_explorer_mag_limit_worker.isRunning():
 
-            self.statusBar().showMessage("Mag Limit is already querying Gaia stars for this field.", 5000)
+            self.statusBar().showMessage("Mag Limit is already querying catalog stars for this field.", 5000)
 
             return
 
@@ -42211,7 +42251,7 @@ class MainWindow(QMainWindow):
             gaia_object_limit=250,
 
             include_dense_galaxy_catalog=self._should_enable_dense_sky_explorer_galaxy_catalog(
-                self._selected_sky_explorer_object_type_keys()
+                selected_object_types
             ),
 
             pixel_roi=self._sky_explorer_committed_pixel_roi(),
@@ -42225,6 +42265,10 @@ class MainWindow(QMainWindow):
         self._sky_explorer_worker.exploration_completed.connect(self._handle_sky_explorer_completed)
 
         self._sky_explorer_worker.exploration_failed.connect(self._handle_sky_explorer_failed)
+
+        self._sky_explorer_worker.starless_wcs_choice_requested.connect(self._handle_sky_explorer_starless_wcs_choice)
+
+        self._sky_explorer_query_active = True
 
         self._sky_explorer_worker.start()
 
@@ -42252,17 +42296,31 @@ class MainWindow(QMainWindow):
 
         self._sync_sky_explorer_primary_button()
 
-        if is_busy and not self._sky_explorer_exploration_is_running():
-
-            self._sky_explorer_primary_button.setEnabled(False)
-
         self._sync_tools_menu_actions()
 
-    def _sky_explorer_exploration_is_running(self) -> bool:
+    def _sky_explorer_explore_query_is_running(self) -> bool:
+
+        if bool(getattr(self, "_sky_explorer_query_active", False)):
+
+            return True
 
         worker = getattr(self, "_sky_explorer_worker", None)
 
         return worker is not None and bool(worker.isRunning())
+
+    def _sky_explorer_mag_limit_query_is_running(self) -> bool:
+
+        if bool(getattr(self, "_sky_explorer_mag_limit_query_active", False)):
+
+            return True
+
+        worker = getattr(self, "_sky_explorer_mag_limit_worker", None)
+
+        return worker is not None and bool(worker.isRunning())
+
+    def _sky_explorer_exploration_is_running(self) -> bool:
+
+        return self._sky_explorer_explore_query_is_running() or self._sky_explorer_mag_limit_query_is_running()
 
     def _terminate_sky_explorer_exploration(self) -> None:
 
@@ -42270,19 +42328,55 @@ class MainWindow(QMainWindow):
 
             return
 
+        explore_running = self._sky_explorer_explore_query_is_running()
+
+        mag_limit_running = self._sky_explorer_mag_limit_query_is_running()
+
+        self._sky_explorer_query_active = False
+
+        self._sky_explorer_mag_limit_query_active = False
+
         self._pending_sky_explorer_result_gaia_query_signature = None
 
         self._sky_explorer_pending_update_object_type_keys = ()
 
-        self._interrupt_and_drop_worker("_sky_explorer_worker")
+        if explore_running:
+
+            self._interrupt_and_drop_worker("_sky_explorer_worker")
+
+        if mag_limit_running:
+
+            self._pending_sky_explorer_mag_limit_query_signature = None
+
+            self._interrupt_and_drop_worker("_sky_explorer_mag_limit_worker")
+
+            self._set_sky_explorer_mag_limit_active(False)
 
         self._set_sky_explorer_busy(False)
 
-        self._sky_explorer_status_label.setText("Sky Explorer query terminated.")
+        if mag_limit_running and not explore_running:
 
-        self._append_sky_explorer_workflow_note("Terminated Sky Explorer query.")
+            status_text = "Mag Limit query terminated."
 
-        self.statusBar().showMessage("Sky Explorer query terminated.", 5000)
+            note_text = "Terminated Mag Limit catalog query."
+
+        elif mag_limit_running and explore_running:
+
+            status_text = "Sky Explorer and Mag Limit queries terminated."
+
+            note_text = "Terminated Sky Explorer and Mag Limit queries."
+
+        else:
+
+            status_text = "Sky Explorer query terminated."
+
+            note_text = "Terminated Sky Explorer query."
+
+        self._sky_explorer_status_label.setText(status_text)
+
+        self._append_sky_explorer_workflow_note(note_text)
+
+        self.statusBar().showMessage(status_text, 5000)
 
     def _sync_sky_explorer_primary_button(self) -> None:
 
@@ -42292,9 +42386,17 @@ class MainWindow(QMainWindow):
 
             self._sky_explorer_primary_button.setEnabled(True)
 
-            self._sky_explorer_primary_button.setToolTip("Stop the current Sky Explorer query.")
+            if self._sky_explorer_mag_limit_query_is_running() and not self._sky_explorer_explore_query_is_running():
+
+                self._sky_explorer_primary_button.setToolTip("Stop the current Mag Limit catalog query.")
+
+            else:
+
+                self._sky_explorer_primary_button.setToolTip("Stop the current Sky Explorer query.")
 
             self._sync_sky_explorer_header_buttons()
+
+            self._apply_sky_explorer_terminate_button_style()
 
             return
 
@@ -42326,7 +42428,47 @@ class MainWindow(QMainWindow):
 
         self._append_sky_explorer_workflow_note(message)
 
+    def _apply_sky_explorer_terminate_button_style(self) -> None:
+
+        colors = self._resolved_theme_editor_colors()
+
+        accent = QColor(colors.get("accent", "#3d8bfd")).name().lower()
+
+        accent_soft = QColor(accent).lighter(118).name().lower()
+
+        accent_deep = QColor(accent).darker(118).name().lower()
+
+        card_bg = QColor(colors.get("panel_bg", "#2b2b2b")).name().lower()
+
+        body_text = colors.get("text", "#f8fafc")
+
+        self._sky_explorer_primary_button.setStyleSheet(
+
+            "QPushButton {"
+
+            f"background-color: {card_bg};"
+
+            f"color: {body_text};"
+
+            f"border: 2px solid {accent};"
+
+            "border-radius: 4px;"
+
+            "font-weight: 700;"
+
+            "padding: 4px 10px;"
+
+            "}"
+
+            f"QPushButton:hover {{ background-color: {QColor(card_bg).lighter(112).name().lower()}; border: 2px solid {accent_soft}; }}"
+
+            f"QPushButton:pressed {{ background-color: {QColor(card_bg).darker(108).name().lower()}; border: 2px solid {accent_deep}; }}"
+
+        )
+
     def _handle_sky_explorer_completed(self, result: object) -> None:
+
+        self._sky_explorer_query_active = False
 
         self._sky_explorer_worker = None
 
@@ -42400,7 +42542,7 @@ class MainWindow(QMainWindow):
 
         if self._sky_explorer_mag_limit_worker is not None and self._sky_explorer_mag_limit_worker.isRunning():
 
-            self.statusBar().showMessage("Mag Limit is already querying Gaia stars for this field.", 5000)
+            self.statusBar().showMessage("Mag Limit is already querying catalog stars for this field.", 5000)
 
             return
 
@@ -42424,15 +42566,19 @@ class MainWindow(QMainWindow):
 
         self._sky_explorer_mag_limit_auto_objects = ()
 
-        self._sky_explorer_status_label.setText("Mag Limit is resolving the field and querying Gaia stars.")
+        self._sky_explorer_status_label.setText("Mag Limit is resolving the field and querying catalog stars.")
 
-        self.statusBar().showMessage("Mag Limit Gaia query started.", 5000)
+        self.statusBar().showMessage("Mag Limit catalog query started.", 5000)
 
-        self._append_sky_explorer_workflow_note(f"Started Mag Limit Gaia query for {source_path.name}.")
+        self._append_sky_explorer_workflow_note(
+            f"Started Mag Limit catalog query{' inside the drawn ROI' if self._sky_explorer_committed_pixel_roi() is not None else ''} for {source_path.name}."
+        )
+
+        self._sky_explorer_mag_limit_query_active = True
 
         self._set_sky_explorer_busy(True)
 
-        self._pending_sky_explorer_mag_limit_query_signature = (round(float(options.max_magnitude), 6),)
+        self._pending_sky_explorer_mag_limit_query_signature = self._current_sky_explorer_mag_limit_query_signature()
 
         self._sky_explorer_mag_limit_worker = SkyExplorerWorker(
 
@@ -42448,6 +42594,12 @@ class MainWindow(QMainWindow):
 
             ignore_gaia_hard_cap=True,
 
+            include_deep_star_catalogs=True,
+
+            catalog_start_magnitude=float(options.start_magnitude),
+
+            pixel_roi=self._sky_explorer_committed_pixel_roi(),
+
             parent=self,
 
         )
@@ -42457,6 +42609,10 @@ class MainWindow(QMainWindow):
         self._sky_explorer_mag_limit_worker.exploration_completed.connect(self._handle_sky_explorer_mag_limit_completed)
 
         self._sky_explorer_mag_limit_worker.exploration_failed.connect(self._handle_sky_explorer_mag_limit_failed)
+
+        self._sky_explorer_mag_limit_worker.starless_wcs_choice_requested.connect(
+            self._handle_sky_explorer_starless_wcs_choice
+        )
 
         self._sky_explorer_mag_limit_worker.start()
 
@@ -42471,6 +42627,8 @@ class MainWindow(QMainWindow):
         self._append_sky_explorer_workflow_note(progress_text)
 
     def _handle_sky_explorer_mag_limit_completed(self, result: object) -> None:
+
+        self._sky_explorer_mag_limit_query_active = False
 
         self._sky_explorer_mag_limit_worker = None
 
@@ -42496,23 +42654,35 @@ class MainWindow(QMainWindow):
 
         if representative_stars:
 
-            summary_text = f"Mag Limit annotated {len(representative_stars)} representative Gaia stars."
+            summary_text = f"Mag Limit annotated {len(representative_stars)} representative catalog stars."
 
         else:
 
+            only_detected = bool(getattr(self._sky_explorer_mag_limit_options, "only_detected_sources", False)) if self._sky_explorer_mag_limit_options is not None else False
+
             gaia_summary = next((summary for summary in result.layer_summaries if summary.layer_key == "gaia_stars"), None)
 
-            if (
+            if only_detected and result.objects:
+
+                if self._sky_explorer_mag_limit_detection_image() is None:
+
+                    summary_text = "Mag Limit could not load the image to test which sources appear."
+
+                else:
+
+                    summary_text = "Mag Limit found catalog sources on the image, but none were detected at the minimum SNR."
+
+            elif (
                 gaia_summary is not None
                 and int(getattr(gaia_summary, "returned_count", 0) or 0) > 0
                 and int(getattr(gaia_summary, "displayed_count", 0) or 0) == 0
             ):
 
-                summary_text = "Mag Limit found Gaia stars in the field cone, but none fall inside the solved image footprint."
+                summary_text = "Mag Limit found catalog stars in the field cone, but none fall inside the solved image footprint."
 
             else:
 
-                summary_text = "Mag Limit did not find Gaia stars with usable magnitudes for this field."
+                summary_text = "Mag Limit did not find catalog stars with usable magnitudes for this field."
 
         self._sky_explorer_status_label.setText(summary_text)
 
@@ -42534,6 +42704,8 @@ class MainWindow(QMainWindow):
 
     def _handle_sky_explorer_mag_limit_failed(self, message: str) -> None:
 
+        self._sky_explorer_mag_limit_query_active = False
+
         self._sky_explorer_mag_limit_worker = None
 
         self._pending_sky_explorer_mag_limit_query_signature = None
@@ -42542,13 +42714,29 @@ class MainWindow(QMainWindow):
 
         self._set_sky_explorer_mag_limit_active(False)
 
-        self._sky_explorer_status_label.setText(f"Mag Limit failed: {message}")
+        terminated = "terminated" in str(message).lower()
 
-        self._append_sky_explorer_workflow_note(f"Mag Limit failed: {message}")
+        self._sky_explorer_status_label.setText(
+            "Mag Limit query terminated." if terminated else f"Mag Limit failed: {message}"
+        )
+
+        self._append_sky_explorer_workflow_note(
+            "Terminated Mag Limit catalog query." if terminated else f"Mag Limit failed: {message}"
+        )
+
+        if terminated:
+
+            self.statusBar().showMessage("Mag Limit query terminated.", 5000)
+
+            return
+
+        self.statusBar().showMessage(f"Mag Limit failed: {message}", 7000)
 
         QMessageBox.warning(self, "Mag Limit failed", message)
 
     def _handle_sky_explorer_failed(self, message: str) -> None:
+
+        self._sky_explorer_query_active = False
 
         self._sky_explorer_worker = None
 
@@ -42577,6 +42765,53 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Sky Explorer failed: {message}", 7000)
 
         QMessageBox.warning(self, "Sky Explorer failed", message)
+
+    def _forget_sky_explorer_starless_wcs_if_image_changed(self, source_image: Path) -> None:
+        memory = getattr(self, "_sky_explorer_starless_wcs_memory", None)
+        if memory is None:
+            return
+        try:
+            resolved = str(Path(source_image).expanduser().resolve())
+        except OSError:
+            resolved = str(source_image)
+        if memory[0] != resolved:
+            self._sky_explorer_starless_wcs_memory = None
+
+    def _sky_explorer_starless_wcs_choice_still_valid(
+        self,
+        prompt: SkyExplorerStarlessWcsPrompt,
+        choice: SkyExplorerStarlessWcsChoice,
+    ) -> bool:
+        if choice.action == "use_file":
+            wcs_path = choice.wcs_path
+            if wcs_path is None or not wcs_path.is_file():
+                return False
+            return sky_explorer_external_wcs_error(prompt.image_width, prompt.image_height, wcs_path) is None
+        return choice.action in {"use_embedded", "plate_solve"}
+
+    def _handle_sky_explorer_starless_wcs_choice(self, prompt: object) -> None:
+        worker = self.sender()
+        choice = SkyExplorerStarlessWcsChoice(action="cancel")
+        try:
+            if not isinstance(prompt, SkyExplorerStarlessWcsPrompt):
+                return
+            resolved = str(Path(prompt.image_path).expanduser().resolve())
+            memory = getattr(self, "_sky_explorer_starless_wcs_memory", None)
+            if (
+                memory is not None
+                and memory[0] == resolved
+                and self._sky_explorer_starless_wcs_choice_still_valid(prompt, memory[1])
+            ):
+                choice = memory[1]
+                return
+            dialog = SkyExplorerStarlessWcsDialog(prompt, parent=self)
+            dialog.exec()
+            choice = dialog.choice()
+            if choice.action != "cancel":
+                self._sky_explorer_starless_wcs_memory = (resolved, choice)
+        finally:
+            if isinstance(worker, (SkyExplorerWorker, AsteroidVisibleMagnitudeWorker)):
+                worker.provide_starless_wcs_choice(choice)
 
     def _append_sky_explorer_workflow_note(self, message: str) -> None:
 
@@ -44394,21 +44629,13 @@ class MainWindow(QMainWindow):
 
     def _should_enable_dense_sky_explorer_galaxy_catalog(self, selected_object_type_keys: Sequence[str]) -> bool:
 
-        if self._current_sky_explorer_object_type_mode() != "scientific":
+        return sky_explorer_should_include_dense_galaxy_catalog(
 
-            return False
+            selected_object_type_keys,
 
-        selected_keys = {str(key or "").strip() for key in selected_object_type_keys if str(key or "").strip()}
+            object_type_mode=self._current_sky_explorer_object_type_mode(),
 
-        scientific_keys = {
-
-            definition.key
-
-            for definition in sky_explorer_object_type_definitions_for_mode("scientific")
-
-        }
-
-        return bool(scientific_keys) and selected_keys == scientific_keys
+        )
 
     def _filtered_sky_explorer_objects(self) -> tuple[SkyExplorerObject, ...]:
 
@@ -48874,6 +49101,8 @@ class MainWindow(QMainWindow):
 
             text_scale_mode=str(getattr(settings, "sky_explorer_mag_limit_text_scale_mode", "off") or "off"),
 
+            only_detected_sources=bool(getattr(settings, "sky_explorer_mag_limit_only_detected_sources", False)),
+
         )
 
     def _persist_sky_explorer_mag_limit_options(self, options: SkyExplorerMagLimitOptions) -> None:
@@ -48895,6 +49124,8 @@ class MainWindow(QMainWindow):
             "sky_explorer_mag_limit_max_magnitude": float(options.max_magnitude),
 
             "sky_explorer_mag_limit_text_scale_mode": str(options.text_scale_mode),
+
+            "sky_explorer_mag_limit_only_detected_sources": bool(getattr(options, "only_detected_sources", False)),
 
             "sky_explorer_mag_limit_auto_stars_per_bin": max(2, int(options.auto_stars_per_bin)),
 
@@ -49000,11 +49231,11 @@ class MainWindow(QMainWindow):
 
             if representative_stars:
 
-                self.statusBar().showMessage(f"Mag Limit annotated {len(representative_stars)} representative Gaia stars.", 5000)
+                self.statusBar().showMessage(f"Mag Limit annotated {len(representative_stars)} representative catalog stars.", 5000)
 
             else:
 
-                self.statusBar().showMessage("Mag Limit did not find Gaia stars with usable magnitudes for this field.", 6000)
+                self.statusBar().showMessage("Mag Limit did not find catalog stars with usable magnitudes for this field.", 6000)
 
             return
 
@@ -49076,7 +49307,7 @@ class MainWindow(QMainWindow):
 
         if self._sky_explorer_mag_limit_worker is not None and self._sky_explorer_mag_limit_worker.isRunning():
 
-            self.statusBar().showMessage("Mag Limit is already querying Gaia stars for this field.", 5000)
+            self.statusBar().showMessage("Mag Limit is already querying catalog stars for this field.", 5000)
 
             return
 
@@ -49126,11 +49357,17 @@ class MainWindow(QMainWindow):
 
             solved_field=self._current_sky_explorer_solved_field(),
 
+            prompt_for_starless_wcs=True,
+
             parent=self,
 
         )
 
         self._sky_explorer_mag_limit_auto_worker.progress_updated.connect(self._handle_sky_explorer_mag_limit_auto_progress)
+
+        self._sky_explorer_mag_limit_auto_worker.starless_wcs_choice_requested.connect(
+            self._handle_sky_explorer_starless_wcs_choice
+        )
 
         self._sky_explorer_mag_limit_auto_worker.estimate_completed.connect(self._handle_sky_explorer_mag_limit_auto_completed)
 
@@ -49194,9 +49431,21 @@ class MainWindow(QMainWindow):
 
         self._set_sky_explorer_mag_limit_active(False)
 
-        self._sky_explorer_status_label.setText(f"Mag Limit failed: {message}")
+        terminated = "terminated" in str(message).lower()
 
-        self._append_sky_explorer_workflow_note(f"Mag Limit failed: {message}")
+        self._sky_explorer_status_label.setText(
+            "Mag Limit query terminated." if terminated else f"Mag Limit failed: {message}"
+        )
+
+        self._append_sky_explorer_workflow_note(
+            "Terminated Mag Limit catalog query." if terminated else f"Mag Limit failed: {message}"
+        )
+
+        if terminated:
+
+            self.statusBar().showMessage("Mag Limit query terminated.", 5000)
+
+            return
 
         QMessageBox.warning(self, "Mag Limit failed", message)
 
@@ -49284,6 +49533,58 @@ class MainWindow(QMainWindow):
         self._tools_estimate_magnitude_limit_action.setEnabled(is_sky_explorer and has_image and not is_busy)
 
         self._tools_clear_magnitude_limit_action.setEnabled(is_sky_explorer and self._sky_explorer_mag_limit_is_active())
+
+    def _ensure_assistant_dock(self) -> QDockWidget:
+        if self._assistant_dock is not None:
+            return self._assistant_dock
+        guide_library = GuideLibrary()
+        bridge = MainWindowAssistantBridge(self)
+        panel = AssistantPanel(
+            settings_provider=lambda: self._settings,
+            registry_factory=lambda: ToolRegistry(
+                (
+                    *guide_tools(guide_library),
+                    *app_tools(bridge),
+                    *image_tools(bridge.catalog_cache_dir),
+                    *deck_tools(bridge),
+                )
+            ),
+            state_provider=self._assistant_state_text,
+            protected_roots_provider=bridge.protected_roots,
+            on_settings_changed=self._save_settings_snapshot,
+            parent=self,
+        )
+        panel.open_settings_requested.connect(self._open_assistant_settings)
+        dock = QDockWidget("CAst Assistant", self)
+        dock.setObjectName("assistantDock")
+        dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        dock.setWidget(panel)
+        dock.setMinimumWidth(320)
+        dock.visibilityChanged.connect(self._tools_assistant_action.setChecked)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self._assistant_panel = panel
+        self._assistant_dock = dock
+        return dock
+
+    def _toggle_assistant_dock(self, checked: bool = True) -> None:
+        if not checked:
+            if self._assistant_dock is not None:
+                self._assistant_dock.hide()
+            return
+        dock = self._ensure_assistant_dock()
+        dock.show()
+        dock.raise_()
+        if self._assistant_panel is not None:
+            self._assistant_panel.refresh_setup_state()
+            self._assistant_panel.focus_input()
+
+    def _open_assistant_settings(self) -> None:
+        self._open_settings(focus_assistant=True)
+
+    def _assistant_state_text(self) -> str:
+        mode_action = self._app_mode_action_group.checkedAction()
+        mode_name = mode_action.text() if mode_action is not None else "Mode launcher"
+        return f"- Open mode: {mode_name}"
 
     def _reset_sky_explorer_image_display_controls(self) -> None:
 
@@ -49625,6 +49926,39 @@ class MainWindow(QMainWindow):
             )
         return overlays
 
+    def _sky_explorer_roi_fov_label(self, selection: _HrRoiSelection) -> str:
+        settings = self._ensure_settings()
+        if not bool(getattr(settings, "sky_explorer_show_roi_fov_label", True)):
+            return ""
+        left, right = sorted((float(selection.x0), float(selection.x1)))
+        top, bottom = sorted((float(selection.y0), float(selection.y1)))
+        if right - left < 1.0 or bottom - top < 1.0:
+            return ""
+        survey_scale_arcsec = self._sky_explorer_survey_pixel_scale_arcsec()
+        if survey_scale_arcsec is not None:
+            return (
+                f"{format_sky_explorer_angular_distance((right - left) * survey_scale_arcsec)} × "
+                f"{format_sky_explorer_angular_distance((bottom - top) * survey_scale_arcsec)}"
+            )
+        label = sky_explorer_roi_fov_label(
+            self._sky_explorer_image_wcs(),
+            x0=left,
+            y0=top,
+            x1=right,
+            y1=bottom,
+        )
+        return "" if label is None else label
+
+    def _sky_explorer_survey_pixel_scale_arcsec(self) -> float | None:
+        if not getattr(self, "_sky_explorer_primary_survey_key", None):
+            return None
+        source_path = getattr(self, "_current_sky_explorer_source_image", None)
+        if source_path is None or not self._sky_explorer_path_in_survey_field_cache(source_path):
+            return None
+        _ra_deg, _dec_deg, fov_arcmin, width_px, height_px = self._sky_explorer_survey_field_settings()
+        span_px = float(max(int(width_px), int(height_px), 1))
+        return (float(fov_arcmin) * 60.0) / span_px
+
     def _sky_explorer_selection_overlay_for(
         self, selection: _HrRoiSelection, *, active: bool = False
     ) -> SelectionOverlay:
@@ -49637,6 +49971,7 @@ class MainWindow(QMainWindow):
             color=self._sky_explorer_roi_drag_color() if active else self._sky_explorer_roi_color(),
             fill=False,
             stroke_width=2.0,
+            label=self._sky_explorer_roi_fov_label(selection),
         )
 
     def _sync_sky_explorer_roi_overlays(self) -> None:
@@ -52319,6 +52654,42 @@ class MainWindow(QMainWindow):
 
             )
 
+        if sky_explorer_is_photometric_galaxy(sky_object):
+
+            target_name = identifier or source_id or f"{sky_object.ra_deg:.6f} {sky_object.dec_deg:.6f}"
+
+            return (
+
+                sky_explorer_ned_cone_search_url(sky_object.ra_deg, sky_object.dec_deg),
+
+                f"Opened NED literature search near {target_name}.",
+
+            )
+
+        photometric_vizier_url = sky_explorer_vizier_catalog_cone_url(
+            catalog,
+            sky_object.ra_deg,
+            sky_object.dec_deg,
+        )
+
+        if photometric_vizier_url is not None:
+
+            catalog_label = {
+                "des-dr1": "DES DR1",
+                "panstarrs-dr1": "Pan-STARRS DR1",
+                "skymapper-dr4": "SkyMapper DR4",
+            }.get(catalog, catalog)
+
+            target_name = identifier or source_id or f"{sky_object.ra_deg:.6f} {sky_object.dec_deg:.6f}"
+
+            return (
+
+                photometric_vizier_url,
+
+                f"Opened {catalog_label} / VizieR search for {target_name}.",
+
+            )
+
         if catalog == "ngc2000" and identifier:
 
             return (
@@ -52689,7 +53060,10 @@ class MainWindow(QMainWindow):
         current_result = self._current_sky_explorer_result
 
         if (
-            self._sky_explorer_result_matches_current_source(current_result)
+            self._sky_explorer_committed_pixel_roi() is None
+            and not self._sky_explorer_mag_limit_needs_deep_star_catalogs()
+            and self._sky_explorer_explore_gaia_covers_mag_limit_max()
+            and self._sky_explorer_result_matches_current_source(current_result)
             and self._sky_explorer_has_mag_limit_gaia_objects(current_result.objects)
             and self._sky_explorer_result_has_full_mag_limit_gaia_coverage(current_result)
             and self._sky_explorer_gaia_query_signature_matches(self._sky_explorer_result_gaia_query_signature, current_signature)
@@ -52712,17 +53086,61 @@ class MainWindow(QMainWindow):
 
         return ()
 
-    def _current_sky_explorer_mag_limit_query_signature(self) -> tuple[float,]:
+    def _sky_explorer_mag_limit_options_or_defaults(self) -> SkyExplorerMagLimitOptions:
 
-        options = getattr(self, "_sky_explorer_mag_limit_options", None)
+        return self._sky_explorer_mag_limit_options or self._sky_explorer_mag_limit_options_from_settings()
 
-        if options is not None:
+    def _sky_explorer_mag_limit_needs_deep_star_catalogs(self, options: SkyExplorerMagLimitOptions | None = None) -> bool:
 
-            return (round(float(options.max_magnitude), 6),)
+        resolved = options or self._sky_explorer_mag_limit_options_or_defaults()
 
-        settings = self._ensure_settings()
+        return float(resolved.max_magnitude) > float(DEEP_STAR_OVERLAP_MAGNITUDE)
 
-        return (round(float(getattr(settings, "sky_explorer_gaia_max_magnitude", 17.0)), 6),)
+    def _sky_explorer_explore_gaia_covers_mag_limit_max(self) -> bool:
+
+        options = self._sky_explorer_mag_limit_options_or_defaults()
+
+        cached = self._sky_explorer_result_gaia_query_signature
+
+        if cached is None:
+
+            explore_max = float(getattr(self._ensure_settings(), "sky_explorer_gaia_max_magnitude", 17.0))
+
+        else:
+
+            explore_max = float(cached[0])
+
+        return float(options.max_magnitude) <= explore_max + 1e-9
+
+    def _current_sky_explorer_mag_limit_query_signature(
+        self,
+    ) -> tuple[float, float, bool, tuple[float, float, float, float] | None]:
+
+        options = self._sky_explorer_mag_limit_options_or_defaults()
+
+        start_magnitude = float(getattr(options, "start_magnitude", options.auto_start_magnitude))
+
+        max_magnitude = float(options.max_magnitude)
+
+        if start_magnitude > max_magnitude:
+
+            start_magnitude, max_magnitude = max_magnitude, start_magnitude
+
+        roi = self._sky_explorer_committed_pixel_roi()
+
+        roi_key = None if roi is None else tuple(round(float(value), 2) for value in roi)
+
+        return (
+
+            round(start_magnitude, 6),
+
+            round(max_magnitude, 6),
+
+            self._sky_explorer_mag_limit_needs_deep_star_catalogs(options),
+
+            roi_key,
+
+        )
 
     def _current_sky_explorer_gaia_query_signature(self) -> tuple[float, bool, int | None]:
 
@@ -52857,6 +53275,14 @@ class MainWindow(QMainWindow):
             return preferred_display_name.strip()
 
         return str(sky_object.name or sky_object.source_id or "").strip()
+
+    def _sky_explorer_mag_limit_magnitude_text(self, sky_object: SkyExplorerObject, magnitude: float) -> str:
+
+        metadata = sky_object.metadata if isinstance(sky_object.metadata, dict) else {}
+
+        band = str(metadata.get("magnitude_band") or "G").strip() or "G"
+
+        return f"{band} {float(magnitude):.1f}"
 
     def _sky_explorer_mag_limit_style_key(self) -> str:
 
@@ -53006,7 +53432,7 @@ class MainWindow(QMainWindow):
 
                     source_id=f"mag-limit:{self._sky_explorer_overlay_source_id(sky_object)}",
 
-                    name=f"{self._sky_explorer_mag_limit_label_name(sky_object)}\nG {float(magnitude):.1f}",
+                    name=f"{self._sky_explorer_mag_limit_label_name(sky_object)}\n{self._sky_explorer_mag_limit_magnitude_text(sky_object, float(magnitude))}",
 
                     x=float(sky_object.pixel_x),
 
@@ -53086,6 +53512,10 @@ class MainWindow(QMainWindow):
 
         faintest_count = max(1, int(getattr(options, "faintest_count", 1) or 1))
 
+        if bool(getattr(options, "only_detected_sources", False)) and self._sky_explorer_mag_limit_detection_image() is None:
+
+            return ()
+
         objects_by_bin: dict[float, list[tuple[SkyExplorerObject, float]]] = {}
 
         ranged_objects: list[tuple[SkyExplorerObject, float]] = []
@@ -53132,7 +53562,14 @@ class MainWindow(QMainWindow):
 
             )
 
-            return tuple(sky_object for sky_object, _magnitude in ranked_faintest[:faintest_count])
+            return tuple(
+                sky_object
+                for sky_object, _magnitude in self._sky_explorer_mag_limit_visible_candidates(
+                    ranked_faintest,
+                    limit=faintest_count,
+                    options=options,
+                )
+            )
 
         selected_objects: list[SkyExplorerObject] = []
 
@@ -53160,9 +53597,89 @@ class MainWindow(QMainWindow):
 
             )
 
-            selected_objects.extend(sky_object for sky_object, _magnitude in ranked_objects[:examples_per_bin])
+            selected_objects.extend(
+                sky_object
+                for sky_object, _magnitude in self._sky_explorer_mag_limit_visible_candidates(
+                    ranked_objects,
+                    limit=examples_per_bin,
+                    options=options,
+                )
+            )
 
         return tuple(selected_objects)
+
+    def _sky_explorer_mag_limit_visible_candidates(
+        self,
+        ranked_objects: Sequence[tuple[SkyExplorerObject, float]],
+        *,
+        limit: int,
+        options: SkyExplorerMagLimitOptions,
+    ) -> list[tuple[SkyExplorerObject, float]]:
+        chosen: list[tuple[SkyExplorerObject, float]] = []
+        if not bool(getattr(options, "only_detected_sources", False)):
+            return list(ranked_objects[: max(0, int(limit))])
+        image = self._sky_explorer_mag_limit_detection_image()
+        if image is None:
+            return []
+        threshold = float(options.auto_snr_threshold)
+        measured = 0
+        for item in ranked_objects:
+            if len(chosen) >= max(0, int(limit)):
+                break
+            if measured >= 80:
+                break
+            sky_object = item[0]
+            measured += 1
+            if self._sky_explorer_cached_source_is_detected(sky_object, image, threshold):
+                chosen.append(item)
+        return chosen
+
+    def _sky_explorer_mag_limit_detection_image(self):
+        source_path = getattr(self, "_current_sky_explorer_source_image", None)
+        if source_path is None or not Path(source_path).exists():
+            return None
+        cached_path = getattr(self, "_sky_explorer_detection_image_path", None)
+        cached_image = getattr(self, "_sky_explorer_detection_image", None)
+        if cached_path == source_path and cached_image is not None:
+            return cached_image
+        if cached_path == source_path and getattr(self, "_sky_explorer_detection_image_failed", False):
+            return None
+        try:
+            image = load_detection_image(Path(source_path))
+        except Exception:
+            self._sky_explorer_detection_image_path = source_path
+            self._sky_explorer_detection_image = None
+            self._sky_explorer_detection_image_failed = True
+            return None
+        self._sky_explorer_detection_image_failed = False
+        self._sky_explorer_detection_image_path = source_path
+        self._sky_explorer_detection_image = image
+        self._sky_explorer_detection_cache_key = None
+        return image
+
+    def _sky_explorer_cached_source_is_detected(self, sky_object: SkyExplorerObject, image, threshold: float) -> bool:
+        source_path = getattr(self, "_current_sky_explorer_source_image", None)
+        cache_key = (str(source_path), round(float(threshold), 2))
+        if getattr(self, "_sky_explorer_detection_cache_key", None) != cache_key:
+            self._sky_explorer_detection_cache_key = cache_key
+            self._sky_explorer_detection_cache = {}
+        identity = (
+            str(sky_object.catalog),
+            str(sky_object.source_id),
+            round(float(sky_object.pixel_x), 2),
+            round(float(sky_object.pixel_y), 2),
+        )
+        cache = self._sky_explorer_detection_cache
+        if identity in cache:
+            return bool(cache[identity])
+        detected = catalog_position_is_detected(
+            image,
+            float(sky_object.pixel_x),
+            float(sky_object.pixel_y),
+            snr_threshold=float(threshold),
+        )
+        cache[identity] = detected
+        return detected
 
     def _should_annotate_sky_explorer_object(self, sky_object: SkyExplorerObject) -> bool:
 
@@ -54232,6 +54749,20 @@ class MainWindow(QMainWindow):
 
 
         tools_menu = self.menuBar().addMenu("Tools")
+
+        self._tools_assistant_action = QAction("AI Assistant", self)
+
+        self._tools_assistant_action.setCheckable(True)
+
+        self._tools_assistant_action.setShortcut("Ctrl+Shift+A")
+
+        self._tools_assistant_action.setToolTip("Open a chat that can guide you through CAst and look at your images.")
+
+        self._tools_assistant_action.triggered.connect(self._toggle_assistant_dock)
+
+        tools_menu.addAction(self._tools_assistant_action)
+
+        tools_menu.addSeparator()
 
         self._tools_create_collage_action = QAction("Create collage", self)
 
@@ -58381,9 +58912,9 @@ class MainWindow(QMainWindow):
 
         self._sync_differential_primary_button()
 
-        self.statusBar().showMessage("Scanning FITS files...")
+        self.statusBar().showMessage("Scanning supported image files...")
 
-        self._summary_label.setText("Scanning the selected location and inspecting FITS headers.")
+        self._summary_label.setText("Scanning the selected location and inspecting image metadata.")
 
         self._object_table.setRowCount(0)
 
@@ -58785,7 +59316,7 @@ class MainWindow(QMainWindow):
 
         self._update_source_period_button_state()
 
-    def _open_settings(self) -> None:
+    def _open_settings(self, *, focus_assistant: bool = False) -> None:
 
         root_path = Path(self._root_path_input.text()).expanduser()
 
@@ -58801,7 +59332,17 @@ class MainWindow(QMainWindow):
 
         dialog = SettingsDialog(root_path=root_path, settings=settings, parent=self)
 
-        if dialog.exec():
+        if focus_assistant:
+
+            dialog.show_assistant_tab()
+
+        accepted = dialog.exec()
+
+        if self._assistant_panel is not None:
+
+            QTimer.singleShot(0, self._assistant_panel.refresh_setup_state)
+
+        if accepted:
 
             save_settings_config_override(dialog.selected_config_path_override())
 
@@ -59963,6 +60504,10 @@ class MainWindow(QMainWindow):
                 canvas.set_selected_object(None)
 
     def _purge_sky_explorer_runtime_state(self) -> None:
+
+        self._sky_explorer_query_active = False
+
+        self._sky_explorer_mag_limit_query_active = False
 
         self._interrupt_and_drop_worker("_sky_explorer_worker")
 
@@ -61446,6 +61991,10 @@ class MainWindow(QMainWindow):
             self._refresh_hr_image_view(reset_view=False)
 
             self._refresh_hr_plot()
+
+            if self._hr_diagram_filter.is_active:
+
+                self._append_hr_diagram_filter_work_log()
 
             self._hr_status_label.setText("Updated the HR diagram from cached full-field measurements.")
 
@@ -71421,6 +71970,10 @@ class MainWindow(QMainWindow):
 
             self._refresh_hr_plot()
 
+            if self._hr_diagram_filter.is_active:
+
+                self._append_hr_diagram_filter_work_log()
+
             self._hr_status_label.setText("Updated the HR diagram from cached full-field measurements.")
 
             self.statusBar().clearMessage()
@@ -71724,6 +72277,10 @@ class MainWindow(QMainWindow):
             "Use the HR plot controls and filtered rows on the left to inspect the diagram without regenerating the workflow."
 
         )
+
+        if self._hr_diagram_filter.is_active:
+
+            self._append_hr_diagram_filter_work_log()
 
         self._sync_hr_footer_splitter_sizes()
 
@@ -72030,6 +72587,8 @@ class MainWindow(QMainWindow):
             table_row_mask=table_row_mask,
 
             highlighted_row_keys=self._hr_common_motion_highlight_row_keys,
+
+            diagram_filter=self._hr_diagram_filter,
 
         )
 
@@ -76141,6 +76700,88 @@ class MainWindow(QMainWindow):
 
         return normalized_settings
 
+    def _open_hr_diagram_filter_dialog(self) -> None:
+
+        dialog = HrDiagramFilterDialog(self._hr_diagram_filter, self)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+
+            return
+
+        self._hr_diagram_filter = dialog.filter_settings()
+
+        self._update_hr_diagram_filter_button()
+
+        self._refresh_hr_plot()
+
+        self._append_hr_diagram_filter_work_log()
+
+        if self._hr_diagram_filter.is_active:
+
+            self.statusBar().showMessage("Applied the HR diagram filter. Details are in the Work Log.", 5000)
+
+        else:
+
+            self.statusBar().showMessage("Cleared the HR diagram filter.", 5000)
+
+    def _update_hr_diagram_filter_button(self) -> None:
+
+        active = self._hr_diagram_filter.is_active
+
+        self._hr_diagram_filter_button.setText("Filter On" if active else "Filter...")
+
+        self._hr_diagram_filter_button.setToolTip(hr_diagram_filter_tooltip(self._hr_diagram_filter))
+
+    def _hr_diagram_filter_rows(self) -> list[HrMeasurementRow]:
+
+        working_table = self._current_hr_working_table
+
+        if working_table is None:
+
+            return []
+
+        if self._hr_applied_roi_filter_is_active():
+
+            return self._filter_hr_rows_by_roi(
+
+                working_table.rows,
+
+                selections=self._hr_applied_roi_selections,
+
+                inverted=self._hr_applied_roi_inverted,
+
+            )
+
+        return list(working_table.rows)
+
+    def _append_hr_diagram_filter_work_log(self) -> None:
+
+        summary = summarize_hr_diagram_filter(self._hr_diagram_filter_rows(), self._hr_diagram_filter)
+
+        plotted_count = None
+
+        matching_count = None
+
+        if self._current_hr_working_table is not None:
+
+            plotted_count = self._hr_diagram_widget.plotted_row_count()
+
+            matching_count = self._hr_diagram_widget.visible_row_count()
+
+        for line in hr_diagram_filter_work_log_lines(
+
+            summary,
+
+            plotted_count=plotted_count,
+
+            matching_count=matching_count,
+
+            roi_active=self._hr_applied_roi_filter_is_active(),
+
+        ):
+
+            self._append_hr_workflow_note(line)
+
     def _open_hr_motion_group_dialog(self) -> None:
 
         dialog = HrMotionGroupDialog(self._current_hr_motion_group_settings(), self)
@@ -77041,6 +77682,10 @@ class MainWindow(QMainWindow):
             self._sky_explorer_survey_field_shift_timer.stop()
 
         self._restore_committed_sky_atlas_star_magnitude()
+
+        if self._assistant_panel is not None:
+
+            self._assistant_panel.shutdown()
 
         self._force_stop_background_workers()
 
@@ -79295,7 +79940,11 @@ class MainWindow(QMainWindow):
 
         ]
 
-        accent_outline_buttons = [self._hr_find_motion_group_button, self._hr_motion_group_advanced_button]
+        accent_outline_buttons = [
+            self._hr_find_motion_group_button,
+            self._hr_motion_group_advanced_button,
+            self._hr_diagram_filter_button,
+        ]
 
         accent_outline_toggle_buttons = [self._hr_motion_overlay_button]
 
@@ -83444,14 +84093,25 @@ class MainWindow(QMainWindow):
         self._differential_scan_in_progress = False
 
         workflow_scan_requested = self._differential_workflow_scan_requested
-
-        self._notify_excluded_unsuitable_scan_images(report)
-
         workflow_auto_generate_after_scan = self._differential_workflow_auto_generate_after_scan
 
         self._differential_workflow_scan_requested = False
 
         self._differential_workflow_auto_generate_after_scan = False
+
+        self._notify_excluded_unsuitable_scan_images(report)
+
+        if not self._confirm_camera_raw_differential_use(report):
+            message = "Differential Photometry canceled before loading the camera RAW dataset."
+            self._current_report = None
+            self._summary_label.setText(message)
+            self._append_work_log(message)
+            self.statusBar().showMessage(message, 8000)
+            self._set_generate_button_attention(False)
+            if workflow_scan_requested and self._differential_workflow_dialog is not None and qt_object_is_valid(self._differential_workflow_dialog):
+                self._differential_workflow_dialog.set_failed(message, can_generate=False)
+            self._sync_differential_primary_button()
+            return
 
         self._current_report = report
 
@@ -83475,9 +84135,9 @@ class MainWindow(QMainWindow):
 
         self._update_target_browser_buttons()
 
-        self.statusBar().showMessage(f"Scanned {report.total_files} FITS files.")
+        self.statusBar().showMessage(f"Scanned {report.total_files} image files.")
 
-        self._append_work_log(f"Scan completed: found {report.total_files} FITS file(s) across {len(report.object_summaries)} object folder(s).")
+        self._append_work_log(f"Scan completed: found {report.total_files} supported image file(s) across {len(report.object_summaries)} object folder(s).")
 
 
 
@@ -83489,7 +84149,7 @@ class MainWindow(QMainWindow):
 
                 self._summary_label.setText(
 
-                    f"Found {report.total_files} FITS files across {object_count} object folder(s). Ready for guided Generate."
+                    f"Found {report.total_files} supported image files across {object_count} object folder(s). Ready for guided Generate."
 
                 )
 
@@ -83497,7 +84157,7 @@ class MainWindow(QMainWindow):
 
                 self._summary_label.setText(
 
-                    f"Found {report.total_files} FITS files across {object_count} object folders. "
+                    f"Found {report.total_files} supported image files across {object_count} object folders. "
 
                     "Review the loaded-results summary to choose the active object for Generate and scan-file inspection."
 
@@ -83537,17 +84197,17 @@ class MainWindow(QMainWindow):
 
             self._summary_label.setText(
 
-                "No FITS files were found under Files/<ObjectName>. Add data and rescan."
+                "No supported image files were found under Files/<ObjectName>. Add data and rescan."
 
             )
 
-            self._append_work_log("Scan completed: no supported FITS files were found in the selected location.")
+            self._append_work_log("Scan completed: no supported image files were found in the selected location.")
 
             self._set_generate_button_attention(False)
 
             if workflow_scan_requested and self._differential_workflow_dialog is not None and qt_object_is_valid(self._differential_workflow_dialog):
 
-                self._differential_workflow_dialog.set_failed("No supported FITS files were found in the selected folder.", can_generate=False)
+                self._differential_workflow_dialog.set_failed("No supported image files were found in the selected folder.", can_generate=False)
 
         self._populate_workspace_filter_options_for_selected_object()
 
@@ -83564,6 +84224,43 @@ class MainWindow(QMainWindow):
         self._append_work_log(message)
         self.statusBar().showMessage(message, 8000)
         QMessageBox.information(self, "Images excluded", message)
+
+    def _confirm_camera_raw_differential_use(self, report: ScanReport) -> bool:
+        raw_count = sum(
+            1
+            for summary in report.object_summaries
+            for result in summary.files
+            if is_raw_camera_image_path(result.path)
+        )
+        if raw_count == 0:
+            return True
+
+        noun = "file" if raw_count == 1 else "files"
+        message = (
+            f"This folder contains {raw_count} camera RAW {noun}.\n\n"
+            "Camera RAW frames such as CR2, CR3, NEF, ARW, and DNG come from color sensors. "
+            "CAst will decode each file as linear 16-bit RGB and average the demosaiced color channels "
+            "into one synthetic luminance plane.\n\n"
+            "This is not equivalent to monochrome photometry through a defined filter. Bayer demosaicing, "
+            "camera white balance and channel response, differences in star color, and missing filter or "
+            "exposure metadata can introduce systematic error. Validate the result before scientific use "
+            "or AAVSO submission.\n\n"
+            "Proceed with caution?"
+        )
+        reply = QMessageBox.warning(
+            self,
+            "Color camera RAW photometry",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
+
+        self._append_work_log(
+            f"Camera RAW caution accepted for {raw_count} {noun}; using a synthetic luminance plane for Differential Photometry."
+        )
+        return True
 
     def _handle_scan_failed(self, message: str) -> None:
 
@@ -91716,6 +92413,7 @@ class MainWindow(QMainWindow):
             longitude_deg=settings.observing_site_longitude_deg,
             elevation_m=settings.observing_site_elevation_m,
             min_altitude_deg=settings.ephemeris_min_altitude_deg,
+            aavso_api_token=str(getattr(settings, "aavso_api_token", "") or ""),
             parent=self,
         )
         dialog.exec()

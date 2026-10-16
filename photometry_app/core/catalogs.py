@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 import re
 import threading
-from typing import Callable
+from typing import Callable, Sequence
 
 
 
@@ -62,6 +62,34 @@ _GAIA_TILE_MAX_RADIUS_DEG = 0.35
 _GAIA_TILE_RADIUS_MARGIN = 1.12
 _GAIA_TILE_MAX_COUNT = 64
 _GAIA_TILE_MAX_SPLIT_DEPTH = 2
+GAIA_COMPLETENESS_MAGNITUDE = 21.0
+DEEP_STAR_OVERLAP_MAGNITUDE = 20.5
+PANSTARRS_MIN_DEC_DEG = -30.0
+PANSTARRS_COMPLETENESS_MAGNITUDE = 23.0
+SKYMAPPER_COMPLETENESS_MAGNITUDE = 21.5
+DES_COMPLETENESS_MAGNITUDE = 24.0
+DES_STAR_CLASS_MIN = 0.5
+DES_GALAXY_CLASS_MAX = DES_STAR_CLASS_MIN
+PANSTARRS_EXTENDED_DELTA_MAG = 0.05
+DEEP_GALAXY_DEFAULT_MAX_MAGNITUDE = 22.0
+_MAX_DEEP_GALAXIES = 2000
+DEEP_STAR_MATCH_RADIUS_ARCSEC = 1.5
+_PANSTARRS_VIZIER_CATALOG = "II/349/ps1"
+_SKYMAPPER_VIZIER_CATALOG = "II/379/smssdr4"
+_DES_VIZIER_CATALOG = "II/357/des_dr1"
+_PANSTARRS_VIZIER_COLUMNS = ("objID", "RAJ2000", "DEJ2000", "gmag", "rmag", "imag", "rKmag")
+_SKYMAPPER_VIZIER_COLUMNS = ("ObjectId", "RAICRS", "DEICRS", "gPSF", "rPSF", "iPSF", "ClassStar")
+_DES_VIZIER_COLUMNS = ("DES", "CoadID", "RAJ2000", "DEJ2000", "gmag", "rmag", "imag", "S/Gr")
+_DEEP_CATALOG_LABELS = {
+    "panstarrs": "Pan-STARRS DR1",
+    "skymapper": "SkyMapper DR4",
+    "des": "DES DR1",
+}
+_DEEP_CATALOG_COMPLETENESS = {
+    "panstarrs": PANSTARRS_COMPLETENESS_MAGNITUDE,
+    "skymapper": SKYMAPPER_COMPLETENESS_MAGNITUDE,
+    "des": DES_COMPLETENESS_MAGNITUDE,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +109,55 @@ class GaiaTileOptions:
 
 
 DEFAULT_GAIA_TILE_OPTIONS = GaiaTileOptions()
+
+
+def deep_star_catalogs_for_declination(dec_deg: float) -> tuple[str, ...]:
+    if float(dec_deg) >= PANSTARRS_MIN_DEC_DEG:
+        return ("panstarrs",)
+    return ("des", "skymapper")
+
+
+def deep_star_catalog_for_declination(dec_deg: float) -> str:
+    return deep_star_catalogs_for_declination(dec_deg)[0]
+
+
+def _deep_catalog_label(catalog_key: str) -> str:
+    return _DEEP_CATALOG_LABELS.get(str(catalog_key), str(catalog_key))
+
+
+def _faintest_star_magnitude(stars: Sequence[CatalogStar]) -> float | None:
+    magnitudes = [
+        float(star.magnitude)
+        for star in stars
+        if star.magnitude is not None and math.isfinite(float(star.magnitude))
+    ]
+    return max(magnitudes) if magnitudes else None
+
+
+def _merge_magnitude_limit_stars(
+    gaia_stars: Sequence[CatalogStar],
+    deep_stars: Sequence[CatalogStar],
+    *,
+    match_radius_arcsec: float = DEEP_STAR_MATCH_RADIUS_ARCSEC,
+) -> list[CatalogStar]:
+    if not deep_stars:
+        return list(gaia_stars)
+    if not gaia_stars:
+        return list(deep_stars)
+    gaia_coords = SkyCoord(
+        ra=[star.ra_deg for star in gaia_stars] * u.deg,
+        dec=[star.dec_deg for star in gaia_stars] * u.deg,
+    )
+    deep_coords = SkyCoord(
+        ra=[star.ra_deg for star in deep_stars] * u.deg,
+        dec=[star.dec_deg for star in deep_stars] * u.deg,
+    )
+    _index, separations, _ = deep_coords.match_to_catalog_sky(gaia_coords)
+    merged = list(gaia_stars)
+    for star, separation in zip(deep_stars, separations):
+        if float(separation.to(u.arcsec).value) > float(match_radius_arcsec):
+            merged.append(star)
+    return merged
 
 
 def _resolved_gaia_tile_options(options: GaiaTileOptions | None) -> GaiaTileOptions:
@@ -462,6 +539,7 @@ class CatalogService:
 
         from photometry_app.core.standard_magnitude import (
             catalog_has_band_magnitudes,
+            catalog_needs_comparison_identifiers,
             enrich_gaia_stars_with_standard_catalogs,
         )
 
@@ -485,10 +563,9 @@ class CatalogService:
 
                 needs_variable_refresh = include_variable_stars and _needs_variable_catalog_refresh(cached_catalog)
                 if not needs_variable_refresh:
-                    if (
-                        include_gaia
-                        and cached_catalog.gaia_stars
-                        and not catalog_has_band_magnitudes(cached_catalog.gaia_stars)
+                    if include_gaia and cached_catalog.gaia_stars and (
+                        not catalog_has_band_magnitudes(cached_catalog.gaia_stars)
+                        or catalog_needs_comparison_identifiers(cached_catalog.gaia_stars)
                     ):
                         enrich_notes = enrich_gaia_stars_with_standard_catalogs(
                             cached_catalog.gaia_stars,
@@ -799,7 +876,741 @@ class CatalogService:
 
         return gaia_stars
 
+    def query_magnitude_limit_stars(
+        self,
+        solved_field: SolvedField,
+        *,
+        start_magnitude: float = -5.0,
+        max_magnitude: float = 21.0,
+        progress_callback: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[CatalogStar]:
+        start_value = max(-5.0, min(30.0, float(start_magnitude)))
+        max_value = max(-5.0, min(30.0, float(max_magnitude)))
+        if start_value > max_value:
+            start_value, max_value = max_value, start_value
+        cache_path = self._cache_dir / self._magnitude_limit_cache_key(
+            solved_field,
+            start_magnitude=start_value,
+            max_magnitude=max_value,
+        )
+        if cache_path.exists():
+            try:
+                cached_catalog = self._load_cache(cache_path)
+                if progress_callback is not None:
+                    progress_callback(
+                        f"Loaded cached magnitude-limit stars: {len(cached_catalog.gaia_stars)} source(s) "
+                        f"from {start_value:.1f} to {max_value:.1f} mag."
+                    )
+                return list(cached_catalog.gaia_stars)
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+                cache_path.unlink(missing_ok=True)
 
+        merged: list[CatalogStar] = []
+        gaia_cutoff = min(max_value, GAIA_COMPLETENESS_MAGNITUDE + 0.5)
+        if start_value <= gaia_cutoff:
+            if progress_callback is not None:
+                progress_callback(
+                    f"Querying Gaia DR3 for magnitude-limit stars at G <= {gaia_cutoff:.1f}."
+                )
+            gaia_stars = [
+                star
+                for star in self.query_gaia_stars_limited(
+                    solved_field,
+                    gaia_cutoff,
+                    progress_callback=progress_callback,
+                    progress_label="magnitude-limit field",
+                    cancel_event=cancel_event,
+                )
+                if star.magnitude is not None
+                and math.isfinite(float(star.magnitude))
+                and start_value <= float(star.magnitude) <= max_value
+            ]
+            merged.extend(gaia_stars)
+
+        if max_value > DEEP_STAR_OVERLAP_MAGNITUDE:
+            deep_min = max(start_value, DEEP_STAR_OVERLAP_MAGNITUDE)
+            catalog_keys = deep_star_catalogs_for_declination(solved_field.center_dec_deg)
+            used_catalog_key: str | None = None
+            for catalog_index, catalog_key in enumerate(catalog_keys):
+                catalog_label = _deep_catalog_label(catalog_key)
+                if progress_callback is not None:
+                    progress_callback(
+                        f"Querying {catalog_label} for stars fainter than Gaia "
+                        f"({deep_min:.1f} to {max_value:.1f} mag)."
+                    )
+                try:
+                    deep_stars = self._query_deep_field_stars(
+                        solved_field,
+                        catalog_key=catalog_key,
+                        min_magnitude=deep_min,
+                        max_magnitude=max_value,
+                        progress_callback=progress_callback,
+                        cancel_event=cancel_event,
+                    )
+                except Exception as exc:
+                    if catalog_index >= len(catalog_keys) - 1:
+                        raise
+                    if progress_callback is not None:
+                        progress_callback(
+                            f"{catalog_label} lookup failed ({summarize_catalog_service_error(exc)}); "
+                            f"trying {_deep_catalog_label(catalog_keys[catalog_index + 1])}."
+                        )
+                    continue
+                unique_before = len(merged)
+                merged = _merge_magnitude_limit_stars(merged, deep_stars)
+                added = len(merged) - unique_before
+                faintest_deep = _faintest_star_magnitude(deep_stars)
+                if deep_stars:
+                    used_catalog_key = catalog_key
+                if progress_callback is not None:
+                    if not deep_stars:
+                        progress_callback(
+                            f"{catalog_label} returned no stars from {deep_min:.1f} to {max_value:.1f} mag."
+                        )
+                    else:
+                        faintest_text = (
+                            f"; faintest r = {faintest_deep:.1f}" if faintest_deep is not None else ""
+                        )
+                        progress_callback(
+                            f"{catalog_label} returned {len(deep_stars)} star(s){faintest_text}; "
+                            f"added {added} new source(s) after matching Gaia."
+                        )
+                if catalog_key == "des" and deep_stars:
+                    break
+        else:
+            used_catalog_key = None
+
+        partial_catalog = FieldCatalog(
+            center_ra_deg=solved_field.center_ra_deg,
+            center_dec_deg=solved_field.center_dec_deg,
+            radius_deg=solved_field.radius_deg,
+            gaia_stars=merged,
+        )
+        self._store_cache(cache_path, partial_catalog)
+        faintest_catalog = _faintest_star_magnitude(merged)
+        if progress_callback is not None:
+            progress_callback(
+                f"Magnitude-limit catalog lookup complete: {len(merged)} star(s) from "
+                f"{start_value:.1f} to {max_value:.1f} mag."
+            )
+            if faintest_catalog is not None and float(max_value) > float(faintest_catalog) + 0.25:
+                catalog_key = used_catalog_key or deep_star_catalog_for_declination(solved_field.center_dec_deg)
+                catalog_label = _deep_catalog_label(catalog_key)
+                completeness = _DEEP_CATALOG_COMPLETENESS.get(catalog_key)
+                completeness_text = (
+                    f"{catalog_label} typically reaches about {float(completeness):.1f} mag"
+                    if completeness is not None
+                    else catalog_label
+                )
+                progress_callback(
+                    f"Catalog limit: no catalog stars fainter than {faintest_catalog:.1f} mag were found in this field "
+                    f"({completeness_text}; requested {max_value:.1f}). "
+                    "Stars you can still see in the image are below this catalog's completeness."
+                )
+        return merged
+
+    def _query_deep_field_stars(
+        self,
+        solved_field: SolvedField,
+        *,
+        catalog_key: str,
+        min_magnitude: float,
+        max_magnitude: float,
+        progress_callback: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[CatalogStar]:
+        query_label = _deep_catalog_label(catalog_key)
+        return self._query_tiled_catalog_field(
+            solved_field,
+            lambda center, radius: self._query_deep_catalog_filtered(
+                center,
+                radius,
+                catalog_key=catalog_key,
+                min_magnitude=min_magnitude,
+                max_magnitude=max_magnitude,
+            ),
+            query_label,
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+        )
+
+    def _query_tiled_catalog_field(
+        self,
+        solved_field: SolvedField,
+        query_function: Callable[[SkyCoord, u.Quantity], list[CatalogStar]],
+        query_label: str,
+        *,
+        progress_callback: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[CatalogStar]:
+        tiles = build_gaia_query_tiles(solved_field)
+        if len(tiles) <= 1:
+            _raise_if_wcs_solve_cancelled(cancel_event)
+            return self._query_vizier_with_alternate_centers(
+                solved_field,
+                query_function,
+                query_label,
+                progress_callback=progress_callback,
+            )
+        if progress_callback is not None:
+            progress_callback(f"Wide field: querying {query_label} in {len(tiles)} tiles.")
+        merged: dict[str, CatalogStar] = {}
+        pending = list(tiles)
+        completed = 0
+        planned = len(tiles)
+        while pending:
+            _raise_if_wcs_solve_cancelled(cancel_event)
+            tile = pending.pop(0)
+            completed += 1
+            if progress_callback is not None:
+                progress_callback(
+                    f"{query_label} tile {completed}/{planned} "
+                    f"(RA {tile.center.ra.deg:.5f} deg, Dec {tile.center.dec.deg:.5f} deg, "
+                    f"radius {tile.radius_deg:.4f} deg)."
+                )
+            for star in query_function(tile.center, tile.radius_deg * u.deg):
+                merged.setdefault(f"{star.catalog}:{star.source_id}", star)
+        return list(merged.values())
+
+    def _query_deep_catalog_filtered(
+        self,
+        center: SkyCoord,
+        radius: u.Quantity,
+        *,
+        catalog_key: str,
+        min_magnitude: float,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        if catalog_key == "des":
+            return self._query_des_filtered(center, radius, min_magnitude=min_magnitude, max_magnitude=max_magnitude)
+        if catalog_key == "skymapper":
+            return self._query_skymapper_filtered(center, radius, min_magnitude=min_magnitude, max_magnitude=max_magnitude)
+        return self._query_panstarrs_filtered(center, radius, min_magnitude=min_magnitude, max_magnitude=max_magnitude)
+
+    def _query_panstarrs_filtered(
+        self,
+        center: SkyCoord,
+        radius: u.Quantity,
+        *,
+        min_magnitude: float,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        vizier = Vizier(
+            columns=list(_PANSTARRS_VIZIER_COLUMNS),
+            row_limit=-1,
+            column_filters={"rmag": f"{float(min_magnitude):.3f}..{float(max_magnitude):.3f}"},
+        )
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                tables = vizier.query_region(center, radius=radius, catalog=_PANSTARRS_VIZIER_CATALOG)
+                return self._panstarrs_stars_from_tables(tables, min_magnitude=min_magnitude, max_magnitude=max_magnitude)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 0 and _is_vizier_empty_parse_error(exc):
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        return []
+
+    def _query_skymapper_filtered(
+        self,
+        center: SkyCoord,
+        radius: u.Quantity,
+        *,
+        min_magnitude: float,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        vizier = Vizier(
+            columns=list(_SKYMAPPER_VIZIER_COLUMNS),
+            row_limit=-1,
+            column_filters={"rPSF": f"{float(min_magnitude):.3f}..{float(max_magnitude):.3f}"},
+        )
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                tables = vizier.query_region(center, radius=radius, catalog=_SKYMAPPER_VIZIER_CATALOG)
+                return self._skymapper_stars_from_tables(tables, min_magnitude=min_magnitude, max_magnitude=max_magnitude)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 0 and _is_vizier_empty_parse_error(exc):
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        return []
+
+    def _query_des_filtered(
+        self,
+        center: SkyCoord,
+        radius: u.Quantity,
+        *,
+        min_magnitude: float,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        vizier = Vizier(
+            columns=list(_DES_VIZIER_COLUMNS),
+            row_limit=-1,
+            column_filters={"rmag": f"{float(min_magnitude):.3f}..{float(max_magnitude):.3f}"},
+        )
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                tables = vizier.query_region(center, radius=radius, catalog=_DES_VIZIER_CATALOG)
+                return self._des_stars_from_tables(tables, min_magnitude=min_magnitude, max_magnitude=max_magnitude)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 0 and _is_vizier_empty_parse_error(exc):
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        return []
+
+    def _panstarrs_stars_from_tables(
+        self,
+        tables: object,
+        *,
+        min_magnitude: float,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        if not tables:
+            return []
+        stars: list[CatalogStar] = []
+        for row in tables[0]:
+            magnitude = _as_float(_row_value(row, "rmag"))
+            if magnitude is None or not (min_magnitude <= float(magnitude) <= max_magnitude):
+                continue
+            kron_magnitude = _as_float(_row_value(row, "rKmag"))
+            if kron_magnitude is not None and (float(magnitude) - float(kron_magnitude)) >= PANSTARRS_EXTENDED_DELTA_MAG:
+                continue
+            ra_deg = _as_float(_row_value(row, "RAJ2000"))
+            dec_deg = _as_float(_row_value(row, "DEJ2000"))
+            source_id = str(_row_value(row, "objID") or "").strip()
+            if ra_deg is None or dec_deg is None or not source_id:
+                continue
+            g_mag = _as_float(_row_value(row, "gmag"))
+            i_mag = _as_float(_row_value(row, "imag"))
+            stars.append(
+                CatalogStar(
+                    catalog="panstarrs-dr1",
+                    source_id=source_id,
+                    name=f"PS1 {source_id}",
+                    ra_deg=float(ra_deg),
+                    dec_deg=float(dec_deg),
+                    magnitude=float(magnitude),
+                    is_variable=False,
+                    metadata={
+                        "preferred_display_name": f"PS1 {source_id}",
+                        "magnitude_band": "r",
+                        "magnitude_system": "PS1",
+                        "g_mag": g_mag,
+                        "i_mag": i_mag,
+                    },
+                )
+            )
+        return stars
+
+    def _skymapper_stars_from_tables(
+        self,
+        tables: object,
+        *,
+        min_magnitude: float,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        if not tables:
+            return []
+        stars: list[CatalogStar] = []
+        for row in tables[0]:
+            magnitude = _as_float(_row_value(row, "rPSF", _row_value(row, "r_psf")))
+            if magnitude is not None and not math.isfinite(float(magnitude)):
+                magnitude = None
+            band = "r"
+            if magnitude is None:
+                magnitude = _as_float(_row_value(row, "gPSF", _row_value(row, "g_psf")))
+                band = "g"
+            if magnitude is None or not math.isfinite(float(magnitude)):
+                continue
+            if not (min_magnitude <= float(magnitude) <= max_magnitude):
+                continue
+            class_star = _as_float(_row_value(row, "ClassStar"))
+            if class_star is not None and math.isfinite(float(class_star)) and float(class_star) < DES_STAR_CLASS_MIN:
+                continue
+            ra_deg = _as_float(_row_value(row, "RAICRS", _row_value(row, "RAJ2000")))
+            if ra_deg is None:
+                ra_deg = _as_float(_row_value(row, "RAJ2000"))
+            dec_deg = _as_float(_row_value(row, "DEICRS"))
+            if dec_deg is None:
+                dec_deg = _as_float(_row_value(row, "DEJ2000"))
+            source_id = str(_row_value(row, "ObjectId") or "").strip()
+            if ra_deg is None or dec_deg is None or not source_id:
+                continue
+            stars.append(
+                CatalogStar(
+                    catalog="skymapper-dr4",
+                    source_id=source_id,
+                    name=f"SMSS {source_id}",
+                    ra_deg=float(ra_deg),
+                    dec_deg=float(dec_deg),
+                    magnitude=float(magnitude),
+                    is_variable=False,
+                    metadata={
+                        "preferred_display_name": f"SMSS {source_id}",
+                        "magnitude_band": band,
+                        "magnitude_system": "SkyMapper",
+                    },
+                )
+            )
+        return stars
+
+    def _des_stars_from_tables(
+        self,
+        tables: object,
+        *,
+        min_magnitude: float,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        if not tables:
+            return []
+        stars: list[CatalogStar] = []
+        for row in tables[0]:
+            magnitude = _as_float(_row_value(row, "rmag"))
+            if magnitude is None or not math.isfinite(float(magnitude)):
+                continue
+            if not (min_magnitude <= float(magnitude) <= max_magnitude):
+                continue
+            star_class = _as_float(_row_value(row, "S/Gr"))
+            if star_class is not None and math.isfinite(float(star_class)) and float(star_class) < DES_STAR_CLASS_MIN:
+                continue
+            ra_deg = _as_float(_row_value(row, "RAJ2000"))
+            dec_deg = _as_float(_row_value(row, "DEJ2000"))
+            source_id = str(_row_value(row, "DES") or _row_value(row, "CoadID") or "").strip()
+            if ra_deg is None or dec_deg is None or not source_id:
+                continue
+            stars.append(
+                CatalogStar(
+                    catalog="des-dr1",
+                    source_id=source_id,
+                    name=f"DES {source_id}",
+                    ra_deg=float(ra_deg),
+                    dec_deg=float(dec_deg),
+                    magnitude=float(magnitude),
+                    is_variable=False,
+                    metadata={
+                        "preferred_display_name": f"DES {source_id}",
+                        "magnitude_band": "r",
+                        "magnitude_system": "DES",
+                        "star_galaxy": star_class,
+                    },
+                )
+            )
+        return stars
+
+    def query_deep_galaxies(
+        self,
+        solved_field: SolvedField,
+        *,
+        max_magnitude: float = DEEP_GALAXY_DEFAULT_MAX_MAGNITUDE,
+        row_limit: int = _MAX_DEEP_GALAXIES,
+        progress_callback: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[CatalogStar]:
+        max_value = max(-5.0, min(30.0, float(max_magnitude)))
+        catalog_keys = deep_star_catalogs_for_declination(solved_field.center_dec_deg)
+        galaxies: list[CatalogStar] = []
+        used_catalog_key: str | None = None
+        for catalog_index, catalog_key in enumerate(catalog_keys):
+            catalog_label = _deep_catalog_label(catalog_key)
+            if progress_callback is not None:
+                progress_callback(
+                    f"Querying {catalog_label} for faint galaxies (r <= {max_value:.1f})."
+                )
+            try:
+                catalog_galaxies = self._query_tiled_catalog_field(
+                    solved_field,
+                    lambda center, radius, catalog_key=catalog_key: self._query_deep_catalog_galaxies_filtered(
+                        center,
+                        radius,
+                        catalog_key=catalog_key,
+                        max_magnitude=max_value,
+                    ),
+                    catalog_label,
+                    progress_callback=progress_callback,
+                    cancel_event=cancel_event,
+                )
+            except Exception as exc:
+                if catalog_index >= len(catalog_keys) - 1:
+                    raise
+                if progress_callback is not None:
+                    progress_callback(
+                        f"{catalog_label} galaxy lookup failed ({summarize_catalog_service_error(exc)}); "
+                        f"trying {_deep_catalog_label(catalog_keys[catalog_index + 1])}."
+                    )
+                continue
+            if catalog_galaxies:
+                galaxies = catalog_galaxies
+                used_catalog_key = catalog_key
+                if progress_callback is not None:
+                    faintest = _faintest_star_magnitude(catalog_galaxies)
+                    faintest_text = f"; faintest r = {faintest:.1f}" if faintest is not None else ""
+                    progress_callback(
+                        f"{catalog_label} returned {len(catalog_galaxies)} galax{'y' if len(catalog_galaxies) == 1 else 'ies'}"
+                        f"{faintest_text}."
+                    )
+                if catalog_key == "des":
+                    break
+            elif progress_callback is not None:
+                progress_callback(f"{catalog_label} returned no galaxies at r <= {max_value:.1f}.")
+        galaxies.sort(
+            key=lambda item: (
+                item.magnitude is None,
+                float(item.magnitude) if item.magnitude is not None else 99.0,
+                item.name.lower(),
+            )
+        )
+        limited = galaxies[: max(0, int(row_limit))]
+        if progress_callback is not None:
+            if not limited:
+                catalog_label = _deep_catalog_label(used_catalog_key or catalog_keys[0])
+                progress_callback(
+                    f"Catalog limit: {catalog_label} has no photometric galaxies at r <= {max_value:.1f} in this field. "
+                    "SIMBAD and HyperLEDA only include the brightest named galaxies."
+                )
+            elif used_catalog_key is not None and len(galaxies) > len(limited):
+                progress_callback(
+                    f"Showing the brightest {len(limited)} of {len(galaxies)} photometric galaxies."
+                )
+        return limited
+
+    def _query_deep_catalog_galaxies_filtered(
+        self,
+        center: SkyCoord,
+        radius: u.Quantity,
+        *,
+        catalog_key: str,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        if catalog_key == "des":
+            return self._query_des_galaxies_filtered(center, radius, max_magnitude=max_magnitude)
+        if catalog_key == "skymapper":
+            return self._query_skymapper_galaxies_filtered(center, radius, max_magnitude=max_magnitude)
+        return self._query_panstarrs_galaxies_filtered(center, radius, max_magnitude=max_magnitude)
+
+    def _query_panstarrs_galaxies_filtered(
+        self,
+        center: SkyCoord,
+        radius: u.Quantity,
+        *,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        vizier = Vizier(
+            columns=list(_PANSTARRS_VIZIER_COLUMNS),
+            row_limit=-1,
+            column_filters={"rmag": f"..{float(max_magnitude):.3f}"},
+        )
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                tables = vizier.query_region(center, radius=radius, catalog=_PANSTARRS_VIZIER_CATALOG)
+                return self._panstarrs_galaxies_from_tables(tables, max_magnitude=max_magnitude)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 0 and _is_vizier_empty_parse_error(exc):
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        return []
+
+    def _query_skymapper_galaxies_filtered(
+        self,
+        center: SkyCoord,
+        radius: u.Quantity,
+        *,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        vizier = Vizier(
+            columns=list(_SKYMAPPER_VIZIER_COLUMNS),
+            row_limit=-1,
+            column_filters={"rPSF": f"..{float(max_magnitude):.3f}"},
+        )
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                tables = vizier.query_region(center, radius=radius, catalog=_SKYMAPPER_VIZIER_CATALOG)
+                return self._skymapper_galaxies_from_tables(tables, max_magnitude=max_magnitude)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 0 and _is_vizier_empty_parse_error(exc):
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        return []
+
+    def _query_des_galaxies_filtered(
+        self,
+        center: SkyCoord,
+        radius: u.Quantity,
+        *,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        vizier = Vizier(
+            columns=list(_DES_VIZIER_COLUMNS),
+            row_limit=-1,
+            column_filters={
+                "rmag": f"..{float(max_magnitude):.3f}",
+                "S/Gr": f"<{DES_GALAXY_CLASS_MAX:.3f}",
+            },
+        )
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                tables = vizier.query_region(center, radius=radius, catalog=_DES_VIZIER_CATALOG)
+                return self._des_galaxies_from_tables(tables, max_magnitude=max_magnitude)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 0 and _is_vizier_empty_parse_error(exc):
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        return []
+
+    def _panstarrs_galaxies_from_tables(
+        self,
+        tables: object,
+        *,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        if not tables:
+            return []
+        galaxies: list[CatalogStar] = []
+        for row in tables[0]:
+            magnitude = _as_float(_row_value(row, "rmag"))
+            if magnitude is None or not math.isfinite(float(magnitude)) or float(magnitude) > max_magnitude:
+                continue
+            kron_magnitude = _as_float(_row_value(row, "rKmag"))
+            if kron_magnitude is None or not math.isfinite(float(kron_magnitude)):
+                continue
+            if (float(magnitude) - float(kron_magnitude)) < PANSTARRS_EXTENDED_DELTA_MAG:
+                continue
+            ra_deg = _as_float(_row_value(row, "RAJ2000"))
+            dec_deg = _as_float(_row_value(row, "DEJ2000"))
+            source_id = str(_row_value(row, "objID") or "").strip()
+            if ra_deg is None or dec_deg is None or not source_id:
+                continue
+            galaxies.append(
+                CatalogStar(
+                    catalog="panstarrs-dr1",
+                    source_id=source_id,
+                    name=f"PS1 {source_id}",
+                    ra_deg=float(ra_deg),
+                    dec_deg=float(dec_deg),
+                    magnitude=float(magnitude),
+                    is_variable=False,
+                    object_type="Galaxy",
+                    metadata={
+                        "preferred_display_name": f"PS1 {source_id}",
+                        "magnitude_band": "r",
+                        "magnitude_system": "PS1",
+                        "object_class": "galaxy",
+                    },
+                )
+            )
+        return galaxies
+
+    def _skymapper_galaxies_from_tables(
+        self,
+        tables: object,
+        *,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        if not tables:
+            return []
+        galaxies: list[CatalogStar] = []
+        for row in tables[0]:
+            magnitude = _as_float(_row_value(row, "rPSF"))
+            if magnitude is None:
+                magnitude = _as_float(_row_value(row, "r_psf"))
+            if magnitude is None or not math.isfinite(float(magnitude)) or float(magnitude) > max_magnitude:
+                continue
+            class_star = _as_float(_row_value(row, "ClassStar"))
+            if class_star is None or not math.isfinite(float(class_star)) or float(class_star) >= DES_GALAXY_CLASS_MAX:
+                continue
+            ra_deg = _as_float(_row_value(row, "RAICRS"))
+            if ra_deg is None:
+                ra_deg = _as_float(_row_value(row, "RAJ2000"))
+            dec_deg = _as_float(_row_value(row, "DEICRS"))
+            if dec_deg is None:
+                dec_deg = _as_float(_row_value(row, "DEJ2000"))
+            source_id = str(_row_value(row, "ObjectId") or "").strip()
+            if ra_deg is None or dec_deg is None or not source_id:
+                continue
+            galaxies.append(
+                CatalogStar(
+                    catalog="skymapper-dr4",
+                    source_id=source_id,
+                    name=f"SMSS {source_id}",
+                    ra_deg=float(ra_deg),
+                    dec_deg=float(dec_deg),
+                    magnitude=float(magnitude),
+                    is_variable=False,
+                    object_type="Galaxy",
+                    metadata={
+                        "preferred_display_name": f"SMSS {source_id}",
+                        "magnitude_band": "r",
+                        "magnitude_system": "SkyMapper",
+                        "object_class": "galaxy",
+                        "star_galaxy": class_star,
+                    },
+                )
+            )
+        return galaxies
+
+    def _des_galaxies_from_tables(
+        self,
+        tables: object,
+        *,
+        max_magnitude: float,
+    ) -> list[CatalogStar]:
+        if not tables:
+            return []
+        galaxies: list[CatalogStar] = []
+        for row in tables[0]:
+            magnitude = _as_float(_row_value(row, "rmag"))
+            if magnitude is None or not math.isfinite(float(magnitude)) or float(magnitude) > max_magnitude:
+                continue
+            star_class = _as_float(_row_value(row, "S/Gr"))
+            if star_class is None or not math.isfinite(float(star_class)) or float(star_class) >= DES_GALAXY_CLASS_MAX:
+                continue
+            ra_deg = _as_float(_row_value(row, "RAJ2000"))
+            dec_deg = _as_float(_row_value(row, "DEJ2000"))
+            source_id = str(_row_value(row, "DES") or _row_value(row, "CoadID") or "").strip()
+            if ra_deg is None or dec_deg is None or not source_id:
+                continue
+            galaxies.append(
+                CatalogStar(
+                    catalog="des-dr1",
+                    source_id=source_id,
+                    name=f"DES {source_id}",
+                    ra_deg=float(ra_deg),
+                    dec_deg=float(dec_deg),
+                    magnitude=float(magnitude),
+                    is_variable=False,
+                    object_type="Galaxy",
+                    metadata={
+                        "preferred_display_name": f"DES {source_id}",
+                        "magnitude_band": "r",
+                        "magnitude_system": "DES",
+                        "object_class": "galaxy",
+                        "star_galaxy": star_class,
+                    },
+                )
+            )
+        return galaxies
 
     def clear_cache(self) -> int:
 
@@ -1064,6 +1875,8 @@ class CatalogService:
                         "pm_dec": _as_float(row.get("pmDE")),
 
                         "preferred_display_name": preferred_display_name,
+                        "magnitude_band": "G",
+                        "magnitude_system": "Gaia",
 
                     },
 
@@ -1344,6 +2157,21 @@ class CatalogService:
 
             suffix += "_tiles"
 
+        return f"{cache_stem}{suffix}.json"
+
+    def _magnitude_limit_cache_key(
+        self,
+        solved_field: SolvedField,
+        *,
+        start_magnitude: float,
+        max_magnitude: float,
+    ) -> str:
+        cache_stem = self._cache_key(solved_field).removesuffix(".json")
+        suffix = f"_maglimit_{float(start_magnitude):.2f}_{float(max_magnitude):.2f}"
+        if gaia_field_needs_tiles(solved_field):
+            suffix += "_tiles"
+        catalog_token = "-".join(deep_star_catalogs_for_declination(solved_field.center_dec_deg))
+        suffix += f"_{catalog_token}"
         return f"{cache_stem}{suffix}.json"
 
     def _catalog_summary(self, catalog: FieldCatalog) -> str:
@@ -2353,6 +3181,10 @@ def _parse_unitized_duration(value: str | None, default_unit: str, convert_to: s
 
 
 
+def _normalized_column_key(key: object) -> str:
+    return "".join(character for character in str(key).strip().lower() if character.isalnum())
+
+
 def _row_value(row: object, key: str, default: object = None) -> object:
 
     try:
@@ -2369,11 +3201,11 @@ def _row_value(row: object, key: str, default: object = None) -> object:
 
         if column_names is not None:
 
-            normalized_target = str(key).strip().lower()
+            normalized_target = _normalized_column_key(key)
 
             for column_name in column_names:
 
-                if str(column_name).strip().lower() != normalized_target:
+                if _normalized_column_key(column_name) != normalized_target:
 
                     continue
 

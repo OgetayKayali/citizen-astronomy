@@ -95,6 +95,7 @@ class VariableEphemerisForecast:
     timezone_name: str
     site_configured: bool
     current_phase: float | None
+    current_epoch: float | None
     events: list[VariableEphemerisEvent]
     tonight_events: list[VariableEphemerisEvent]
     tonight_observable: list[VariableEphemerisEvent]
@@ -196,7 +197,8 @@ def compute_variable_ephemeris(
     resolved_timezone_name = _timezone_label(zone, timezone_name)
     min_altitude_deg = normalize_ephemeris_min_altitude_deg(min_altitude_deg)
     night_start, night_end = _local_night_window(now_local, zone, location)
-    current_phase = current_ephemeris_phase(star, now_utc)
+    current_epoch = current_ephemeris_epoch(star, now_utc)
+    current_phase = None if current_epoch is None else current_epoch % 1.0
     events: list[VariableEphemerisEvent] = []
     if star.period_days is not None and star.period_days > 0 and star.epoch_hjd is not None:
         events = _upcoming_events(
@@ -231,6 +233,7 @@ def compute_variable_ephemeris(
         timezone_name=resolved_timezone_name,
         site_configured=site_configured,
         current_phase=current_phase,
+        current_epoch=current_epoch,
         events=events,
         tonight_events=tonight_events,
         tonight_observable=tonight_observable,
@@ -248,12 +251,19 @@ def compute_variable_ephemeris(
     )
 
 
-def current_ephemeris_phase(star: VsxEphemerisStar, now: datetime) -> float | None:
+def current_ephemeris_epoch(star: VsxEphemerisStar, now: datetime) -> float | None:
+    """Cycle count E = (JD − reference epoch) / period. The fractional part is the phase."""
     if star.period_days is None or star.period_days <= 0 or star.epoch_hjd is None:
         return None
-    now_utc = _as_utc(now)
-    elapsed_days = _datetime_to_jd(now_utc) - float(star.epoch_hjd)
-    return (elapsed_days / float(star.period_days)) % 1.0
+    elapsed_days = _datetime_to_jd(_as_utc(now)) - float(star.epoch_hjd)
+    return elapsed_days / float(star.period_days)
+
+
+def current_ephemeris_phase(star: VsxEphemerisStar, now: datetime) -> float | None:
+    epoch = current_ephemeris_epoch(star, now)
+    if epoch is None:
+        return None
+    return epoch % 1.0
 
 
 def event_kinds_for_variability_type(variability_type: str) -> tuple[tuple[str, float], ...]:

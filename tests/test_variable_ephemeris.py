@@ -12,6 +12,7 @@ from photometry_app.core.variable_ephemeris import (
     VsxEphemerisStar,
     compute_site_tonight_schedule,
     compute_variable_ephemeris,
+    current_ephemeris_epoch,
     current_ephemeris_phase,
     daylight_sky_factor,
     ephemeris_sky_rgb,
@@ -221,7 +222,11 @@ class VariableEphemerisTests(unittest.TestCase):
     def test_current_phase_wraps_through_the_cycle(self) -> None:
         star = _star(period_days=2.0)
         now = datetime(2026, 1, 4, 0, 0, tzinfo=UTC)
+        self.assertAlmostEqual(current_ephemeris_epoch(star, now) or -1.0, 1.5, places=5)
         self.assertAlmostEqual(current_ephemeris_phase(star, now) or -1.0, 0.5, places=5)
+        forecast = compute_variable_ephemeris(star, timezone_name="UTC", now=now)
+        self.assertAlmostEqual(forecast.current_epoch or -1.0, 1.5, places=5)
+        self.assertAlmostEqual(forecast.current_phase or -1.0, 0.5, places=5)
 
     def test_lookup_uses_vsx_api_before_vizier(self) -> None:
         star = parse_vsx_object_xml(_W_UMA_XML)

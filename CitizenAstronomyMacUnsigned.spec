@@ -124,6 +124,7 @@ hiddenimports = [
     "imageio.plugins.ffmpeg",
     "imageio_ffmpeg",
     "matplotlib.backends.backend_qtagg",
+    "keyring",
 ]
 
 # Unsigned macOS builds intentionally omit Velopack (Windows installer/updater).

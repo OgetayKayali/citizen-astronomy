@@ -236,6 +236,44 @@ class SettingsTest(unittest.TestCase):
 
         self.assertTrue(loaded.image_display_auto_stretch_default_migrated)
 
+    def test_ai_assistant_settings_round_trip_without_api_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            root.mkdir()
+            settings = AppSettings.from_root(root)
+            self.assertEqual(settings.ai_provider, "openai_compatible")
+            settings.ai_provider = "anthropic"
+            settings.ai_models = {"anthropic": " claude-test ", "gemini": "gemini-test", "bogus": "x"}
+            settings.ai_openai_compatible_base_url = " http://localhost:11434/v1/ "
+            self.assertEqual(settings.ai_reasoning_effort, "default")
+            settings.ai_reasoning_effort = "high"
+            settings.save(root)
+
+            config_path = Path(os.environ["CITIZEN_PHOTOMETRY_CONFIG_PATH"])
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+            loaded = AppSettings.from_root(root)
+
+        self.assertNotIn("ai_api_key", payload)
+        self.assertEqual(payload["ai_models"], {"anthropic": "claude-test", "gemini": "gemini-test"})
+        self.assertEqual(loaded.ai_provider, "anthropic")
+        self.assertEqual(loaded.ai_models, {"anthropic": "claude-test", "gemini": "gemini-test"})
+        self.assertEqual(loaded.ai_openai_compatible_base_url, "http://localhost:11434/v1")
+        self.assertEqual(loaded.ai_reasoning_effort, "high")
+
+    def test_unknown_ai_provider_falls_back_to_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            root.mkdir()
+            config_path = Path(os.environ["CITIZEN_PHOTOMETRY_CONFIG_PATH"])
+            config_path.write_text(
+                json.dumps({"ai_provider": "mystery", "ai_models": ["not", "a", "dict"], "ai_reasoning_effort": "max"}), encoding="utf-8"
+            )
+            loaded = AppSettings.from_root(root)
+
+        self.assertEqual(loaded.ai_provider, "openai_compatible")
+        self.assertEqual(loaded.ai_models, {})
+        self.assertEqual(loaded.ai_reasoning_effort, "default")
+
     def test_settings_json_with_utf8_bom_loads(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:

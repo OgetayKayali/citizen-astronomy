@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from unittest.mock import patch
 import unittest
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox
 
+from photometry_app.core.models import LightCurvePoint, LightCurveSeries
+from photometry_app.core.oc_extrema import ORIGIN_AAVSO, OcSession, PhotometryImport
 from photometry_app.core.variable_ephemeris import (
     TonightSchedule,
     TonightScheduleSample,
@@ -14,6 +20,7 @@ from photometry_app.core.variable_ephemeris import (
     compute_variable_ephemeris,
     twilight_marks_from_samples,
 )
+from photometry_app.ui.oc_dialog import AidDownloadDialog, remember_aid_dialog_session
 from photometry_app.ui.variable_ephemeris_dialog import (
     VariableEphemerisDialog,
     _MOON_CURVE_COLOR,
@@ -374,6 +381,204 @@ class VariableEphemerisDialogTests(unittest.TestCase):
         self.assertFalse(forecast.site_configured)
         self.assertIn("Observing Latitude", dialog._schedule_panel._placeholder.text())
         dialog.close()
+
+    def test_enter_searches_without_closing_and_light_curve_matches_search(self) -> None:
+        dialog = VariableEphemerisDialog(timezone_name="UTC")
+        dialog.show()
+        self.app.processEvents()
+        close_button = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Close)
+        self.assertIsNotNone(close_button)
+        assert close_button is not None
+        self.assertTrue(dialog._search_button.isDefault())
+        self.assertFalse(close_button.isDefault())
+        self.assertFalse(close_button.autoDefault())
+        self.assertFalse(dialog._pull_light_curve_button.autoDefault())
+        self.assertEqual(dialog._search_button.styleSheet(), dialog._pull_light_curve_button.styleSheet())
+        self.assertIn("background-color", dialog._pull_light_curve_button.styleSheet())
+        QTest.keyClick(dialog._name_input, Qt.Key.Key_Return)
+        self.app.processEvents()
+        self.assertTrue(dialog.isVisible())
+        self.assertIsNone(dialog._worker)
+        self.assertIn("Enter a variable-star name", dialog._status_label.text())
+        dialog.close()
+
+    def test_light_curve_tab_paints_the_epoch_curve(self) -> None:
+        epoch_hjd = 2460000.0
+        now = Time(epoch_hjd + 20.4, format="jd", scale="utc").to_datetime()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        forecast = compute_variable_ephemeris(
+            _dialog_star(period_days=1.0, epoch_hjd=epoch_hjd),
+            timezone_name="UTC",
+            now=now,
+        )
+        dialog = VariableEphemerisDialog(timezone_name="UTC")
+        dialog.resize(1400, 700)
+        dialog.show()
+        dialog._handle_lookup_completed(forecast)
+        samples: list[tuple[float, float]] = []
+        for cycle in range(12, 19):
+            for phase, magnitude in ((0.0, 10.0), (0.25, 11.0), (0.5, 12.0), (0.75, 11.0)):
+                samples.append((epoch_hjd + cycle + phase, magnitude))
+        dialog._apply_pulled_photometry(
+            PhotometryImport(sessions=(_aid_session("V", samples),), records=())
+        )
+        dialog._view_tabs.setCurrentIndex(0)
+        self.app.processEvents()
+        dialog._view_tabs.setCurrentIndex(1)
+        for _ in range(4):
+            self.app.processEvents()
+        self.assertTrue(dialog.isVisible())
+        self.assertIs(dialog._view_tabs.currentWidget(), dialog._light_curve_panel)
+        self.assertFalse(dialog._light_curve_panel._plot_widget.isHidden())
+        legend = dialog._light_curve_panel._plot_item.legend
+        self.assertIsNotNone(legend)
+        assert legend is not None
+        self.assertTrue(any(label.text == "Now" for _sample, label in legend.items))
+        dialog.close()
+
+    def test_pull_light_curve_waits_for_a_period_and_epoch(self) -> None:
+        dialog = VariableEphemerisDialog(timezone_name="UTC")
+        self.assertFalse(dialog._pull_light_curve_button.isEnabled())
+        self.assertEqual(dialog._view_tabs.tabText(0), "Tonight")
+        self.assertEqual(dialog._view_tabs.tabText(1), "Light curve")
+        self.assertIs(dialog._view_tabs.currentWidget(), dialog._schedule_panel)
+
+        epoch_hjd = 2460000.0
+        now = Time(epoch_hjd + 20.4, format="jd", scale="utc").to_datetime()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        forecast = compute_variable_ephemeris(
+            _dialog_star(period_days=1.0, epoch_hjd=epoch_hjd),
+            timezone_name="UTC",
+            now=now,
+        )
+        dialog._handle_lookup_completed(forecast)
+        self.assertTrue(dialog._pull_light_curve_button.isEnabled())
+        self.assertEqual(dialog._epoch_now_label.text(), f"{forecast.current_epoch:.3f}")
+        self.assertIs(dialog._view_tabs.currentWidget(), dialog._schedule_panel)
+
+        missing = compute_variable_ephemeris(
+            _dialog_star(period_days=None, epoch_hjd=epoch_hjd),
+            timezone_name="UTC",
+            now=now,
+        )
+        dialog._handle_lookup_completed(missing)
+        self.assertFalse(dialog._pull_light_curve_button.isEnabled())
+        self.assertEqual(dialog._epoch_now_label.text(), "—")
+        dialog.close()
+
+    def test_pulled_photometry_marks_the_current_epoch_and_draws_future_cycles(self) -> None:
+        epoch_hjd = 2460000.0
+        now = Time(epoch_hjd + 20.4, format="jd", scale="utc").to_datetime()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        forecast = compute_variable_ephemeris(
+            _dialog_star(period_days=1.0, epoch_hjd=epoch_hjd),
+            timezone_name="UTC",
+            now=now,
+        )
+        dialog = VariableEphemerisDialog(timezone_name="UTC")
+        dialog._handle_lookup_completed(forecast)
+        samples: list[tuple[float, float]] = []
+        for cycle in range(12, 19):
+            for phase, magnitude in ((0.0, 10.0), (0.25, 11.0), (0.5, 12.0), (0.75, 11.0)):
+                samples.append((epoch_hjd + cycle + phase, magnitude))
+        dialog._apply_pulled_photometry(
+            PhotometryImport(sessions=(_aid_session("V", samples),), records=())
+        )
+        self.assertIs(dialog._view_tabs.currentWidget(), dialog._light_curve_panel)
+        self.assertIn("future light curve", dialog._status_label.text())
+        self.assertIn(f"{forecast.current_epoch:.3f}", dialog._light_curve_panel._summary_label.text())
+        now_line = dialog._light_curve_panel._now_line
+        self.assertIsNotNone(now_line)
+        self.assertAlmostEqual(float(now_line.value()), float(forecast.current_epoch or 0.0), places=4)
+        expected = next(item for item in dialog._light_curve_panel._curve_items if item.name() == "V")
+        epochs = expected.getData()[0]
+        self.assertGreater(max(float(value) for value in epochs), float(forecast.current_epoch or 0.0))
+        view_box = dialog._light_curve_panel._plot_item.getViewBox()
+        self.assertTrue(view_box.state["mouseEnabled"][0])
+        self.assertTrue(view_box.state["mouseEnabled"][1])
+        self.assertTrue(view_box.yInverted())
+        dialog.close()
+
+    def test_pull_light_curve_opens_on_the_latest_30_days(self) -> None:
+        remember_aid_dialog_session({"start_jd": 2460000.0, "end_jd": 2460010.0, "observer": "OKDA"})
+        epoch_hjd = 2460000.0
+        now = Time(epoch_hjd + 20.4, format="jd", scale="utc").to_datetime()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        forecast = compute_variable_ephemeris(
+            _dialog_star(period_days=1.0, epoch_hjd=epoch_hjd),
+            timezone_name="UTC",
+            now=now,
+        )
+        dialog = VariableEphemerisDialog(timezone_name="UTC")
+        dialog._handle_lookup_completed(forecast)
+        captured: dict[str, object] = {}
+
+        def fake_exec(download: AidDownloadDialog) -> QDialog.DialogCode:
+            captured["start"] = download._start_jd_spin.value()
+            captured["end"] = download._end_jd_spin.value()
+            captured["observer"] = download._observer_edit.text()
+            return QDialog.DialogCode.Rejected
+
+        with patch.object(AidDownloadDialog, "exec", fake_exec):
+            dialog._handle_pull_light_curve_clicked()
+        start_jd = float(captured["start"])
+        end_jd = float(captured["end"])
+        self.assertAlmostEqual(end_jd - start_jd, 30.0, places=5)
+        self.assertAlmostEqual(end_jd, float(Time.now().jd), delta=1e-4)
+        self.assertEqual(captured["observer"], "OKDA")
+        dialog.close()
+        remember_aid_dialog_session(None)
+
+
+def _dialog_star(*, period_days: float | None, epoch_hjd: float) -> VsxEphemerisStar:
+    return VsxEphemerisStar(
+        name="RR Lyr",
+        oid="18050",
+        ra_deg=291.36629,
+        dec_deg=42.78436,
+        variability_type="RRAB",
+        period_days=period_days,
+        epoch_hjd=epoch_hjd,
+        max_mag=7.17,
+        min_mag=8.14,
+        eclipse_duration_hours=None,
+        source="test",
+    )
+
+
+def _aid_session(filter_name: str, samples: list[tuple[float, float]]) -> OcSession:
+    points: list[LightCurvePoint] = []
+    for jd, magnitude in samples:
+        observed = Time(jd, format="jd", scale="utc").to_datetime()
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=UTC)
+        points.append(
+            LightCurvePoint(
+                observation_time=observed,
+                file_path=Path("aavso-aid"),
+                differential_magnitude=magnitude,
+                instrumental_magnitude=None,
+                flux=None,
+                flux_error=None,
+                standard_magnitude=magnitude,
+                standard_magnitude_error=0.01,
+            )
+        )
+    return OcSession(
+        session_name=f"AAVSO {filter_name}",
+        series=LightCurveSeries(
+            object_name=f"AAVSO {filter_name}",
+            source_id="",
+            source_name="RR Lyr",
+            filter_name=filter_name,
+            points=points,
+        ),
+        origin=ORIGIN_AAVSO,
+    )
 
 
 if __name__ == "__main__":

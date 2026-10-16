@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from astropy.io import fits
@@ -244,7 +245,7 @@ class ScannerTest(unittest.TestCase):
             self.assertEqual(summary.files[0].metadata.height, 32)
             self.assertEqual(summary.solved_count, 1)
 
-    def test_scan_fits_tree_excludes_jpg_and_png_with_counts(self) -> None:
+    def test_scan_fits_tree_accepts_camera_raw_and_excludes_jpg_and_png_with_counts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             object_dir = root / "Files" / "M42"
@@ -253,16 +254,34 @@ class ScannerTest(unittest.TestCase):
             (object_dir / "preview.jpg").write_bytes(b"fake-jpg")
             (object_dir / "preview.jpeg").write_bytes(b"fake-jpeg")
             (object_dir / "plate.png").write_bytes(b"fake-png")
-            (object_dir / "camera.cr3").write_bytes(b"fake-cr3")
+            (object_dir / "camera.CR2").write_bytes(b"fake-cr2")
             (object_dir / "camera.nef").write_bytes(b"fake-nef")
             (object_dir / "notes.txt").write_text("ignore", encoding="utf-8")
 
-            report = scan_fits_tree(root)
+            from photometry_app.core.scanner import read_header_and_shape as real_read_header_and_shape
+
+            def _read_header_and_shape(path: Path):
+                if path.suffix.lower() in {".cr2", ".nef"}:
+                    header = fits.Header()
+                    header["DATE-OBS"] = "2026-03-16T01:02:03"
+                    header["EXPTIME"] = 30.0
+                    header["FILTER"] = "Color"
+                    return header, 32, 32
+                return real_read_header_and_shape(path)
+
+            with patch(
+                "photometry_app.core.scanner.read_header_and_shape",
+                side_effect=_read_header_and_shape,
+            ):
+                report = scan_fits_tree(root)
 
             self.assertEqual(len(report.object_summaries), 1)
-            self.assertEqual(len(report.object_summaries[0].files), 1)
-            self.assertEqual(report.object_summaries[0].files[0].path.name, "frame_001.fits")
-            self.assertEqual(report.excluded_unsuitable_image_counts, (("JPG", 2), ("PNG", 1), ("RAW", 2)))
+            self.assertEqual(len(report.object_summaries[0].files), 3)
+            self.assertEqual(
+                {item.path.name for item in report.object_summaries[0].files},
+                {"frame_001.fits", "camera.CR2", "camera.nef"},
+            )
+            self.assertEqual(report.excluded_unsuitable_image_counts, (("JPG", 2), ("PNG", 1)))
 
     def test_format_excluded_unsuitable_images_message(self) -> None:
         from photometry_app.core.scanner import format_excluded_unsuitable_images_message

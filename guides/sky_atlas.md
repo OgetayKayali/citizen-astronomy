@@ -2,24 +2,24 @@
 
 ## Introduction
 
-Most sky maps show you the heavens as a catalog. **Sky Atlas** tries to make them feel inhabited.
+**Sky Atlas** is CAst's interactive all-sky map. You can search every downloaded catalog from a centered window, click objects to pin their details, change the observing time and site, tune how many stars and deep-sky objects are drawn, inspect the live Moon, and lay your own sky-registered images over the atlas as custom surveys. Use it when you want context: where an object sits, what surrounds it, and how the sky looks from a given place at a given time.
 
-Sky Atlas is CAst's immersive all-sky exploration mode. You can search every catalog from a centered window, inspect the live Moon, change time and observer location, tune star density and Milky Way rendering, and layer your own sky-registered imagery on top of the atlas. It is the mode you use when you want context: where an object sits, what surrounds it, and how the sky changes with time and location.
+![Sky Atlas centered on the Lagoon and Trifid nebulae, with a custom survey overlay, Messier labels, and the Milky Way background](images/sky_atlas.jpg)
 
-Some internal controls still use the older phrase **Sky View**. In the launcher, mode menu, and user-facing documentation, this mode should be understood as **Sky Atlas**.
+Some controls still use the older name **Sky View** (for example the **Sky View options** tooltip). In the launcher and the **Mode** menu the mode is called **Sky Atlas**.
 
 ### What you can do with this mode
 
-- **Explore the sky interactively.** Pan, zoom, search, and click visible targets to inspect their RA, Dec, altitude, azimuth, and constellation context.
-- **Simulate time and location.** Change UTC time, pause or resume time flow, and switch observing sites to see how the sky changes from different places on Earth.
-- **Control star and deep-sky density.** Tune limiting magnitude and catalog visibility so the atlas stays readable or becomes much deeper.
-- **Render the Milky Way and constellations.** Adjust bloom, spikes, constellation styling, and Milky Way detail/tone.
-- **Work with the Moon as a live object.** Search for the Moon and inspect its topocentric position from your chosen site and time.
-- **Create your own surveys from your own data.** Import sky-registered PNG, XISF, TIFF, or FITS images into named custom surveys and display them as overlays on the atlas.
+- **Explore the sky interactively.** Drag to pan, scroll to zoom, search, and click visible targets to see their RA, Dec, altitude, azimuth, and constellation.
+- **Simulate time and location.** Set the UTC time, step by hours or days, pause or play the clock, and pick your observing site on a world map.
+- **Control star and deep-sky density.** Choose a limiting magnitude up to 15.0 (Hipparcos, Tycho-2, or Gaia DR3) and which deep-sky catalogs are plotted.
+- **Render the Milky Way and constellations.** Adjust Milky Way detail and tone, and style constellation lines and labels.
+- **Find the Moon.** Search for the Moon and see its topocentric position for your site and time.
+- **Overlay your own images.** Import sky-registered PNG, XISF, TIFF, or FITS images into named custom surveys and display them on the atlas.
 
 ### Why this matters
 
-A star chart is most useful when it becomes personal. The question is not only “where is M31?” but “what does the sky look like from my site, on my night, around the target I care about?” Sky Atlas combines packaged catalogs, downloadable all-sky star data, and your own overlay imagery so you can move between outreach, planning, and visual inspection without leaving the app.
+A star chart is most useful when it matches your situation: your site, your night, the target you care about. Sky Atlas combines packaged catalogs, downloadable all-sky star data, and your own overlay images, so you can move between planning, outreach, and visual inspection without leaving the app.
 
 ---
 
@@ -27,28 +27,47 @@ A star chart is most useful when it becomes personal. The question is not only �
 
 ### Step 1: Open Sky Atlas
 
-Open **Sky Atlas** from the mode launcher or the mode menu.
+Click **Sky Atlas** on the mode launcher ("Explore the sky and objects with an interactive all-sky map."), or choose **Mode > Sky Atlas**.
 
-On first use, the mode opens on a 60° Orion field and shows stars down to about magnitude 5, like Stellarium. Fainter catalog stars fade in gradually as you zoom in, and the already-visible stars get brighter so the step between magnitudes stays even. All-sky views keep stars small. The first paint loads only the bright Hipparcos subset and the existing Milky Way preview, so the atlas appears immediately instead of stitching a 16k texture or reloading Gaia.
+On first use, the atlas opens on a 60° field centered on Orion and shows stars down to about magnitude 5. Fainter catalog stars fade in gradually as you zoom in, up to the **Limiting magnitude** set in **Sky Atlas Settings**, and the already-visible stars brighten so the step between magnitudes stays even. All-sky views keep stars small. The first paint uses the bright star subset and the existing Milky Way preview, so the atlas appears quickly; deeper catalogs are loaded only when you ask for them in **Sky Atlas Settings**, or when no Hipparcos stars are on disk yet.
 
-### Step 2: Search for a Target
+### Step 2: Find the controls
 
-Click **Search the sky** to open a centered search window. Type a name, catalog ID, or alias. The window stays responsive while catalogs are scanned; the status line shows **Searching…** until matches appear. Results come from every catalog — including layers you have turned off — and are listed from most relevant to least. Each row starts with the object type, for example `Galaxy  Andromeda Galaxy`.
+The atlas fills the window. The controls sit in a dock at the bottom centre that slides in when you move the pointer near the bottom edge and slides away when you move it up again. It stays visible while one of its popups is open. From left to right the dock buttons are (hover to see each tooltip):
 
-Search includes:
+| Tooltip | What it does |
+|---------|--------------|
+| **Search the sky** | Opens the search window |
+| **Date and time** | Opens the UTC time popup |
+| **Pause time** / **Play time** | Stops or resumes the simulation clock |
+| **Observer location** | Opens the **Observer Location** dialog |
+| **Toggle equatorial grid** | Shows or hides the RA/Dec grid |
+| **Toggle alt-az grid** | Shows or hides the altitude/azimuth grid |
+| **Toggle constellations** | Shows or hides constellation lines and names |
+| **Toggle ground and horizon** | Shows or hides the ground and horizon |
+| **Custom sky map overlays** | Opens the **Custom Sky Map** popup |
+| **Sky Atlas settings** | Opens **Sky Atlas Settings** (stars and deep-sky catalogs) |
+| **Sky View options** | Opens the Milky Way, constellation, and reset popup |
+| **Toggle full screen** | Switches the window in and out of full screen |
 
-- named stars
-- Messier, NGC, IC, VdB, LDN, LBN, Barnard, Sharpless, RCW, and HASH PN objects already on disk
-- packaged atlas targets
-- the live **Moon**
+The grids, constellations, and ground start switched off. The clock starts running.
 
-Choosing a result centers the atlas on that object and pins its details in the left-hand object panel. If the object belongs to a hidden catalog, Sky Atlas still pins it so you can inspect it.
+The footer at the bottom of the atlas shows the observer site name (or **Not set** if no site is configured), the field of view, the RA/Dec of the view centre, and the Alt/Az of the view centre.
 
-### Step 3: Set Time
+### Step 3: Search for a target
 
-Open **Date and time** to control the simulation clock.
+Click **Search the sky**. A centered window titled **Search the sky** opens with the note `Every catalog is included, even layers you have turned off.`
 
-The popup uses **UTC** and offers:
+1. Type a name, catalog ID, or alias in the box (`Type a name, catalog ID, or alias…`).
+2. The status line shows **Searching…** while catalogs are scanned, then the number of matches, `most relevant first`.
+3. Each result row starts with the object type, for example `Galaxy  Andromeda Galaxy`. A second line shows the catalog, the magnitude, and the constellation when known.
+4. Click a result, or press **Enter** to go to the highlighted one. Use the **Up**/**Down** arrow keys to move from the box into the list. Press **Esc** to close.
+
+Choosing a result centers the atlas on the object, selects it, and pins its details in the object panel. If the object belongs to a catalog you have hidden, Sky Atlas still pins it so you can inspect it.
+
+### Step 4: Set the time
+
+Click **Date and time**. The popup shows a **UTC** date/time editor (with a calendar popup) and five buttons:
 
 - **-1 d**
 - **-1 h**
@@ -56,30 +75,31 @@ The popup uses **UTC** and offers:
 - **+1 h**
 - **+1 d**
 
-You can also pause and resume time with **Pause time** / **Play time**. This makes it easy to inspect how an object rises, sets, or shifts relative to the horizon and constellations.
+Click **Pause time** in the dock to freeze the sky at the current moment; the same button then reads **Play time**. While the clock runs, stars and objects move smoothly with the sky.
 
-### Step 4: Set Observer Location
+### Step 5: Set the observer location
 
-Open **Observer location** to choose where the atlas should observe from.
+Click **Observer location**. The **Observer Location** dialog opens with a world map on the left and a **Saved Site** card on the right.
 
-You can:
+1. Drag the map to pan. Scroll, or use the **-** and **+** buttons, to zoom. **Center on marker** returns to the selected point.
+2. Click the map to place the marker, or type **Latitude**, **Longitude**, and **Elevation**.
+3. **Name** fills in automatically from the clicked coordinates (`Auto-filled from clicked coordinates.`). Type your own name to override it; clear the field to turn auto-fill back on.
+4. Leave **Keep this site in quick-switch presets** checked to keep the site in the **Saved Sites** list.
+5. Click **Save Location**.
 
-- quick-switch among saved sites
-- open **Manage Locations**
-- use the full **Observer Location** dialog
-- click a world map or type **Latitude**, **Longitude**, and **Elevation**
-- save the site with **Save Location**
+To reuse a site, pick it from **Saved Sites** and click **Load**, then **Save Location**. **Remove** deletes the selected saved site.
 
-Observer location matters because it changes:
+The location is saved as CAst's observing site, so the same site is used the next time you open Sky Atlas. It changes:
 
-- altitude and azimuth
-- horizon placement
-- ground context
+- altitude and azimuth of every object
+- the horizon and ground
 - the live Moon position
 
-### Step 5: Turn Layers On and Off
+The map tiles come from CARTO, and the place label from OpenStreetMap Nominatim, so the map and the auto-filled name need an internet connection.
 
-Use the main toggles to control:
+### Step 6: Turn layers on and off
+
+Use the dock toggles:
 
 - **Toggle equatorial grid**
 - **Toggle alt-az grid**
@@ -87,41 +107,44 @@ Use the main toggles to control:
 - **Toggle ground and horizon**
 - **Custom sky map overlays**
 
-Then open **Sky Atlas settings** and **Sky View options** for deeper control over catalogs and rendering.
+Then open **Sky Atlas settings** for stars and deep-sky catalogs, and **Sky View options** for the Milky Way and constellation styling.
 
 ---
 
 ## Searching and Inspecting Objects
 
+### Mouse controls
+
+- **Drag** with the left mouse button to pan.
+- **Scroll** to zoom. The field of view glides continuously between 2° and 360°. When the Moon is selected or centered, you can zoom in to about 0.24°.
+- **Hover** over an object to highlight it and show its label.
+- **Click** a star or object to select it and pin its details.
+- **Double-click** an object to center the view on it and pin it.
+
+The atlas has no keyboard shortcuts of its own. In the search window, **Enter**, **Esc**, and the arrow keys work as described above.
+
 ### Pinned object panel
 
-When nothing is selected, the panel says:
+The object panel appears at the top left when you select something and hides again when nothing is selected. It shows:
 
-- `No object selected`
-- `Click a visible object to pin its details here`
-
-After you click a target, the panel can show:
-
-- **RA**
-- **Dec**
-- **Alt**
-- **Az**
-- **Constellation**
-- object name / aliases
-- magnitude and related metadata where available
+- the object name and magnitude (`mag`)
+- up to four alternate names, or the catalog name
+- the object type
 - literature links: **SIMBAD**, **ADS**, **VizieR**, and **HASH** when the object is a HASH PN
+- **RA**, **Dec**, **Alt**, **Az**, and **Constellation**
 
-The links open in your browser. SIMBAD is the object record, ADS searches papers, and VizieR opens the catalog identifier. HASH PN objects also get a VizieR row for catalogue V/163.
-
-The footer interaction hint reads:
-
-`FOV ... | Drag to pan | Wheel to zoom | Click star/object for details`
-
-Mouse-wheel zoom glides the field of view continuously instead of jumping a step at a time.
+The links open in your browser. SIMBAD opens the object record, ADS searches papers sorted by citation count, and VizieR searches by the identifier. The **HASH** link opens the object's row in VizieR catalogue V/163. Alt and Az update as the clock runs or when you change the site.
 
 ### What can be searched
 
-The search window scans every catalog that is already downloaded, even when those catalogs are disabled in Sky Atlas Settings. Named stars stay searchable; unnamed catalog stars are left out so the list stays useful. Hidden deep-sky objects still appear, with their type at the start of the name.
+Search covers:
+
+- packaged named stars and atlas targets, including the packaged Messier catalog
+- every deep-sky catalog already downloaded to disk (NGC, IC, VdB, LDN, LBN, Barnard, Sharpless, RCW, HASH PN), even when it is switched off in **Sky Atlas Settings**
+- objects currently drawn on the atlas
+- the live **Moon**
+
+Search does not download anything. A catalog you have never enabled is not searchable until you enable it once in **Sky Atlas Settings** and click **OK**. Named stars stay searchable; unnamed catalog stars are left out so the list stays useful. Named objects rank ahead of unnamed ones, and one-letter queries match names only. The list holds up to 60 results.
 
 ---
 
@@ -129,261 +152,220 @@ The search window scans every catalog that is already downloaded, even when thos
 
 ### Stars
 
-Sky Atlas uses a tiered full-sky star strategy. Depending on limiting magnitude, it can rely on:
+Sky Atlas uses a tiered full-sky star strategy. Depending on the limiting magnitude, it loads:
 
-- **Hipparcos**
-- **Tycho-2**
-- **Gaia DR3**
+- **Hipparcos** (VizieR I/239)
+- **Tycho-2** (VizieR I/259)
+- **Gaia DR3** (streamed from the Flatiron Gaia DR3 mirror)
 
-The settings dialog estimates star counts and download sizes for the selected depth. Typical examples from the built-in estimator are roughly:
+Hipparcos to magnitude 9.5 is always the base set once it has been downloaded. The settings dialog estimates star counts and download sizes for the chosen depth. Examples from the built-in estimator:
 
-- mag `9.5`: Hipparcos, about `99k` stars
-- mag `12.5`: Tycho-2, about `1.8M` stars
-- mag `15.0`: Gaia DR3, about `35M` stars
+- mag `9.5`: Hipparcos, about `99k` stars (12 MB)
+- mag `12.5`: Tycho-2, about `1.8M` stars (240 MB)
+- mag `15.0`: Gaia DR3, about `35M` stars (4.8 GB)
+
+Catalogs are saved under a `sky-atlas` folder next to the program; the dialog shows the exact path after **Saved under:**.
 
 ### Deep-sky catalogs
 
-The built-in deep-sky object families include:
+The deep-sky catalogs are:
 
-- **Messier**
-- **NGC**
-- **IC**
-- **VdB**
-- **LDN**
-- **LBN**
-- **Barnard** dark nebulae
-- **Sharpless** HII regions
-- **RCW** southern HII regions
-- **HASH PN** planetary nebulae and known mimics (VizieR V/163)
+- **Messier** (packaged)
+- **NGC** and **IC** (VizieR VII/118)
+- **VdB** reflection nebulae (VII/21)
+- **LDN** dark nebulae (VII/7A)
+- **LBN** bright nebulae (VII/9)
+- **Barnard** dark nebulae (VII/220A)
+- **Sharpless** HII regions (VII/20)
+- **RCW** southern HII regions (VII/216)
+- **HASH PN** planetary nebulae and known mimics (V/163)
 
-These can be enabled or disabled independently in **Sky Atlas Settings**. Barnard, Sharpless, RCW, and HASH PN are especially useful for checking whether a nebula is already catalogued. HASH PN labels use the usual name when HASH provides one — including amateur discoverer names such as **StDr-1**, Pa, Kn, and Ou — and keep the HASH number as an alias. Search accepts common spellings (`StDr-1`, `StDr 1`, `StDr1`). Object names, constellation names, and the deep-sky marker circles are drawn on the GPU. Dense catalogues such as HASH PN wait for a closer zoom before showing labels, and only the most relevant names are drawn so the view stays responsive. CAst downloads these catalogues from CDS/VizieR when you enable them; it does not redistribute the HASH database.
+Messier and NGC are on by default. Each catalog can be switched on or off in **Sky Atlas Settings**. Barnard, Sharpless, RCW, and HASH PN are useful for checking whether a nebula is already catalogued. HASH PN labels use the usual name when HASH provides one, including amateur discoverer names such as **StDr-1**, Pa, Kn, and Ou, and keep the HASH number as an alias. Search accepts common spellings (`StDr-1`, `StDr 1`, `StDr1`).
+
+Object names, constellation names, and deep-sky marker circles are drawn on the GPU. Dense catalogs (HASH PN, LDN, LBN, Barnard, Sharpless, RCW) wait for a closer zoom before showing labels: named objects below about 28° field width, unnamed ones below about 10°. Only the most relevant names are drawn so the view stays responsive. CAst downloads these catalogs from CDS/VizieR when you enable them; it does not redistribute the HASH database.
 
 ### The Moon
 
-The Moon is not just a static catalog row. Search terms such as **Moon**, **Luna**, and **Earth's Moon** resolve to a live topocentric Moon object derived from the current observer location and simulation time.
-
-That makes Sky Atlas useful for planning lunar context, not only deep-sky navigation.
+Search for **Moon**, **Luna**, or **Earth's Moon** to get a live topocentric Moon object computed from the current observer location and simulation time. Its listed magnitude is estimated from the illuminated fraction. Selecting the Moon lets you zoom in much closer than other targets.
 
 ---
 
 ## Settings
 
-Open **Sky Atlas Settings**.
-
-The dialog intro says:
+Click **Sky Atlas settings** in the dock. The **Sky Atlas Settings** dialog opens with the intro:
 
 `Adjust what stars and deep-sky objects appear in Sky Atlas.`
 
+The left list switches between the **Stars** and **Deep-Sky Objects** pages. Changes preview on the atlas as you move the controls. **OK** saves them, **Cancel** reverts to the saved values, and **Restore Defaults** resets every control in the dialog.
+
 ### Stars page
 
-Controls include:
+| Control | Range | Default | Description |
+|---------|-------|---------|-------------|
+| **Limiting magnitude** | 3.0–15.0 | 8.7 | Fainter stars fade out beyond this value |
+| **Star brightness** | 0.35x–2.00x | 1.00x | Overall glow intensity |
+| **Star size** | 0.40x–2.50x | 1.00x | Base disc size for all stars |
+| **Magnitude size contrast** | 0.00x–2.00x | 1.00x | How strongly fainter stars shrink relative to bright ones |
+| **Twinkling** | 0–100% | 50% | Atmospheric scintillation amount |
 
-- **Limiting magnitude**
-- **Star catalog download**
-- **Star brightness**
-- **Star size**
-- **Magnitude size contrast**
-- **Twinkling**
-
-The dialog also warns:
+The **Star catalog download** box shows the estimated catalog, star count, and size for the chosen limiting magnitude, the folder after **Saved under:**, and this note:
 
 `Click OK to download any missing catalog data in the background. You can keep using Sky Atlas; Cancel or quitting the app keeps the last working magnitude.`
 
-Faint-star downloads (especially Gaia DR3 past Tycho-2) show a cancellable progress bar as soon as you click OK. The current star field stays on screen and only refreshes when the new catalog is ready. Gaia is streamed as one catalog file from the Flatiron Gaia DR3 mirror, so progress follows stars and megabytes actually received. A finished download keeps the new magnitude the next time you open Sky Atlas. Closing the app mid-download restores the last working magnitude so the next launch does not immediately retry a stuck download.
+When you click **OK**, a banner with a progress bar and a **Cancel** button appears at the top of the atlas if catalog data is missing. The current sky stays on screen and only refreshes when the new catalog is ready. Gaia is streamed as one catalog file, so progress follows the stars and megabytes actually received. A finished download keeps the new magnitude the next time you open Sky Atlas. If you click **Cancel**, or quit mid-download, the last working magnitude is kept so the next launch does not retry a stuck download. If a deeper download does not finish, the status bar shows `Sky Atlas kept the last complete star catalog; the deeper download did not finish.`
 
 ### Deep-Sky Objects page
 
-Controls include:
+- **Catalogs to show**: one checkbox per catalog listed above.
+- **Visibility**:
+  - **Object limiting magnitude** (1.0–16.0, default 10.0): marks objects brighter than this limit.
+  - **Label limiting magnitude** (1.0–16.0, default 8.0): shows names only for objects brighter than this.
 
-- **Catalogs to show**
-- **Visibility**
-- **Object limiting magnitude**
-- **Label limiting magnitude**
-
-This lets you choose whether the atlas should stay clean and outreach-friendly or become denser and more scientific.
+Use these to keep the atlas clean for outreach or make it denser for checking a field.
 
 ---
 
 ## Rendering and Visual Controls
 
-Open **Sky View options** for the immersive renderer controls.
+Click **Sky View options** in the dock. The popup has three groups and a **Reset View** button.
 
-### Star rendering
-
-Controls include:
-
-- **Max mag**
-- **Bloom**
-- **Spikes**
-
-Spike modes:
-
-- **Off**
-- **Subtle**
-- **Classic**
+**Max mag** at the top shows the current star limiting magnitude. Change the limit in **Sky Atlas Settings**.
 
 ### Milky Way
 
-The background is the previous all-sky Milky Way texture (ESA Gaia Sky 2020), not the later starless Gaia glow. Resolution settings stay Low = 4k, Medium = 8k, and High = full 32k tiles.
+The background is the previous all-sky Milky Way texture (ESA Gaia Sky 2020), not the later starless Gaia glow.
 
-Milky Way detail modes include:
+| Control | Options or range | Default |
+|---------|------------------|---------|
+| **Milky Way** checkbox | on/off | On |
+| Resolution (next to the checkbox) | **Off**, **Low** (4k), **Medium** (8k), **High** (32k tiles) | High |
+| **Mode** | **Basic Milky Way**, **Advanced Milky Way (16k)**, **High Detail Milky Way (32k)**, **Fully Milky Way** | Fully Milky Way |
+| **Opacity** | 0–80% | 65% |
+| **Exposure** | 0.35x–1.80x | 1.30x |
+| **Preset** | **Atlas**, **Dark sky**, **Source-like**, **Custom** | Atlas |
+| **Contrast** | 0.60x–2.20x | 1.35x |
+| **Saturation** | 0.00x–2.40x | 2.00x |
+| **Black point** | 0.00–0.25 | 0.00 |
+| **Gamma** | 0.60x–1.80x | 1.05x |
+| **Flip texture** | on/off | Off |
 
-- **Off**
-- **Low**
-- **Medium**
-- **High**
-
-and more advanced named modes such as:
-
-- **Basic Milky Way**
-- **Advanced Milky Way (16k)**
-- **High Detail Milky Way (32k)**
-- **Fully Milky Way**
-
-Tone presets include:
-
-- **Atlas**
-- **Dark sky**
-- **Source-like**
-- **Custom**
-
-Additional controls:
-
-- **Opacity**
-- **Exposure**
-- **Preset**
-- **Contrast**
-- **Saturation**
-- **Black point**
-- **Gamma**
-- **Flip texture**
+Choosing a **Preset** sets **Exposure**, **Contrast**, **Saturation**, **Black point**, and **Gamma** together. Moving any of those sliders yourself switches the preset display to **Custom** when the values no longer match a preset. Setting the resolution to **Off** hides the Milky Way.
 
 ### Constellations
 
-Constellation controls include:
+| Control | Options or range | Default |
+|---------|------------------|---------|
+| **Constellations** | on/off (same as **Toggle constellations**) | Off |
+| **Lines** | on/off | On |
+| **Labels** | on/off | On |
+| **Color** | **Blue-white**, **Gray-white**, **Soft cyan**, **Warm amber** | Blue-white |
+| **Line width** | 0.5–3.0 px | 1.0 px |
+| **Line opacity** | 0–100% | 42% |
+| **Label opacity** | 0–100% | 72% |
+| **Label size** | 8–20 pt | 11 pt |
 
-- **Constellations**
-- **Lines**
-- **Labels**
-- **Color**
-- **Line width**
-- **Line opacity**
-- **Label opacity**
-- **Label size**
+### Reset View
 
-Color themes include:
+**Reset View** animates the camera back to the opening 60° Orion field.
 
-- **Blue-white**
-- **Gray-white**
-- **Soft cyan**
-- **Warm amber**
-
-Use **Reset View** if you want to return to a clean baseline camera setup.
+The **Sky View options** settings and the dock toggles are not saved between sessions; they return to their defaults when you restart CAst. **Sky Atlas Settings**, the observer location, and the custom overlay settings are saved.
 
 ---
 
 ## Custom Surveys and Overlays
 
-This is one of Sky Atlas's most important advanced features.
-
 ### What custom surveys are
 
-Open **Custom sky map overlays** to work with the **Custom Sky Map** system.
-
-This lets you create your own named surveys from **your own sky data**, then display those overlays directly on the atlas.
-
-You can think of this as building a personal sky layer: your calibrated or solved image becomes another survey option beside the built-in atlas background.
+Click **Custom sky map overlays** in the dock to open the **Custom Sky Map** popup. A custom survey is a named group of your own sky-registered images, for example one survey per filter. Sky Atlas draws the images of the selected survey on the atlas at their sky positions.
 
 ### Supported input formats
 
-Custom overlays support:
-
 - **PNG**
 - **XISF**
-- **TIFF**
-- **FITS**
+- **TIFF** (`.tif`, `.tiff`)
+- **FITS** (`.fit`, `.fits`)
 
-Unsupported types are rejected with:
+Other file types are rejected with:
 
 `Sky Atlas custom overlays support PNG, XISF, TIFF, and FITS images only.`
 
-### How to create your own survey
+### How to create a survey
 
-1. Open **Custom sky map overlays**
-2. Click **Edit Surveys**
-3. In **Custom Sky Map Surveys**, click **New Survey**
-4. Enter a **Name** and optional **Filter**
-5. Click **Add Image...**
-6. Import one or more sky-registered images
+1. Click **Custom sky map overlays**, then **Edit Surveys**.
+2. In the **Custom Sky Map Surveys** dialog, click **New Survey**. It appears in the **Surveys** list as `Survey 1`, `Survey 2`, and so on.
+3. Type a **Name** and, optionally, choose or type a **Filter** (the list offers Luminance, Clear, R, G, B, Ha, OIII, and SII).
+4. Click **Add Image...** and choose one image. Repeat for each image you want in the survey.
+5. Click **OK** to save the surveys.
 
-Sky Atlas tries to use embedded WCS when present. For plain image formats such as PNG or TIFF, it can look for companion WCS/FITS-style information first and otherwise try to solve the field as needed.
+While an image imports, a **Sky Atlas** progress window shows `Reading WCS or plate-solving the overlay image...`. Sky Atlas uses the embedded WCS when it is valid. For PNG and TIFF it first looks for a FITS file with the same base name (`.fits`, `.fit`, `.fts`, or `.fz`) next to the image. If no usable WCS is found, it tries to plate-solve the image with metadata-seeded Gaia matching or astrometry.net (using the astrometry.net API key from CAst's settings). If that fails, `Custom overlay failed` explains why.
 
-### How to use a created survey
+Other survey actions:
 
-Once imported:
+- **Remove Selected** removes the selected image from the survey.
+- **Delete Survey** deletes the selected survey; if it has images, CAst asks for confirmation first.
+- Every survey needs a name; **OK** refuses an empty name with `Every survey needs a name.`
 
-1. Return to **Custom Sky Map**
-2. Enable **Show custom sky overlays**
-3. Pick the survey from the **Survey** dropdown
-4. Tune:
-   - **Opacity**
-   - **Brightness**
-   - **Saturation**
-   - **Feather**
-   - **Treat black as alpha** to make black and near-black pixels transparent so the overlay blends into the atlas sky
+### How to show a survey
+
+1. Click **Custom sky map overlays**.
+2. Pick the survey from the **Survey** dropdown. Picking a survey also turns on **Show custom sky overlays**. Use the checkbox to hide or show the overlays later.
+3. Tune the display:
+
+| Control | Range | Default |
+|---------|-------|---------|
+| **Opacity** | 0–100% | 85% |
+| **Brightness** | 0.35x–2.00x | 1.00x |
+| **Saturation** | 0.00x–2.40x | 1.00x |
+| **Feather** | 0–100% | 0% |
+| **Treat black as alpha** | on/off | Off |
+
+**Feather** fades the image edges into the atlas. **Treat black as alpha** makes black and near-black pixels transparent so the overlay blends into the atlas sky. The dropdown shows **No surveys yet** until you create one.
 
 ### How the data is stored
 
-Imported overlays are cached into a survey-specific folder with atlas-ready assets such as:
+Surveys are saved in a `survey` folder next to the program, one subfolder per survey with a `survey.json` manifest. Each imported image gets its own folder containing:
 
 - a cached `overlay.png`
 - a cached `overlay.wcs.fits`
 - an `overlay.json` manifest
 
-Survey folders are meant to be portable. The app's own dialog notes that surveys can be shared by copying their survey subfolder.
-
-### Why this matters
-
-This means Sky Atlas is not limited to built-in catalogs or public survey backdrops. You can create your own survey from your own processed data and browse it in the same navigable all-sky environment.
+Cached images are downscaled to a long edge of 2048 pixels by default. Survey folders are portable: as the dialog notes, you can share a survey by copying its subfolder.
 
 ---
 
 ## Observer Location and Time Workflow
 
-Sky Atlas becomes much more useful when you treat time and place as first-class controls instead of leaving them at defaults.
-
 ### Location workflow
 
-- choose or create a site in **Observer Location**
-- save it as a reusable preset
-- switch among sites from the popup
+- Open **Observer location**, click the map or type coordinates, and click **Save Location**.
+- Keep **Keep this site in quick-switch presets** checked to add the site to **Saved Sites**.
+- Switch sites later with **Saved Sites**, **Load**, and **Save Location**.
 
 ### Time workflow
 
-- jump to **Now**
-- nudge by hours or days
-- pause and inspect a sky moment
-- resume playback for a live moving sky
+- Jump to **Now**.
+- Step by hours or days with **-1 h**, **+1 h**, **-1 d**, and **+1 d**, or type a UTC time.
+- Click **Pause time** to inspect one moment, then **Play time** to let the sky move again.
 
-This is especially useful for:
+This is useful for:
 
 - horizon checks
 - constellation orientation
-- Moon context
-- public outreach and teaching
+- Moon position
+- outreach and teaching
 
 ---
 
 ## Suggested Workflow
 
 1. Open **Sky Atlas**.
-2. Search for a named star, Messier target, or the Moon.
-3. Set your observing site in **Observer location**.
-4. Adjust **Date and time** until the sky matches the night you care about.
-5. Turn on constellation lines, grids, or horizon overlays as needed.
-6. Open **Sky Atlas Settings** and choose a limiting magnitude and object catalog depth that matches your goal.
-7. If you have your own registered image data, add it through **Custom Sky Map Surveys** and enable it as an overlay.
-8. Fine-tune Milky Way tone and star rendering in **Sky View options**.
+2. Click **Observer location** and save your observing site.
+3. Click **Date and time** and set the night you care about.
+4. Click **Search the sky** and look up a named star, a Messier target, or the Moon.
+5. Turn on constellations, grids, or the ground and horizon from the dock.
+6. Open **Sky Atlas settings** and choose a limiting magnitude and the deep-sky catalogs that match your goal.
+7. If you have your own registered images, add them in **Custom Sky Map Surveys** and pick the survey in **Custom Sky Map**.
+8. Fine-tune the Milky Way and constellation styling in **Sky View options**.
 
 ---
 
@@ -402,23 +384,25 @@ This is especially useful for:
 
 ### What Sky Atlas does not do
 
-- It is not a full planetarium replacement with every possible catalog exposed in the UI.
+- It is not a full planetarium; it shows the catalogs listed above, the Moon, and your own overlays.
 - It is not an image-anchored annotation mode like Sky Explorer.
-- It does not promise a dedicated export workflow in the same way some other modes do.
+- It has no export or screenshot command.
 
 ### Practical caveats
 
-- Deep star catalogs can be large, especially when Gaia DR3 depth is enabled. Those downloads stay in the background with a cancellable progress bar, and quitting keeps the last working magnitude.
-- Some data is downloaded on first use.
-- Search returns a limited number of combined results and favors recognizable targets.
-- Custom overlays need valid sky registration through WCS or solving.
-- Imported overlays may be downscaled into cache for practical display.
-- Some internal controls still say **Sky View** even though the product mode is **Sky Atlas**.
+- Deep star catalogs can be large, especially at Gaia DR3 depth. Downloads run in the background with a cancellable progress bar, and quitting keeps the last working magnitude.
+- Hipparcos, Tycho-2, Gaia DR3, and the deep-sky catalogs (except Messier) are downloaded on first use. The location map and place labels also need an internet connection.
+- Search only covers catalogs already on disk and returns up to 60 results.
+- Custom overlays need a valid WCS or a successful plate solve.
+- Imported overlays are downscaled into the cache for display.
+- **Sky View options** and the dock toggles reset when CAst restarts.
+- If GPU star rendering is unavailable, the status bar reports that compatibility rendering is active, which may be slower.
+- Some controls still say **Sky View** even though the mode is **Sky Atlas**.
 
 ---
 
 ## Conclusion
 
-Sky Atlas is CAst's exploration and context mode. It helps you move from “what object do I want?” to “what does the sky around it look like, from my site, at my time, with my own data layered into the map?” If you want a navigable, customizable sky environment rather than a single-image analysis tool, this is the right place to start.
+Sky Atlas is CAst's exploration and context mode. It takes you from "which object do I want?" to "what does the sky around it look like, from my site, at my time, with my own images on the map?" If you want a navigable sky map rather than a single-image analysis tool, start here.
 
 For shared shell conventions and themes, see [Themes, Layout, and Shared UI](themes_layout_ui.md).

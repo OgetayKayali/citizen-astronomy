@@ -2,38 +2,49 @@
 
 ## Introduction
 
-Most star fields look flat because images hide the one coordinate your eye cannot see directly: depth.
+A star field in an image is flat. Two stars that sit side by side on the sensor can be ten parsecs or ten thousand parsecs away from each other along the line of sight.
 
-**Distance Map** takes a solved sky image, queries Gaia DR3 for stars in that footprint, and turns the field into a 3D parallax map. Instead of seeing only where stars land on the detector, you can inspect how they distribute through space, how proper-motion groups cluster, and whether a possible open-cluster-like population stands out against the foreground and background.
+**Distance Map** takes one solved sky image, queries Gaia DR3 for the stars inside that footprint, converts their parallaxes to distances, and draws the field as a 3D point cloud with you (the observer) at the origin. You can orbit the cloud, slice through it with your own image, measure depth with a ruler, and search for groups of stars that move together through space.
 
-This mode is not trying to turn your image into a full physical Milky Way model. It is a field-scale visualization and discovery aid built on Gaia astrometry, designed to make distance structure legible.
+This mode is a field-scale visualization and exploration aid built on Gaia astrometry. It is not a full physical model of the Milky Way, and its cluster search is not a membership study.
+
+![Distance Map with the field image, the 3D distance map with Distance Ruler and Tomography turned on, the Catalog Stars table, and the Work Log](images/distance_map.jpg)
 
 ### What you can do with this mode
 
-- **Build a 3D map from a single image field.** Open a solved frame and let CAst query Gaia stars inside that footprint.
-- **Filter the catalog by usefulness.** Limit stars by G magnitude, distance, parallax SNR, and maximum star count.
-- **Inspect the field in 3D.** Switch among overview, top-down, side, and field-centered cameras.
-- **Search for likely co-moving groups.** Use **Find Cluster** and the **Advanced...** dialog to highlight likely open-cluster or moving-group members.
-- **Compare the 3D view with the original image.** The field image and catalog table stay tied to the same Gaia selection.
-- **Save a figure of the 3D view.** Export the rendered distance map as an image.
+- **Build a 3D map from a single image field.** Open a solved (or solvable) frame and CAst queries Gaia stars inside that footprint.
+- **Filter the catalog.** Limit stars by G magnitude (**Mag Limit**), distance (**Distance Limit**), parallax quality (**Min SNR**), and count (**Max Stars**).
+- **Inspect the field in 3D.** Orbit, pan, and zoom with the mouse, or pick **Orbit Overview**, **Top-Down**, **Side View**, **Field Center**, or **Tomography Face-On** from **View**.
+- **Slice through the volume.** **Tomography** places your field image as a translucent plane in the 3D view; **Ctrl+left-drag** moves it in depth.
+- **Search for co-moving groups.** **Find Cluster** and **Advanced...** highlight a likely open-cluster or moving-group population from Gaia proper motion and parallax.
+- **Follow the group across views.** Highlighted members are emphasized in the 3D map, colored in the **Catalog Stars** table, and marked on the **Field Image**. **Only Group** filters all three.
+- **Show depth confidence.** **Parallax Uncertainty** draws each star's distance interval along its line of sight; **Distance Ruler** adds a parsec scale.
+- **Compare with a bundled globular cluster catalog.** **Catalog Sphere** overlays a distance and radius sphere for 17 named globular clusters.
+- **Save a figure.** **Save** exports the current 3D view as PNG, JPEG, or BMP.
 
 ### Why this matters
 
-Many astronomical images mix stars that only appear close together because they land in the same line of sight. Gaia changed that forever by giving us distances and proper motions at scale. Distance Map brings that perspective into CAst, so your image is not just a 2D patch of the sky but a doorway into the local 3D structure behind it.
+Many images mix stars that only appear close together because they land in the same line of sight. Gaia measured parallaxes and proper motions for more than a billion stars. Distance Map brings that third dimension into CAst, so you can see how the stars in your frame are spread out in depth and whether part of the field moves as one group.
 
 ---
 
 ## How It Works
 
-### Step 1: Open a Source Image
+### Step 1: Open the mode
 
-Switch to **Distance Map** mode and click **Open**.
+Use one of these:
 
-The file picker title is:
+- On the mode picker, click the **Distance Map** card ("Map catalog stars in 3D using their measured distances.").
+- From any mode, choose **Mode > Distance Map**.
+- Choose **Mode > Choose Mode...** to return to the mode picker.
+
+### Step 2: Open a source image
+
+Click **Open** on the mode toolbar, or choose **File > Open File** (**Ctrl+O**). The file picker title is:
 
 `Select source image for Distance Map`
 
-Supported inputs include:
+Supported inputs:
 
 - `.xisf`
 - `.fits` / `.fit`
@@ -42,40 +53,63 @@ Supported inputs include:
 - `.jpg` / `.jpeg`
 - camera RAW (for example `.dng`, `.cr2` / `.cr3`, `.nef`, `.arw`, `.orf`, `.rw2`, `.raf`, `.pef`)
 
-The mode uses one image at a time and expects a usable celestial WCS. If the frame is not already solved, CAst can use the shared astrometry.net resolver when configured.
+The mode uses one image at a time. If the file is missing CAst shows **Image not found**; if the extension is not supported it shows **Unsupported image**.
 
-### Step 2: Let the Initial Build Run
+### Step 3: Let the build run
 
-After opening an image, Distance Map restores saved limits and starts a background build automatically.
+As soon as you choose a file, Distance Map restores your saved limits and starts a background build. While it runs:
 
-The main panels are:
+- **Open** changes to **Building...** and is disabled.
+- **Apply**, the limit fields, **View**, **Labels**, **Distance Ruler**, **Reset View**, and **Save** are disabled.
+- The **Work Log** and the status bar report each step.
+
+The build:
+
+1. Checks the image WCS. If the embedded WCS is missing or unusable, CAst recovers a plate solution. It runs metadata-seeded Gaia matching and, when an **Astrometry API Key** is set under **Settings > Open Settings > General**, astrometry.net at the same time, and keeps whichever succeeds first. The log notes `Plate-solved the image with astrometry.net before querying catalogs.` when a solve was needed.
+2. Queries Gaia DR3 for stars with G at or below **Mag Limit** inside the solved field.
+3. Rejects stars below **Min SNR**, stars without a positive parallax, stars beyond **Distance Limit**, and stars outside the image rectangle.
+4. Keeps the brightest **Max Stars** survivors and draws them.
+
+When the build finishes, the status bar reads `Distance Map drew N star(s) from M Gaia source(s).` If it fails, a **Distance Map failed** message box explains why.
+
+The main panels, left to right, are:
 
 - **Field Image**
 - **3D Distance Map**
-- **Catalog Stars**
-- **Work Log**
+- **Catalog Stars** (top right)
+- **Work Log** (bottom right)
 
-While the worker runs, the **Open** button temporarily becomes **Building...**.
+Drag the splitters between them to resize.
 
-### Step 3: Review the 3D Field
+### Step 4: Look around the 3D field
 
-Once the Gaia query completes, you can inspect:
+The default camera is **Orbit Overview**. Use the mouse in the 3D view:
 
-- the original field image
-- the 3D star cloud
-- the catalog table
-- the work log summary
+| Action | Result |
+|--------|--------|
+| Left-drag | Orbit around the current center |
+| Ctrl + left-drag | Pan in the view plane (moves the slice instead when **Tomography** is on) |
+| Middle-drag | Pan |
+| Ctrl + middle-drag | Pan sideways and forward or back instead of up and down |
+| Mouse wheel | Zoom in or out |
+| Ctrl + mouse wheel | Change the field of view |
+| Arrow keys | Orbit (click the 3D view first so it has focus) |
 
-The default camera is **Orbit Overview**, but you can switch to:
+Pick a preset camera from **View**:
 
-- **Top-Down**
-- **Side View**
-- **Field Center**
-- **Tomography Face-On**
+- **Orbit Overview**: angled view of the whole cloud
+- **Top-Down**: looking straight down on the cloud
+- **Side View**: low, side-on view
+- **Field Center**: closer view centered on the stars
+- **Tomography Face-On**: looks at the Tomography slice face-on (only meaningful while **Tomography** is on)
 
-### Step 4: Adjust Query Limits
+The camera centers on the mean position of the visible stars, or on the highlighted group when one exists. Click **Reset View** to return to the selected **View** preset.
 
-The main toolbar includes:
+In the **Field Image**, scroll to zoom and left-drag to pan.
+
+### Step 5: Adjust the limits
+
+The right end of the toolbar holds:
 
 - **Mag Limit**
 - **Distance Limit**
@@ -83,18 +117,36 @@ The main toolbar includes:
 - **Min SNR**
 - **Apply**
 
-Use these controls to rebuild the map with a deeper, nearer, brighter, or cleaner Gaia selection.
+Change any value and click **Apply** to re-query Gaia and rebuild the map. Defaults and ranges are in [Controls and Defaults](#controls-and-defaults). Values are saved and restored the next time you open an image.
 
-### Step 5: Find a Cluster
+### Step 6: Find a cluster
 
-Click **Find Cluster** to search for a likely open-cluster-like or moving-group population based on Gaia proper motions and, when appropriate, parallax.
+Click **Find Cluster** to search the current map for a likely open-cluster or moving-group population using Gaia proper motions and, when enough stars have it, parallax.
 
-If you want finer control first, open **Advanced...** and choose a preset or expert options. After a successful detection:
+To change the search first, click **Advanced...**, pick a preset or expert options, and click **OK**. The next **Find Cluster** uses the new settings.
 
-- likely members are highlighted in 3D
-- matching rows are emphasized in the table
-- member markers can be shown on the field image
-- **Find Cluster** changes to **Find All** so you can clear the highlighted subset
+After a successful detection:
+
+- members are drawn larger with a gold glow in 3D
+- matching rows in **Catalog Stars** turn gold
+- members are circled on the **Field Image** in their BP-RP color (names are shown when there are six or fewer)
+- **Labels** shows member names instead of field-star names
+- the **Work Log** records how many members were found, the preset, the backend, and whether parallax was used
+- **Find Cluster** changes to **Find All**
+
+Turn on **Only Group** to hide every non-member in the 3D map and the table. Click **Find All** to clear the group and return to the full selection.
+
+If no group is found, CAst reports:
+
+`Could not identify a likely cluster from the current map stars. Try loosening the preset or increasing the star count.`
+
+### Step 7: Use the display tools
+
+Turn on any of **Labels**, **Distance Ruler**, **Parallax Uncertainty**, **Catalog Sphere**, and **Model Cluster Depth**, or click **Tomography**. Each is described in [Reading the Visualization](#reading-the-visualization).
+
+### Step 8: Save the view
+
+Click **Save** to export the current 3D view. See [Saving Output](#saving-output).
 
 ---
 
@@ -102,14 +154,57 @@ If you want finer control first, open **Advanced...** and choose a preset or exp
 
 | Requirement | Why |
 |-------------|-----|
-| Solved image or astrometry.net access | Gaia stars must be matched to a real sky footprint |
-| Network access | Gaia query comes from external catalog services |
-| Positive, usable Gaia parallaxes | Needed to turn stars into distances |
+| A solved image, or one CAst can solve | Gaia stars must be matched to a real sky footprint |
+| Network access | The Gaia query comes from external catalog services |
+| Stars with positive Gaia parallax | Needed to turn stars into distances |
 | OpenGL-capable environment | Required for the 3D view |
 
-If OpenGL is unavailable, the mode reports:
+If OpenGL is unavailable, the 3D panel reports:
 
 `OpenGL 3D view is unavailable in this environment.`
+
+After a build in that case it reads `N star(s) loaded, but OpenGL 3D view is unavailable.` The table and log still fill in.
+
+---
+
+## Controls and Defaults
+
+### Limits (toolbar, need Apply)
+
+| Control | Default | Range | Notes |
+|---------|---------|-------|-------|
+| **Mag Limit** | 17.0 mag | 1.0 to 22.0, step 0.5 | Gaia G magnitude cut sent with the query |
+| **Distance Limit** | 500.0 pc | 1.0 to 50000.0, step 50 | Stars farther than this (from 1000 / parallax) are rejected |
+| **Max Stars** | 500 | 10 to 50000, step 50 | Stars drawn after filtering. Gaia is queried for up to 4 x this many rows (at least 500) |
+| **Min SNR** | 5.0 | 0.0 to 50.0, step 0.5 | Parallax / parallax error must be at or above this. 0 disables the cut |
+
+These four values are saved in your settings.
+
+### Display (toolbar, instant)
+
+| Control | Default | Saved |
+|---------|---------|-------|
+| **View** | Orbit Overview | No |
+| **Labels** | On | No |
+| **Distance Ruler** | Off | No |
+| **Tomography** | Off | No |
+| **Only Group** | Off (enabled once a group exists) | No |
+| **Model Cluster Depth** | On | Yes |
+| **Parallax Uncertainty** | Off | Yes |
+| **Catalog Sphere** | Off | Yes |
+
+**Find Cluster**, **Tomography**, **Distance Ruler**, **Model Cluster Depth**, **Parallax Uncertainty**, and **Catalog Sphere** are disabled until a map with stars exists.
+
+### Cluster detection (Advanced..., saved)
+
+| Setting | Default |
+|---------|---------|
+| **Preset** | Default |
+| **Turn on Only Group automatically after detection** | Off |
+| **Backend** | Auto (recommended) |
+| **Strictness** | 1.00 (range 0.40 to 2.50) |
+| **Parallax** | Auto |
+| **Apply magnitude/color cleanup** | On |
 
 ---
 
@@ -117,94 +212,109 @@ If OpenGL is unavailable, the mode reports:
 
 ### 1. Resolve the field
 
-Distance Map first validates or solves the image WCS. This is similar in spirit to Sky Explorer: the app needs a reliable celestial footprint before it can ask Gaia what stars live inside it.
+Distance Map validates the embedded WCS first. If it is unusable, CAst uses the same solver as Sky Explorer: metadata-seeded Gaia matching and, with an astrometry.net key, astrometry.net in parallel. Solutions are cached under the Sky Explorer WCS cache.
 
 ### 2. Query Gaia DR3
 
-Using the solved footprint, CAst queries Gaia DR3 through its catalog service. Internally it overfetches beyond the final display count so later filtering still leaves a useful map.
+Using the solved footprint, CAst queries Gaia DR3 for stars at or below **Mag Limit**. The row cap is
 
-The resulting star set includes data such as:
+$$
+\text{rows} = \max(4 \times \text{Max Stars},\ 500)
+$$
+
+so later filtering still leaves enough stars. Results are cached under `distance-map-catalogs` in the cache directory.
+
+Each star carries:
 
 - name or identifier
 - G magnitude
 - BP-RP color when available
 - parallax and parallax error
-- proper motion
+- proper motion in RA and Dec
 - RA / Dec
-- derived distance in parsecs
 
-### 3. Convert parallax into distance
+### 3. Filter
 
-Distance Map uses positive parallax stars and derives distance from:
+Each Gaia row passes through these cuts in order:
+
+1. **Parallax SNR**: \(\varpi / \sigma_\varpi \ge\) **Min SNR** (skipped when **Min SNR** is 0). Stars without a positive parallax and error fail.
+2. **Usable parallax and distance**: the parallax must be positive and the derived distance at or below **Distance Limit**.
+3. **Image footprint**: the star must land inside the solved image rectangle, not just the query cone.
+
+The **Work Log** reports how many stars each cut rejected.
+
+### 4. Convert parallax into distance
 
 $$
 d_{pc} = \frac{1000}{\varpi_{mas}}
 $$
 
-where $\varpi$ is parallax in milliarcseconds.
+where \(\varpi\) is parallax in milliarcseconds. This simple inversion is reasonable when the parallax is much larger than its error, which is why **Min SNR** defaults to 5.
 
-Only stars with usable astrometry make it into the 3D map.
+### 5. Build 3D coordinates
 
-### 4. Build 3D coordinates
+RA, Dec, and distance are converted to ICRS Cartesian coordinates in parsecs. The observer sits at the origin, drawn as a small cyan point.
 
-The Gaia positions are transformed into 3D Cartesian coordinates in parsecs. That turns the field into a true point cloud rather than a 2D overlay.
+### 6. Sort and cap
 
-The observer sits at the origin, and stars are drawn in space around that reference frame.
-
-### 5. Filter and sort
-
-The main toolbar limits then shape the visible selection:
-
-- **Mag Limit** removes faint stars
-- **Distance Limit** rejects stars beyond the chosen depth
-- **Max Stars** caps the drawn set
-- **Min SNR** rejects weak parallax measurements
-
-By default, the mode also filters stars to the image footprint, so the 3D view corresponds to the actual field rather than the broader Gaia cone alone.
+Survivors are sorted by G magnitude (brightest first), then distance, and the first **Max Stars** are kept. The **Catalog Stars** table uses the same order.
 
 ---
 
 ## Reading the Visualization
 
-### 3D Distance Map
+### Stars
 
-The central view shows stars in 3D:
-
-- color roughly follows Gaia **BP-RP** from blue to red
-- brighter stars appear larger
-- likely cluster members gain a stronger visual emphasis
-
-Additional scene elements can be toggled:
-
-- **Labels**
-- **Distance Ruler**
-- **Parallax Uncertainty**
-- **Catalog Sphere**
-- **Tomography**
+- Color follows Gaia **BP-RP**, from blue (about -0.4) through white and orange to red (about 3.0). Stars without BP-RP are green.
+- Point size follows G magnitude: brighter stars are larger (2 to 10 pixels).
+- Highlighted group members are drawn at least 7 pixels with a gold glow.
 
 ### Labels
 
-**Labels** shows a limited set of object names so the map stays readable. Cluster members are favored when a group has been identified.
+**Labels** (on by default) shows up to 40 names. With a group highlighted it labels members; otherwise it labels the first 40 stars, which are the brightest.
 
 ### Distance Ruler
 
-**Distance Ruler** adds a line-of-sight depth scale in parsecs, which helps you understand whether you are looking at a compact structure or a long foreground/background mix.
+**Distance Ruler** draws a line along the image's line of sight, offset slightly to the side, spanning the nearest to farthest visible star, with up to seven parsec ticks.
 
 ### Parallax Uncertainty
 
-**Parallax Uncertainty** draws line-of-sight uncertainty segments for the stars. This is useful when you want to see whether a visually compact group is actually well constrained in depth or only appears so because of large distance uncertainties.
+**Parallax Uncertainty** draws a line for each star from
+
+$$
+d_{near} = \frac{1000}{\varpi + \sigma_\varpi} \quad \text{to} \quad d_{far} = \frac{1000}{\varpi - \sigma_\varpi}
+$$
+
+along its line of sight. Long lines mean the depth is poorly constrained. When a group exists, only members get lines. At most 2500 lines are drawn (brightest first).
 
 ### Catalog Sphere
 
-**Catalog Sphere** draws a wireframe sphere for a matched globular cluster from the bundled catalog. It is a visualization aid, not a universal deep-cluster model.
+**Catalog Sphere** looks up the bundled globular cluster catalog: M3, M4, M5, M10, M12, M13, M14, M15, M19, M22, M28, M53, M62, M79, M92, 47 Tuc, and Omega Cen. It matches the cluster nearest the field (or the highlighted group's mean position), or one with at least five map stars inside its visible core, and draws a gold wireframe sphere at the catalog distance. The sphere marks the visible core, not the full catalog radius. The **Work Log** reports the match, or `No named globular cluster matched the current field for catalog distances.`
+
+Globular clusters lie thousands of parsecs away. Raise **Distance Limit**, and usually lower **Min SNR**, before expecting their stars in the map.
+
+### Model Cluster Depth
+
+**Model Cluster Depth** is on by default. When a group exists it moves the members along their own lines of sight into a center-weighted sphere, so a cluster reads as a compact ball instead of a long parallax smear.
+
+- If you ran **Find Cluster**, it uses those members.
+- If you did not, it auto-detects a group with the current cluster settings. That group is highlighted in gold and enables **Only Group**, but it is not marked on the **Field Image**, and **Find Cluster** keeps its name.
+- The sphere is centered on the inverse-variance weighted mean parallax distance of the members, or on the catalog distance when **Catalog Sphere** matched a cluster.
+
+This is a display model, not a physical reconstruction. While it is on, the **Distance (pc)** column shows the modelled distance for members; the **Parallax** column is unchanged. Turn it off to see the plain 1000 / parallax distances.
 
 ### Tomography
 
-**Tomography** adds a translucent field slice through the 3D volume. The mode tip explains:
+Click **Tomography** to place your field image as a translucent slice through the 3D volume. CAst:
 
-`Ctrl+left-drag in the 3D view to move the slice.`
+- maps the image corners onto a plane perpendicular to the line of sight, using the image WCS
+- starts the slice halfway through the depth range of the stars
+- switches **View** to **Tomography Face-On**
+- logs `Tomography enabled at N pc along the line of sight. Ctrl+left-drag in the 3D view to move the slice.`
 
-This is useful when you want to examine how stars line up near a chosen depth plane rather than only from the default orbit view.
+Hold **Ctrl** and left-drag up to push the slice farther away, down to bring it closer. Dragging the full height of the view covers the full depth range. Switch **View** to **Orbit Overview** or **Side View** to see the slice from the side. Click **Tomography** again to remove it.
+
+Tomography stays on when you click **Apply**. Opening a new image turns it off.
 
 ---
 
@@ -212,44 +322,42 @@ This is useful when you want to examine how stars line up near a chosen depth pl
 
 ### Basic Find Cluster
 
-Click **Find Cluster** to ask CAst for a likely moving-group or open-cluster-like subset.
-
-If no good cluster is found, CAst reports:
-
-`Could not identify a likely cluster from the current map stars. Try loosening the preset or increasing the star count.`
+Click **Find Cluster**. CAst searches the current map stars (the stars drawn, not the full Gaia query) for the largest dense group in proper-motion space, optionally with parallax. See [Reference: How the cluster search works](#reference-how-the-cluster-search-works).
 
 ### Advanced cluster settings
 
-Open **Advanced...** to reach **Distance Map Cluster Detection**.
-
-The dialog describes itself as:
+Click **Advanced...** to open **Distance Map Cluster Detection**. The dialog describes itself as:
 
 `Find likely open-cluster members from Gaia proper motion and parallax, then mark them on the 3D map and field image.`
 
-Preset choices:
+**Preset** choices, with their built-in values:
 
-- **Default**
-- **Tight**
-- **Loose**
-- **Parallax Priority**
-- **Custom**
+| Preset | Description in the dialog | Strictness | Parallax | Magnitude/color cleanup |
+|--------|---------------------------|------------|----------|-------------------------|
+| **Default** | Recommended balanced search using automatic backend selection and automatic parallax use when enough stars support it. | 1.00 | Auto | On |
+| **Tight** | Uses a stricter cluster threshold to emphasize the dense core of a moving group. | 0.80 | Auto | On |
+| **Loose** | Expands the astrometric search for broader associations and ignores parallax when the field is sparse. | 1.35 | Proper motion only | Off |
+| **Parallax Priority** | Requires positive Gaia parallax for every candidate member. | 0.95 | Require parallax | On |
+| **Custom** | Keeps your manual expert settings for backend, strictness, parallax usage, and magnitude cleanup. | yours | yours | yours |
 
-Additional controls include:
+All built-in presets use **Backend** `Auto (recommended)`.
+
+Other controls:
 
 - **Turn on Only Group automatically after detection**
-- **Show Expert Controls**
-- **Backend** (`Auto (recommended)`, `Lightweight`, `Sklearn DBSCAN`)
-- **Strictness**
-- **Parallax** (`Auto`, `Require parallax`, `Proper motion only`)
+- **Show Expert Controls** / **Hide Expert Controls** toggles the expert section. It opens automatically when the preset is **Custom**.
+- **Backend**: `Auto (recommended)`, `Lightweight`, `Sklearn DBSCAN`
+- **Strictness**: 0.40 to 2.50. Lower values tighten the search; higher values loosen it.
+- **Parallax**: `Auto`, `Require parallax`, `Proper motion only`
 - **Apply magnitude/color cleanup**
+
+The dialog notes: `Changing any expert setting switches the preset to Custom.`
+
+Click **OK** to save the settings (the log records `Updated Distance Map cluster detection to the <preset> preset.`) or **Cancel** to discard them. Settings persist between sessions.
 
 ### Only Group
 
-After a cluster is found, **Only Group** filters the map and table to the highlighted members. This is the easiest way to inspect a candidate group without the surrounding field clutter.
-
-### Model Cluster Depth
-
-**Model Cluster Depth** is a visualization aid. It can remap highlighted members into a simplified center-weighted depth model so a group reads more clearly in 3D. This is not a physical reconstruction of real cluster structure; it is an interpretive display feature.
+After a group exists, **Only Group** limits the 3D map and the table to members. The **Field Image** markers are unaffected.
 
 ---
 
@@ -257,7 +365,7 @@ After a cluster is found, **Only Group** filters the map and table to the highli
 
 ### Field Image
 
-The left panel shows the original source frame. After cluster detection, likely members can be marked on the image so you can connect the 3D structure back to the actual stars in the field.
+The left panel shows the source frame. Scroll to zoom and drag to pan. After **Find Cluster**, members are circled in their BP-RP color.
 
 When nothing is loaded, the panel says:
 
@@ -268,16 +376,16 @@ When nothing is loaded, the panel says:
 Columns:
 
 - **Name**
-- **G mag**
-- **Parallax**
-- **Distance (pc)**
-- **RA / Dec**
+- **G mag** (2 decimals)
+- **Parallax** (mas, 3 decimals)
+- **Distance (pc)** (1 decimal)
+- **RA / Dec** (degrees, 5 decimals)
 
-Rows corresponding to highlighted cluster members are visually emphasized. This table is the quickest way to compare the brightest or nearest stars numerically after the build completes.
+Rows follow the map order (brightest first). Group members have a gold background. The table is read-only; selecting a row does not move the 3D camera or mark the image.
 
 ### Work Log
 
-The log panel reports progress, query counts, rejections, and cluster outcomes. Its placeholder reads:
+The log reports progress, query counts, rejections, cluster outcomes, display notes, and saved file paths. Its placeholder reads:
 
 `Distance Map progress and summary notes will appear here.`
 
@@ -285,33 +393,36 @@ The log panel reports progress, query counts, rejections, and cluster outcomes. 
 
 ## Saving Output
 
-Use **Save** to export the current 3D view as an image.
-
-The save dialog title is:
+Click **Save** to export the current 3D view as an image. The dialog title is:
 
 `Save Distance Map Image`
 
-Formats:
+- Default name: `<image name>_distance_map.png` next to the source image
+- Formats: PNG, JPEG, BMP. Any other extension is replaced with `.png`.
+- The log records `Saved distance map image to <path>.`
 
-- PNG
-- JPEG
-- BMP
+The export is a capture of the 3D view at its current size and camera. Distance Map does not offer a CSV, FITS, or catalog export, and the **File** menu has no export entries in this mode.
 
-This is a screenshot-style export of the 3D scene. Distance Map does **not** currently offer a dedicated CSV, FITS, or catalog export path from this panel.
+---
+
+## Mode Memory
+
+Leaving Distance Map clears the loaded image, map, and group unless **Keep mode memory when switching** is turned on under **Settings > Open Settings > General**. Limits, cluster settings, and the three saved display options are kept either way.
 
 ---
 
 ## Suggested Workflow
 
-1. Open a solved field that contains a rich Milky Way patch, cluster, or association candidate.
-2. Let Distance Map build its initial Gaia selection.
-3. Start with the default **Orbit Overview** and inspect the overall depth spread.
-4. If the scene is crowded, reduce **Max Stars** or tighten **Distance Limit**.
-5. Raise **Min SNR** if noisy parallaxes are cluttering the result.
-6. Run **Find Cluster** or open **Advanced...** first if you want a tighter or looser moving-group search.
+1. Open a solved field that contains a rich Milky Way patch, an open cluster, or an association.
+2. Let Distance Map build its first selection with the defaults.
+3. Orbit the cloud in **Orbit Overview** and check the depth spread with **Distance Ruler**.
+4. If the scene is crowded, lower **Max Stars** or **Distance Limit** and click **Apply**.
+5. If noisy parallaxes clutter the result, raise **Min SNR** and click **Apply**.
+6. Click **Find Cluster**, or open **Advanced...** first for a tighter or looser search.
 7. Turn on **Only Group** to study just the suspected members.
-8. Enable **Parallax Uncertainty** or **Tomography** when you want to understand depth confidence and slicing.
-9. Save a screenshot of the final 3D view.
+8. Turn on **Parallax Uncertainty** to see how well their depths are constrained, and turn **Model Cluster Depth** off to compare the raw distances.
+9. Click **Tomography** and Ctrl+left-drag the slice through the group.
+10. Save a figure with **Save**.
 
 ---
 
@@ -326,27 +437,44 @@ This is a screenshot-style export of the 3D scene. Distance Map does **not** cur
 
 ---
 
+## Reference: How the cluster search works
+
+1. **Eligible stars.** Stars with finite proper motion in RA and Dec. At least 5 are needed.
+2. **Parallax use.** `Require parallax` keeps only stars with positive parallax and adds parallax as a third feature. `Proper motion only` ignores parallax. `Auto` uses parallax when at least max(6, 35% of the eligible stars) have positive parallax.
+3. **Normalization.** Each feature is centered on its median and scaled by 1.4826 x its median absolute deviation, so proper motion and parallax are comparable.
+4. **Neighborhood size.** `min_samples` = round(sqrt(N)), clamped to 5 to 12. The search radius `eps` is 1.25 x the 30th percentile of each star's distance to its (min_samples - 1)-th neighbor, multiplied by **Strictness** and clamped to 0.25 to 2.4.
+5. **Clustering.** DBSCAN groups the stars. `Auto` uses scikit-learn's DBSCAN when there are 180 or more eligible stars and a built-in implementation otherwise. `Sklearn DBSCAN` falls back to the built-in version if scikit-learn is missing.
+6. **Pick the group.** The largest group is kept if it has at least `min_samples` members.
+7. **Magnitude/color cleanup.** Members with BP-RP and parallax are placed in color versus absolute magnitude \(M_G = G - 5\log_{10}(d_{pc}) + 5\) space, and outliers far from their neighbors are dropped. The cleanup is only applied if at least 60% of the members survive.
+
+A highlighted group is a candidate. Check it against a published cluster catalog (for example in Sky Explorer or SIMBAD) and look at **Parallax Uncertainty** before treating it as a real cluster.
+
+---
+
 ## Limitations
 
 ### What Distance Map does not do
 
-- It does not infer distances for stars without usable parallax.
-- It does not perform image-based star detection from scratch for the 3D model; it is Gaia-driven.
-- It does not replace a full scientific cluster-membership study.
-- It does not export a research-grade table directly from the mode UI.
+- It does not infer distances for stars without a positive parallax.
+- It does not detect stars in your image; the 3D model is built from Gaia.
+- It does not replace a scientific cluster-membership study.
+- It does not export a table from the mode UI.
+- Selecting a table row or clicking a star does not select it in the other views. The views are linked through the highlighted group only.
+- There are no right-click menus in this mode.
 
 ### Practical caveats
 
-- Unsovled images still need astrometry.net or existing WCS.
-- Sparse fields may not produce a useful cluster candidate.
-- Very deep or very large queries can become visually crowded unless you tune the limits.
-- **Model Cluster Depth** is illustrative, not a physical cluster-depth solution.
-- **Catalog Sphere** is only available when a relevant bundled globular entry matches the current context.
+- Unsolved images need a successful plate solve (local Gaia matching or astrometry.net).
+- 1000 / parallax becomes biased when the parallax error is large. Keep **Min SNR** high for distance work.
+- Sparse fields may not produce a cluster candidate.
+- Very deep or very large queries can become crowded unless you tune the limits.
+- **Model Cluster Depth** is illustrative, and it changes the member distances shown in the table while it is on.
+- **Catalog Sphere** only appears when one of the 17 bundled globular clusters matches the field.
 
 ---
 
 ## Conclusion
 
-Distance Map is CAst's “add depth to the field” mode. Open a solved image, let Gaia provide the third dimension, and use the 3D view to see whether your field is a loose foreground/background mix or a more coherent spatial structure. It is especially valuable when you want to connect a familiar 2D image to the real geometry behind it.
+Distance Map adds depth to a solved field. Open an image, let Gaia provide the third dimension, and use the 3D view, the slice, and the cluster search to see whether your field is a loose foreground and background mix or contains a group that shares distance and motion.
 
 For shared shell conventions and themes, see [Themes, Layout, and Shared UI](themes_layout_ui.md).

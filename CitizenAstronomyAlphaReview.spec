@@ -105,6 +105,7 @@ hiddenimports = [
     "imageio.plugins.ffmpeg",
     "imageio_ffmpeg",
     "matplotlib.backends.backend_qtagg",
+    "keyring",
 ]
 
 for package_name in ("lz4", "zstandard", "pyqtgraph", "imageio_ffmpeg", "velopack", "rawpy"):

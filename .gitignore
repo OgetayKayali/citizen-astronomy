@@ -88,5 +88,8 @@ docs/codebase_map_printable.*
 docs/Doc_*.md
 docs/screenshots/sky_view_milky_way_*.png
 
+# Local GitHub download / usage reports (do not publish)
+usage_stats/
+
 # Project update log
 !version.md

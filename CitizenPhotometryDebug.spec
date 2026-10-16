@@ -15,6 +15,7 @@ a = Analysis(
         ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\astrostack.md', 'guides'),
         ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\sky_atlas.md', 'guides'),
         ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\distance_map.md', 'guides'),
+        ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\observation_deck.md', 'guides'),
         ('c:\\Users\\Kay\\Desktop\\Projects\\Photometry\\guides\\themes_layout_ui.md', 'guides'),
     ],
     hiddenimports=['xisf', 'rawpy', 'pyqtgraph', 'pyqtgraph.opengl', 'OpenGL', 'OpenGL.GL', 'OpenGL.platform.win32', 'OpenGL_accelerate', 'astroquery.vizier', 'astroquery.ipac.nexsci.nasa_exoplanet_archive', 'astropy.tests', 'astropy.tests.runner', 'scipy.special._cdflib', 'imageio', 'imageio.v2', 'imageio.plugins.ffmpeg', 'imageio_ffmpeg'],

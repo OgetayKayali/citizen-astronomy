@@ -831,6 +831,8 @@ class AidDownloadDialog(QDialog):
         has_api_token: bool = False,
         session: dict[str, object] | None = None,
         include_star_from_session: bool = False,
+        start_jd: float | None = None,
+        end_jd: float | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -924,6 +926,7 @@ class AidDownloadDialog(QDialog):
         layout.addWidget(buttons)
         if session:
             self.apply_session(session, include_star=include_star_from_session)
+        self._apply_jd_override(start_jd, end_jd)
 
     def current_query(self, *, source_id: str = "", api_token: str = "") -> AidQuery:
         star_name = self._star_name_edit.text().strip()
@@ -961,6 +964,12 @@ class AidDownloadDialog(QDialog):
             "group_by_night": self._group_by_night.isChecked(),
             "max_observations": int(self._max_spin.value()),
         }
+
+    def _apply_jd_override(self, start_jd: float | None, end_jd: float | None) -> None:
+        if isinstance(start_jd, (int, float)) and float(start_jd) > 0:
+            self._start_jd_spin.setValue(float(start_jd))
+        if isinstance(end_jd, (int, float)) and float(end_jd) > 0:
+            self._end_jd_spin.setValue(float(end_jd))
 
     def apply_session(self, state: dict[str, object] | None, *, include_star: bool = False) -> None:
         if not state:

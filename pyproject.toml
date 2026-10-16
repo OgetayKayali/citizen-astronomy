@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "citizen-photometry"
-version = "0.1.1a16"
+version = "0.1.1a17"
 description = "Desktop tool for citizen-science photometry from FITS image series."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,6 +13,7 @@ dependencies = [
     "astroquery>=0.4.10",
     "imageio>=2.37",
     "imageio-ffmpeg>=0.6",
+    "keyring>=25.0",
     "matplotlib>=3.10",
     "numpy>=2.0",
     "pandas>=2.2",

@@ -9,6 +9,8 @@ import math
 from pathlib import Path
 import re
 import time
+from typing import Literal
+from urllib.parse import quote_plus
 
 from astroquery.simbad import Simbad
 from astroquery.vizier import Vizier
@@ -18,7 +20,7 @@ from astropy.table import Row
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 
-from photometry_app.core.catalogs import CatalogService
+from photometry_app.core.catalogs import CatalogService, DEEP_GALAXY_DEFAULT_MAX_MAGNITUDE
 from photometry_app.core.image_io import read_header, read_header_and_shape
 from photometry_app.core.local_wcs import recover_wcs_racing_available_solvers, solve_wcs_from_metadata_and_gaia
 from photometry_app.core.models import CatalogStar, SolvedField
@@ -26,7 +28,46 @@ from photometry_app.core.scanner import inspect_fits_file
 from photometry_app.core.settings import AppSettings, resolve_astrometry_timeout_seconds
 from photometry_app.core.solar_system import SolarSystemSearchResult, search_nearby_known_solar_system_objects
 from photometry_app.core.survey_images import SKY_EXPLORER_SURVEY_FIELD_MOSAIC_RADIUS
-from photometry_app.core.wcs import AstrometryNetClient, celestial_wcs, extract_solved_field, infer_astrometry_solve_hints, validate_wcs
+from photometry_app.core.wcs import (
+    AstrometryNetClient,
+    celestial_wcs,
+    extract_solved_field,
+    infer_astrometry_solve_hints,
+    is_pixinsight_staralignment_output,
+    validate_wcs,
+)
+
+
+# Fewer detected sources than this means a plate solve has nothing to match.
+_STARLESS_PLATE_SOLVE_SOURCE_LIMIT = 4
+_RASTER_WCS_COMPANION_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+_WCS_COMPANION_SUFFIXES = (".fits", ".fit", ".fts", ".fz")
+SkyExplorerStarlessWcsAction = Literal["use_embedded", "use_file", "plate_solve", "cancel"]
+
+
+@dataclass(frozen=True, slots=True)
+class SkyExplorerWcsCandidate:
+    center_ra_deg: float
+    center_dec_deg: float
+    radius_deg: float
+    width_arcmin: float | None
+    height_arcmin: float | None
+    staralignment_sidecar: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SkyExplorerStarlessWcsPrompt:
+    image_path: Path
+    image_width: int
+    image_height: int
+    embedded_candidate: SkyExplorerWcsCandidate | None
+    companion_unavailable_note: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SkyExplorerStarlessWcsChoice:
+    action: SkyExplorerStarlessWcsAction
+    wcs_path: Path | None = None
 
 
 SKY_EXPLORER_LAYER_ORDER: tuple[str, ...] = (
@@ -52,6 +93,14 @@ _MAX_SIMBAD_GENERAL_OBJECTS = 300
 _MAX_SIMBAD_DEEP_SKY_OBJECTS = 5000
 _MAX_NGC2000_OBJECTS = 64
 _MAX_HYPERLEDA_GALAXIES = 2000
+SKY_EXPLORER_PHOTOMETRIC_GALAXY_CATALOGS: frozenset[str] = frozenset({"des-dr1", "panstarrs-dr1", "skymapper-dr4"})
+SKY_EXPLORER_PHOTOMETRIC_CATALOG_VIZIER_SOURCES: dict[str, str] = {
+    "des-dr1": "II/357/des_dr1",
+    "panstarrs-dr1": "II/349/ps1",
+    "skymapper-dr4": "II/379/smssdr4",
+}
+DEFAULT_PHOTOMETRIC_GALAXY_SIZE_ARCMIN = 0.5
+_NED_GALAXY_SEARCH_RADIUS_ARCMIN = 0.2
 _MAX_SHARPLESS_OBJECTS = 256
 _MAX_BARNARD_OBJECTS = 256
 _MAX_VDB_OBJECTS = 256
@@ -1095,9 +1144,10 @@ def sky_explorer_supplement_catalogs_for_object_types(selected_object_type_keys:
     selected_keys = sky_explorer_normalized_object_type_keys(selected_object_type_keys)
     if not selected_keys:
         return frozenset(_SKY_EXPLORER_DEEP_SKY_SUPPLEMENT_CATALOGS)
+    expanded_keys = sky_explorer_expanded_object_type_keys(selected_keys)
     enabled: set[str] = set()
     for catalog_name, type_keys in _SKY_EXPLORER_DEEP_SKY_SUPPLEMENT_TYPE_KEYS.items():
-        if selected_keys.intersection(type_keys):
+        if expanded_keys.intersection(type_keys):
             enabled.add(catalog_name)
     for catalog_key in selected_keys:
         supplement_name = _SKY_EXPLORER_CATALOG_SUPPLEMENT_CATALOGS.get(catalog_key)
@@ -1193,6 +1243,21 @@ def _object_type_keys_for_simbad_code(code: str, *, layer_key: str) -> frozenset
     return frozenset(key for key in keys if key)
 
 
+def sky_explorer_expanded_object_type_keys(
+    selected_object_type_keys: Sequence[str] | None,
+    *,
+    layer_key: str = "deep_sky",
+) -> frozenset[str]:
+    selected_keys = sky_explorer_normalized_object_type_keys(selected_object_type_keys)
+    expanded: set[str] = set(selected_keys)
+    for type_key in selected_keys:
+        canonical_code = _canonical_sky_explorer_object_type_code(type_key)
+        if canonical_code is None:
+            continue
+        expanded.update(_object_type_keys_for_simbad_code(canonical_code, layer_key=layer_key))
+    return frozenset(expanded)
+
+
 _SKY_EXPLORER_DEEP_SKY_SUPPLEMENT_CATALOGS: tuple[str, ...] = (
     "hyperleda",
     "sharpless",
@@ -1243,6 +1308,31 @@ _SKY_EXPLORER_DEEP_SKY_SUPPLEMENT_TYPE_KEYS: dict[str, frozenset[str]] = {
         }
     ),
 }
+
+_SKY_EXPLORER_DENSE_GALAXY_OBJECT_TYPE_KEYS: frozenset[str] = frozenset(
+    {
+        "galaxy",
+        "galaxy_pair",
+        "galaxy_group",
+        "galaxy_cluster",
+        "seyfert_galaxy",
+        "active_galactic_nucleus",
+        "quasar",
+        "blazar",
+    }
+)
+
+
+def sky_explorer_should_include_dense_galaxy_catalog(
+    selected_object_type_keys: Sequence[str] | None,
+    *,
+    object_type_mode: str | None = None,
+) -> bool:
+    mode = _sky_explorer_selection_key(str(object_type_mode or ""))
+    if mode not in {"scientific", "advanced"}:
+        return False
+    expanded_keys = sky_explorer_expanded_object_type_keys(selected_object_type_keys)
+    return bool(expanded_keys.intersection(_SKY_EXPLORER_DENSE_GALAXY_OBJECT_TYPE_KEYS))
 
 
 def sky_explorer_object_type_definitions_for_mode(mode: str | None) -> tuple[SkyExplorerObjectTypeDefinition, ...]:
@@ -1605,9 +1695,12 @@ def explore_sky_image(
     gaia_object_limit: int = _MAX_GAIA_STARS,
     include_dense_galaxy_catalog: bool = False,
     ignore_gaia_hard_cap: bool = False,
+    include_deep_star_catalogs: bool = False,
+    catalog_start_magnitude: float | None = None,
     progress_callback: Callable[[str], None] | None = None,
     pixel_roi: Sequence[float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    starless_choice_callback: Callable[[SkyExplorerStarlessWcsPrompt], SkyExplorerStarlessWcsChoice] | None = None,
 ) -> SkyExplorerResult:
     normalized_layers = _normalize_layers(selected_layers)
     selected_type_keys = sky_explorer_normalized_object_type_keys(selected_object_type_keys)
@@ -1618,7 +1711,12 @@ def explore_sky_image(
             progress_callback(message)
 
     emit_progress("Checking the image WCS and field footprint.")
-    solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=emit_progress)
+    solved_field, used_astrometry_fallback = _resolve_source_field(
+        source_path,
+        settings,
+        progress_callback=emit_progress,
+        starless_choice_callback=starless_choice_callback,
+    )
     survey_mosaic = _is_sky_explorer_survey_tile_wcs_canvas(source_path)
     normalized_pixel_roi = _normalize_sky_explorer_pixel_roi(pixel_roi)
     if survey_mosaic and normalized_pixel_roi is None:
@@ -1640,7 +1738,7 @@ def explore_sky_image(
         else:
             warning_messages_roi = None
             emit_progress(
-                f"Explore is limited to the drawn ROI ({solved_field.radius_deg:.3f} deg search radius)."
+                f"Catalog search is limited to the drawn ROI ({solved_field.radius_deg:.3f} deg search radius)."
             )
     else:
         footprint = _build_field_footprint(solved_field, survey_mosaic=survey_mosaic)
@@ -1654,21 +1752,32 @@ def explore_sky_image(
 
     catalog_service = CatalogService(settings.cache_dir / "sky-explorer-catalogs")
     if "gaia_stars" in normalized_layers:
-        emit_progress("Querying Gaia field stars with the Sky Explorer magnitude settings.")
-        gaia_stars = catalog_service.query_gaia_stars_limited(
-            solved_field,
-            settings.sky_explorer_gaia_max_magnitude,
-            row_limit=(
-                None
-                if ignore_gaia_hard_cap
-                else (
-                    settings.sky_explorer_gaia_hard_cap_rows
-                    if settings.sky_explorer_gaia_hard_cap_enabled
-                    else None
-                )
-            ),
-            progress_callback=emit_progress,
-        )
+        maximum_magnitude = float(settings.sky_explorer_gaia_max_magnitude)
+        if include_deep_star_catalogs:
+            start_magnitude = -5.0 if catalog_start_magnitude is None else float(catalog_start_magnitude)
+            emit_progress("Querying Gaia and faint-survey stars for the magnitude-limit range.")
+            gaia_stars = catalog_service.query_magnitude_limit_stars(
+                solved_field,
+                start_magnitude=start_magnitude,
+                max_magnitude=maximum_magnitude,
+                progress_callback=emit_progress,
+            )
+        else:
+            emit_progress("Querying Gaia field stars with the Sky Explorer magnitude settings.")
+            gaia_stars = catalog_service.query_gaia_stars_limited(
+                solved_field,
+                maximum_magnitude,
+                row_limit=(
+                    None
+                    if ignore_gaia_hard_cap
+                    else (
+                        settings.sky_explorer_gaia_hard_cap_rows
+                        if settings.sky_explorer_gaia_hard_cap_enabled
+                        else None
+                    )
+                ),
+                progress_callback=emit_progress,
+            )
         gaia_objects, gaia_summary = _catalog_star_objects(
             gaia_stars,
             layer_key="gaia_stars",
@@ -1718,7 +1827,10 @@ def explore_sky_image(
             layer_summaries.append(exoplanet_summary)
 
     if any(layer in normalized_layers for layer in ("deep_sky", "general_objects")):
-        emit_progress("Querying SIMBAD for named objects in the image footprint.")
+        if include_dense_galaxy_catalog:
+            emit_progress("Querying SIMBAD and HyperLEDA galaxies in the image footprint.")
+        else:
+            emit_progress("Querying SIMBAD for named objects in the image footprint.")
         simbad_objects, simbad_summaries = _query_simbad_objects(
             solved_field,
             wcs=wcs,
@@ -1731,6 +1843,56 @@ def explore_sky_image(
         )
         objects.extend(simbad_objects)
         layer_summaries.extend(simbad_summaries)
+        if include_dense_galaxy_catalog and "deep_sky" in normalized_layers:
+            emit_progress("Querying DES or Pan-STARRS for faint catalog galaxies.")
+            deep_galaxy_stars = catalog_service.query_deep_galaxies(
+                solved_field,
+                max_magnitude=DEEP_GALAXY_DEFAULT_MAX_MAGNITUDE,
+                progress_callback=emit_progress,
+            )
+            deep_galaxy_objects = [
+                sky_object
+                for sky_object in (
+                    _sky_explorer_object_from_deep_galaxy_star(
+                        star,
+                        field_center=field_center,
+                        solved_field=solved_field,
+                        wcs=wcs,
+                    )
+                    for star in deep_galaxy_stars
+                )
+                if sky_object is not None
+            ]
+            if deep_galaxy_objects:
+                deep_sky_objects = [item for item in objects if item.layer_key == "deep_sky"]
+                other_objects = [item for item in objects if item.layer_key != "deep_sky"]
+                _append_unique_deep_sky_objects(
+                    deep_sky_objects,
+                    deep_galaxy_objects,
+                    seen_keys={_sky_object_identity_key(item) for item in deep_sky_objects},
+                    seen_position_keys={_sky_object_position_key(item) for item in deep_sky_objects},
+                    seen_designation_keys={
+                        designation_key
+                        for item in deep_sky_objects
+                        for designation_key in _sky_object_designation_keys(item)
+                    },
+                )
+                objects = deep_sky_objects + other_objects
+                layer_summaries = [
+                    SkyExplorerLayerSummary(
+                        layer_key=summary.layer_key,
+                        title=summary.title,
+                        returned_count=int(summary.returned_count)
+                        + (len(deep_galaxy_objects) if summary.layer_key == "deep_sky" else 0),
+                        displayed_count=summary.displayed_count,
+                        note=summary.note,
+                    )
+                    for summary in layer_summaries
+                ]
+                warning_messages.append(
+                    f"Added faint photometric galaxies from DES/Pan-STARRS/SkyMapper "
+                    f"({len(deep_galaxy_objects)} catalog hits; SIMBAD and HyperLEDA only mark the brightest named galaxies)."
+                )
 
     if "solar_system" in normalized_layers:
         scan_result = inspect_fits_file(source_path, source_path.parent.name, observation_timezone=settings.observation_timezone)
@@ -1883,11 +2045,124 @@ def _normalize_layers(selected_layers: Sequence[str] | None) -> tuple[str, ...]:
     return tuple(normalized) or SKY_EXPLORER_LAYER_ORDER
 
 
+def sky_explorer_external_wcs_error(image_width: int, image_height: int, wcs_path: Path) -> str | None:
+    """Return why a user-chosen WCS file cannot be applied, or None when it can."""
+    if not wcs_path.is_file():
+        return f"Could not find {wcs_path.name}."
+    try:
+        header, width, height = read_header_and_shape(wcs_path)
+    except Exception as exc:
+        return f"Could not read {wcs_path.name}: {exc}"
+    if width != image_width or height != image_height:
+        return (
+            f"{wcs_path.name} is {width or '?'}×{height or '?'} px, "
+            f"while this image is {image_width}×{image_height} px."
+        )
+    valid, reasons = validate_wcs(header, None)
+    if not valid:
+        reason = " ".join(reason.strip() for reason in reasons if reason.strip()) or "It does not contain a celestial WCS."
+        return f"{wcs_path.name} cannot be used. {reason}"
+    if extract_solved_field(header, width, height, wcs_path) is None:
+        return f"{wcs_path.name} does not contain a usable celestial WCS."
+    return None
+
+
+def _trusted_solved_field(header, width: int | None, height: int | None, wcs_path: Path) -> SolvedField | None:
+    """Accept a parseable celestial WCS, including one PixInsight StarAlignment would veto."""
+    if width is None or height is None:
+        return None
+    valid, _reasons = validate_wcs(header, None)
+    if not valid:
+        return None
+    return extract_solved_field(header, int(width), int(height), wcs_path)
+
+
+def _wcs_candidate_from_solution(
+    header,
+    solved_field: SolvedField,
+    *,
+    staralignment_sidecar: bool,
+) -> SkyExplorerWcsCandidate:
+    width_arcmin = None
+    height_arcmin = None
+    try:
+        wcs = celestial_wcs(header)
+        scales = proj_plane_pixel_scales(wcs.celestial) * 3600.0
+        width_arcmin = float(scales[0] * solved_field.width) / 60.0
+        height_arcmin = float(scales[1] * solved_field.height) / 60.0
+    except Exception:
+        width_arcmin = None
+        height_arcmin = None
+    return SkyExplorerWcsCandidate(
+        center_ra_deg=float(solved_field.center_ra_deg),
+        center_dec_deg=float(solved_field.center_dec_deg),
+        radius_deg=float(solved_field.radius_deg),
+        width_arcmin=width_arcmin,
+        height_arcmin=height_arcmin,
+        staralignment_sidecar=staralignment_sidecar,
+    )
+
+
+def _raster_wcs_companions(source_path: Path) -> tuple[Path, ...]:
+    if source_path.suffix.lower() not in _RASTER_WCS_COMPANION_SUFFIXES:
+        return ()
+    companions: list[Path] = []
+    for suffix in _WCS_COMPANION_SUFFIXES:
+        candidate = source_path.with_suffix(suffix)
+        if candidate.is_file() and candidate.resolve() != source_path.resolve():
+            companions.append(candidate)
+    return tuple(companions)
+
+
+def _matching_companion_solution(
+    source_path: Path,
+    width: int | None,
+    height: int | None,
+) -> tuple[SolvedField | None, str | None]:
+    """Use a same-name FITS when the pixel size matches. Otherwise explain the first miss."""
+    if width is None or height is None:
+        return None, None
+    notes: list[str] = []
+    for companion in _raster_wcs_companions(source_path):
+        try:
+            header, companion_width, companion_height = read_header_and_shape(companion)
+        except Exception as exc:
+            notes.append(f"{companion.name} is beside this image, but it could not be read ({exc}).")
+            continue
+        if companion_width != width or companion_height != height:
+            notes.append(
+                f"{companion.name} is beside this image but is {companion_width or '?'}×{companion_height or '?'} px, "
+                f"while this image is {width}×{height} px."
+            )
+            continue
+        valid, reasons = validate_wcs(header, companion)
+        if not valid:
+            reason = " ".join(reason.strip() for reason in reasons if reason.strip())
+            note = f"{companion.name} is beside this image, but its WCS was not used."
+            if reason:
+                note = f"{note} {reason}"
+            notes.append(note)
+            continue
+        solved_field = extract_solved_field(header, companion_width, companion_height, companion)
+        if solved_field is None:
+            notes.append(f"{companion.name} is beside this image, but its WCS was not used.")
+            continue
+        return solved_field, None
+    return None, (notes[0] if notes else None)
+
+
+def _count_plate_solve_sources(source_path: Path) -> int:
+    from photometry_app.core.local_wcs import _detect_image_sources
+
+    return len(_detect_image_sources(source_path))
+
+
 def _resolve_source_field(
     source_path: Path,
     settings: AppSettings,
     *,
     progress_callback: Callable[[str], None] | None = None,
+    starless_choice_callback: Callable[[SkyExplorerStarlessWcsPrompt], SkyExplorerStarlessWcsChoice] | None = None,
 ) -> tuple[SolvedField, bool]:
     header, width, height = read_header_and_shape(source_path)
     valid_wcs, reasons = validate_wcs(header, source_path)
@@ -1896,6 +2171,69 @@ def _resolve_source_field(
         if solved_field is None:
             raise ValueError("Could not derive an image footprint from the selected source image.")
         return solved_field, False
+
+    companion_field, companion_note = _matching_companion_solution(source_path, width, height)
+    if companion_field is not None:
+        if progress_callback is not None:
+            progress_callback(f"Using WCS from {companion_field.wcs_path.name} (same pixel size).")
+        return companion_field, False
+
+    if (
+        starless_choice_callback is not None
+        and width is not None
+        and height is not None
+        and not _is_sky_explorer_survey_tile_wcs_canvas(source_path)
+    ):
+        if progress_callback is not None:
+            progress_callback("Checking whether this image contains stars to plate-solve.")
+        try:
+            source_count = _count_plate_solve_sources(source_path)
+        except Exception:
+            source_count = _STARLESS_PLATE_SOLVE_SOURCE_LIMIT
+        if source_count < _STARLESS_PLATE_SOLVE_SOURCE_LIMIT:
+            embedded = _trusted_solved_field(header, width, height, source_path)
+            prompt = SkyExplorerStarlessWcsPrompt(
+                image_path=source_path,
+                image_width=int(width),
+                image_height=int(height),
+                embedded_candidate=(
+                    None
+                    if embedded is None
+                    else _wcs_candidate_from_solution(
+                        header,
+                        embedded,
+                        staralignment_sidecar=is_pixinsight_staralignment_output(source_path),
+                    )
+                ),
+                companion_unavailable_note=companion_note,
+            )
+            choice = starless_choice_callback(prompt)
+            if choice is None or choice.action == "cancel":
+                raise SkyExplorerCancelled("Sky Explorer query was terminated.")
+            if choice.action == "use_embedded":
+                if embedded is None:
+                    raise ValueError("This image does not contain a celestial WCS.")
+                if progress_callback is not None:
+                    progress_callback(
+                        "Using this image's WCS. Star matching was skipped because the image looks starless."
+                    )
+                return embedded, False
+            if choice.action == "use_file":
+                wcs_path = choice.wcs_path
+                if wcs_path is None:
+                    raise ValueError("Choose a solved image with the same pixel size.")
+                error = sky_explorer_external_wcs_error(int(width), int(height), wcs_path)
+                if error:
+                    raise ValueError(error)
+                other_header, other_width, other_height = read_header_and_shape(wcs_path)
+                solved_field = _trusted_solved_field(other_header, other_width, other_height, wcs_path)
+                if solved_field is None:
+                    raise ValueError(f"{wcs_path.name} does not contain a usable celestial WCS.")
+                if progress_callback is not None:
+                    progress_callback(
+                        f"Using WCS from {wcs_path.name}. Star matching was skipped because the image looks starless."
+                    )
+                return solved_field, False
 
     api_key = str(settings.astrometry_api_key or "").strip()
     if progress_callback is not None:
@@ -2134,6 +2472,81 @@ def _catalog_star_object_from_star(
     )
 
 
+def _sky_explorer_object_from_deep_galaxy_star(
+    star: CatalogStar,
+    *,
+    field_center: SkyCoord,
+    solved_field: SolvedField,
+    wcs: WCS,
+) -> SkyExplorerObject | None:
+    sky_object = _catalog_star_object_from_star(
+        star,
+        layer_key="deep_sky",
+        field_center=field_center,
+        solved_field=solved_field,
+        wcs=wcs,
+    )
+    if sky_object is None:
+        return None
+    metadata = dict(sky_object.metadata or {})
+    metadata["catalog_type"] = "G"
+    metadata.setdefault("magnitude_catalog", star.catalog)
+    metadata.setdefault("catalog_size_arcmin", DEFAULT_PHOTOMETRIC_GALAXY_SIZE_ARCMIN)
+    metadata.setdefault("catalog_major_axis_arcmin", DEFAULT_PHOTOMETRIC_GALAXY_SIZE_ARCMIN)
+    metadata.setdefault("catalog_minor_axis_arcmin", DEFAULT_PHOTOMETRIC_GALAXY_SIZE_ARCMIN)
+    return replace(
+        sky_object,
+        object_type="Galaxy",
+        metadata=metadata,
+    )
+
+
+def sky_explorer_is_photometric_galaxy(sky_object: SkyExplorerObject) -> bool:
+    catalog = _sky_explorer_selection_key(sky_object.catalog)
+    if catalog not in SKY_EXPLORER_PHOTOMETRIC_GALAXY_CATALOGS:
+        return False
+    if sky_object.layer_key != "deep_sky":
+        return False
+    object_type = _sky_explorer_selection_key(sky_object.object_type)
+    metadata = sky_object.metadata if isinstance(sky_object.metadata, dict) else {}
+    catalog_type = _sky_explorer_selection_key(str(metadata.get("catalog_type") or ""))
+    object_class = _sky_explorer_selection_key(str(metadata.get("object_class") or ""))
+    return object_type == "galaxy" or catalog_type in {"g", "gx"} or object_class == "galaxy"
+
+
+def sky_explorer_ned_cone_search_url(
+    ra_deg: float,
+    dec_deg: float,
+    *,
+    radius_arcmin: float = _NED_GALAXY_SEARCH_RADIUS_ARCMIN,
+) -> str:
+    return (
+        "https://ned.ipac.caltech.edu/conesearch?search_type=Near%20Position%20Search"
+        "&in_csys=Equatorial&in_equinox=J2000.0"
+        f"&ra={float(ra_deg):.6f}d&dec={float(dec_deg):.6f}d"
+        f"&sr={max(0.05, float(radius_arcmin)):.3f}"
+    )
+
+
+def sky_explorer_vizier_catalog_cone_url(
+    catalog_key: str,
+    ra_deg: float,
+    dec_deg: float,
+    *,
+    radius_arcsec: float = 3.0,
+) -> str | None:
+    source = SKY_EXPLORER_PHOTOMETRIC_CATALOG_VIZIER_SOURCES.get(_sky_explorer_selection_key(catalog_key))
+    if source is None:
+        return None
+    return (
+        "https://vizier.cds.unistra.fr/viz-bin/VizieR-4?"
+        f"-source={quote_plus(source)}"
+        f"&-c={float(ra_deg):.6f}+{float(dec_deg):.6f}"
+        "&-c.eq=J2000"
+        f"&-c.rs={max(0.5, float(radius_arcsec)):.1f}"
+    )
+
+
 def _query_simbad_objects(
     solved_field: SolvedField,
     *,
@@ -2209,6 +2622,7 @@ def _query_simbad_objects(
                 wcs=wcs,
                 field_center=field_center,
                 require_named_alias=False,
+                minimum_major_axis_arcmin=None if include_dense_galaxy_catalog else _MIN_HYPERLEDA_MAJOR_AXIS_ARCMIN,
             )
             total_counts["deep_sky"] += hyperleda_count
             _append_unique_deep_sky_objects(
@@ -2647,6 +3061,7 @@ def _query_hyperleda_galaxy_objects(
     wcs: WCS,
     field_center: SkyCoord,
     require_named_alias: bool = False,
+    minimum_major_axis_arcmin: float | None = _MIN_HYPERLEDA_MAJOR_AXIS_ARCMIN,
 ) -> tuple[list[SkyExplorerObject], int]:
     center = SkyCoord(solved_field.center_ra_deg * u.deg, solved_field.center_dec_deg * u.deg)
     radius = max(float(solved_field.radius_deg) * _SIMBAD_SEARCH_RADIUS_EXPANSION, 0.01) * u.deg
@@ -2672,6 +3087,7 @@ def _query_hyperleda_galaxy_objects(
                 field_center=field_center,
                 solved_field=solved_field,
                 wcs=wcs,
+                minimum_major_axis_arcmin=minimum_major_axis_arcmin,
             )
             if sky_object is not None:
                 row_count += 1
@@ -3070,6 +3486,7 @@ def _sky_explorer_object_from_hyperleda_row(
     field_center: SkyCoord,
     solved_field: SolvedField,
     wcs: WCS,
+    minimum_major_axis_arcmin: float | None = _MIN_HYPERLEDA_MAJOR_AXIS_ARCMIN,
 ) -> SkyExplorerObject | None:
     ra_text = _row_text(row, "RAJ2000")
     dec_text = _row_text(row, "DEJ2000")
@@ -3082,8 +3499,9 @@ def _sky_explorer_object_from_hyperleda_row(
 
     geometry_metadata = _hyperleda_geometry_metadata_from_row(row)
     major_axis_arcmin = geometry_metadata.get("catalog_major_axis_arcmin")
-    if not isinstance(major_axis_arcmin, float) or major_axis_arcmin < _MIN_HYPERLEDA_MAJOR_AXIS_ARCMIN:
-        return None
+    if minimum_major_axis_arcmin is not None:
+        if not isinstance(major_axis_arcmin, float) or major_axis_arcmin < minimum_major_axis_arcmin:
+            return None
 
     ra_deg = float(coordinates.ra.deg)
     dec_deg = float(coordinates.dec.deg)
@@ -3979,6 +4397,77 @@ def np_is_finite(value: object) -> bool:
         return bool(math.isfinite(float(value)))
     except (TypeError, ValueError):
         return False
+
+
+def _fast_angular_separation_arcsec(
+    ra_a_deg: float,
+    dec_a_deg: float,
+    ra_b_deg: float,
+    dec_b_deg: float,
+) -> float:
+    """Spherical separation without building SkyCoord objects."""
+    lat_a = math.radians(float(dec_a_deg))
+    lat_b = math.radians(float(dec_b_deg))
+    delta_lat = lat_b - lat_a
+    delta_lon = math.radians(float(ra_b_deg) - float(ra_a_deg))
+    haversine = (
+        math.sin(delta_lat * 0.5) ** 2
+        + math.cos(lat_a) * math.cos(lat_b) * math.sin(delta_lon * 0.5) ** 2
+    )
+    haversine = min(1.0, max(0.0, haversine))
+    return math.degrees(2.0 * math.asin(math.sqrt(haversine))) * 3600.0
+
+
+def sky_explorer_roi_fov_label_from_world_corners(
+    top_left: tuple[float, float],
+    top_right: tuple[float, float],
+    bottom_left: tuple[float, float],
+    bottom_right: tuple[float, float],
+) -> str | None:
+    """Format a rectangle's on-sky width and height from its corner coordinates."""
+    width_arcsec = 0.5 * (
+        _fast_angular_separation_arcsec(*top_left, *top_right)
+        + _fast_angular_separation_arcsec(*bottom_left, *bottom_right)
+    )
+    height_arcsec = 0.5 * (
+        _fast_angular_separation_arcsec(*top_left, *bottom_left)
+        + _fast_angular_separation_arcsec(*top_right, *bottom_right)
+    )
+    if not math.isfinite(width_arcsec) or not math.isfinite(height_arcsec):
+        return None
+    if width_arcsec <= 0.0 or height_arcsec <= 0.0:
+        return None
+    return (
+        f"{format_sky_explorer_angular_distance(width_arcsec)} × "
+        f"{format_sky_explorer_angular_distance(height_arcsec)}"
+    )
+
+
+def sky_explorer_roi_fov_label(
+    wcs,
+    *,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+) -> str | None:
+    """Field of view for an image rectangle, or None when WCS cannot measure it."""
+    if wcs is None:
+        return None
+    left, right = sorted((float(x0), float(x1)))
+    top, bottom = sorted((float(y0), float(y1)))
+    corners: list[tuple[float, float]] = []
+    for x_coord, y_coord in ((left, top), (right, top), (left, bottom), (right, bottom)):
+        try:
+            ra_deg, dec_deg = wcs.pixel_to_world_values(float(x_coord), float(y_coord))
+            ra_value = float(ra_deg)
+            dec_value = float(dec_deg)
+        except Exception:
+            return None
+        if not math.isfinite(ra_value) or not math.isfinite(dec_value):
+            return None
+        corners.append((ra_value, dec_value))
+    return sky_explorer_roi_fov_label_from_world_corners(*corners)
 
 
 def format_sky_explorer_angular_distance(arcsec: float) -> str:

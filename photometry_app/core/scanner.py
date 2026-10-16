@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 
 from photometry_app.core.image_io import (
-    RAW_CAMERA_IMAGE_SUFFIXES,
     is_supported_image_path,
     read_header_and_shape,
 )
@@ -27,12 +26,11 @@ _LONG_FRACTIONAL_SECONDS_PATTERN = re.compile(r"(\.\d{6})\d+")
 _MIN_UTC_DATETIME = datetime.min.replace(tzinfo=UTC)
 
 SUPPORTED_FITS_SUFFIXES = {".fit", ".fits", ".xisf"}
-DIFFERENTIAL_PHOTOMETRY_EXCLUDED_SUFFIXES = {".png", ".jpg", ".jpeg"} | set(RAW_CAMERA_IMAGE_SUFFIXES)
+DIFFERENTIAL_PHOTOMETRY_EXCLUDED_SUFFIXES = {".png", ".jpg", ".jpeg"}
 _EXCLUDED_IMAGE_TYPE_LABELS = {
     ".png": "PNG",
     ".jpg": "JPG",
     ".jpeg": "JPG",
-    **{suffix: "RAW" for suffix in RAW_CAMERA_IMAGE_SUFFIXES},
 }
 
 FILENAME_METADATA_PATTERN = re.compile(
@@ -52,7 +50,7 @@ def is_differential_photometry_image_path(path: Path) -> bool:
 
 
 def differential_photometry_excluded_type_label(path: Path) -> str | None:
-    """Return a display label for an excluded raster type, or None if not excluded."""
+    """Return a display label for an excluded rendered type, or None."""
 
     if not is_supported_image_path(path):
         return None
@@ -60,7 +58,7 @@ def differential_photometry_excluded_type_label(path: Path) -> str | None:
 
 
 def format_excluded_unsuitable_images_message(counts: tuple[tuple[str, int], ...] | dict[str, int]) -> str | None:
-    """Build the user-facing exclusion notice for JPG/PNG/RAW files skipped by DP."""
+    """Build the user-facing exclusion notice for JPG/PNG files skipped by DP."""
 
     if isinstance(counts, dict):
         items = tuple(sorted((str(label), int(count)) for label, count in counts.items() if int(count) > 0))

@@ -139,6 +139,16 @@ class OcDialogTest(unittest.TestCase):
         self.assertEqual(restored._observer_edit.text(), "OKDA")
         self.assertFalse(restored._exclude_fainterthan.isChecked())
         restored.close()
+        overridden = AidDownloadDialog(
+            star_name="DY Her",
+            session=aid_dialog_session(),
+            start_jd=2460900.5,
+            end_jd=2460930.5,
+        )
+        self.assertAlmostEqual(overridden._start_jd_spin.value(), 2460900.5)
+        self.assertAlmostEqual(overridden._end_jd_spin.value(), 2460930.5)
+        self.assertEqual(overridden._observer_edit.text(), "OKDA")
+        overridden.close()
         remember_aid_dialog_session(None)
 
     def test_pull_aavso_no_on_full_history_reopens_dialog(self) -> None:

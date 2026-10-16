@@ -62,7 +62,7 @@ def calibrate_image_sequence(
 
     science_frames = _collect_image_paths(science_path, exclude_roots=(output_directory,))
     if not science_frames:
-        raise ValueError("Choose a science image folder or file containing supported FITS/XISF images.")
+        raise ValueError("Choose a science image folder or file containing supported images.")
 
     worker_count = _resolve_calibration_parallel_worker_count(request.max_parallel_workers, len(science_frames))
     warning_messages: list[str] = []

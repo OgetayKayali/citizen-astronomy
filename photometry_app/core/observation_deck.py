@@ -253,10 +253,27 @@ class ObservationDeckLibrary:
     images: tuple[DeckImage, ...]
     scanned_files: int
     unreadable_files: int
+    excluded_keys: frozenset[str] = frozenset()
 
     @property
     def root_path(self) -> Path | None:
         return self.root_paths[0] if self.root_paths else None
+
+    @property
+    def excluded_images(self) -> tuple[DeckImage, ...]:
+        if not self.excluded_keys:
+            return ()
+        return tuple(image for image in self.images if path_key(image.path) in self.excluded_keys)
+
+    def is_excluded(self, path: Path | str) -> bool:
+        return bool(self.excluded_keys) and path_key(path) in self.excluded_keys
+
+    def counted(self, images: Sequence[DeckImage] | None = None) -> tuple[DeckImage, ...]:
+        """The images that count toward statistics: everything the user has not left out."""
+        pool = self.images if images is None else tuple(images)
+        if not self.excluded_keys:
+            return pool
+        return tuple(image for image in pool if path_key(image.path) not in self.excluded_keys)
 
     def images_for_path(self, folder: Path | None = None) -> tuple[DeckImage, ...]:
         if folder is None:
@@ -501,7 +518,39 @@ def merge_observation_deck_libraries(
         images=tuple(rebound),
         scanned_files=len(rebound),
         unreadable_files=sum(1 for image in rebound if image.read_error),
+        excluded_keys=(existing.excluded_keys | incoming.excluded_keys) & seen,
     )
+
+
+def carry_observation_deck_exclusions(
+    previous: ObservationDeckLibrary | None,
+    library: ObservationDeckLibrary,
+) -> ObservationDeckLibrary:
+    """Keep images the user left out excluded after a rescan, for the files that still exist."""
+    if previous is None or not previous.excluded_keys:
+        return library
+    present = {path_key(image.path) for image in library.images}
+    return replace(library, excluded_keys=library.excluded_keys | (previous.excluded_keys & present))
+
+
+def set_observation_deck_exclusions(
+    library: ObservationDeckLibrary,
+    paths: Iterable[Path | str],
+    *,
+    excluded: bool,
+) -> tuple[ObservationDeckLibrary, int]:
+    """Leave images out of (or put them back into) the statistics. Returns the library and how many changed."""
+    known = {path_key(image.path) for image in library.images}
+    wanted = {path_key(path) for path in paths} & known
+    if excluded:
+        changed = wanted - library.excluded_keys
+        keys = library.excluded_keys | changed
+    else:
+        changed = wanted & library.excluded_keys
+        keys = library.excluded_keys - changed
+    if not changed:
+        return library, 0
+    return replace(library, excluded_keys=frozenset(keys)), len(changed)
 
 
 def _owning_master_root(path: Path, roots: Sequence[Path]) -> Path | None:
@@ -520,6 +569,7 @@ def remove_observation_deck_root(library: ObservationDeckLibrary, root_path: Pat
         images=images,
         scanned_files=len(images),
         unreadable_files=sum(1 for image in images if image.read_error),
+        excluded_keys=library.excluded_keys & {path_key(image.path) for image in images},
     )
 
 
@@ -541,6 +591,7 @@ def save_observation_deck_library(library: ObservationDeckLibrary, path: Path | 
         "updated_at": datetime.now().isoformat(timespec="seconds"),
         "roots": [str(root) for root in library.root_paths],
         "images": [_deck_image_to_payload(image) for image in library.images],
+        "excluded": [str(image.path) for image in library.excluded_images],
         "scanned_files": library.scanned_files,
         "unreadable_files": library.unreadable_files,
     }
@@ -564,11 +615,17 @@ def load_observation_deck_library(path: Path | None = None) -> ObservationDeckLi
         image = _deck_image_from_payload(item)
         if image is not None:
             images.append(image)
+    excluded = payload.get("excluded")
+    known = {path_key(image.path) for image in images}
+    excluded_keys = frozenset(
+        path_key(item) for item in (excluded if isinstance(excluded, list) else ()) if isinstance(item, str) and item.strip()
+    )
     return ObservationDeckLibrary(
         root_paths=normalize_master_roots(roots, touch_filesystem=False),
         images=tuple(images),
         scanned_files=int(payload.get("scanned_files", len(images)) or 0),
         unreadable_files=int(payload.get("unreadable_files", 0) or 0),
+        excluded_keys=excluded_keys & known,
     )
 
 

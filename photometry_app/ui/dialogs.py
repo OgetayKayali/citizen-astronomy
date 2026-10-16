@@ -161,6 +161,7 @@ from photometry_app.core.settings import (
     setup_pixel_scale_arcsec_per_pixel,
 )
 from photometry_app.core.sky_atlas import SkyAtlasObject, load_local_sky_atlas_objects
+from photometry_app.ui.assistant_settings import AssistantSettingsPanel
 from photometry_app.ui.constellation_overlay import ConstellationDataLoader
 from photometry_app.core.meteor_stream import (
     MeteorStreamOverlay,
@@ -12688,6 +12689,8 @@ class SettingsDialog(QDialog):
         self._sky_explorer_scale_extended_nebulae_input.setChecked(bool(settings.sky_explorer_scale_extended_nebulae))
         self._sky_explorer_scale_overlay_strokes_input = QCheckBox("Scale overlay stroke width")
         self._sky_explorer_scale_overlay_strokes_input.setChecked(bool(settings.sky_explorer_scale_overlay_strokes))
+        self._sky_explorer_show_roi_fov_label_input = QCheckBox("Show ROI field of view")
+        self._sky_explorer_show_roi_fov_label_input.setChecked(bool(getattr(settings, "sky_explorer_show_roi_fov_label", True)))
         self._sky_explorer_marker_color_relation_input = QComboBox()
         self._sky_explorer_marker_color_relation_input.addItem("Fill bright, stroke dark", "stroke_dark_fill_bright")
         self._sky_explorer_marker_color_relation_input.addItem("Fill dark, stroke bright", "stroke_bright_fill_dark")
@@ -14153,6 +14156,12 @@ class SettingsDialog(QDialog):
         )
         self._add_tooltip_form_row(
             sky_explorer_visual_form_layout,
+            "ROI Field of View",
+            self._sky_explorer_show_roi_fov_label_input,
+            "Shows the plate-solved width and height at the top-left of a Sky Explorer ROI. Hidden until the image has a celestial solution.",
+        )
+        self._add_tooltip_form_row(
+            sky_explorer_visual_form_layout,
             "Marker Color Relation",
             self._sky_explorer_marker_color_relation_input,
             "Controls whether generated Sky Explorer type colors use the brighter related color for marker fill and the darker color for stroke, or invert that relation.",
@@ -14472,6 +14481,9 @@ class SettingsDialog(QDialog):
         self._settings_tabs.addTab(self._asteroid_settings_tab, "Asteroid/Comet")
         self._settings_tabs.addTab(self._sky_explorer_settings_tab, "Sky Explorer")
         self._settings_tabs.addTab(self._setup_settings_tab, "Setup")
+        self._assistant_settings_panel = AssistantSettingsPanel(settings)
+        self._assistant_settings_tab = _SettingsTabScrollArea(self._assistant_settings_panel)
+        self._settings_tabs.addTab(self._assistant_settings_tab, "AI Assistant")
 
         default_button = QPushButton("Default")
         default_button.clicked.connect(self._restore_defaults)
@@ -14537,7 +14549,7 @@ class SettingsDialog(QDialog):
             limit_mode = VariableStarLimitMode(str(limit_mode).strip().lower())
         aperture_mode = PhotometryApertureMode.FWHM_SCALED
         return replace(
-            self._settings,
+            self._assistant_settings_panel.apply_to(self._settings),
             astrometry_api_key=self._api_key_input.text().strip() or None,
             astrometry_timeout_seconds=normalize_astrometry_timeout_seconds(self._astrometry_timeout_input.value()),
             cache_dir=Path(self._cache_dir_input.text()).expanduser(),
@@ -14588,6 +14600,7 @@ class SettingsDialog(QDialog):
             sky_explorer_annotated_galaxy_require_shape_metadata=self._sky_explorer_annotated_galaxy_require_shape_metadata_input.isChecked(),
             sky_explorer_scale_extended_nebulae=self._sky_explorer_scale_extended_nebulae_input.isChecked(),
             sky_explorer_scale_overlay_strokes=self._sky_explorer_scale_overlay_strokes_input.isChecked(),
+            sky_explorer_show_roi_fov_label=self._sky_explorer_show_roi_fov_label_input.isChecked(),
             sky_explorer_marker_color_relation=str(self._sky_explorer_marker_color_relation_input.currentData() or "stroke_dark_fill_bright"),
             sky_explorer_text_color_relation=str(self._sky_explorer_text_color_relation_input.currentData() or "dark"),
             sky_explorer_default_text_font_family=str(self._sky_explorer_default_text_font_family_input.currentFont().family() or "").strip(),
@@ -14912,10 +14925,22 @@ class SettingsDialog(QDialog):
             return
         self._setup_pixel_scale_input.setText(f"{pixel_scale:.3f} arcsec/pixel")
 
+    def show_assistant_tab(self) -> None:
+        self._settings_tabs.setCurrentWidget(self._assistant_settings_tab)
+
+    def accept(self) -> None:
+        error = self._assistant_settings_panel.commit_credentials()
+        if error:
+            self._settings_tabs.setCurrentWidget(self._assistant_settings_tab)
+            QMessageBox.warning(self, "AI Assistant key not saved", error)
+            return
+        super().accept()
+
     def _restore_defaults(self) -> None:
         defaults = self._default_settings
         self._theme = defaults.theme
         self._custom_theme_colors = dict(defaults.custom_theme_colors or default_custom_theme_colors())
+        self._assistant_settings_panel.restore_defaults(defaults)
         self._api_key_input.setText(defaults.astrometry_api_key or "")
         self._astrometry_timeout_input.setValue(
             normalize_astrometry_timeout_seconds(
@@ -15012,6 +15037,7 @@ class SettingsDialog(QDialog):
         self._update_sky_explorer_galaxy_annotation_inputs()
         self._sky_explorer_scale_extended_nebulae_input.setChecked(bool(defaults.sky_explorer_scale_extended_nebulae))
         self._sky_explorer_scale_overlay_strokes_input.setChecked(bool(defaults.sky_explorer_scale_overlay_strokes))
+        self._sky_explorer_show_roi_fov_label_input.setChecked(bool(getattr(defaults, "sky_explorer_show_roi_fov_label", True)))
         self._set_combo_data(self._sky_explorer_marker_color_relation_input, defaults.sky_explorer_marker_color_relation)
         self._set_combo_data(self._sky_explorer_text_color_relation_input, defaults.sky_explorer_text_color_relation)
         default_text_font_family = str(getattr(defaults, "sky_explorer_default_text_font_family", "") or "").strip()

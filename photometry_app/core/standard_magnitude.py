@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import math
+import re
 
 import numpy as np
 import requests
@@ -112,6 +113,9 @@ _VSP_BAND_ALIASES = {
 _MATCH_SEPARATION_ARCSEC = 2.0
 _VSP_API_URL = "https://app.aavso.org/vsp/api/chart/"
 _APASS_CATALOG = "II/336/apass9"
+_AUID_RE = re.compile(r"^\d{3}-?[A-Z0-9]{3}-?[A-Z0-9]{3}$", re.IGNORECASE)
+_GAIA_NAME_RE = re.compile(r"^(?:gaia\s+(?:e?dr)\d+\s+)?\d{10,}$", re.IGNORECASE)
+_APASS_NAME_RE = re.compile(r"^apass(?:\s+j|\s+)\S+", re.IGNORECASE)
 
 
 def normalize_photometric_band(filter_name: str | None) -> str | None:
@@ -230,6 +234,45 @@ def prefer_catalog_display_magnitude(star: CatalogStar) -> None:
     seed_gaia_g_band_magnitude(star)
 
 
+def preferred_comparison_catalog_name(star: CatalogStar) -> str | None:
+    """Readable comparison-star label: AAVSO AUID, then APASS designation."""
+    auid = _usable_auid(star.metadata.get("auid"))
+    if auid is not None:
+        return auid
+    apass_id = str(star.metadata.get("apass_id") or "").strip()
+    if apass_id:
+        return apass_id if apass_id.upper().startswith("APASS") else f"APASS {apass_id}"
+    return None
+
+
+def apply_comparison_catalog_display_name(star: CatalogStar) -> None:
+    """Replace a Gaia-number label with AUID or APASS when those IDs are known."""
+    preferred = preferred_comparison_catalog_name(star)
+    if not preferred or star.name == preferred:
+        return
+    if not _may_replace_comparison_name(star.name, star.source_id):
+        return
+    star.name = preferred
+    star.metadata["preferred_display_name"] = preferred
+
+
+def catalog_needs_comparison_identifiers(stars: list[CatalogStar]) -> bool:
+    """True when VSP/APASS magnitudes exist but readable comparison IDs were never copied."""
+    for star in stars:
+        bands = get_band_magnitudes(star)
+        if not any(str(entry.get("source") or "") in {"vsp", "apass"} for entry in bands.values()):
+            continue
+        if preferred_comparison_catalog_name(star):
+            continue
+        if _may_replace_comparison_name(star.name, star.source_id):
+            return True
+    return False
+
+
+def measurement_may_use_comparison_catalog_name(measurement: PhotometryMeasurement) -> bool:
+    return _may_replace_comparison_name(measurement.source_name, measurement.source_id)
+
+
 def enrich_stars_with_standard_catalogs(
     stars: list[CatalogStar],
     solved_field: SolvedField,
@@ -284,6 +327,7 @@ def enrich_stars_with_standard_catalogs(
 
     for star in stars:
         prefer_catalog_display_magnitude(star)
+        apply_comparison_catalog_display_name(star)
     return notes
 
 
@@ -340,16 +384,17 @@ def query_apass_field(solved_field: SolvedField, *, mag_limit: float | None = No
             if not band_magnitudes:
                 continue
             primary = band_magnitudes.get("V") or next(iter(band_magnitudes.values()))
+            designation = _apass_designation(float(ra), float(dec))
             stars.append(
                 CatalogStar(
                     catalog="apass9",
                     source_id=f"apass-{ra:.6f}-{dec:.6f}",
-                    name=f"APASS {ra:.5f} {dec:.5f}",
+                    name=designation,
                     ra_deg=float(ra),
                     dec_deg=float(dec),
                     magnitude=float(primary["mag"]),
                     is_variable=False,
-                    metadata={"band_magnitudes": band_magnitudes},
+                    metadata={"band_magnitudes": band_magnitudes, "apass_id": designation},
                 )
             )
     return stars
@@ -412,6 +457,9 @@ def query_vsp_field(
         auid = str(item.get("auid") or "").strip() or f"vsp-{ra:.6f}-{dec:.6f}"
         label = str(item.get("label") or auid)
         primary = band_magnitudes.get("V") or next(iter(band_magnitudes.values()))
+        metadata: dict[str, object] = {"band_magnitudes": band_magnitudes, "auid": auid}
+        if label and label != auid:
+            metadata["vsp_label"] = label
         stars.append(
             CatalogStar(
                 catalog="aavso-vsp",
@@ -421,7 +469,7 @@ def query_vsp_field(
                 dec_deg=float(dec),
                 magnitude=float(primary["mag"]),
                 is_variable=False,
-                metadata={"band_magnitudes": band_magnitudes, "auid": auid},
+                metadata=metadata,
             )
         )
     return stars, returned_chart_id
@@ -466,6 +514,8 @@ def merge_band_magnitudes_by_sky_match(
                 error=_as_optional_float(entry.get("error")),
                 source=str(entry.get("source") or source),
             )
+        _copy_comparison_identifiers(target, donor)
+        apply_comparison_catalog_display_name(target)
         matched += 1
     return matched
 
@@ -547,6 +597,53 @@ def catalog_has_band_magnitudes(stars: list[CatalogStar]) -> bool:
         if any(str(entry.get("source") or "") in {"vsp", "apass"} for entry in bands.values()):
             return True
     return False
+
+
+def _copy_comparison_identifiers(target: CatalogStar, donor: CatalogStar) -> None:
+    donor_auid = _usable_auid(donor.metadata.get("auid")) or _usable_auid(donor.source_id)
+    if donor_auid is not None:
+        target.metadata["auid"] = donor_auid
+    donor_label = str(donor.metadata.get("vsp_label") or "").strip()
+    if donor_label:
+        target.metadata["vsp_label"] = donor_label
+    donor_apass = str(donor.metadata.get("apass_id") or "").strip()
+    if not donor_apass and str(donor.catalog).strip().lower() == "apass9":
+        donor_apass = _apass_designation(donor.ra_deg, donor.dec_deg)
+    if donor_apass:
+        target.metadata["apass_id"] = donor_apass
+
+
+def _usable_auid(value: object) -> str | None:
+    text = str(value or "").strip().upper()
+    if not text or not _AUID_RE.fullmatch(text):
+        return None
+    compact = text.replace("-", "")
+    if len(compact) != 9:
+        return None
+    return f"{compact[:3]}-{compact[3:6]}-{compact[6:]}"
+
+
+def _may_replace_comparison_name(name: str | None, source_id: str | None) -> bool:
+    text = str(name or "").strip()
+    source = str(source_id or "").strip()
+    if not text or text == source:
+        return True
+    if _GAIA_NAME_RE.fullmatch(text):
+        return True
+    if _APASS_NAME_RE.fullmatch(text):
+        return True
+    return _usable_auid(text) is not None
+
+
+def _apass_designation(ra_deg: float, dec_deg: float) -> str:
+    coord = SkyCoord(ra=float(ra_deg) * u.deg, dec=float(dec_deg) * u.deg, frame="icrs")
+    ra_hms = coord.ra.hms
+    dec_dms = coord.dec.signed_dms
+    sign = "+" if float(dec_dms.sign) >= 0 else "-"
+    return (
+        f"APASS J{int(ra_hms.h):02d}{int(ra_hms.m):02d}{float(ra_hms.s):04.1f}"
+        f"{sign}{int(abs(dec_dms.d)):02d}{int(abs(dec_dms.m)):02d}{abs(float(dec_dms.s)):04.1f}"
+    )
 
 
 def _band_magnitudes_mutable(target: CatalogStar | PhotometryMeasurement | dict[str, Any]) -> dict[str, dict[str, object]]:

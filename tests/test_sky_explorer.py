@@ -12,7 +12,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 
-from photometry_app.core.models import SolvedField
+from photometry_app.core.models import CatalogStar, SolvedField
 from photometry_app.core.settings import AppSettings
 from photometry_app.core.solar_system import SolarSystemDetection, SolarSystemSearchResult
 
@@ -40,6 +40,7 @@ from photometry_app.core.sky_explorer import (
     _sky_explorer_object_from_hyperleda_row,
     _sky_explorer_object_from_ngc2000_row,
     _sky_explorer_object_from_simbad_row,
+    _sky_explorer_object_from_deep_galaxy_star,
     _sky_explorer_object_from_vdb_row,
     _simbad_query_regions,
     _solar_system_object_from_result,
@@ -50,12 +51,18 @@ from photometry_app.core.sky_explorer import (
     parse_sky_explorer_ra_dec,
     SkyExplorerResult,
     sky_explorer_angular_separation_arcsec,
+    sky_explorer_roi_fov_label,
+    sky_explorer_roi_fov_label_from_world_corners,
     sky_explorer_object_type_key_for_object,
     sky_explorer_object_type_key_for_catalog_type,
     sky_explorer_object_type_keys_for_object,
     sky_explorer_query_layers_for_object_types,
     sky_explorer_simbad_otype_codes_for_object_types,
+    sky_explorer_is_photometric_galaxy,
+    sky_explorer_ned_cone_search_url,
+    sky_explorer_should_include_dense_galaxy_catalog,
     sky_explorer_supplement_catalogs_for_object_types,
+    sky_explorer_vizier_catalog_cone_url,
     sky_explorer_object_type_group_palette,
     SKY_EXPLORER_CATALOG_OBJECT_TYPE_KEYS,
     sky_explorer_catalog_display_name,
@@ -273,6 +280,24 @@ class SkyExplorerTest(unittest.TestCase):
         self.assertIn("hyperleda", galaxy_supplements)
         self.assertIn("ngc2000", galaxy_supplements)
         self.assertNotIn("hash_pn", galaxy_supplements)
+
+        scientific_galaxy_supplements = sky_explorer_supplement_catalogs_for_object_types(("G",))
+        self.assertIn("hyperleda", scientific_galaxy_supplements)
+        self.assertIn("ngc2000", scientific_galaxy_supplements)
+        self.assertNotIn("hash_pn", scientific_galaxy_supplements)
+
+        scientific_pn_supplements = sky_explorer_supplement_catalogs_for_object_types(("PN",))
+        self.assertIn("hash_pn", scientific_pn_supplements)
+        self.assertNotIn("hyperleda", scientific_pn_supplements)
+
+    def test_dense_galaxy_catalog_follows_galaxy_types_in_scientific_and_advanced(self) -> None:
+        self.assertTrue(sky_explorer_should_include_dense_galaxy_catalog(("G",), object_type_mode="scientific"))
+        self.assertTrue(sky_explorer_should_include_dense_galaxy_catalog(("galaxy",), object_type_mode="advanced"))
+        self.assertTrue(sky_explorer_should_include_dense_galaxy_catalog(("PaG", "SyG"), object_type_mode="scientific"))
+        self.assertFalse(sky_explorer_should_include_dense_galaxy_catalog(("galaxy",), object_type_mode="simple"))
+        self.assertFalse(sky_explorer_should_include_dense_galaxy_catalog(("PN",), object_type_mode="scientific"))
+        self.assertFalse(sky_explorer_should_include_dense_galaxy_catalog(("ngc",), object_type_mode="catalog"))
+        self.assertFalse(sky_explorer_should_include_dense_galaxy_catalog(("other_deep_sky",), object_type_mode="scientific"))
 
     def test_catalog_mode_definitions_list_common_catalogs(self) -> None:
         titles = [definition.title for definition in sky_explorer_object_type_definitions_for_mode("catalog")]
@@ -1604,6 +1629,48 @@ class SkyExplorerTest(unittest.TestCase):
         self.assertEqual(returned_count, 1)
         self.assertEqual([item.name for item in objects], ["MCG-01-13-049"])
 
+    def test_dense_hyperleda_query_keeps_small_unnamed_galaxies(self) -> None:
+        table = Table(
+            rows=[
+                ("999998", "05 03 10.0", "-08 12 00", "G", "", 0.0, 0.05, 20.0, "", "Simbad"),
+            ],
+            names=("PGC", "RAJ2000", "DEJ2000", "OType", "MType", "logD25", "logR25", "PA", "ANames", "Simbad"),
+        )
+        solved_field = SolvedField(
+            center_ra_deg=75.65,
+            center_dec_deg=-8.3,
+            radius_deg=0.5,
+            width=1000,
+            height=800,
+            wcs_path=Path("field.fits"),
+        )
+        field_center = SkyCoord(75.65 * u.deg, -8.3 * u.deg)
+        wcs = SimpleNamespace(world_to_pixel_values=lambda ra_deg, dec_deg: (500.0, 400.0))
+
+        class FakeVizier:
+            def __init__(self, *args, **kwargs) -> None:
+                return None
+
+            def query_region(self, *args, **kwargs):
+                return [table]
+
+        with patch("photometry_app.core.sky_explorer.Vizier", side_effect=FakeVizier):
+            named_only_objects, _named_only_count = _query_hyperleda_galaxy_objects(
+                solved_field,
+                wcs=wcs,
+                field_center=field_center,
+            )
+            dense_objects, dense_count = _query_hyperleda_galaxy_objects(
+                solved_field,
+                wcs=wcs,
+                field_center=field_center,
+                minimum_major_axis_arcmin=None,
+            )
+
+        self.assertEqual(named_only_objects, [])
+        self.assertEqual(dense_count, 1)
+        self.assertEqual([item.source_id for item in dense_objects], ["PGC 999998"])
+
     def test_simbad_queries_deep_sky_with_larger_row_budget_than_general_objects(self) -> None:
         general_table = Table(
             rows=[(10.0, 20.0, "HD 123", "HD 123", "V*", 9.8)],
@@ -2696,7 +2763,10 @@ class SkyExplorerTest(unittest.TestCase):
             ):
                 result = explore_sky_image(source_path, settings=settings, selected_layers=("deep_sky",))
 
-            resolve_source_field.assert_called_once_with(source_path, settings, progress_callback=None)
+            resolve_source_field.assert_called_once()
+            self.assertEqual(resolve_source_field.call_args.args[0], source_path)
+            self.assertIs(resolve_source_field.call_args.args[1], settings)
+            self.assertTrue(callable(resolve_source_field.call_args.kwargs["progress_callback"]))
             self.assertEqual(result.objects, ())
             self.assertEqual(result.layer_summaries, ())
             self.assertTrue(result.used_astrometry_fallback)
@@ -2760,21 +2830,21 @@ class SkyExplorerTest(unittest.TestCase):
                     selected_layers=("gaia_stars", "variable_stars", "exoplanets"),
                 )
 
-            fake_catalog_service.query_gaia_stars_limited.assert_called_once_with(
-                solved_field,
-                16.8,
-                row_limit=321,
-                progress_callback=None,
-            )
-            fake_catalog_service.query_field_catalog.assert_called_once_with(
-                solved_field,
-                include_gaia=False,
-                include_variable_stars=True,
-                include_exoplanets=True,
-                variable_star_max_magnitude=16.8,
-                exoplanet_max_magnitude=16.8,
-                progress_callback=None,
-            )
+            fake_catalog_service.query_gaia_stars_limited.assert_called_once()
+            gaia_call = fake_catalog_service.query_gaia_stars_limited.call_args
+            self.assertEqual(gaia_call.args[0], solved_field)
+            self.assertEqual(gaia_call.args[1], 16.8)
+            self.assertEqual(gaia_call.kwargs["row_limit"], 321)
+            self.assertTrue(callable(gaia_call.kwargs["progress_callback"]))
+            fake_catalog_service.query_field_catalog.assert_called_once()
+            field_call = fake_catalog_service.query_field_catalog.call_args
+            self.assertEqual(field_call.args[0], solved_field)
+            self.assertEqual(field_call.kwargs["include_gaia"], False)
+            self.assertEqual(field_call.kwargs["include_variable_stars"], True)
+            self.assertEqual(field_call.kwargs["include_exoplanets"], True)
+            self.assertEqual(field_call.kwargs["variable_star_max_magnitude"], 16.8)
+            self.assertEqual(field_call.kwargs["exoplanet_max_magnitude"], 16.8)
+            self.assertTrue(callable(field_call.kwargs["progress_callback"]))
             self.assertEqual(len(result.layer_summaries), 3)
 
     def test_explore_sky_image_mag_limit_query_ignores_gaia_hard_cap(self) -> None:
@@ -2832,12 +2902,216 @@ class SkyExplorerTest(unittest.TestCase):
                     ignore_gaia_hard_cap=True,
                 )
 
-            fake_catalog_service.query_gaia_stars_limited.assert_called_once_with(
-                solved_field,
-                17.0,
-                row_limit=None,
-                progress_callback=None,
+            call = fake_catalog_service.query_gaia_stars_limited.call_args
+            self.assertEqual(call.args[0], solved_field)
+            self.assertEqual(call.args[1], 17.0)
+            self.assertEqual(call.kwargs["row_limit"], None)
+            self.assertTrue(callable(call.kwargs["progress_callback"]))
+
+    def test_explore_sky_image_mag_limit_uses_deep_star_catalogs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root_path = Path(temp_dir)
+            source_path = root_path / "field.fits"
+            source_path.write_bytes(b"fits")
+            settings = AppSettings.from_root(root_path)
+            settings.sky_explorer_gaia_max_magnitude = 24.0
+            solved_field = SolvedField(
+                center_ra_deg=115.44,
+                center_dec_deg=-14.84,
+                radius_deg=0.8,
+                width=1600,
+                height=1200,
+                wcs_path=root_path / "field_solution.fits",
             )
+            footprint = SkyExplorerFieldFootprint(
+                center_ra_deg=115.44,
+                center_dec_deg=-14.84,
+                radius_deg=0.8,
+                width_deg=1.0,
+                height_deg=0.75,
+                corners=(),
+            )
+            fake_catalog_service = Mock()
+            fake_catalog_service.query_magnitude_limit_stars.return_value = []
+
+            def fake_catalog_star_objects(
+                catalog_stars,
+                *,
+                layer_key,
+                max_entries,
+                field_center,
+                solved_field,
+                wcs,
+            ):
+                return [], SkyExplorerLayerSummary(layer_key, layer_key, len(catalog_stars), len(catalog_stars))
+
+            with (
+                patch("photometry_app.core.sky_explorer._resolve_source_field", return_value=(solved_field, False)),
+                patch("photometry_app.core.sky_explorer._build_field_footprint", return_value=footprint),
+                patch("photometry_app.core.sky_explorer.read_header", return_value={}),
+                patch("photometry_app.core.sky_explorer.celestial_wcs", return_value=SimpleNamespace()),
+                patch("photometry_app.core.sky_explorer.CatalogService", return_value=fake_catalog_service),
+                patch("photometry_app.core.sky_explorer._catalog_star_objects", side_effect=fake_catalog_star_objects),
+            ):
+                explore_sky_image(
+                    source_path,
+                    settings=settings,
+                    selected_layers=("gaia_stars",),
+                    gaia_object_limit=0,
+                    ignore_gaia_hard_cap=True,
+                    include_deep_star_catalogs=True,
+                    catalog_start_magnitude=12.0,
+                )
+
+            fake_catalog_service.query_gaia_stars_limited.assert_not_called()
+            call = fake_catalog_service.query_magnitude_limit_stars.call_args
+            self.assertEqual(call.args[0], solved_field)
+            self.assertEqual(call.kwargs["start_magnitude"], 12.0)
+            self.assertEqual(call.kwargs["max_magnitude"], 24.0)
+            self.assertTrue(callable(call.kwargs["progress_callback"]))
+
+    def test_deep_galaxy_object_matches_scientific_galaxy_type(self) -> None:
+        solved_field = SolvedField(
+            center_ra_deg=332.32,
+            center_dec_deg=-47.17,
+            radius_deg=0.15,
+            width=1000,
+            height=800,
+            wcs_path=Path("field.fits"),
+        )
+        field_center = SkyCoord(332.32 * u.deg, -47.17 * u.deg)
+        wcs = SimpleNamespace(world_to_pixel_values=lambda ra_deg, dec_deg: (500.0, 400.0))
+        star = CatalogStar(
+            "des-dr1",
+            "J220948.74-471448.0",
+            "DES J220948.74-471448.0",
+            332.453113,
+            -47.246688,
+            18.85,
+            False,
+            object_type="Galaxy",
+            metadata={"magnitude_band": "r"},
+        )
+
+        sky_object = _sky_explorer_object_from_deep_galaxy_star(
+            star,
+            field_center=field_center,
+            solved_field=solved_field,
+            wcs=wcs,
+        )
+
+        self.assertIsNotNone(sky_object)
+        assert sky_object is not None
+        self.assertEqual(sky_object.object_type, "Galaxy")
+        self.assertEqual(sky_object.metadata["catalog_type"], "G")
+        self.assertAlmostEqual(float(sky_object.metadata["catalog_size_arcmin"]), 0.5)
+        self.assertIn("g", sky_explorer_object_type_keys_for_object(sky_object))
+        self.assertIn("galaxy", sky_explorer_object_type_keys_for_object(sky_object))
+        self.assertTrue(sky_explorer_is_photometric_galaxy(sky_object))
+
+    def test_photometric_galaxy_literature_urls_use_ned_and_catalog_vizier(self) -> None:
+        ned_url = sky_explorer_ned_cone_search_url(332.453113, -47.246688)
+        self.assertIn("ned.ipac.caltech.edu/conesearch", ned_url)
+        self.assertIn("ra=332.453113d", ned_url)
+        self.assertIn("dec=-47.246688d", ned_url)
+
+        des_url = sky_explorer_vizier_catalog_cone_url("des-dr1", 332.453113, -47.246688)
+        self.assertIsNotNone(des_url)
+        assert des_url is not None
+        self.assertIn("vizier.cds.unistra.fr/viz-bin/VizieR-4", des_url)
+        self.assertIn("II%2F357%2Fdes_dr1", des_url)
+
+        star = SkyExplorerObject(
+            "gaia_stars",
+            "panstarrs-dr1",
+            "ps1-1",
+            "PS1 1",
+            "Star",
+            10.1,
+            20.1,
+            4.0,
+            4.0,
+            22.4,
+            8.0,
+            "PS1 1",
+            {},
+        )
+        self.assertFalse(sky_explorer_is_photometric_galaxy(star))
+
+    def test_explore_sky_image_adds_photometric_galaxies_when_dense_catalog_is_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root_path = Path(temp_dir)
+            source_path = root_path / "field.fits"
+            source_path.write_bytes(b"fits")
+            settings = AppSettings.from_root(root_path)
+            solved_field = SolvedField(
+                center_ra_deg=332.32,
+                center_dec_deg=-47.17,
+                radius_deg=0.15,
+                width=1000,
+                height=800,
+                wcs_path=root_path / "field_solution.fits",
+            )
+            footprint = SkyExplorerFieldFootprint(
+                center_ra_deg=332.32,
+                center_dec_deg=-47.17,
+                radius_deg=0.15,
+                width_deg=0.3,
+                height_deg=0.24,
+                corners=(),
+            )
+            fake_catalog_service = Mock()
+            fake_catalog_service.query_deep_galaxies.return_value = [
+                CatalogStar(
+                    "des-dr1",
+                    "J220948.74-471448.0",
+                    "DES J220948.74-471448.0",
+                    332.453113,
+                    -47.246688,
+                    18.85,
+                    False,
+                    object_type="Galaxy",
+                )
+            ]
+            faint_galaxy = SkyExplorerObject(
+                layer_key="deep_sky",
+                catalog="des-dr1",
+                source_id="J220948.74-471448.0",
+                name="DES J220948.74-471448.0",
+                object_type="Galaxy",
+                ra_deg=332.453113,
+                dec_deg=-47.246688,
+                pixel_x=520.0,
+                pixel_y=410.0,
+                magnitude=18.85,
+                angular_distance_arcmin=6.0,
+                short_label="DES J220948.74-471448.0",
+                metadata={"catalog_type": "G"},
+            )
+
+            with (
+                patch("photometry_app.core.sky_explorer._resolve_source_field", return_value=(solved_field, False)),
+                patch("photometry_app.core.sky_explorer._build_field_footprint", return_value=footprint),
+                patch("photometry_app.core.sky_explorer.read_header", return_value={}),
+                patch("photometry_app.core.sky_explorer.celestial_wcs", return_value=SimpleNamespace()),
+                patch("photometry_app.core.sky_explorer.CatalogService", return_value=fake_catalog_service),
+                patch("photometry_app.core.sky_explorer._query_simbad_objects", return_value=([], [])),
+                patch(
+                    "photometry_app.core.sky_explorer._sky_explorer_object_from_deep_galaxy_star",
+                    return_value=faint_galaxy,
+                ),
+            ):
+                result = explore_sky_image(
+                    source_path,
+                    settings=settings,
+                    selected_layers=("deep_sky",),
+                    selected_object_type_keys=("G",),
+                    include_dense_galaxy_catalog=True,
+                )
+
+            fake_catalog_service.query_deep_galaxies.assert_called_once()
+            self.assertEqual([item.name for item in result.objects], ["DES J220948.74-471448.0"])
+            self.assertTrue(any("photometric galaxies" in message for message in result.warning_messages))
 
 
 class SkyExplorerRulerFormattingTest(unittest.TestCase):
@@ -2860,6 +3134,39 @@ class SkyExplorerRulerFormattingTest(unittest.TestCase):
         separation = sky_explorer_angular_separation_arcsec(10.0, 20.0, 10.001, 20.0)
         self.assertGreater(separation, 0.0)
         self.assertLess(separation, 10.0)
+
+    def test_roi_fov_label_uses_wcs_and_hides_without_a_solution(self) -> None:
+        from astropy.wcs import WCS
+
+        self.assertIsNone(sky_explorer_roi_fov_label(None, x0=0.0, y0=0.0, x1=10.0, y1=10.0))
+        self.assertIsNone(
+            sky_explorer_roi_fov_label_from_world_corners(
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+            )
+        )
+        self.assertEqual(
+            sky_explorer_roi_fov_label_from_world_corners(
+                (180.0, 0.0),
+                (180.0 + 2.0 / 60.0, 0.0),
+                (180.0, 1.0 / 60.0),
+                (180.0 + 2.0 / 60.0, 1.0 / 60.0),
+            ),
+            "2.00' × 1.00'",
+        )
+        wcs = WCS(naxis=2)
+        wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        wcs.wcs.crval = [180.0, 0.0]
+        wcs.wcs.crpix = [1.0, 1.0]
+        wcs.wcs.cdelt = [-1.0 / 3600.0, 1.0 / 3600.0]
+        wcs.wcs.cunit = ["deg", "deg"]
+        label = sky_explorer_roi_fov_label(wcs, x0=0.0, y0=0.0, x1=120.0, y1=180.0)
+        self.assertIsNotNone(label)
+        assert label is not None
+        self.assertIn("×", label)
+        self.assertTrue(label.startswith("2.00'"))
 
 
 class SkyExplorerCatalogTypeMappingTest(unittest.TestCase):

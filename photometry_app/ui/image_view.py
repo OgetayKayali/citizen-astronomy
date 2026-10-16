@@ -226,6 +226,8 @@ class SelectionOverlay:
 
     stroke_width: float = 0.0
 
+    label: str = ""
+
 
 
 
@@ -1359,7 +1361,15 @@ class AnnotatedImageView(QWidget):
 
             return None
 
-        return rect.adjusted(-padding, -padding, padding, padding)
+        rect = rect.adjusted(-padding, -padding, padding, padding)
+
+        label = str(getattr(overlay, "label", "") or "").strip()
+
+        if label:
+
+            rect = rect.adjusted(-6.0, -6.0, 8.0 + (7.2 * len(label)), 22.0)
+
+        return rect
 
 
 
@@ -2980,6 +2990,14 @@ class AnnotatedImageView(QWidget):
 
         image_point = self.widget_to_image(event.position().x(), event.position().y())
 
+        if self._gesture_roi_active:
+
+            if image_point is not None:
+
+                self.imageMoved.emit(image_point.x(), image_point.y(), event.buttons(), event.modifiers())
+
+            return
+
         self._set_hover_image_point(image_point)
 
         if self._direct_edit_active:
@@ -3003,14 +3021,6 @@ class AnnotatedImageView(QWidget):
             if bool(event.buttons() & Qt.MouseButton.LeftButton):
 
                 self._update_pan_from_mouse_event(event)
-
-            return
-
-        if self._gesture_roi_active:
-
-            if image_point is not None:
-
-                self.imageMoved.emit(image_point.x(), image_point.y(), event.buttons(), event.modifiers())
 
             return
 
@@ -5171,6 +5181,48 @@ class AnnotatedImageView(QWidget):
                 continue
 
             painter.drawRect(rect)
+
+            label = str(getattr(overlay, "label", "") or "").strip()
+
+            if label:
+
+                self._draw_selection_overlay_label(painter, rect, label, overlay.color)
+
+
+
+    def _draw_selection_overlay_label(self, painter: QPainter, rect: QRectF, label: str, color: str) -> None:
+
+        appearance = self._on_screen_overlay_appearance_scale()
+
+        font = QFont(self.font())
+
+        font.setBold(True)
+
+        font.setPixelSize(max(1, int(round(12.0 * appearance))))
+
+        painter.save()
+
+        painter.setFont(font)
+
+        metrics = QFontMetricsF(font)
+
+        inset = 4.0 * appearance
+
+        origin = QPointF(rect.left() + inset, rect.top() + inset + metrics.ascent())
+
+        halo = max(1.0, appearance)
+
+        painter.setPen(QColor("#111827"))
+
+        for dx, dy in ((-halo, 0.0), (halo, 0.0), (0.0, -halo), (0.0, halo)):
+
+            painter.drawText(QPointF(origin.x() + dx, origin.y() + dy), label)
+
+        painter.setPen(QColor(color))
+
+        painter.drawText(origin, label)
+
+        painter.restore()
 
 
 

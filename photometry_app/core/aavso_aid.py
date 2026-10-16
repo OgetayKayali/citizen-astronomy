@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 import csv
@@ -25,6 +25,7 @@ AID_MIN_REQUEST_INTERVAL_SECONDS = 10.0
 DEFAULT_MAX_AID_OBSERVATIONS = 25000
 MAX_AID_OBSERVATIONS = 50000
 AID_NIGHT_GAP_DAYS = 0.35
+DEFAULT_RECENT_AID_DAYS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +145,25 @@ class AidFilterRejectedAllError(ValueError):
     def __init__(self, message: str, notes: tuple[str, ...] = ()) -> None:
         super().__init__(message)
         self.notes = notes
+
+
+def recent_aid_jd_range(
+    days: float = DEFAULT_RECENT_AID_DAYS,
+    now: datetime | None = None,
+) -> tuple[float, float]:
+    """JD window ending at the current time, spanning the latest `days`."""
+    if now is None:
+        end_jd = float(Time.now().jd)
+    else:
+        moment = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        end_jd = float(Time(moment.astimezone(UTC), scale="utc").jd)
+    try:
+        span = float(days)
+    except (TypeError, ValueError):
+        span = DEFAULT_RECENT_AID_DAYS
+    if not math.isfinite(span) or span < 0.0:
+        span = DEFAULT_RECENT_AID_DAYS
+    return end_jd - span, end_jd
 
 
 def normalize_max_aid_observations(value: object) -> int:

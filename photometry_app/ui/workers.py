@@ -71,7 +71,7 @@ from photometry_app.core.survey_tiles import (
     survey_tile_sky_center,
 )
 from photometry_app.core.distance_map import build_distance_map
-from photometry_app.core.sky_explorer import SkyExplorerCancelled, explore_sky_image
+from photometry_app.core.sky_explorer import SkyExplorerCancelled, SkyExplorerStarlessWcsChoice, explore_sky_image
 from photometry_app.core.settings import AppSettings, SkyAtlasCustomOverlayRecord, resolve_shared_parallel_workers
 from photometry_app.core.sky_atlas_custom_overlay import import_sky_overlay
 from photometry_app.core.solar_system import KnownObjectHeliocentricContext, SolarSystemDetection, SolarSystemDetectionResult, SolarSystemFrameMeasurement, SolarSystemVisibilityEstimateResult, build_known_object_heliocentric_context, build_multi_known_object_heliocentric_context, detect_known_solar_system_objects, estimate_visible_magnitude_limit, measure_detections_in_frame
@@ -2962,6 +2962,8 @@ class SkyExplorerWorker(QThread):
 
     progress_updated = Signal(str)
 
+    starless_wcs_choice_requested = Signal(object)
+
 
 
     def __init__(
@@ -2984,6 +2986,10 @@ class SkyExplorerWorker(QThread):
 
         ignore_gaia_hard_cap: bool = False,
 
+        include_deep_star_catalogs: bool = False,
+
+        catalog_start_magnitude: float | None = None,
+
         pixel_roi: Sequence[float] | None = None,
 
         parent: object | None = None,
@@ -3005,8 +3011,12 @@ class SkyExplorerWorker(QThread):
         self._include_dense_galaxy_catalog = bool(include_dense_galaxy_catalog)
 
         self._ignore_gaia_hard_cap = bool(ignore_gaia_hard_cap)
+        self._include_deep_star_catalogs = bool(include_deep_star_catalogs)
+        self._catalog_start_magnitude = None if catalog_start_magnitude is None else float(catalog_start_magnitude)
         self._pixel_roi = None if pixel_roi is None else tuple(float(value) for value in pixel_roi)
         self._cancel_requested = Event()
+        self._starless_wcs_choice: SkyExplorerStarlessWcsChoice | None = None
+        self._starless_wcs_choice_ready = Event()
 
     def request_cancel(self) -> None:
         self._cancel_requested.set()
@@ -3014,6 +3024,22 @@ class SkyExplorerWorker(QThread):
 
     def cancellation_requested(self) -> bool:
         return self._cancel_requested.is_set() or self.isInterruptionRequested()
+
+    def provide_starless_wcs_choice(self, choice: SkyExplorerStarlessWcsChoice) -> None:
+        self._starless_wcs_choice = choice
+        self._starless_wcs_choice_ready.set()
+
+    def _ask_starless_wcs_choice(self, prompt: object) -> SkyExplorerStarlessWcsChoice:
+        self._starless_wcs_choice = None
+        self._starless_wcs_choice_ready.clear()
+        self.starless_wcs_choice_requested.emit(prompt)
+        while not self._starless_wcs_choice_ready.wait(0.2):
+            if self.cancellation_requested():
+                raise SkyExplorerCancelled("Sky Explorer query was terminated.")
+        choice = self._starless_wcs_choice
+        if not isinstance(choice, SkyExplorerStarlessWcsChoice) or choice.action == "cancel":
+            raise SkyExplorerCancelled("Sky Explorer query was terminated.")
+        return choice
 
     def run(self) -> None:
 
@@ -3040,11 +3066,17 @@ class SkyExplorerWorker(QThread):
 
                 ignore_gaia_hard_cap=self._ignore_gaia_hard_cap,
 
+                include_deep_star_catalogs=self._include_deep_star_catalogs,
+
+                catalog_start_magnitude=self._catalog_start_magnitude,
+
                 pixel_roi=self._pixel_roi,
 
                 progress_callback=progress_callback,
 
                 cancel_callback=self.cancellation_requested,
+
+                starless_choice_callback=self._ask_starless_wcs_choice,
 
             )
 
@@ -3856,6 +3888,8 @@ class AsteroidVisibleMagnitudeWorker(QThread):
 
     progress_updated = Signal(str)
 
+    starless_wcs_choice_requested = Signal(object)
+
 
 
     def __init__(self, *, parent: object | None = None, **kwargs: object) -> None:
@@ -3864,9 +3898,51 @@ class AsteroidVisibleMagnitudeWorker(QThread):
 
         self._kwargs = dict(kwargs)
 
+        self._starless_wcs_choice: SkyExplorerStarlessWcsChoice | None = None
+
+        self._starless_wcs_choice_ready = Event()
+
+
+
+    def provide_starless_wcs_choice(self, choice: SkyExplorerStarlessWcsChoice) -> None:
+
+        self._starless_wcs_choice = choice
+
+        self._starless_wcs_choice_ready.set()
+
+
+
+    def _ask_starless_wcs_choice(self, prompt: object) -> SkyExplorerStarlessWcsChoice:
+
+        self._starless_wcs_choice = None
+
+        self._starless_wcs_choice_ready.clear()
+
+        self.starless_wcs_choice_requested.emit(prompt)
+
+        while not self._starless_wcs_choice_ready.wait(0.2):
+
+            if self.isInterruptionRequested():
+
+                raise SkyExplorerCancelled("Sky Explorer query was terminated.")
+
+        choice = self._starless_wcs_choice
+
+        if not isinstance(choice, SkyExplorerStarlessWcsChoice) or choice.action == "cancel":
+
+            raise SkyExplorerCancelled("Sky Explorer query was terminated.")
+
+        return choice
+
 
 
     def run(self) -> None:
+
+        kwargs = dict(self._kwargs)
+
+        if kwargs.pop("prompt_for_starless_wcs", False):
+
+            kwargs["starless_choice_callback"] = self._ask_starless_wcs_choice
 
         try:
 
@@ -3874,7 +3950,7 @@ class AsteroidVisibleMagnitudeWorker(QThread):
 
                 progress_callback=self.progress_updated.emit,
 
-                **self._kwargs,
+                **kwargs,
 
             )
 

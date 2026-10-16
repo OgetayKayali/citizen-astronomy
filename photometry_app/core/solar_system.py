@@ -1864,6 +1864,8 @@ def estimate_visible_magnitude_limit(
 
     solved_field: SolvedField | None = None,
 
+    starless_choice_callback: Callable | None = None,
+
 ) -> SolarSystemVisibilityEstimateResult:
 
     options = options or _visible_limit_estimate_options(settings)
@@ -1884,7 +1886,25 @@ def estimate_visible_magnitude_limit(
 
     else:
 
-        solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=progress_callback)
+        if starless_choice_callback is not None:
+
+            from photometry_app.core.sky_explorer import _resolve_source_field as resolve_sky_explorer_field
+
+            solved_field, used_astrometry_fallback = resolve_sky_explorer_field(
+
+                source_path,
+
+                settings,
+
+                progress_callback=progress_callback,
+
+                starless_choice_callback=starless_choice_callback,
+
+            )
+
+        else:
+
+            solved_field, used_astrometry_fallback = _resolve_source_field(source_path, settings, progress_callback=progress_callback)
 
     if progress_callback is not None:
 
@@ -1900,42 +1920,49 @@ def estimate_visible_magnitude_limit(
 
     catalog_service = catalog_service or CatalogService(settings.cache_dir / "catalogs")
 
-    gaia_stars = [
-
-        star
-
-        for star in catalog_service.query_gaia_stars(solved_field, progress_callback=progress_callback)
-
-        if (
-            star.magnitude is not None
-            and np.isfinite(float(star.magnitude))
-            and float(star.magnitude) >= float(options.start_magnitude)
-            and float(star.magnitude) <= float(getattr(options, "max_magnitude", 30.0))
+    query_magnitude_limit_stars = getattr(catalog_service, "query_magnitude_limit_stars", None)
+    if query_magnitude_limit_stars is not None:
+        catalog_stars = list(
+            query_magnitude_limit_stars(
+                solved_field,
+                start_magnitude=float(options.start_magnitude),
+                max_magnitude=float(getattr(options, "max_magnitude", 30.0)),
+                progress_callback=progress_callback,
+            )
         )
+    else:
+        catalog_stars = [
+            star
+            for star in catalog_service.query_gaia_stars(solved_field, progress_callback=progress_callback)
+            if (
+                star.magnitude is not None
+                and np.isfinite(float(star.magnitude))
+                and float(star.magnitude) >= float(options.start_magnitude)
+                and float(star.magnitude) <= float(getattr(options, "max_magnitude", 30.0))
+            )
+        ]
 
-    ]
+    if not catalog_stars:
 
-    if not gaia_stars:
-
-        raise ValueError("Gaia did not return any usable field stars with magnitudes for this image.")
+        raise ValueError("No catalog stars with usable magnitudes were returned for this image.")
 
 
 
     wcs = _resolved_wcs_for_field(solved_field)
 
-    projected_stars = _project_catalog_stars_into_image(gaia_stars, wcs, solved_field)
+    projected_stars = _project_catalog_stars_into_image(catalog_stars, wcs, solved_field)
 
     if progress_callback is not None:
 
         progress_callback(
 
-            f"Projected {len(projected_stars)} Gaia star(s) into the image and sampling them in {step_magnitude:.1f} mag steps starting at {options.start_magnitude:.1f} mag."
+            f"Projected {len(projected_stars)} catalog star(s) into the image and sampling them in {step_magnitude:.1f} mag steps starting at {options.start_magnitude:.1f} mag."
 
         )
 
     if not projected_stars:
 
-        raise ValueError("No Gaia stars with usable magnitudes project inside the current image footprint.")
+        raise ValueError("No catalog stars with usable magnitudes project inside the current image footprint.")
 
 
 
@@ -5648,6 +5675,30 @@ def _collapsed_image_plane(image_data: np.ndarray) -> np.ndarray:
         return np.nanmean(data, axis=0)
 
     raise ValueError("Solar-system mode currently supports grayscale or RGB-style images only.")
+
+
+def load_detection_image(source_path: Path) -> np.ndarray:
+    """Load a source image as the grayscale plane used for source detection."""
+    return _collapsed_image_plane(read_photometry_image_data(Path(source_path)))
+
+
+def catalog_position_is_detected(
+    image_data: np.ndarray,
+    x: float,
+    y: float,
+    *,
+    snr_threshold: float,
+) -> bool:
+    """True when a local peak at this pixel passes the same SNR and offset test as Automatic limit."""
+    _measured_x, _measured_y, match_offset_px, local_snr, *_rest = _measure_local_match(
+        np.asarray(image_data),
+        float(x),
+        float(y),
+        expected_trail_length_px=None,
+    )
+    if local_snr is None or match_offset_px is None:
+        return False
+    return float(local_snr) >= float(snr_threshold) and float(match_offset_px) <= _VISIBLE_LIMIT_MAX_OFFSET_PX
 
 
 

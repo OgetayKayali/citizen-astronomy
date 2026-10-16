@@ -464,6 +464,311 @@ class CatalogServiceTest(unittest.TestCase):
         self.assertEqual(targets[1].main_id, "NGC 7000")
         self.assertLess(targets[0].separation_arcsec or 0.0, targets[1].separation_arcsec or 0.0)
 
+    def test_deep_star_catalog_follows_panstarrs_declination_limit(self) -> None:
+        from photometry_app.core.catalogs import (
+            deep_star_catalog_for_declination,
+            deep_star_catalogs_for_declination,
+        )
+
+        self.assertEqual(deep_star_catalog_for_declination(10.0), "panstarrs")
+        self.assertEqual(deep_star_catalog_for_declination(-30.0), "panstarrs")
+        self.assertEqual(deep_star_catalog_for_declination(-30.01), "des")
+        self.assertEqual(deep_star_catalogs_for_declination(-30.01), ("des", "skymapper"))
+
+    def test_panstarrs_parser_keeps_stellar_sources_and_drops_likely_galaxies(self) -> None:
+        from astropy.table import Table
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            table = Table(
+                {
+                    "objID": ["111", "222"],
+                    "RAJ2000": [10.0, 10.1],
+                    "DEJ2000": [20.0, 20.1],
+                    "rmag": [22.4, 22.6],
+                    "rKmag": [22.45, 22.2],
+                    "gmag": [22.8, 22.9],
+                    "imag": [22.1, 22.2],
+                }
+            )
+            stars = service._panstarrs_stars_from_tables([table], min_magnitude=21.0, max_magnitude=24.0)
+
+        self.assertEqual([star.source_id for star in stars], ["111"])
+        self.assertEqual(stars[0].catalog, "panstarrs-dr1")
+        self.assertEqual(stars[0].metadata["magnitude_band"], "r")
+        self.assertAlmostEqual(stars[0].magnitude, 22.4)
+
+    def test_skymapper_parser_uses_r_psf_and_falls_back_to_g(self) -> None:
+        from astropy.table import Table
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            table = Table(
+                {
+                    "ObjectId": ["sm-1", "sm-2"],
+                    "RAICRS": [90.0, 90.1],
+                    "DEICRS": [-45.0, -45.1],
+                    "r_psf": [22.2, float("nan")],
+                    "g_psf": [22.5, 22.8],
+                    "i_psf": [21.9, 22.4],
+                }
+            )
+            stars = service._skymapper_stars_from_tables([table], min_magnitude=21.0, max_magnitude=24.0)
+
+        self.assertEqual([star.source_id for star in stars], ["sm-1", "sm-2"])
+        self.assertEqual(stars[0].catalog, "skymapper-dr4")
+        self.assertEqual(stars[0].metadata["magnitude_band"], "r")
+        self.assertAlmostEqual(stars[0].magnitude, 22.2)
+        self.assertEqual(stars[1].metadata["magnitude_band"], "g")
+        self.assertAlmostEqual(stars[1].magnitude, 22.8)
+
+    def test_skymapper_parser_reads_vizier_rpsf_column_names(self) -> None:
+        from astropy.table import Table
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            table = Table(
+                {
+                    "ObjectId": ["sm-3"],
+                    "RAICRS": [90.0],
+                    "DEICRS": [-45.0],
+                    "rPSF": [22.1],
+                    "gPSF": [22.6],
+                    "ClassStar": [0.92],
+                }
+            )
+            stars = service._skymapper_stars_from_tables([table], min_magnitude=21.0, max_magnitude=24.0)
+
+        self.assertEqual([star.source_id for star in stars], ["sm-3"])
+        self.assertAlmostEqual(stars[0].magnitude, 22.1)
+        self.assertEqual(stars[0].metadata["magnitude_band"], "r")
+
+    def test_des_parser_keeps_stellar_sources_and_drops_likely_galaxies(self) -> None:
+        from astropy.table import Table
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            table = Table(
+                {
+                    "DES": ["J221006.09-471115.7", "J221006.08-471128.9"],
+                    "RAJ2000": [332.525391, 332.525355],
+                    "DEJ2000": [-47.187722, -47.191376],
+                    "rmag": [22.4, 22.8],
+                    "gmag": [23.1, 23.4],
+                    "imag": [21.9, 22.2],
+                    "S/Gr": [0.92, 0.12],
+                }
+            )
+            stars = service._des_stars_from_tables([table], min_magnitude=21.0, max_magnitude=24.0)
+
+        self.assertEqual([star.source_id for star in stars], ["J221006.09-471115.7"])
+        self.assertEqual(stars[0].catalog, "des-dr1")
+        self.assertEqual(stars[0].metadata["magnitude_band"], "r")
+        self.assertAlmostEqual(stars[0].magnitude, 22.4)
+
+    def test_des_galaxy_parser_keeps_extended_sources_and_drops_stars(self) -> None:
+        from astropy.table import Table
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            table = Table(
+                {
+                    "DES": ["J221006.09-471115.7", "J221006.08-471128.9"],
+                    "RAJ2000": [332.525391, 332.525355],
+                    "DEJ2000": [-47.187722, -47.191376],
+                    "rmag": [22.4, 18.9],
+                    "gmag": [23.1, 19.4],
+                    "imag": [21.9, 18.2],
+                    "S/Gr": [0.92, 0.12],
+                }
+            )
+            galaxies = service._des_galaxies_from_tables([table], max_magnitude=22.0)
+
+        self.assertEqual([star.source_id for star in galaxies], ["J221006.08-471128.9"])
+        self.assertEqual(galaxies[0].object_type, "Galaxy")
+        self.assertAlmostEqual(galaxies[0].magnitude, 18.9)
+
+    def test_panstarrs_galaxy_parser_keeps_extended_sources(self) -> None:
+        from astropy.table import Table
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            table = Table(
+                {
+                    "objID": ["ps1-star", "ps1-galaxy"],
+                    "RAJ2000": [10.0, 10.01],
+                    "DEJ2000": [20.0, 20.01],
+                    "rmag": [18.0, 19.2],
+                    "rKmag": [17.99, 18.9],
+                    "gmag": [18.4, 19.6],
+                    "imag": [17.8, 18.8],
+                }
+            )
+            galaxies = service._panstarrs_galaxies_from_tables([table], max_magnitude=22.0)
+
+        self.assertEqual([star.source_id for star in galaxies], ["ps1-galaxy"])
+        self.assertEqual(galaxies[0].object_type, "Galaxy")
+
+    def test_query_deep_galaxies_uses_des_south_of_panstarrs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            solved_field = SolvedField(
+                center_ra_deg=332.32,
+                center_dec_deg=-47.17,
+                radius_deg=0.13,
+                width=16,
+                height=16,
+                wcs_path=Path("test.fits"),
+            )
+            des_galaxy = CatalogStar(
+                "des-dr1",
+                "J220948.74-471448.0",
+                "DES J220948.74-471448.0",
+                332.45,
+                -47.25,
+                18.85,
+                False,
+                object_type="Galaxy",
+            )
+            with patch.object(CatalogService, "_query_tiled_catalog_field", return_value=[des_galaxy]) as tiled_query:
+                galaxies = service.query_deep_galaxies(solved_field, max_magnitude=22.0)
+
+        self.assertEqual([star.source_id for star in galaxies], ["J220948.74-471448.0"])
+        self.assertEqual(tiled_query.call_args.args[2], "DES DR1")
+
+    def test_magnitude_limit_query_skips_deep_catalogs_when_gaia_covers_the_range(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            solved_field = self._solved_field()
+            gaia_star = CatalogStar("gaia-dr3", "gaia-1", "gaia-1", 83.822, -5.391, 18.0, False)
+            with (
+                patch.object(CatalogService, "query_gaia_stars_limited", return_value=[gaia_star]) as gaia_query,
+                patch.object(CatalogService, "_query_deep_field_stars") as deep_query,
+            ):
+                stars = service.query_magnitude_limit_stars(
+                    solved_field,
+                    start_magnitude=12.0,
+                    max_magnitude=20.5,
+                )
+
+        self.assertEqual([star.source_id for star in stars], ["gaia-1"])
+        gaia_query.assert_called_once()
+        deep_query.assert_not_called()
+
+    def test_magnitude_limit_query_adds_panstarrs_stars_fainter_than_gaia(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            solved_field = SolvedField(
+                center_ra_deg=10.0,
+                center_dec_deg=20.0,
+                radius_deg=0.1,
+                width=16,
+                height=16,
+                wcs_path=Path("test.fits"),
+            )
+            gaia_star = CatalogStar("gaia-dr3", "gaia-1", "gaia-1", 10.0, 20.0, 20.8, False)
+            duplicate = CatalogStar("panstarrs-dr1", "ps1-dup", "PS1 ps1-dup", 10.0, 20.0, 22.1, False)
+            faint = CatalogStar("panstarrs-dr1", "ps1-faint", "PS1 ps1-faint", 10.01, 20.01, 22.4, False)
+            with (
+                patch.object(CatalogService, "query_gaia_stars_limited", return_value=[gaia_star]),
+                patch.object(CatalogService, "_query_deep_field_stars", return_value=[duplicate, faint]) as deep_query,
+            ):
+                stars = service.query_magnitude_limit_stars(
+                    solved_field,
+                    start_magnitude=18.0,
+                    max_magnitude=24.0,
+                )
+
+        self.assertEqual([star.source_id for star in stars], ["gaia-1", "ps1-faint"])
+        self.assertEqual(deep_query.call_args.kwargs["catalog_key"], "panstarrs")
+
+    def test_magnitude_limit_query_uses_des_south_of_panstarrs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            solved_field = SolvedField(
+                center_ra_deg=90.0,
+                center_dec_deg=-45.0,
+                radius_deg=0.1,
+                width=16,
+                height=16,
+                wcs_path=Path("test.fits"),
+            )
+            faint = CatalogStar("des-dr1", "des-1", "DES des-1", 90.0, -45.0, 22.8, False)
+            with (
+                patch.object(CatalogService, "query_gaia_stars_limited", return_value=[]),
+                patch.object(CatalogService, "_query_deep_field_stars", return_value=[faint]) as deep_query,
+            ):
+                stars = service.query_magnitude_limit_stars(
+                    solved_field,
+                    start_magnitude=21.5,
+                    max_magnitude=23.0,
+                )
+
+        self.assertEqual([star.source_id for star in stars], ["des-1"])
+        self.assertEqual(deep_query.call_count, 1)
+        self.assertEqual(deep_query.call_args.kwargs["catalog_key"], "des")
+
+    def test_magnitude_limit_query_falls_back_to_skymapper_when_des_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            solved_field = SolvedField(
+                center_ra_deg=90.0,
+                center_dec_deg=-45.0,
+                radius_deg=0.1,
+                width=16,
+                height=16,
+                wcs_path=Path("test.fits"),
+            )
+            faint = CatalogStar("skymapper-dr4", "smss-1", "SMSS smss-1", 90.0, -45.0, 22.2, False)
+
+            def fake_deep(solved_field, *, catalog_key, min_magnitude, max_magnitude, progress_callback=None, cancel_event=None):
+                if catalog_key == "des":
+                    return []
+                return [faint]
+
+            with (
+                patch.object(CatalogService, "query_gaia_stars_limited", return_value=[]),
+                patch.object(CatalogService, "_query_deep_field_stars", side_effect=fake_deep) as deep_query,
+            ):
+                stars = service.query_magnitude_limit_stars(
+                    solved_field,
+                    start_magnitude=21.5,
+                    max_magnitude=23.0,
+                )
+
+        self.assertEqual([star.source_id for star in stars], ["smss-1"])
+        self.assertEqual(
+            [call.kwargs["catalog_key"] for call in deep_query.call_args_list],
+            ["des", "skymapper"],
+        )
+
+    def test_magnitude_limit_query_reports_catalog_limit_in_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = CatalogService(Path(temp_dir))
+            solved_field = SolvedField(
+                center_ra_deg=90.0,
+                center_dec_deg=-45.0,
+                radius_deg=0.1,
+                width=16,
+                height=16,
+                wcs_path=Path("test.fits"),
+            )
+            gaia_star = CatalogStar("gaia-dr3", "gaia-1", "gaia-1", 90.0, -45.0, 21.1, False)
+            messages: list[str] = []
+            with (
+                patch.object(CatalogService, "query_gaia_stars_limited", return_value=[gaia_star]),
+                patch.object(CatalogService, "_query_deep_field_stars", return_value=[]),
+            ):
+                service.query_magnitude_limit_stars(
+                    solved_field,
+                    start_magnitude=18.0,
+                    max_magnitude=24.0,
+                    progress_callback=messages.append,
+                )
+
+        self.assertTrue(any(message.startswith("Catalog limit:") for message in messages))
+        self.assertTrue(any("requested 24.0" in message for message in messages))
+
 
 class GaiaQueryTilesTest(unittest.TestCase):
     def _small_field(self) -> SolvedField:

@@ -86,7 +86,7 @@ from photometry_app.ui.image_view import AnnotatedImageView, ImageOverlay
 
 from photometry_app.ui.levels_dialog import CurvesDialog
 
-from photometry_app.ui.main_window import MainWindow, _AsteroidBlinkExportCanceled, _AsteroidDiscoveryContinuationState, _AstrostackOverlayLayer, _DifferentialDiscoverRunOptions, _DifferentialWorkflowDialog, _DifferentialWorkflowOptions, _HrRoiSelection, _SKY_EXPLORER_OBJECT_ROLE, _SKY_EXPLORER_ROI_STROKE_COLOR, _SkyAtlasOverlayContainer, _SkyAtlasViewWidget, _SkyViewLocationDialog, _SkyViewLocationMapWidget, _SkyViewMilkyWayProjectedTileVertex, _SkyViewMilkyWayTextureLevel, _SkyVisibleObject
+from photometry_app.ui.main_window import MainWindow, _AsteroidBlinkExportCanceled, _AsteroidDiscoveryContinuationState, _AstrostackOverlayLayer, _DifferentialDiscoverRunOptions, _DifferentialWorkflowDialog, _DifferentialWorkflowOptions, _HrRoiSelection, _SKY_EXPLORER_OBJECT_ROLE, _SKY_EXPLORER_OBJECT_TYPE_COLUMN, _SKY_EXPLORER_QUERY_OBJECT_TYPE_ROLE, _SKY_EXPLORER_ROI_STROKE_COLOR, _SkyAtlasOverlayContainer, _SkyAtlasViewWidget, _SkyViewLocationDialog, _SkyViewLocationMapWidget, _SkyViewMilkyWayProjectedTileVertex, _SkyViewMilkyWayTextureLevel, _SkyVisibleObject
 from photometry_app.ui.moon_system import DEFAULT_MOON_VISUAL_SETTINGS, MoonDrawState, MoonEphemeris, MoonRendererGL, MoonState, MoonTextureLod, MoonTileDiagnostics
 from photometry_app.ui.sky_view_location import _SkyViewObservingSiteSelection
 
@@ -206,6 +206,32 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self._config_dir.cleanup()
 
         self._state_dir.cleanup()
+
+
+
+    def _check_only_sky_explorer_object_type(self, type_key: str) -> None:
+
+        table = self.window._sky_explorer_object_type_table
+
+        matched = False
+
+        for row_index in range(table.rowCount()):
+
+            item = table.item(row_index, _SKY_EXPLORER_OBJECT_TYPE_COLUMN)
+
+            if item is None:
+
+                continue
+
+            item_key = item.data(_SKY_EXPLORER_QUERY_OBJECT_TYPE_ROLE)
+
+            should_check = isinstance(item_key, str) and item_key.casefold() == type_key.casefold()
+
+            item.setCheckState(Qt.CheckState.Checked if should_check else Qt.CheckState.Unchecked)
+
+            matched = matched or should_check
+
+        self.assertTrue(matched, f"Object type {type_key!r} was not in the Sky Explorer type table.")
 
 
 
@@ -1041,6 +1067,75 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(information.call_args.args[1], "Images excluded")
         self.assertEqual(information.call_args.args[2], expected)
         self.assertIn(expected, self.window._work_log_output.toPlainText())
+
+    def test_scan_completed_warns_and_loads_camera_raw_when_accepted(self) -> None:
+        root_path = Path(self._config_dir.name)
+        raw_result = FileScanResult(
+            path=root_path / "frame.CR2",
+            object_folder="Alpha",
+            metadata=ObservationMetadata(
+                date_obs=datetime(2026, 9, 22, 1, 0, tzinfo=UTC),
+                filter_name=None,
+                exposure_seconds=None,
+                width=100,
+                height=80,
+                object_name="Alpha",
+            ),
+            wcs_status=WcsStatus.UNSOLVED,
+        )
+        report = ScanReport(
+            root_path=root_path,
+            object_summaries=[ObjectScanSummary(object_name="Alpha", files=[raw_result])],
+        )
+
+        with (
+            patch.object(self.window, "_show_scan_results_summary_dialog"),
+            patch(
+                "photometry_app.ui.main_window.QMessageBox.warning",
+                return_value=QMessageBox.StandardButton.Yes,
+            ) as warning,
+        ):
+            self.window._handle_scan_completed(report)
+
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[1], "Color camera RAW photometry")
+        self.assertIn("synthetic luminance plane", warning.call_args.args[2])
+        self.assertEqual(warning.call_args.args[4], QMessageBox.StandardButton.Cancel)
+        self.assertIs(self.window._current_report, report)
+        self.assertIn("Camera RAW caution accepted", self.window._work_log_output.toPlainText())
+
+    def test_scan_completed_does_not_load_camera_raw_when_canceled(self) -> None:
+        root_path = Path(self._config_dir.name)
+        raw_result = FileScanResult(
+            path=root_path / "frame.nef",
+            object_folder="Alpha",
+            metadata=ObservationMetadata(
+                date_obs=datetime(2026, 9, 22, 1, 0, tzinfo=UTC),
+                filter_name=None,
+                exposure_seconds=None,
+                width=100,
+                height=80,
+                object_name="Alpha",
+            ),
+            wcs_status=WcsStatus.UNSOLVED,
+        )
+        report = ScanReport(
+            root_path=root_path,
+            object_summaries=[ObjectScanSummary(object_name="Alpha", files=[raw_result])],
+        )
+
+        with (
+            patch.object(self.window, "_show_scan_results_summary_dialog") as summary_dialog,
+            patch(
+                "photometry_app.ui.main_window.QMessageBox.warning",
+                return_value=QMessageBox.StandardButton.Cancel,
+            ),
+        ):
+            self.window._handle_scan_completed(report)
+
+        summary_dialog.assert_not_called()
+        self.assertIsNone(self.window._current_report)
+        self.assertIn("canceled", self.window._summary_label.text().lower())
 
 
 
@@ -25426,6 +25521,95 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(self.window._sky_explorer_primary_button.text(), "Explore")
         self.assertFalse(self.window._sky_explorer_primary_button.isEnabled())
 
+    def test_sky_explorer_explore_shows_terminate_before_worker_reports_running(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        class _NotYetRunningWorker:
+            def __init__(self, **_kwargs) -> None:
+                self.progress_updated = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.exploration_completed = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.exploration_failed = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+
+            def start(self) -> None:
+                return None
+
+            def isRunning(self) -> bool:
+                return False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "field.fits"
+            source_path.write_bytes(b"test")
+            self.window._current_sky_explorer_source_image = source_path
+            self.window._sky_explorer_image_input.setText(str(source_path))
+            with (
+                patch("photometry_app.ui.main_window.SkyExplorerWorker", _NotYetRunningWorker),
+                patch.object(self.window, "_selected_sky_explorer_object_type_keys", return_value=("galaxy",)),
+                patch.object(self.window, "_selected_sky_explorer_query_layers", return_value=("deep_sky",)),
+                patch.object(self.window, "_refresh_sky_explorer_image_view"),
+            ):
+                self.window._start_sky_explorer_exploration()
+
+        self.assertTrue(self.window._sky_explorer_query_active)
+        self.assertEqual(self.window._sky_explorer_primary_button.text(), "Terminate")
+        self.assertTrue(self.window._sky_explorer_primary_button.isEnabled())
+        self.assertIn("2px solid", self.window._sky_explorer_primary_button.styleSheet())
+
+    def test_sky_explorer_mag_limit_search_shows_terminate_before_worker_reports_running(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        class _NotYetRunningWorker:
+            def __init__(self, **_kwargs) -> None:
+                self.progress_updated = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.exploration_completed = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.exploration_failed = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+
+            def start(self) -> None:
+                return None
+
+            def isRunning(self) -> bool:
+                return False
+
+            def request_cancel(self) -> None:
+                return None
+
+            def requestInterruption(self) -> None:
+                return None
+
+            def blockSignals(self, _value: bool) -> None:
+                return None
+
+            def wait(self, _ms: int) -> bool:
+                return True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "field.fits"
+            source_path.write_bytes(b"test")
+            self.window._current_sky_explorer_source_image = source_path
+            with patch("photometry_app.ui.main_window.SkyExplorerWorker", _NotYetRunningWorker):
+                self.window._start_sky_explorer_mag_limit_query()
+
+        self.assertTrue(self.window._sky_explorer_mag_limit_query_active)
+        self.assertEqual(self.window._sky_explorer_primary_button.text(), "Terminate")
+        self.assertTrue(self.window._sky_explorer_primary_button.isEnabled())
+        self.assertIn("Mag Limit", self.window._sky_explorer_primary_button.toolTip())
+
+        self.window._handle_sky_explorer_primary_action()
+
+        self.assertFalse(self.window._sky_explorer_mag_limit_query_active)
+        self.assertIsNone(self.window._sky_explorer_mag_limit_worker)
+        self.assertEqual(self.window._sky_explorer_primary_button.text(), "Explore")
+        self.assertEqual(self.window._sky_explorer_status_label.text(), "Mag Limit query terminated.")
+
+    def test_sky_explorer_mag_limit_terminated_failure_skips_warning_dialog(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        self.window._sky_explorer_mag_limit_query_active = True
+        with patch("photometry_app.ui.main_window.QMessageBox.warning") as warning:
+            self.window._handle_sky_explorer_mag_limit_failed("Sky Explorer query was terminated.")
+        warning.assert_not_called()
+        self.assertFalse(self.window._sky_explorer_mag_limit_query_active)
+        self.assertEqual(self.window._sky_explorer_primary_button.text(), "Explore")
+        self.assertEqual(self.window._sky_explorer_status_label.text(), "Mag Limit query terminated.")
+
     def test_sky_explorer_terminated_failure_skips_warning_dialog(self) -> None:
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
         with patch("photometry_app.ui.main_window.QMessageBox.warning") as warning:
@@ -25714,7 +25898,34 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertFalse(overlays[0].fill)
         self.assertEqual(overlays[0].color, _SKY_EXPLORER_ROI_STROKE_COLOR)
         self.assertGreater(overlays[0].stroke_width, 0.0)
+        self.assertEqual(overlays[0].label, "")
         self.assertEqual(self.window._sky_explorer_roi_button_state(), "active")
+
+    def test_sky_explorer_roi_shows_fov_label_only_when_solved_and_enabled(self) -> None:
+        from astropy.wcs import WCS
+
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        self.window._sky_explorer_roi_selection = _HrRoiSelection("rectangle", 0.0, 0.0, 120.0, 60.0)
+        wcs = WCS(naxis=2)
+        wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        wcs.wcs.crval = [180.0, 0.0]
+        wcs.wcs.crpix = [1.0, 1.0]
+        wcs.wcs.cdelt = [-1.0 / 3600.0, 1.0 / 3600.0]
+        wcs.wcs.cunit = ["deg", "deg"]
+
+        with patch.object(self.window, "_sky_explorer_image_wcs", return_value=wcs):
+            overlays = self.window._current_sky_explorer_selection_overlays()
+        self.assertIn("×", overlays[0].label)
+        self.assertTrue(overlays[0].label.startswith("2.00'"))
+
+        with patch.object(self.window, "_sky_explorer_image_wcs", return_value=None):
+            unsolved = self.window._current_sky_explorer_selection_overlays()
+        self.assertEqual(unsolved[0].label, "")
+
+        self.window._ensure_settings().sky_explorer_show_roi_fov_label = False
+        with patch.object(self.window, "_sky_explorer_image_wcs", return_value=wcs):
+            hidden = self.window._current_sky_explorer_selection_overlays()
+        self.assertEqual(hidden[0].label, "")
 
     def test_sky_explorer_remove_roi_from_committed_region(self) -> None:
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
@@ -25761,6 +25972,37 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
                 self.window._start_sky_explorer_exploration()
 
         self.assertEqual(captured.get("pixel_roi"), (12.0, 18.0, 40.0, 55.0))
+
+    def test_sky_explorer_mag_limit_query_uses_committed_roi(self) -> None:
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+        self.window._sky_explorer_roi_selection = _HrRoiSelection("rectangle", 12.0, 18.0, 40.0, 55.0)
+        captured: dict[str, object] = {}
+
+        class _FakeWorker:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+                self.progress_updated = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.exploration_completed = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+                self.exploration_failed = SimpleNamespace(connect=lambda *_args, **_kwargs: None)
+
+            def start(self) -> None:
+                return None
+
+            def isRunning(self) -> bool:
+                return False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "field.fits"
+            source_path.write_bytes(b"test")
+            self.window._current_sky_explorer_source_image = source_path
+            with patch("photometry_app.ui.main_window.SkyExplorerWorker", _FakeWorker):
+                self.window._start_sky_explorer_mag_limit_query()
+
+        self.assertEqual(captured.get("pixel_roi"), (12.0, 18.0, 40.0, 55.0))
+        self.assertEqual(
+            self.window._pending_sky_explorer_mag_limit_query_signature[-1],
+            (12.0, 18.0, 40.0, 55.0),
+        )
 
     def test_sky_explorer_context_menu_offers_remove_roi_inside_region(self) -> None:
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
@@ -27808,6 +28050,12 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertTrue(worker_class.call_args.kwargs["ignore_gaia_hard_cap"])
 
+        self.assertTrue(worker_class.call_args.kwargs["include_deep_star_catalogs"])
+
+        self.assertEqual(worker_class.call_args.kwargs["catalog_start_magnitude"], 12.0)
+
+        self.assertIsNone(worker_class.call_args.kwargs["pixel_roi"])
+
         fake_worker.start.assert_called_once()
 
 
@@ -28029,6 +28277,49 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         start_query.assert_called_once()
 
 
+    def test_sky_explorer_mag_limit_queries_deep_catalogs_beyond_gaia(self) -> None:
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_mag_limit_deep_catalogs.fits"
+
+        image_path.touch()
+
+        self.window._current_sky_explorer_source_image = image_path
+
+        self.window._current_sky_explorer_result = SkyExplorerResult(
+
+            source_path=image_path,
+
+            solved_field=SolvedField(10.0, 20.0, 0.5, 16, 16, image_path),
+
+            used_astrometry_fallback=False,
+
+            footprint=SkyExplorerFieldFootprint(10.0, 20.0, 0.5, 1.0, 0.75, ()),
+
+            objects=(SkyExplorerObject("gaia_stars", "Gaia DR3", "gaia-a", "Gaia A", "Star", 10.1, 20.1, 4.0, 4.0, 12.22, 8.0, "Gaia A", {}),),
+
+            layer_summaries=(SkyExplorerLayerSummary("gaia_stars", "Gaia Stars", 1, 1),),
+
+            warning_messages=(),
+
+            summary_text="Resolved a 0.500 deg field and prepared Gaia Stars: 1 for image overlay and table review.",
+
+        )
+
+        self.window._sky_explorer_result_gaia_query_signature = self.window._current_sky_explorer_gaia_query_signature()
+
+        options = replace(
+            self.window._sky_explorer_mag_limit_options_from_settings(),
+            start_magnitude=12.0,
+            max_magnitude=24.0,
+        )
+
+        with patch.object(self.window, "_refresh_sky_explorer_image_view"), patch.object(self.window, "_start_sky_explorer_mag_limit_query") as start_query:
+
+            self.window._apply_sky_explorer_mag_limit_options(options)
+
+        start_query.assert_called_once()
+
+
     def test_sky_explorer_mag_limit_prefers_common_name_from_metadata(self) -> None:
 
         image_path = Path(self._state_dir.name) / "sky_explorer_mag_limit_named_star.fits"
@@ -28227,6 +28518,82 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         )
 
         self.assertEqual(self.window._sky_explorer_mag_limit_label_name(unnamed), long_source_id)
+
+
+
+    def test_sky_explorer_mag_limit_labels_use_catalog_magnitude_band(self) -> None:
+
+        image_path = Path(self._state_dir.name) / "sky_explorer_mag_limit_ps1_band.fits"
+
+        image_path.touch()
+
+        self.window._current_sky_explorer_source_image = image_path
+
+        self.window._sky_explorer_mag_limit_result = SkyExplorerResult(
+
+            source_path=image_path,
+
+            solved_field=SolvedField(10.0, 20.0, 0.5, 16, 16, image_path),
+
+            used_astrometry_fallback=False,
+
+            footprint=SkyExplorerFieldFootprint(10.0, 20.0, 0.5, 1.0, 0.75, ()),
+
+            objects=(
+
+                SkyExplorerObject(
+
+                    "gaia_stars",
+
+                    "panstarrs-dr1",
+
+                    "ps1-1",
+
+                    "PS1 1",
+
+                    "Star",
+
+                    10.1,
+
+                    20.1,
+
+                    4.0,
+
+                    4.0,
+
+                    22.4,
+
+                    8.0,
+
+                    "PS1 1",
+
+                    {"preferred_display_name": "PS1 1", "magnitude_band": "r"},
+
+                ),
+
+            ),
+
+            layer_summaries=(SkyExplorerLayerSummary("gaia_stars", "Gaia Stars", 1, 1),),
+
+            warning_messages=(),
+
+            summary_text="Resolved a 0.500 deg field and prepared Gaia Stars: 1 for image overlay and table review.",
+
+        )
+
+        self.window._sky_explorer_mag_limit_options = replace(
+            self.window._sky_explorer_mag_limit_options_from_settings(),
+            start_magnitude=12.0,
+            max_magnitude=24.0,
+        )
+
+        self.window._sky_explorer_mag_limit_query_signature = self.window._current_sky_explorer_mag_limit_query_signature()
+
+        self.window._set_sky_explorer_mag_limit_active(True)
+
+        overlays = [overlay for overlay in self.window._current_sky_explorer_image_overlays() if overlay.source_id.startswith("mag-limit:")]
+
+        self.assertEqual(overlays[0].name, "PS1 1\nr 22.4")
 
 
     def test_sky_explorer_mag_limit_completion_populates_measurement_results_group(self) -> None:
@@ -31131,27 +31498,27 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(result_names, ["NGC 7000"])
         self.assertIn("NGC", self.window._sky_explorer_results_table.item(0, 0).text())
 
-    def test_sky_explorer_dense_galaxy_catalog_is_only_enabled_for_scientific_all(self) -> None:
+    def test_sky_explorer_dense_galaxy_catalog_enables_for_scientific_and_advanced_galaxies(self) -> None:
 
         self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
 
         self.assertFalse(self.window._should_enable_dense_sky_explorer_galaxy_catalog(self.window._selected_sky_explorer_object_type_keys()))
 
-        self.window._sky_explorer_object_type_mode_button.click()
+        self.window._set_sky_explorer_object_type_mode("scientific", preserve_selection=False)
 
-        self.window._sky_explorer_object_type_mode_button.click()
+        self._check_only_sky_explorer_object_type("g")
 
-        self.window._sky_explorer_select_all_button.click()
+        self.assertTrue(self.window._should_enable_dense_sky_explorer_galaxy_catalog(self.window._selected_sky_explorer_object_type_keys()))
 
-        selected_keys = self.window._selected_sky_explorer_object_type_keys()
+        self.window._set_sky_explorer_object_type_mode("advanced", preserve_selection=False)
 
-        self.assertTrue(self.window._should_enable_dense_sky_explorer_galaxy_catalog(selected_keys))
+        self._check_only_sky_explorer_object_type("galaxy")
 
-        first_item = self.window._sky_explorer_object_type_table.item(0, 4)
+        self.assertTrue(self.window._should_enable_dense_sky_explorer_galaxy_catalog(self.window._selected_sky_explorer_object_type_keys()))
 
-        assert first_item is not None
+        self.window._set_sky_explorer_object_type_mode("simple", preserve_selection=False)
 
-        first_item.setCheckState(Qt.CheckState.Unchecked)
+        self._check_only_sky_explorer_object_type("galaxy")
 
         self.assertFalse(self.window._should_enable_dense_sky_explorer_galaxy_catalog(self.window._selected_sky_explorer_object_type_keys()))
 
@@ -31231,6 +31598,47 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(coordinates, (75.6573166667, -8.3020694444))
 
+
+    def test_sky_explorer_photometric_galaxy_details_open_ned_and_survey_stars_open_vizier(self) -> None:
+        galaxy = SkyExplorerObject(
+            "deep_sky",
+            "des-dr1",
+            "J220948.74-471448.0",
+            "DES J220948.74-471448.0",
+            "Galaxy",
+            332.453113,
+            -47.246688,
+            100.0,
+            80.0,
+            18.85,
+            6.0,
+            "DES J220948.74-471448.0",
+            {"catalog_type": "G"},
+        )
+        galaxy_url, galaxy_status = self.window._sky_explorer_object_details_url(galaxy)
+        self.assertIn("ned.ipac.caltech.edu/conesearch", galaxy_url)
+        self.assertIn("ra=332.453113d", galaxy_url)
+        self.assertIn("Opened NED literature search", galaxy_status)
+
+        star = SkyExplorerObject(
+            "gaia_stars",
+            "panstarrs-dr1",
+            "ps1-1",
+            "PS1 1",
+            "Star",
+            10.1,
+            20.1,
+            4.0,
+            4.0,
+            22.4,
+            8.0,
+            "PS1 1",
+            {"magnitude_band": "r"},
+        )
+        star_url, star_status = self.window._sky_explorer_object_details_url(star)
+        self.assertIn("vizier.cds.unistra.fr/viz-bin/VizieR-4", star_url)
+        self.assertIn("II%2F349%2Fps1", star_url)
+        self.assertIn("Opened Pan-STARRS DR1 / VizieR search", star_status)
 
     def test_sky_explorer_image_context_search_opens_simbad_coordinate_query(self) -> None:
 
@@ -52027,6 +52435,28 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(self.window._hr_motion_group_advanced_button.text(), "Advanced...")
 
+        self.assertEqual(self.window._hr_diagram_filter_button.text(), "Filter...")
+
+        self.assertFalse(self.window._hr_diagram_filter.is_active)
+
+        primary_layout = self.window._hr_plot_group.layout().itemAt(0).layout()
+
+        toolbar_widgets = [
+            primary_layout.itemAt(index).widget()
+            for index in range(primary_layout.count())
+            if primary_layout.itemAt(index).widget() is not None
+        ]
+
+        self.assertLess(
+            toolbar_widgets.index(self.window._hr_motion_group_advanced_button),
+            toolbar_widgets.index(self.window._hr_diagram_filter_button),
+        )
+
+        self.assertLess(
+            toolbar_widgets.index(self.window._hr_diagram_filter_button),
+            toolbar_widgets.index(self.window._hr_motion_group_filter_checkbox),
+        )
+
         self.assertEqual(self.window._hr_motion_group_filter_checkbox.text(), "Only Group")
 
         self.assertFalse(self.window._hr_motion_group_filter_checkbox.isEnabled())
@@ -54938,6 +55368,196 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
+    def test_settings_dialog_can_open_on_the_ai_assistant_tab(self) -> None:
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            root_path = Path(temp_dir)
+
+            dialog = SettingsDialog(root_path, AppSettings.from_root(root_path), parent=self.window)
+
+            dialog.show_assistant_tab()
+
+            self.assertIs(dialog._settings_tabs.currentWidget(), dialog._assistant_settings_tab)
+
+            dialog.deleteLater()
+
+
+
+    def test_tools_menu_toggles_the_ai_assistant_dock(self) -> None:
+
+        self.assertIsNone(self.window._assistant_dock)
+
+        self.window._tools_assistant_action.trigger()
+
+        dock = self.window._assistant_dock
+
+        self.assertIsNotNone(dock)
+
+        self.assertIs(dock.widget(), self.window._assistant_panel)
+
+        self.assertEqual(self.window.dockWidgetArea(dock), Qt.DockWidgetArea.RightDockWidgetArea)
+
+        self.assertFalse(dock.isHidden())
+
+        self.assertTrue(self.window._tools_assistant_action.isChecked())
+
+        self.window._tools_assistant_action.trigger()
+
+        self.assertTrue(dock.isHidden())
+
+        self.assertFalse(self.window._tools_assistant_action.isChecked())
+
+        self.window._tools_assistant_action.trigger()
+
+        self.assertIs(self.window._assistant_dock, dock)
+
+        self.assertFalse(dock.isHidden())
+
+        registry = self.window._assistant_panel._registry_factory()
+
+        self.assertEqual(
+            set(registry.names()),
+            {
+                "search_guides",
+                "read_guide_section",
+                "list_guide_sections",
+                "get_cast_state",
+                "switch_mode",
+                "list_folder_images",
+                "read_image_header",
+                "summarize_image_headers",
+                "look_up_sky_object",
+                "get_observation_deck",
+                "find_duplicate_images",
+                "add_folder_to_observation_deck",
+                "exclude_from_observation_deck",
+                "include_in_observation_deck",
+            },
+        )
+
+
+
+    def test_assistant_bridge_reports_state_and_switches_modes(self) -> None:
+
+        import threading
+
+        from photometry_app.ui.assistant_bridge import MainWindowAssistantBridge
+
+        bridge = MainWindowAssistantBridge(self.window)
+
+        cancel = threading.Event()
+
+        self.window._handle_app_mode_changed(AppMode.SKY_EXPLORER)
+
+        state = bridge.state(cancel)
+
+        self.assertEqual(state["mode"], "Sky Explorer")
+
+        self.assertIn("workspace_folder", state)
+
+        self.assertIsInstance(state["running_jobs"], list)
+
+        notes = bridge.mode_switch_notes(AppMode.DISTANCE_MAP, cancel)
+
+        self.assertTrue(any("Distance Map opens" in note for note in notes))
+
+        state = bridge.switch_mode(AppMode.DISTANCE_MAP, cancel)
+
+        self.assertEqual(state["mode"], "Distance Map")
+
+        self.assertEqual(self.window._current_app_mode(), AppMode.DISTANCE_MAP)
+
+
+
+    def test_assistant_bridge_builds_the_deck_and_excludes_copies(self) -> None:
+
+        import shutil
+        import threading
+        import time
+
+        from photometry_app.ui.assistant_bridge import MainWindowAssistantBridge
+
+        bridge = MainWindowAssistantBridge(self.window)
+
+        cancel = threading.Event()
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch("photometry_app.ui.astro_tools_panel.load_observation_deck_library", return_value=None),
+            patch("photometry_app.ui.astro_tools_panel.save_observation_deck_library") as save,
+        ):
+
+            root = Path(temp_dir).resolve() / "Astro"
+
+            original = root / "M13" / "Lights" / "a.fits"
+
+            original.parent.mkdir(parents=True)
+
+            header = fits.Header()
+
+            header["IMAGETYP"] = "Light"
+
+            header["EXPTIME"] = 300.0
+
+            header["DATE-OBS"] = "2024-06-01T01:00:00"
+
+            fits.PrimaryHDU(data=np.zeros((8, 8), dtype=np.float32), header=header).writeto(original)
+
+            copy = root / "M13" / "Lights" / "Backup" / "a.fits"
+
+            copy.parent.mkdir()
+
+            shutil.copyfile(original, copy)
+
+            deadline = time.monotonic() + 10
+
+            bridge.open_deck(cancel)
+
+            self.assertEqual(self.window._current_app_mode(), AppMode.ASTRO_TOOLS)
+
+            while bridge.deck_busy(cancel) and time.monotonic() < deadline:
+
+                QApplication.processEvents()
+
+                time.sleep(0.01)
+
+            bridge.add_deck_folder(root, cancel)
+
+            while bridge.deck_busy(cancel) and time.monotonic() < deadline:
+
+                QApplication.processEvents()
+
+                time.sleep(0.01)
+
+            library = bridge.deck_library(cancel)
+
+            self.assertIsNotNone(library)
+
+            self.assertEqual(len(library.images), 2)
+
+            self.assertIn(root, bridge.protected_roots())
+
+            self.assertEqual(bridge.set_deck_exclusions((copy,), True, cancel), 1)
+
+            self.assertTrue(bridge.deck_library(cancel).is_excluded(copy))
+
+            self.assertTrue(save.call_args.args[0].is_excluded(copy))
+
+            self.assertTrue(copy.is_file())
+
+
+
+    def test_assistant_program_map_uses_the_mode_menu_names(self) -> None:
+
+        from photometry_app.assistant.program_map import MODES
+
+        menu_names = {action.text() for action in self.window._app_mode_action_group.actions()}
+
+        self.assertEqual({info.name for info in MODES}, menu_names)
+
+
+
     def test_settings_dialog_uses_general_science_export_and_advanced_tabs(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -54948,7 +55568,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
 
 
-            self.assertEqual(dialog._settings_tabs.count(), 7)
+            self.assertEqual(dialog._settings_tabs.count(), 8)
 
             self.assertEqual(dialog._settings_tabs.tabText(0), "General")
 
@@ -54977,6 +55597,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertIs(dialog._settings_tabs.widget(5), dialog._sky_explorer_settings_tab)
 
             self.assertIs(dialog._settings_tabs.widget(6), dialog._setup_settings_tab)
+
+            self.assertEqual(dialog._settings_tabs.tabText(7), "AI Assistant")
+
+            self.assertIs(dialog._settings_tabs.widget(7), dialog._assistant_settings_tab)
 
             self.assertTrue(dialog._advanced_settings_tab.isAncestorOf(dialog._advanced_settings_group))
 
@@ -55225,6 +55849,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_default_text_font_style_input))
 
             self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_default_text_size_input))
+            self.assertTrue(dialog._sky_explorer_visual_settings_tab.isAncestorOf(dialog._sky_explorer_show_roi_fov_label_input))
 
             self.assertTrue(dialog._asteroid_search_settings_tab.isAncestorOf(dialog._synthetic_tracking_crop_radius_input))
 
@@ -55416,6 +56041,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._sky_explorer_scale_overlay_strokes_input.setChecked(False)
 
+            dialog._sky_explorer_show_roi_fov_label_input.setChecked(False)
+
             dialog._set_combo_data(dialog._sky_explorer_marker_color_relation_input, "stroke_bright_fill_dark")
 
             dialog._set_combo_data(dialog._sky_explorer_text_color_relation_input, "bright")
@@ -55475,6 +56102,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertFalse(updated_settings.sky_explorer_scale_extended_nebulae)
 
             self.assertFalse(updated_settings.sky_explorer_scale_overlay_strokes)
+
+            self.assertFalse(updated_settings.sky_explorer_show_roi_fov_label)
 
             self.assertEqual(updated_settings.sky_explorer_marker_color_relation, "stroke_bright_fill_dark")
 
@@ -55574,6 +56203,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._sky_explorer_scale_overlay_strokes_input.setChecked(False)
 
+            dialog._sky_explorer_show_roi_fov_label_input.setChecked(False)
+
             dialog._set_combo_data(dialog._sky_explorer_marker_color_relation_input, "stroke_bright_fill_dark")
 
             dialog._set_combo_data(dialog._sky_explorer_text_color_relation_input, "bright")
@@ -55619,6 +56250,8 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertTrue(updated_settings.sky_explorer_scale_extended_nebulae)
 
             self.assertTrue(updated_settings.sky_explorer_scale_overlay_strokes)
+
+            self.assertTrue(updated_settings.sky_explorer_show_roi_fov_label)
 
             self.assertEqual(updated_settings.sky_explorer_marker_color_relation, "stroke_dark_fill_bright")
 
