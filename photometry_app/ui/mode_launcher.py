@@ -49,6 +49,7 @@ ModeLauncherTier = Literal["science", "explore"]
 
 SCIENCE_WORKFLOW_LABEL = "Detect & Measure"
 VISUALIZATIONS_TOOLS_LABEL = "Explore, Visualize & Process"
+SIMULATIONS_LABEL = "Simulations"
 EXPLORE_LEARN_LABEL = VISUALIZATIONS_TOOLS_LABEL
 LAUNCHER_HEADER_SUBTITLE = "Measure light, detect moving objects, and explore the sky."
 
@@ -106,6 +107,12 @@ def launcher_content_width(viewport_width: int) -> int:
     target = int(round(host * _CONTENT_WIDTH_RATIO))
     side_margin = max(36, int(round(host * 0.075)))
     return max(320, min(target, host - side_margin * 2))
+
+
+def simulation_grid_column_count(width: int, card_count: int) -> int:
+    """Use the Explore card size so one Simulations card does not span the page."""
+
+    return launcher_grid_column_count(width, tier="explore", card_count=max(int(card_count), 5))
 
 
 def launcher_grid_column_count(width: int, *, tier: ModeLauncherTier, card_count: int = 3) -> int:
@@ -267,7 +274,40 @@ EXPLORE_LEARN_ENTRIES: tuple[ModeLauncherEntry, ...] = (
     ),
 )
 
-MODE_LAUNCHER_ENTRIES: tuple[ModeLauncherEntry, ...] = SCIENCE_WORKFLOW_ENTRIES + EXPLORE_LEARN_ENTRIES
+SIMULATION_ENTRIES: tuple[ModeLauncherEntry, ...] = (
+    ModeLauncherEntry(
+        AppMode.BLACK_HOLE,
+        "Black Hole",
+        "Trace light around a spinning or nonspinning black hole.",
+        "explore",
+        image_names=("black_hole.jpg", "black_hole.png", "black_hole.webp"),
+        gradient_top="#2a160f",
+        gradient_bottom="#100804",
+        detail="Orbit a Kerr or Schwarzschild black hole, watch its gas disk evolve against CAst's lensed Milky Way, and export movies.",
+    ),
+    ModeLauncherEntry(
+        AppMode.GALAXY_MERGER,
+        "Galaxy Merger",
+        "Collide two disk galaxies with gravity, gas, and new stars.",
+        "explore",
+        image_names=("galaxy_merger.jpg", "galaxy_merger.png", "galaxy_merger.webp"),
+        gradient_top="#1c1830",
+        gradient_bottom="#090812",
+        detail="Run an N-body encounter of two galaxies, scrub through the recording, and view it as starlight and dust, a density volume, or particles.",
+    ),
+    ModeLauncherEntry(
+        AppMode.CLUSTER_FLOW,
+        "Cluster Flow",
+        "Evolve gas filaments in a galaxy cluster or an expanding universe.",
+        "explore",
+        image_names=("cluster_flow.jpg", "cluster_flow.png", "cluster_flow.webp"),
+        gradient_top="#0d2230",
+        gradient_bottom="#050c12",
+        detail="Watch gas fall along filaments, heat in outbursts, or grow from cosmological fluctuations, then bake a recording and export an MP4.",
+    ),
+)
+
+MODE_LAUNCHER_ENTRIES: tuple[ModeLauncherEntry, ...] = SCIENCE_WORKFLOW_ENTRIES + EXPLORE_LEARN_ENTRIES + SIMULATION_ENTRIES
 
 
 def _resolve_mode_launcher_image(image_names: tuple[str, ...]) -> Path | None:
@@ -807,9 +847,9 @@ class _LauncherCardGrid(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumWidth(0)
 
-    def sync_to_width(self, width: int, *, image_height: int | None = None) -> None:
+    def sync_to_width(self, width: int, *, image_height: int | None = None, column_count: int | None = None) -> None:
         width = max(1, int(width))
-        columns = launcher_grid_column_count(width, tier=self._tier, card_count=len(self._cards))
+        columns = column_count if column_count is not None else launcher_grid_column_count(width, tier=self._tier, card_count=len(self._cards))
         if columns != self._columns:
             self._rebuild(columns)
         self._apply_sizes(width, columns, image_height=image_height)
@@ -839,6 +879,10 @@ class _LauncherCardGrid(QWidget):
             return
         for index, card in enumerate(self._cards):
             self._grid.addWidget(card, index // columns, index % columns)
+        for column in range(columns):
+            self._grid.setColumnStretch(column, 1 if column == columns - 1 and len(self._cards) < columns else 0)
+        for card in self._cards:
+            self._grid.setAlignment(card, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
     def _apply_sizes(self, width: int, columns: int, *, image_height: int | None = None) -> None:
         widths = _column_widths(width, columns)
@@ -944,11 +988,14 @@ class ModeLauncherWidget(QWidget):
 
         science_cards = self._build_cards(SCIENCE_WORKFLOW_ENTRIES)
         explore_cards = self._build_cards(EXPLORE_LEARN_ENTRIES)
+        simulation_cards = self._build_cards(SIMULATION_ENTRIES)
         self._science_heading = _SectionHeading(SCIENCE_WORKFLOW_LABEL, "modeLauncherSectionScience", self._accent, column)
         self._explore_heading = _SectionHeading(VISUALIZATIONS_TOOLS_LABEL, "modeLauncherSectionExplore", self._accent, column)
+        self._simulation_heading = _SectionHeading(SIMULATIONS_LABEL, "modeLauncherSectionSimulations", self._accent, column)
         self._science_row = _LauncherCardGrid(science_cards, tier="science", parent=column)
         self._explore_row = _LauncherCardGrid(explore_cards, tier="explore", parent=column)
-        self._headings = (self._science_heading, self._explore_heading)
+        self._simulation_row = _LauncherCardGrid(simulation_cards, tier="explore", parent=column)
+        self._headings = (self._science_heading, self._explore_heading, self._simulation_heading)
 
         column_layout.addWidget(header)
         column_layout.addSpacing(_HEADER_SECTION_GAP)
@@ -959,6 +1006,10 @@ class ModeLauncherWidget(QWidget):
         column_layout.addWidget(self._explore_heading)
         column_layout.addSpacing(_SECTION_HEADING_GAP)
         column_layout.addWidget(self._explore_row)
+        column_layout.addSpacing(_SECTION_VERTICAL_GAP)
+        column_layout.addWidget(self._simulation_heading)
+        column_layout.addSpacing(_SECTION_HEADING_GAP)
+        column_layout.addWidget(self._simulation_row)
 
         align_layout.addWidget(column, 0, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         align_layout.addStretch(1)
@@ -1036,13 +1087,15 @@ class ModeLauncherWidget(QWidget):
         header_height = self._header.sizeHint().height() if self._header is not None else 48
         science_height = self._science_heading.sizeHint().height()
         explore_height = self._explore_heading.sizeHint().height()
+        simulation_height = self._simulation_heading.sizeHint().height()
         return (
             header_height
             + science_height
             + explore_height
+            + simulation_height
             + _HEADER_SECTION_GAP
-            + _SECTION_HEADING_GAP * 2
-            + _SECTION_VERTICAL_GAP
+            + _SECTION_HEADING_GAP * 3
+            + _SECTION_VERTICAL_GAP * 2
             + _PAGE_MARGIN_TOP
             + _PAGE_MARGIN_BOTTOM
         )
@@ -1054,6 +1107,7 @@ class ModeLauncherWidget(QWidget):
         explore_width: int,
         science_footer: int,
         explore_footer: int,
+        simulation_footer: int,
         viewport_height: int,
     ) -> tuple[int, int]:
         science = image_band_height(science_width, tier="science")
@@ -1061,19 +1115,49 @@ class ModeLauncherWidget(QWidget):
         if viewport_height <= 0:
             return science, explore
         inset = 2 * int(math.ceil(_CARD_INSET))
-        natural = self._chrome_height() + science + science_footer + inset + explore + explore_footer + inset
-        extra = int(viewport_height * 0.82) - natural
+
+        def occupied(science_image: int, explore_image: int) -> int:
+            return (
+                self._chrome_height()
+                + science_image
+                + science_footer
+                + inset
+                + explore_image
+                + explore_footer
+                + inset
+                + explore_image
+                + simulation_footer
+                + inset
+            )
+
+        overflow = occupied(science, explore) - viewport_height
+        if overflow > 0:
+            science_floor = _SCIENCE_IMAGE_MIN
+            explore_floor = _EXPLORE_IMAGE_MIN
+            while overflow > 0 and explore > explore_floor:
+                explore -= 1
+                overflow -= 2
+            while overflow > 0 and science > max(science_floor, explore + 48):
+                science -= 1
+                overflow -= 1
+            while overflow > 0 and science > science_floor:
+                science -= 1
+                overflow -= 1
+            if science < explore + 48 and explore > explore_floor:
+                needed = explore + 48 - science
+                transfer = min(needed, (explore - explore_floor) * 2)
+                science += transfer
+                explore -= transfer // 2
+            return science, explore
+        extra = int(viewport_height * 0.82) - occupied(science, explore)
         if extra <= 12:
             return science, explore
         science_cap = max(science, int(science_width / 1.60))
         explore_cap = max(explore, int(explore_width / 1.35))
         science_room = max(0, science_cap - science)
         explore_room = max(0, explore_cap - explore)
-        budget = min(extra, science_room + explore_room)
-        if budget <= 0:
-            return science, explore
-        science_gain = min(science_room, int(round(budget * 0.58)))
-        explore_gain = min(explore_room, budget - science_gain)
+        science_gain = min(science_room, int(round(extra * 0.58)))
+        explore_gain = min(explore_room, max(0, extra - science_gain) // 2)
         return science + science_gain, explore + explore_gain
 
     def _sync_layout(self) -> None:
@@ -1102,30 +1186,41 @@ class ModeLauncherWidget(QWidget):
                 tier="explore",
                 card_count=len(EXPLORE_LEARN_ENTRIES),
             )
+            simulation_columns = simulation_grid_column_count(column_width, len(SIMULATION_ENTRIES))
             science_width = _column_widths(column_width, science_columns)[0]
             explore_width = _column_widths(column_width, explore_columns)[0]
+            simulation_width = _column_widths(column_width, simulation_columns)[0]
             science_footer = max(card.footer_height_for(science_width) for card in self._science_row._cards)  # noqa: SLF001
             explore_footer = max(card.footer_height_for(explore_width) for card in self._explore_row._cards)  # noqa: SLF001
+            simulation_footer = max(card.footer_height_for(simulation_width) for card in self._simulation_row._cards)  # noqa: SLF001
             science_image, explore_image = self._fitted_image_heights(
                 science_width=science_width,
                 explore_width=explore_width,
                 science_footer=science_footer,
                 explore_footer=explore_footer,
+                simulation_footer=simulation_footer,
                 viewport_height=host_height,
             )
             if host_height > 0:
                 self._align_root.setMinimumHeight(host_height)
             self._science_row.sync_to_width(column_width, image_height=science_image)
             self._explore_row.sync_to_width(column_width, image_height=explore_image)
+            self._simulation_row.sync_to_width(
+                column_width,
+                image_height=explore_image,
+                column_count=simulation_columns,
+            )
             content_height = (
                 self._header.sizeHint().height()
                 + self._science_heading.sizeHint().height()
                 + self._explore_heading.sizeHint().height()
+                + self._simulation_heading.sizeHint().height()
                 + _HEADER_SECTION_GAP
-                + _SECTION_HEADING_GAP * 2
-                + _SECTION_VERTICAL_GAP
+                + _SECTION_HEADING_GAP * 3
+                + _SECTION_VERTICAL_GAP * 2
                 + self._science_row.height()
                 + self._explore_row.height()
+                + self._simulation_row.height()
             )
             slack = max(_PAGE_MARGIN_TOP + _PAGE_MARGIN_BOTTOM, host_height - content_height)
             top_margin = int(slack * 0.42)
@@ -1186,5 +1281,5 @@ class ModeLauncherWidget(QWidget):
             "QLabel#modeLauncherHeaderTitle { color: #f3f5f8; background: transparent; }"
             "QLabel#modeLauncherHeaderSubtitle { color: #b7c2ce; background: transparent; }"
             "QLabel#modeLauncherVersion { color: #b7c2ce; background: transparent; }"
-            "QLabel#modeLauncherSectionScience, QLabel#modeLauncherSectionExplore { color: #e6ebf2; background: transparent; }"
+            "QLabel#modeLauncherSectionScience, QLabel#modeLauncherSectionExplore, QLabel#modeLauncherSectionSimulations { color: #e6ebf2; background: transparent; }"
         )

@@ -262,6 +262,9 @@ from photometry_app.ui.hr_plot_widget import *
 from photometry_app.ui.image_view import *
 from photometry_app.ui.levels_dialog import CurvesDialog
 from photometry_app.ui.light_curve_widget import *
+from photometry_app.ui.blackhole_view import BlackHolePanel
+from photometry_app.ui.galaxy_merger_view import GalaxyMergerPanel
+from photometry_app.ui.cluster_flow_view import ClusterFlowPanel
 from photometry_app.ui.mode_launcher import ModeLauncherWidget
 from photometry_app.ui.moving_object_label_dialog import MovingObjectQuickLabelDialog
 from photometry_app.ui.moon_system import DEFAULT_MOON_VISUAL_SETTINGS, MoonAsyncEphemerisSampler, MoonAtmosphereModel, MoonCache, MoonDrawState, MoonEarthshineModel, MoonEphemeris, MoonRendererGL, MoonState, MoonTileDiagnostics
@@ -29192,6 +29195,12 @@ class MainWindow(QMainWindow):
 
         self._astro_tools_panel = self._create_astro_tools_panel()
 
+        self._black_hole_panel = BlackHolePanel(self)
+
+        self._galaxy_merger_panel = GalaxyMergerPanel(self)
+
+        self._cluster_flow_panel = ClusterFlowPanel(self)
+
         self._app_mode_stack = _CurrentPageStackedWidget()
 
         self._app_mode_stack.addWidget(self._differential_mode_panel)
@@ -29211,6 +29220,12 @@ class MainWindow(QMainWindow):
         self._app_mode_stack.addWidget(self._distance_map_panel)
 
         self._app_mode_stack.addWidget(self._astro_tools_panel)
+
+        self._app_mode_stack.addWidget(self._black_hole_panel)
+
+        self._app_mode_stack.addWidget(self._galaxy_merger_panel)
+
+        self._app_mode_stack.addWidget(self._cluster_flow_panel)
 
 
 
@@ -54692,6 +54707,30 @@ class MainWindow(QMainWindow):
 
         )
 
+        self._app_mode_black_hole_action = QAction("Black Hole", self)
+
+        self._app_mode_black_hole_action.setCheckable(True)
+
+        self._app_mode_black_hole_action.triggered.connect(
+            lambda _checked: self._handle_app_mode_changed(AppMode.BLACK_HOLE)
+        )
+
+        self._app_mode_galaxy_merger_action = QAction("Galaxy Merger", self)
+
+        self._app_mode_galaxy_merger_action.setCheckable(True)
+
+        self._app_mode_galaxy_merger_action.triggered.connect(
+            lambda _checked: self._handle_app_mode_changed(AppMode.GALAXY_MERGER)
+        )
+
+        self._app_mode_cluster_flow_action = QAction("Cluster Flow", self)
+
+        self._app_mode_cluster_flow_action.setCheckable(True)
+
+        self._app_mode_cluster_flow_action.triggered.connect(
+            lambda _checked: self._handle_app_mode_changed(AppMode.CLUSTER_FLOW)
+        )
+
         self._app_mode_astro_tools_action = QAction("Observation Deck", self)
 
         self._app_mode_astro_tools_action.setCheckable(True)
@@ -54718,6 +54757,12 @@ class MainWindow(QMainWindow):
 
         self._app_mode_action_group.addAction(self._app_mode_astrostack_action)
 
+        self._app_mode_action_group.addAction(self._app_mode_black_hole_action)
+
+        self._app_mode_action_group.addAction(self._app_mode_galaxy_merger_action)
+
+        self._app_mode_action_group.addAction(self._app_mode_cluster_flow_action)
+
         self._app_mode_action_group.addAction(self._app_mode_astro_tools_action)
 
         mode_menu.addAction(self._app_mode_differential_action)
@@ -54735,6 +54780,12 @@ class MainWindow(QMainWindow):
         mode_menu.addAction(self._app_mode_distance_map_action)
 
         mode_menu.addAction(self._app_mode_astrostack_action)
+
+        mode_menu.addAction(self._app_mode_black_hole_action)
+
+        mode_menu.addAction(self._app_mode_galaxy_merger_action)
+
+        mode_menu.addAction(self._app_mode_cluster_flow_action)
 
         mode_menu.addAction(self._app_mode_astro_tools_action)
 
@@ -59456,6 +59507,18 @@ class MainWindow(QMainWindow):
 
             return AppMode.ASTRO_TOOLS
 
+        if current_widget is self._black_hole_panel:
+
+            return AppMode.BLACK_HOLE
+
+        if current_widget is self._galaxy_merger_panel:
+
+            return AppMode.GALAXY_MERGER
+
+        if current_widget is self._cluster_flow_panel:
+
+            return AppMode.CLUSTER_FLOW
+
         return AppMode.DIFFERENTIAL_PHOTOMETRY
 
     def _sync_app_mode_controls(self) -> None:
@@ -59480,6 +59543,12 @@ class MainWindow(QMainWindow):
 
         self._app_mode_astro_tools_action.blockSignals(True)
 
+        self._app_mode_black_hole_action.blockSignals(True)
+
+        self._app_mode_galaxy_merger_action.blockSignals(True)
+
+        self._app_mode_cluster_flow_action.blockSignals(True)
+
         self._app_mode_differential_action.setChecked(mode == AppMode.DIFFERENTIAL_PHOTOMETRY)
 
         self._app_mode_hr_action.setChecked(mode == AppMode.HR_DIAGRAM)
@@ -59498,6 +59567,12 @@ class MainWindow(QMainWindow):
 
         self._app_mode_astro_tools_action.setChecked(mode == AppMode.ASTRO_TOOLS)
 
+        self._app_mode_black_hole_action.setChecked(mode == AppMode.BLACK_HOLE)
+
+        self._app_mode_galaxy_merger_action.setChecked(mode == AppMode.GALAXY_MERGER)
+
+        self._app_mode_cluster_flow_action.setChecked(mode == AppMode.CLUSTER_FLOW)
+
         self._app_mode_differential_action.blockSignals(False)
 
         self._app_mode_hr_action.blockSignals(False)
@@ -59515,6 +59590,12 @@ class MainWindow(QMainWindow):
         self._app_mode_distance_map_action.blockSignals(False)
 
         self._app_mode_astro_tools_action.blockSignals(False)
+
+        self._app_mode_black_hole_action.blockSignals(False)
+
+        self._app_mode_galaxy_merger_action.blockSignals(False)
+
+        self._app_mode_cluster_flow_action.blockSignals(False)
 
         if self._settings is not None:
 
@@ -59592,6 +59673,10 @@ class MainWindow(QMainWindow):
 
             self._file_menu.addAction(self._open_folder_action)
 
+        elif current_mode in {AppMode.BLACK_HOLE, AppMode.GALAXY_MERGER, AppMode.CLUSTER_FLOW}:
+
+            pass
+
         else:
 
             self._file_menu.addAction(self._open_file_action)
@@ -59610,6 +59695,9 @@ class MainWindow(QMainWindow):
             AppMode.SKY_EXPLORER,
             AppMode.DISTANCE_MAP,
             AppMode.ASTRO_TOOLS,
+            AppMode.BLACK_HOLE,
+            AppMode.GALAXY_MERGER,
+            AppMode.CLUSTER_FLOW,
         }:
 
             return
@@ -59797,6 +59885,24 @@ class MainWindow(QMainWindow):
 
             status_message = "Observation Deck mode active."
 
+        elif mode == AppMode.BLACK_HOLE:
+
+            active_widget = self._black_hole_panel
+
+            status_message = "Black Hole mode active."
+
+        elif mode == AppMode.GALAXY_MERGER:
+
+            active_widget = self._galaxy_merger_panel
+
+            status_message = "Galaxy Merger mode active."
+
+        elif mode == AppMode.CLUSTER_FLOW:
+
+            active_widget = self._cluster_flow_panel
+
+            status_message = "Cluster Flow mode active."
+
         else:
 
             active_widget = self._asteroid_detection_panel
@@ -59912,6 +60018,18 @@ class MainWindow(QMainWindow):
         elif mode == AppMode.ASTRO_TOOLS:
 
             mode_title = "Observation Deck"
+
+        elif mode == AppMode.BLACK_HOLE:
+
+            mode_title = "Black Hole"
+
+        elif mode == AppMode.GALAXY_MERGER:
+
+            mode_title = "Galaxy Merger"
+
+        elif mode == AppMode.CLUSTER_FLOW:
+
+            mode_title = "Cluster Flow"
 
         else:
 

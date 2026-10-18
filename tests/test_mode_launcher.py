@@ -19,6 +19,8 @@ from photometry_app.ui.mode_launcher import (
     MODE_LAUNCHER_ENTRIES,
     SCIENCE_WORKFLOW_ENTRIES,
     SCIENCE_WORKFLOW_LABEL,
+    SIMULATION_ENTRIES,
+    SIMULATIONS_LABEL,
     VISUALIZATIONS_TOOLS_LABEL,
     _CONTENT_MAX_WIDTH,
     ModeLauncherWidget,
@@ -65,6 +67,9 @@ class ModeLauncherWidgetTest(unittest.TestCase):
                 AppMode.SKY_VIEW,
                 AppMode.DISTANCE_MAP,
                 AppMode.ASTROSTACK,
+                AppMode.BLACK_HOLE,
+                AppMode.GALAXY_MERGER,
+                AppMode.CLUSTER_FLOW,
             },
         )
 
@@ -82,9 +87,11 @@ class ModeLauncherWidgetTest(unittest.TestCase):
             ["Sky Atlas", "Sky Explorer", "HR Diagram", "Distance Map", "Deep Stack"],
         )
 
-    def test_section_labels_name_the_two_workflows(self) -> None:
+    def test_section_labels_name_the_workflows(self) -> None:
         self.assertEqual(SCIENCE_WORKFLOW_LABEL, "Detect & Measure")
         self.assertEqual(VISUALIZATIONS_TOOLS_LABEL, "Explore, Visualize & Process")
+        self.assertEqual(SIMULATIONS_LABEL, "Simulations")
+        self.assertEqual([entry.title for entry in SIMULATION_ENTRIES], ["Black Hole", "Galaxy Merger", "Cluster Flow"])
 
     def test_launcher_header_names_the_app_and_version(self) -> None:
         launcher = ModeLauncherWidget()
@@ -108,23 +115,32 @@ class ModeLauncherWidgetTest(unittest.TestCase):
         try:
             science_title = launcher.findChild(QLabel, "modeLauncherSectionScience")
             explore_title = launcher.findChild(QLabel, "modeLauncherSectionExplore")
+            simulation_title = launcher.findChild(QLabel, "modeLauncherSectionSimulations")
             self.assertIsNotNone(science_title)
             self.assertIsNotNone(explore_title)
-            assert science_title is not None and explore_title is not None
+            self.assertIsNotNone(simulation_title)
+            assert science_title is not None and explore_title is not None and simulation_title is not None
             self.assertEqual(science_title.text(), "Detect & Measure")
             self.assertEqual(explore_title.text(), "Explore, Visualize & Process")
+            self.assertEqual(simulation_title.text(), "Simulations")
             self.assertIs(launcher.findChild(QWidget, "modeLauncherEditorialScience"), None)
             self.assertIs(launcher.findChild(QWidget, "modeLauncherEditorialExplore"), None)
             science_card = launcher._cards_by_mode[AppMode.DIFFERENTIAL_PHOTOMETRY]  # noqa: SLF001
             explore_card = launcher._cards_by_mode[AppMode.SKY_VIEW]  # noqa: SLF001
+            simulation_card = launcher._cards_by_mode[AppMode.BLACK_HOLE]  # noqa: SLF001
             science_title_pos = science_title.mapTo(launcher, science_title.rect().topLeft())
             science_card_pos = science_card.mapTo(launcher, science_card.rect().topLeft())
             explore_title_pos = explore_title.mapTo(launcher, explore_title.rect().topLeft())
             explore_card_pos = explore_card.mapTo(launcher, explore_card.rect().topLeft())
+            simulation_title_pos = simulation_title.mapTo(launcher, simulation_title.rect().topLeft())
+            simulation_card_pos = simulation_card.mapTo(launcher, simulation_card.rect().topLeft())
             self.assertLess(science_title_pos.y(), science_card_pos.y())
             self.assertLess(explore_title_pos.y(), explore_card_pos.y())
+            self.assertLess(explore_card_pos.y(), simulation_title_pos.y())
+            self.assertLess(simulation_title_pos.y(), simulation_card_pos.y())
             self.assertLess(abs(science_title_pos.x() - science_card_pos.x()), 24)
             self.assertLess(abs(explore_title_pos.x() - explore_card_pos.x()), 24)
+            self.assertLess(abs(simulation_title_pos.x() - simulation_card_pos.x()), 24)
         finally:
             launcher.close()
 
@@ -136,6 +152,8 @@ class ModeLauncherWidgetTest(unittest.TestCase):
         try:
             science_card = launcher._cards_by_mode[AppMode.DIFFERENTIAL_PHOTOMETRY]  # noqa: SLF001
             explore_card = launcher._cards_by_mode[AppMode.ASTROSTACK]  # noqa: SLF001
+            black_hole_card = launcher._cards_by_mode[AppMode.BLACK_HOLE]  # noqa: SLF001
+            self.assertEqual(black_hole_card.width(), explore_card.width())
             self.assertGreater(science_card.width(), explore_card.width())
             self.assertGreater(science_card.height(), explore_card.height())
             self.assertLess(science_card.height(), 520)
@@ -190,6 +208,9 @@ class ModeLauncherWidgetTest(unittest.TestCase):
             AppMode.HR_DIAGRAM,
             AppMode.DISTANCE_MAP,
             AppMode.ASTROSTACK,
+            AppMode.BLACK_HOLE,
+            AppMode.GALAXY_MERGER,
+            AppMode.CLUSTER_FLOW,
         ):
             received.clear()
             launcher._cards_by_mode[mode].click()  # noqa: SLF001
@@ -221,6 +242,9 @@ class ModeLauncherAssetResolutionTest(unittest.TestCase):
         self.assertEqual(image_names[AppMode.SKY_VIEW], "sky_atlas.jpg")
         self.assertEqual(image_names[AppMode.DISTANCE_MAP], "distance_map.png")
         self.assertEqual(image_names[AppMode.ASTROSTACK], "astrostack.gif")
+        self.assertEqual(image_names[AppMode.BLACK_HOLE], "black_hole.jpg")
+        self.assertEqual(image_names[AppMode.GALAXY_MERGER], "galaxy_merger.jpg")
+        self.assertEqual(image_names[AppMode.CLUSTER_FLOW], "cluster_flow.jpg")
 
     def test_sky_atlas_subtitle_mentions_all_sky_map(self) -> None:
         sky_atlas_entry = next(entry for entry in MODE_LAUNCHER_ENTRIES if entry.mode is AppMode.SKY_VIEW)

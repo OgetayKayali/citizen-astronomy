@@ -554,6 +554,25 @@ def _best_available_scientific_catalog_cache(
     )
 
 
+def cached_scientific_star_catalog_files(
+    cache_dir: Path | None = None,
+    maximum_magnitude: float = _DEFAULT_SCIENTIFIC_STAR_MAGNITUDE_LIMIT,
+) -> tuple[tuple[str, Path, float], ...]:
+    """(label, path, magnitude limit) of the best cached Hipparcos and Tycho-2 files.
+
+    Never downloads. A cache deeper than requested is returned as-is; callers
+    filter by magnitude. Reading these files does not resolve star names.
+    """
+
+    root = sky_atlas_catalog_root(cache_dir)
+    found: list[tuple[str, Path, float]] = []
+    for key, label in (("hipparcos", "Hipparcos"), ("tycho2", "Tycho-2")):
+        best = _best_available_named_star_catalog_cache(root, key, maximum_magnitude)
+        if best is not None:
+            found.append((label, best[0], best[1]))
+    return tuple(found)
+
+
 def _merge_star_catalogs(
     primary: list[SkyAtlasObject] | tuple[SkyAtlasObject, ...],
     secondary: tuple[SkyAtlasObject, ...],

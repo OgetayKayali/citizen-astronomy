@@ -1,0 +1,91 @@
+# Bound encounter of two equilibrium galaxies. G = 1.
+# Each galaxy matches examples/galaxy_isolated.scene: Hernquist halo, Hernquist bulge,
+# Shu stellar disk, a cold gas disk, and a hot halo. New stars heat the cold gas and pause its cooling.
+# Both galaxies use the same optical colors. The picture does not tag the progenitors.
+# Run the isolated scene first. Thickening that already happens alone is not a merger.
+# Separation is about 24.2 and the relative speed is 0.3. Escape speed there is about 0.76.
+# The halos overlap, so dynamical friction can drag the pair together.
+# Put seed before the galaxy blocks.
+integrator velocity_verlet
+dt 0.02
+steps 2500
+sample_every 10
+gravitational_constant 1
+seed 20261009
+
+force gravity
+softening 0.03
+
+galaxy left
+particles 1000
+halo_mass 2
+halo_scale 2
+halo_cutoff 16
+disk_mass 1
+disk_scale_radius 1
+disk_height 0.2
+dispersion_ratio 2
+bulge_mass 0.3
+bulge_scale 0.2
+bulge_cutoff 1.6
+gas_mass 0.15
+gas_particles 200
+gas_height 0.05
+hot_gas_mass 0.08
+hot_gas_particles 64
+sound_speed 0.05
+cooling_time 1
+star_formation_time 5
+feedback_energy 4
+feedback_time 1
+inclination 25
+center -12 1.5 0
+velocity 0.15 0.02 0
+display_radius 0.4
+color 0.98 0.91 0.72
+halo_color 0.72 0.66 0.58
+bulge_color 1.00 0.62 0.36
+gas_color 0.96 0.42 0.55
+young_color 0.64 0.80 1.00
+emission 1.7
+halo_emission 0.10
+bulge_emission 2.6
+gas_emission 0.40
+young_emission 6.5
+
+galaxy right
+particles 1000
+halo_mass 2
+halo_scale 2
+halo_cutoff 16
+disk_mass 1
+disk_scale_radius 1
+disk_height 0.2
+dispersion_ratio 2
+bulge_mass 0.3
+bulge_scale 0.2
+bulge_cutoff 1.6
+gas_mass 0.15
+gas_particles 200
+gas_height 0.05
+hot_gas_mass 0.08
+hot_gas_particles 64
+sound_speed 0.05
+cooling_time 1
+star_formation_time 5
+feedback_energy 4
+feedback_time 1
+inclination -40
+center 12 -1.5 0
+velocity -0.15 -0.02 0
+display_radius 0.4
+color 0.98 0.91 0.72
+halo_color 0.72 0.66 0.58
+bulge_color 1.00 0.62 0.36
+gas_color 0.96 0.42 0.55
+young_color 0.64 0.80 1.00
+emission 1.7
+halo_emission 0.10
+bulge_emission 2.6
+gas_emission 0.40
+young_emission 6.5

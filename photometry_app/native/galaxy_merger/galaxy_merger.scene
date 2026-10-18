@@ -1,0 +1,103 @@
+# Prograde showcase encounter. G = 1.
+# Spin -1 aligns each tilted disk with the negative-Z orbital angular momentum.
+# Each galaxy uses a Hernquist halo, Hernquist bulge,
+# Shu stellar disk, a cold gas disk, and a hot halo. New stars heat the cold gas and pause its cooling.
+# Both galaxies share the same population-color recipe; it does not tag progenitors.
+# Use physics_validate for exact isolated controls.
+# Separation is about 24.2 and relative speed is 0.36. The transverse speed gives a grazing passage.
+# The halos overlap, so dynamical friction can drag the pair together.
+# Put seed before the galaxy blocks.
+integrator velocity_verlet
+# Validated mechanical step; retain 80 time units and 0.1-unit output spacing.
+dt 0.005
+steps 16000
+sample_every 20
+gravitational_constant 1
+seed 20261009
+
+force gravity
+# At this particle budget, smooth gravity over one initial disk scale height.
+# Reduces isolation heating; sub-softening bulge structure is unresolved.
+softening 0.2
+
+galaxy left
+particles 2400
+halo_mass 2
+halo_scale 2
+halo_cutoff 16
+disk_mass 1
+disk_scale_radius 1
+disk_height 0.2
+dispersion_ratio 2
+vertical_support legacy
+population_variation 0.65
+bulge_mass 0.3
+bulge_scale 0.2
+bulge_cutoff 1.6
+gas_mass 0.15
+gas_particles 200
+gas_height 0.05
+hot_gas_mass 0.08
+hot_gas_particles 64
+sound_speed 0.05
+cooling_time 1
+star_formation_time 5
+feedback_energy 4
+feedback_time 1
+inclination 25
+node 15
+spin -1
+center -12 1.5 0
+velocity 0.15 0.10 0
+display_radius 0.4
+color 0.98 0.91 0.72
+halo_color 0.72 0.66 0.58
+bulge_color 1.00 0.62 0.36
+gas_color 0.96 0.42 0.55
+young_color 0.64 0.80 1.00
+emission 1.7
+halo_emission 0.10
+bulge_emission 2.6
+gas_emission 0.40
+young_emission 6.5
+
+galaxy right
+particles 2400
+halo_mass 2
+halo_scale 2
+halo_cutoff 16
+disk_mass 1
+disk_scale_radius 1
+disk_height 0.2
+dispersion_ratio 2
+vertical_support legacy
+population_variation 0.65
+bulge_mass 0.3
+bulge_scale 0.2
+bulge_cutoff 1.6
+gas_mass 0.15
+gas_particles 200
+gas_height 0.05
+hot_gas_mass 0.08
+hot_gas_particles 64
+sound_speed 0.05
+cooling_time 1
+star_formation_time 5
+feedback_energy 4
+feedback_time 1
+inclination -40
+node -20
+spin -1
+center 12 -1.5 0
+velocity -0.15 -0.10 0
+display_radius 0.4
+color 0.98 0.91 0.72
+halo_color 0.72 0.66 0.58
+bulge_color 1.00 0.62 0.36
+gas_color 0.96 0.42 0.55
+young_color 0.64 0.80 1.00
+emission 1.7
+halo_emission 0.10
+bulge_emission 2.6
+gas_emission 0.40
+young_emission 6.5

@@ -44,6 +44,10 @@ The alpha-review spec fails fast if these are missing:
 - `textures/milkyway_2020_4k_preview.png`
 - `textures/constellation_figures_4k.tif`
 - `assets/citizen_astronomy.ico`
+- `photometry_app/native/cast_blackhole.dll` (Black Hole mode engine; build it with `scripts\build_blackhole_native.ps1`, which needs CMake and Visual Studio 2022 with C++)
+- `photometry_app/native/cast_merger.dll` and `photometry_app/native/vcomp140.dll` (Galaxy Merger mode engine and its OpenMP runtime; `scripts\build_merger_native.ps1` builds the first and copies the second from Visual Studio)
+- `photometry_app/native/galaxy_merger/` (the merger's built-in scenes and optical looks)
+- `photometry_app/native/cast_cluster_flow.dll` (Cluster Flow mode engine; build it with `scripts\build_cluster_flow_native.ps1`. It also needs `vcomp140.dll`, which the merger build copies)
 
 If you do not have the large texture/tile trees locally, obtain them before building. Sky View and Moon fidelity depend on them being present at build time.
 

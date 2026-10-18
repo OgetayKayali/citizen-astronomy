@@ -40,6 +40,7 @@ datas = [
 datas += data_tree("guides", "guides")
 datas += data_tree("photometry_app/data", "photometry_app/data")
 datas += data_tree("assets/moon_tiles", "assets/moon_tiles")
+datas += data_tree("photometry_app/native/galaxy_merger", "photometry_app/native/galaxy_merger")
 _mode_launcher_assets = ROOT / "assets" / "mode_launcher"
 if _mode_launcher_assets.is_dir():
     datas += data_tree("assets/mode_launcher", "assets/mode_launcher")
@@ -62,7 +63,15 @@ datas += copy_metadata("lz4")
 datas += copy_metadata("zstandard")
 datas += copy_metadata("rawpy")
 
-binaries = []
+# Black Hole mode engine; build with scripts/build_blackhole_native.ps1.
+# Galaxy Merger engine and its OpenMP runtime; build with scripts/build_merger_native.ps1.
+# Cluster Flow engine (also uses the OpenMP runtime); build with scripts/build_cluster_flow_native.ps1.
+binaries = [
+    data_file("photometry_app/native/cast_blackhole.dll", "photometry_app/native"),
+    data_file("photometry_app/native/cast_merger.dll", "photometry_app/native"),
+    data_file("photometry_app/native/cast_cluster_flow.dll", "photometry_app/native"),
+    data_file("photometry_app/native/vcomp140.dll", "photometry_app/native"),
+]
 hiddenimports = [
     "xisf",
     "lz4",

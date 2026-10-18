@@ -1,0 +1,129 @@
+# Age-resolved stellar populations and gas-linked emission. See docs/stellar_populations.md.
+# Seeded trailing spiral in stars and gas; the pattern evolves freely under gravity.
+# Prograde showcase encounter. G = 1.
+# Spin -1 aligns each tilted disk with the negative-Z orbital angular momentum.
+# Each galaxy uses a Hernquist halo, Hernquist bulge,
+# Shu stellar disk, a cold gas disk, and a hot halo. New stars heat the cold gas and pause its cooling.
+# Both galaxies share the same population-color recipe; it does not tag progenitors.
+# Use physics_validate for exact isolated controls.
+# Separation is about 24.2 and relative speed is 0.36. The transverse speed gives a grazing passage.
+# The halos overlap, so dynamical friction can drag the pair together.
+# Put seed before the galaxy blocks.
+integrator velocity_verlet
+# Validated mechanical step; retain 80 time units and 0.1-unit output spacing.
+dt 0.005
+steps 16000
+sample_every 20
+gravitational_constant 1
+seed 20261009
+
+force gravity
+# Seeded spiral experiment; see docs/galaxy_spirals.md for limits and measured evolution.
+# Softening is paired with the thinner, more densely sampled stellar disk.
+softening 0.10
+
+galaxy left
+particles 2400
+halo_mass 2
+halo_scale 2
+halo_cutoff 16
+disk_mass 1
+disk_scale_radius 1
+disk_height 0.12
+dispersion_ratio 2
+target_q 1.45
+disk_particle_fraction 0.60
+spiral_strength 0.55
+spiral_arms 2
+spiral_pitch 28
+spiral_phase 20
+vertical_support legacy
+population_variation 0.25
+initial_young_fraction 0.18
+initial_young_age 8
+young_arm_contrast 0.95
+bulge_mass 0.3
+bulge_scale 0.2
+bulge_cutoff 1.6
+gas_mass 0.15
+gas_particles 400
+gas_height 0.05
+hot_gas_mass 0.08
+hot_gas_particles 64
+sound_speed 0.05
+cooling_time 1
+star_formation_time 5
+star_formation_mode continuous
+star_formation_temperature 1.5
+star_formation_converging true
+feedback_energy 4
+feedback_time 1
+inclination 25
+node 15
+spin -1
+center -12 1.5 0
+velocity 0.15 0.10 0
+display_radius 0.4
+color 0.98 0.91 0.72
+halo_color 0.72 0.66 0.58
+bulge_color 1.00 0.62 0.36
+gas_color 0.96 0.42 0.55
+young_color 0.28 0.52 1.00
+emission 1.7
+halo_emission 0.10
+bulge_emission 2.6
+gas_emission 0.40
+young_emission 12
+
+galaxy right
+particles 2400
+halo_mass 2
+halo_scale 2
+halo_cutoff 16
+disk_mass 1
+disk_scale_radius 1
+disk_height 0.12
+dispersion_ratio 2
+target_q 1.45
+disk_particle_fraction 0.60
+spiral_strength 0.55
+spiral_arms 2
+spiral_pitch 28
+spiral_phase 20
+vertical_support legacy
+population_variation 0.25
+initial_young_fraction 0.18
+initial_young_age 8
+young_arm_contrast 0.95
+bulge_mass 0.3
+bulge_scale 0.2
+bulge_cutoff 1.6
+gas_mass 0.15
+gas_particles 400
+gas_height 0.05
+hot_gas_mass 0.08
+hot_gas_particles 64
+sound_speed 0.05
+cooling_time 1
+star_formation_time 5
+star_formation_mode continuous
+star_formation_temperature 1.5
+star_formation_converging true
+feedback_energy 4
+feedback_time 1
+inclination -40
+node -20
+spin -1
+center 12 -1.5 0
+velocity -0.15 -0.10 0
+display_radius 0.4
+color 0.98 0.91 0.72
+halo_color 0.72 0.66 0.58
+bulge_color 1.00 0.62 0.36
+gas_color 0.96 0.42 0.55
+young_color 0.28 0.52 1.00
+emission 1.7
+halo_emission 0.10
+bulge_emission 2.6
+gas_emission 0.40
+young_emission 12

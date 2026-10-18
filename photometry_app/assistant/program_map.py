@@ -75,6 +75,33 @@ MODES: tuple[ModeInfo, ...] = (
         "astrostack",
     ),
     ModeInfo(
+        AppMode.BLACK_HOLE,
+        "Black Hole",
+        "no files needed",
+        "The PhysicsEngine black hole lab: light traced around a Kerr or Schwarzschild black hole, an evolving "
+        "GPU or CPU gas disk, CAst's Milky Way lensed behind it, PNG export, and movie export with camera paths. "
+        "The fluid is two-dimensional, not GRMHD.",
+        "black_hole",
+    ),
+    ModeInfo(
+        AppMode.GALAXY_MERGER,
+        "Galaxy Merger",
+        "no files needed (scenes and recordings can be loaded inside the mode)",
+        "The PhysicsEngine galaxy merger lab: two disk galaxies with dark halos, bulges, cold and hot gas, and "
+        "star formation, integrated as an N-body run and shown as a starlight-and-dust picture, a density volume, "
+        "or particles. Recordings save and load, and frames export as PNG sequences or MP4.",
+        "galaxy_merger",
+    ),
+    ModeInfo(
+        AppMode.CLUSTER_FLOW,
+        "Cluster Flow",
+        "no files needed (baked .cflow recordings can be opened inside the mode)",
+        "The PhysicsEngine Cosmic Flow lab: a 3D gas simulation with two models, a galaxy-cluster filament network "
+        "with dark halos, cooling, and outbursts, or an expanding cosmological volume with live dark matter. "
+        "Shows gas density, speed, temperature, or compression; bakes recordings to replay and exports PNG or MP4.",
+        "cluster_flow",
+    ),
+    ModeInfo(
         AppMode.ASTRO_TOOLS,
         "Observation Deck",
         "one or more master imaging folders added inside the mode",

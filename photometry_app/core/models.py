@@ -49,6 +49,9 @@ class AppMode(StrEnum):
     SKY_VIEW = "sky_view"
     SKY_EXPLORER = "sky_explorer"
     DISTANCE_MAP = "distance_map"
+    BLACK_HOLE = "black_hole"
+    GALAXY_MERGER = "galaxy_merger"
+    CLUSTER_FLOW = "cluster_flow"
     ASTRO_TOOLS = "astro_tools"
 
 
