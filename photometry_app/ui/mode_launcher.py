@@ -305,6 +305,26 @@ SIMULATION_ENTRIES: tuple[ModeLauncherEntry, ...] = (
         gradient_bottom="#050c12",
         detail="Watch gas fall along filaments, heat in outbursts, or grow from cosmological fluctuations, then bake a recording and export an MP4.",
     ),
+    ModeLauncherEntry(
+        AppMode.BINARY_LIGHT_LAB,
+        "Binary Light Lab",
+        "Explore eclipses, pulsations, spots and stellar outbursts.",
+        "explore",
+        image_names=("binary_light_lab.jpg", "binary_light_lab.png"),
+        gradient_top="#162637",
+        gradient_bottom="#080d16",
+        detail="Explore six detached binaries and 16 variable-star Library models, adjust their physics, record light curves, and export observations.",
+    ),
+    ModeLauncherEntry(
+        AppMode.AURORA_MAGNETOSPHERE,
+        "Aurora & Magnetosphere Lab",
+        "Explore how CME pressure and IMF reshape Earth's magnetic shield.",
+        "explore",
+        image_names=("aurora_magnetosphere.jpg",),
+        gradient_top="#15364a",
+        gradient_bottom="#080e1b",
+        detail="CME Impact Mode: compare northward and southward IMF, follow a deterministic event timeline, and inspect an empirical magnetopause with schematic disturbed field lines.",
+    ),
 )
 
 MODE_LAUNCHER_ENTRIES: tuple[ModeLauncherEntry, ...] = SCIENCE_WORKFLOW_ENTRIES + EXPLORE_LEARN_ENTRIES + SIMULATION_ENTRIES

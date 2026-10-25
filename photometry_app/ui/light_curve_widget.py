@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 
 
 
@@ -18,7 +19,7 @@ from PySide6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRectF, Qt, Sign
 
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QImage, QMouseEvent, QPainter, QPen, QPixmap
 
-from PySide6.QtWidgets import QApplication, QColorDialog, QLabel, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QColorDialog, QGraphicsRectItem, QLabel, QMenu, QVBoxLayout, QWidget
 
 
 
@@ -131,7 +132,56 @@ class _LightCurveAxisItem(pg.AxisItem):
         return labels
 
 
+def light_curve_hide_key(source_id: str, filter_name: str | None, file_path: Path, observation_time) -> tuple[str, str, str, str]:
+    """Identity of one plotted observation. Used to hide points without deleting them."""
+    observation = observation_time.isoformat(sep=" ") if observation_time is not None else "-"
+    return (str(source_id), str(filter_name or "unknown"), str(Path(file_path)), observation)
 
+
+def marked_file_path(path: Path) -> Path | None:
+    """Rename a file to '(marked) name' in the same folder. Never deletes a file."""
+    if path.name.startswith("(marked)"):
+        return None
+    if not path.is_file():
+        return None
+    destination = path.with_name(f"(marked) {path.name}")
+    if destination.exists():
+        return None
+    path.rename(destination)
+    return destination
+
+
+def light_curve_points_in_rect(payload: LightCurvePlotPayload, series: LightCurveSeries | None, x0: float, y0: float, x1: float, y1: float) -> list[dict[str, object]]:
+    """Plotted points whose data coordinates fall inside the rectangle, including its edges."""
+    left, right = (x0, x1) if x0 <= x1 else (x1, x0)
+    bottom, top = (y0, y1) if y0 <= y1 else (y1, y0)
+    found: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    def consider(points, source_id: str, filter_name: str | None) -> None:
+        for point in points:
+            if not (left <= float(point.x) <= right and bottom <= float(point.y) <= top):
+                continue
+            source = point.source_point
+            key = light_curve_hide_key(source_id, filter_name, source.file_path, source.observation_time)
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append({
+                "key": key,
+                "source_id": key[0],
+                "filter_name": key[1],
+                "file_path": Path(source.file_path),
+                "observation_time": source.observation_time,
+            })
+
+    if payload.layers:
+        for layer in payload.layers:
+            consider(layer.points, layer.source_id, layer.filter_name)
+        return found
+    if series is not None:
+        consider(payload.points, series.source_id, series.filter_name)
+    return found
 
 
 class LightCurvePlotWidget(QWidget):
@@ -139,6 +189,10 @@ class LightCurvePlotWidget(QWidget):
     pointSelected = Signal(object)
 
     segmentSelected = Signal(object)
+
+    regionSelected = Signal(object)
+
+    regionOverlayCleared = Signal()
 
 
 
@@ -222,6 +276,14 @@ class LightCurvePlotWidget(QWidget):
         self._hover_radius_pixels = 18.0
 
         self._segment_selection_active = False
+
+        self._region_select_enabled = False
+
+        self._region_drag_active = False
+
+        self._region_start: tuple[float, float] | None = None
+
+        self._region_rect: QGraphicsRectItem | None = None
 
         self._auto_range_button = self._plot_item.autoBtn
 
@@ -583,6 +645,34 @@ class LightCurvePlotWidget(QWidget):
 
                         return True
 
+                if event.type() == QEvent.Type.MouseButtonPress and self._region_select_enabled and event.button() == Qt.MouseButton.LeftButton:
+
+                    start = self._view_pos_from_mouse_event(event)
+
+                    if start is not None:
+
+                        self._begin_region_drag(start)
+
+                        return True
+
+                if event.type() == QEvent.Type.MouseMove and self._region_drag_active:
+
+                    current = self._view_pos_from_mouse_event(event)
+
+                    if current is not None:
+
+                        self._update_region_drag(current)
+
+                    return True
+
+                if event.type() == QEvent.Type.MouseButtonRelease and self._region_drag_active and event.button() == Qt.MouseButton.LeftButton:
+
+                    current = self._view_pos_from_mouse_event(event)
+
+                    self._finish_region_drag(current)
+
+                    return True
+
                 if event.type() == QEvent.Type.MouseButtonPress and self._should_begin_segment_drag(event):
 
                     start_x = self._view_x_from_mouse_event(event)
@@ -612,6 +702,10 @@ class LightCurvePlotWidget(QWidget):
                     return True
 
             if event.type() in {QEvent.Type.Leave, QEvent.Type.Hide}:
+
+                if self._region_drag_active:
+
+                    self._cancel_region_drag()
 
                 if self._ctrl_drag_active:
 
@@ -661,6 +755,8 @@ class LightCurvePlotWidget(QWidget):
 
         recent_period_error_bars_only: bool = False,
 
+        reference_layers: list[object] | None = None,
+
     ) -> None:
 
         self._series = series
@@ -690,6 +786,10 @@ class LightCurvePlotWidget(QWidget):
                 phase_anchor_mode=phase_anchor_mode,
 
                 phase_anchor_jd=phase_anchor_jd,
+
+                reference_layers=reference_layers,
+
+                style_overrides=self._series_style_overrides,
 
             )
 
@@ -1198,6 +1298,18 @@ class LightCurvePlotWidget(QWidget):
 
         self._plot_item.clear()
 
+        had_region = self._region_rect is not None
+
+        self._remove_region_rect()
+
+        self._region_drag_active = False
+
+        self._region_start = None
+
+        if had_region:
+
+            self.regionOverlayCleared.emit()
+
         self._plot_item.addItem(self._selected_point_item)
 
         self._plot_item.addItem(self._extrema_marker_item)
@@ -1271,6 +1383,11 @@ class LightCurvePlotWidget(QWidget):
         if payload.layers:
 
             self._render_overview_layers(payload)
+
+            if payload.fit_x_values is not None and payload.fit_y_values is not None:
+                self._plot_item.addItem(
+                    pg.PlotDataItem(payload.fit_x_values, payload.fit_y_values, pen=pg.mkPen(self._theme_colors["fit_curve_color"], width=1.8))
+                )
 
         else:
 
@@ -1380,6 +1497,9 @@ class LightCurvePlotWidget(QWidget):
 
             finite_error_points = [point for point in layer.points if point.y_error is not None]
 
+            if payload.x_axis_mode == "phase" and self._recent_period_error_bars_only:
+                finite_error_points = self._recent_period_error_points(finite_error_points)
+
             if finite_error_points:
 
                 error_item = pg.ErrorBarItem(
@@ -1402,23 +1522,20 @@ class LightCurvePlotWidget(QWidget):
 
                 self._error_bar_items.append(error_item)
 
-            spots = [
-
-                {
-
-                    "pos": (point.x, point.y),
-
-                    "data": point_offset + index,
-
-                    "pen": pg.mkPen(color, width=1.2 if layer.role == "target" else 0.8),
-
-                    "brush": pg.mkBrush(QColor(color)),
-
-                }
-
-                for index, point in enumerate(layer.points)
-
-            ]
+            layer_payload = replace(payload, points=layer.points)
+            alpha_by_index = self._phase_alpha_by_point_index(layer_payload) if payload.x_axis_mode == "phase" else {}
+            spots = []
+            for index, point in enumerate(layer.points):
+                saturated = bool(getattr(point.source_point, "is_saturated", False))
+                point_color = QColor("#f97316" if saturated else color)
+                point_color.setAlpha(alpha_by_index.get(index, 255))
+                spots.append({
+                    "pos": (point.x, point.y), "data": point_offset + index,
+                    "symbol": "x" if saturated else symbol,
+                    "size": 11 if saturated else layer.size,
+                    "pen": pg.mkPen(point_color, width=1.2 if layer.role == "target" else 0.8),
+                    "brush": pg.mkBrush(point_color),
+                })
 
             scatter = pg.ScatterPlotItem(
 
@@ -1449,6 +1566,142 @@ class LightCurvePlotWidget(QWidget):
             point_offset += len(layer.points)
 
 
+
+    def set_region_select_enabled(self, enabled: bool) -> None:
+
+        self._region_select_enabled = bool(enabled)
+
+        if not self._region_select_enabled:
+
+            self._cancel_region_drag()
+
+    def clear_region_overlay(self) -> None:
+
+        self._remove_region_rect()
+
+    def _view_pos_from_mouse_event(self, event: QMouseEvent) -> tuple[float, float] | None:
+
+        if self._payload is None:
+
+            return None
+
+        scene_position = self._plot_widget.mapToScene(event.position().toPoint())
+
+        if not self._plot_widget.sceneBoundingRect().contains(scene_position):
+
+            return None
+
+        view_position = self._plot_item.getViewBox().mapSceneToView(scene_position)
+
+        x_value = float(view_position.x())
+
+        y_value = float(view_position.y())
+
+        if not np.isfinite(x_value) or not np.isfinite(y_value):
+
+            return None
+
+        return x_value, y_value
+
+    def _begin_region_drag(self, start: tuple[float, float]) -> None:
+
+        self._region_drag_active = True
+
+        self._region_start = start
+
+        self._remove_region_rect()
+
+        self._status_label.setText("Drag a rectangle around the light-curve points to select.")
+
+        self._hide_tooltip()
+
+    def _update_region_drag(self, current: tuple[float, float]) -> None:
+
+        if self._region_start is None:
+
+            return
+
+        self._show_region_rect(self._region_start, current)
+
+    def _finish_region_drag(self, current: tuple[float, float] | None) -> None:
+
+        start = self._region_start
+
+        self._region_drag_active = False
+
+        self._region_start = None
+
+        if start is None or current is None or self._payload is None or (self._series is None and not self._payload.layers):
+
+            self._remove_region_rect()
+
+            self._status_label.setText("Drag a rectangle around the light-curve points to select.")
+
+            return
+
+        self._show_region_rect(start, current)
+
+        selected = light_curve_points_in_rect(self._payload, self._series, start[0], start[1], current[0], current[1])
+
+        if not selected:
+
+            self._remove_region_rect()
+
+            self._status_label.setText("No light-curve points were inside that rectangle.")
+
+            self.regionSelected.emit([])
+
+            return
+
+        self._status_label.setText(f"Selected {len(selected)} light-curve point(s).")
+
+        self.regionSelected.emit(selected)
+
+    def _cancel_region_drag(self) -> None:
+
+        self._region_drag_active = False
+
+        self._region_start = None
+
+    def _show_region_rect(self, start: tuple[float, float], current: tuple[float, float]) -> None:
+
+        left, right = (start[0], current[0]) if start[0] <= current[0] else (current[0], start[0])
+
+        bottom, top = (start[1], current[1]) if start[1] <= current[1] else (current[1], start[1])
+
+        if self._region_rect is None:
+
+            self._region_rect = QGraphicsRectItem()
+
+            pen = QPen(QColor("#ff9f1c"))
+
+            pen.setCosmetic(True)
+
+            pen.setWidthF(1.5)
+
+            self._region_rect.setPen(pen)
+
+            fill = QColor("#ff9f1c")
+
+            fill.setAlpha(48)
+
+            self._region_rect.setBrush(fill)
+
+            self._region_rect.setZValue(30)
+
+            self._plot_item.getViewBox().addItem(self._region_rect)
+
+        self._region_rect.setRect(QRectF(left, bottom, max(right - left, 1.0e-9), max(top - bottom, 1.0e-9)))
+
+    def _remove_region_rect(self) -> None:
+
+        if self._region_rect is None:
+
+            return
+
+        self._plot_item.getViewBox().removeItem(self._region_rect)
+
+        self._region_rect = None
 
     def _should_begin_segment_drag(self, event: QMouseEvent) -> bool:
 

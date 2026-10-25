@@ -730,7 +730,7 @@ class ExportersTest(unittest.TestCase):
             self.assertIn(",CV,NO,DIF,", export_line)
             self.assertIn("Source filter: L; exported as CV per settings", export_line)
 
-    def test_export_processing_report_writes_aavso_extended_standard_file_when_transformed(self) -> None:
+    def test_legacy_transformed_checkbox_does_not_certify_untransformed_data(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             measurement_path = root / "Files" / "R_Cas" / "a.fits"
@@ -828,11 +828,11 @@ class ExportersTest(unittest.TestCase):
 
             self.assertEqual(result["aavso_standard_observation_count"], 1)
             self.assertEqual(result["aavso_differential_observation_count"], 0)
-            self.assertIn(",11.5,0.012,R,YES,STD,Comp 1,-9.7,na,na,1.111,na,X12345ABC,Transformed standard export Zero-point sources: 1|VMAGINS=-9.2|CMAGINS=-9.7|CREFMAG=11.0", aavso_text)
+            self.assertIn(",11.5,0.012,R,NO,STD,Comp 1,-9.7,na,na,1.111,na,X12345ABC,Transformed standard export Zero-point sources: 1|VMAGINS=-9.2|CMAGINS=-9.7|CREFMAG=11.0", aavso_text)
             self.assertTrue(preflight["chart_id_present"])
             self.assertEqual(preflight["standard_observation_count"], 1)
             self.assertEqual(preflight["differential_observation_count"], 0)
-            self.assertEqual(preflight["warning_count"], 0)
+            self.assertEqual(preflight["warning_count"], 1)
 
     def test_export_processing_report_uses_exposure_midpoint_for_aavso_jd(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

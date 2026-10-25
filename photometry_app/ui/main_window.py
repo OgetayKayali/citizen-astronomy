@@ -134,6 +134,7 @@ from photometry_app.core.hr_diagram_filter import (
     hr_diagram_filter_work_log_lines,
     summarize_hr_diagram_filter,
 )
+from photometry_app.core.hr_spectral_types import enrich_hr_spectral_types
 from photometry_app.core.hr_motion_groups import *
 from photometry_app.core.image_io import *
 from photometry_app.core.matching import *
@@ -265,6 +266,8 @@ from photometry_app.ui.light_curve_widget import *
 from photometry_app.ui.blackhole_view import BlackHolePanel
 from photometry_app.ui.galaxy_merger_view import GalaxyMergerPanel
 from photometry_app.ui.cluster_flow_view import ClusterFlowPanel
+from photometry_app.ui.binary_light_view import BinaryLightPanel
+from photometry_app.ui.magnetosphere_view import MagnetospherePanel
 from photometry_app.ui.mode_launcher import ModeLauncherWidget
 from photometry_app.ui.moving_object_label_dialog import MovingObjectQuickLabelDialog
 from photometry_app.ui.moon_system import DEFAULT_MOON_VISUAL_SETTINGS, MoonAsyncEphemerisSampler, MoonAtmosphereModel, MoonCache, MoonDrawState, MoonEarthshineModel, MoonEphemeris, MoonRendererGL, MoonState, MoonTileDiagnostics
@@ -1089,7 +1092,7 @@ class _DifferentialWorkflowOptions:
 
     pull_periods: bool = True
 
-    calculate_periods: bool = True
+    calculate_periods: bool = False
 
     create_measurements_table: bool = False
 
@@ -24980,6 +24983,7 @@ class _DifferentialWorkflowDialog(QDialog):
         terminate_callback: Callable[[], None] | None = None,
 
         clear_object_cache_callback: Callable[[str], int] | None = None,
+        transformation_callback: Callable[[], None] | None = None,
 
     ) -> None:
 
@@ -25107,6 +25111,11 @@ class _DifferentialWorkflowDialog(QDialog):
         generate_layout = QVBoxLayout(generate_group)
 
         generate_layout.setSpacing(6)
+        if transformation_callback is not None:
+            self._transformation_button = QPushButton("Photometric Transformation…")
+            self._transformation_button.setToolTip("Calculate and manage B/V instrument profiles, including extracted RGB channels.")
+            self._transformation_button.clicked.connect(transformation_callback)
+            generate_layout.addWidget(self._transformation_button)
 
         pipeline_options_row = QHBoxLayout()
 
@@ -25186,7 +25195,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._calculate_periods_checkbox = QCheckBox("Calculate Periods")
 
-        self._calculate_periods_checkbox.setChecked(True)
+        self._calculate_periods_checkbox.setChecked(False)
 
         self._calculate_periods_checkbox.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -26043,6 +26052,51 @@ class _DifferentialWorkflowDialog(QDialog):
 
 
 
+
+
+def _visible_light_curve_layers(layers, *, show_references: bool, show_checks: bool):
+    """Keep the target, and comparison or check layers only when their switch is on."""
+    visible = []
+    for layer in layers:
+        role = getattr(layer, "role", "")
+        if role == "comparison" and not show_references:
+            continue
+        if role == "check" and not show_checks:
+            continue
+        visible.append(layer)
+    return visible
+
+
+def _strip_hidden_light_curve_layers(layers, hidden_keys):
+    """Drop hidden observations from plotted layers. The stored measurements stay unchanged."""
+    if not hidden_keys:
+        return layers
+    from dataclasses import replace
+    hidden = set(hidden_keys)
+    visible = []
+    for layer in layers:
+        series = getattr(layer, "series", None)
+        if not isinstance(series, LightCurveSeries):
+            visible.append(layer)
+            continue
+        points = [
+            point for point in series.points
+            if light_curve_hide_key(series.source_id, series.filter_name, point.file_path, point.observation_time) not in hidden
+        ]
+        if len(points) == len(series.points):
+            visible.append(layer)
+            continue
+        filtered = LightCurveSeries(
+            object_name=series.object_name,
+            source_id=series.source_id,
+            source_name=series.source_name,
+            filter_name=series.filter_name,
+            points=points,
+            candidate_score=series.candidate_score,
+            variability_metrics=dict(series.variability_metrics),
+        )
+        visible.append(replace(layer, series=filtered))
+    return visible
 
 
 class MainWindow(QMainWindow):
@@ -27803,6 +27857,7 @@ class MainWindow(QMainWindow):
         self._light_curve_y_axis_selector.addItem("Calibrated Magnitude", "calibrated_magnitude")
 
         self._light_curve_y_axis_selector.addItem("Standard Magnitude", "standard_magnitude")
+        self._light_curve_y_axis_selector.addItem("Transformed Magnitude (B/V)", "transformed_magnitude")
 
         self._light_curve_y_axis_selector.addItem("Flux (counts)", "flux")
 
@@ -28195,6 +28250,55 @@ class MainWindow(QMainWindow):
 
         self._light_curve_filter_button.clicked.connect(self._open_light_curve_filter_settings)
 
+        self._light_curve_select_button = QPushButton("Select")
+
+        self._light_curve_select_button.setCheckable(True)
+
+        self._light_curve_select_button.setEnabled(False)
+
+        self._light_curve_select_button.setToolTip(
+            "Draw a rectangle on the light curve to select the points inside it. Click again to turn selection off."
+        )
+
+        self._light_curve_select_button.clicked.connect(self._handle_light_curve_select_clicked)
+
+        self._light_curve_options_menu = QMenu(self._light_curve_select_button)
+
+        self._light_curve_remove_action = QAction("Remove", self._light_curve_options_menu)
+
+        self._light_curve_remove_action.setToolTip("Hide the selected points on the light curve and in the extended report. Files are not deleted.")
+
+        self._light_curve_mark_action = QAction("Mark files", self._light_curve_options_menu)
+
+        self._light_curve_mark_action.setToolTip("Rename the selected files to start with (marked). Nothing is deleted.")
+
+        self._light_curve_select_again_action = QAction("Select again", self._light_curve_options_menu)
+
+        self._light_curve_select_again_action.setToolTip("Draw another rectangle. Points already removed from the light curve stay removed.")
+
+        self._light_curve_reset_action = QAction("Reset", self._light_curve_options_menu)
+
+        self._light_curve_reset_action.setToolTip("Show every point that was removed from the light curve.")
+
+        self._light_curve_remove_action.triggered.connect(self._remove_selected_light_curve_points)
+
+        self._light_curve_mark_action.triggered.connect(self._mark_selected_light_curve_files)
+
+        self._light_curve_select_again_action.triggered.connect(self._select_light_curve_region_again)
+
+        self._light_curve_reset_action.triggered.connect(self._reset_hidden_light_curve_points)
+
+        self._light_curve_options_menu.aboutToShow.connect(self._sync_light_curve_options_menu)
+
+        for action in (
+            self._light_curve_remove_action,
+            self._light_curve_mark_action,
+            self._light_curve_select_again_action,
+            self._light_curve_reset_action,
+        ):
+
+            self._light_curve_options_menu.addAction(action)
+
         self._sync_light_curve_toolbar_button_widths()
 
 
@@ -28447,6 +28551,18 @@ class MainWindow(QMainWindow):
 
         self._light_curve_widget.segmentSelected.connect(self._handle_light_curve_segment_selected)
 
+        self._light_curve_widget.regionSelected.connect(self._handle_light_curve_region_selected)
+
+        self._light_curve_widget.regionOverlayCleared.connect(self._handle_light_curve_region_overlay_cleared)
+
+        self._light_curve_hidden_keys: set[tuple[str, str, str, str]] = set()
+
+        self._light_curve_region_points: list[dict[str, object]] = []
+
+        self._light_curve_options_mode = False
+
+        self._light_curve_select_sync = False
+
         self._apply_startup_theme()
 
         self._image_view = AnnotatedImageView(self)
@@ -28513,6 +28629,21 @@ class MainWindow(QMainWindow):
         workspace_actions_row.addWidget(self._workspace_filter_label)
 
         workspace_actions_row.addWidget(self._measurement_filter_combo)
+
+        self._show_references_checkbox = QCheckBox("Show references")
+        self._show_references_checkbox.setChecked(True)
+        self._show_references_checkbox.setToolTip(
+            "Show the selected target's comparison stars on the light curve. Each filter uses its own comparison measurements."
+        )
+        self._show_references_checkbox.toggled.connect(self._plot_selected_series)
+        workspace_actions_row.addWidget(self._show_references_checkbox)
+        self._show_checks_checkbox = QCheckBox("Show check")
+        self._show_checks_checkbox.setChecked(True)
+        self._show_checks_checkbox.setToolTip(
+            "Show the check star on the light curve. It is measured like the target and is not one of the comparison stars. The image keeps a blue circle and square on that star."
+        )
+        self._show_checks_checkbox.toggled.connect(self._plot_selected_series)
+        workspace_actions_row.addWidget(self._show_checks_checkbox)
 
         workspace_actions_row.addStretch(1)
 
@@ -28597,6 +28728,8 @@ class MainWindow(QMainWindow):
         self._light_curve_controls_layout.addWidget(self._oc_button)
 
         self._light_curve_controls_layout.addWidget(self._light_curve_filter_button)
+
+        self._light_curve_controls_layout.addWidget(self._light_curve_select_button)
 
         self._light_curve_controls_layout.addWidget(self._fit_degree_label)
 
@@ -29201,6 +29334,9 @@ class MainWindow(QMainWindow):
 
         self._cluster_flow_panel = ClusterFlowPanel(self)
 
+        self._binary_light_panel = BinaryLightPanel(self)
+        self._magnetosphere_panel = MagnetospherePanel(self)
+
         self._app_mode_stack = _CurrentPageStackedWidget()
 
         self._app_mode_stack.addWidget(self._differential_mode_panel)
@@ -29226,6 +29362,9 @@ class MainWindow(QMainWindow):
         self._app_mode_stack.addWidget(self._galaxy_merger_panel)
 
         self._app_mode_stack.addWidget(self._cluster_flow_panel)
+
+        self._app_mode_stack.addWidget(self._binary_light_panel)
+        self._app_mode_stack.addWidget(self._magnetosphere_panel)
 
 
 
@@ -29444,6 +29583,8 @@ class MainWindow(QMainWindow):
         self._source_measurement_map_cache: dict[tuple[str, str], list[PhotometryMeasurement]] = {}
 
         self._reference_measurement_frame_index_cache: dict[str, dict[tuple[Path, str | None], PhotometryMeasurement]] = {}
+
+        self._check_measurement_frame_index_cache: dict[str, dict[tuple[Path, str | None], PhotometryMeasurement]] = {}
 
         self._reference_source_row_keys_cache: dict[str, str] = {}
 
@@ -29777,6 +29918,11 @@ class MainWindow(QMainWindow):
         if getattr(sys, "frozen", False) and managed_updates_supported():
 
             QTimer.singleShot(1500, self._check_for_updates_on_startup)
+
+        # Offscreen runs are the test suite. Skip the reminder so a long run cannot open it.
+        if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+
+            self._schedule_discord_invite()
 
         app = QApplication.instance()
 
@@ -54731,6 +54877,17 @@ class MainWindow(QMainWindow):
             lambda _checked: self._handle_app_mode_changed(AppMode.CLUSTER_FLOW)
         )
 
+        self._app_mode_magnetosphere_action = QAction("Aurora & Magnetosphere Lab", self)
+        self._app_mode_magnetosphere_action.setCheckable(True)
+        self._app_mode_magnetosphere_action.triggered.connect(
+            lambda _checked: self._handle_app_mode_changed(AppMode.AURORA_MAGNETOSPHERE)
+        )
+        self._app_mode_binary_light_action = QAction("Binary Light Lab", self)
+        self._app_mode_binary_light_action.setCheckable(True)
+        self._app_mode_binary_light_action.triggered.connect(
+            lambda _checked: self._handle_app_mode_changed(AppMode.BINARY_LIGHT_LAB)
+        )
+
         self._app_mode_astro_tools_action = QAction("Observation Deck", self)
 
         self._app_mode_astro_tools_action.setCheckable(True)
@@ -54762,6 +54919,8 @@ class MainWindow(QMainWindow):
         self._app_mode_action_group.addAction(self._app_mode_galaxy_merger_action)
 
         self._app_mode_action_group.addAction(self._app_mode_cluster_flow_action)
+        self._app_mode_action_group.addAction(self._app_mode_binary_light_action)
+        self._app_mode_action_group.addAction(self._app_mode_magnetosphere_action)
 
         self._app_mode_action_group.addAction(self._app_mode_astro_tools_action)
 
@@ -54786,6 +54945,8 @@ class MainWindow(QMainWindow):
         mode_menu.addAction(self._app_mode_galaxy_merger_action)
 
         mode_menu.addAction(self._app_mode_cluster_flow_action)
+        mode_menu.addAction(self._app_mode_binary_light_action)
+        mode_menu.addAction(self._app_mode_magnetosphere_action)
 
         mode_menu.addAction(self._app_mode_astro_tools_action)
 
@@ -54846,6 +55007,9 @@ class MainWindow(QMainWindow):
         open_settings_action.triggered.connect(self._open_settings)
 
         settings_menu.addAction(open_settings_action)
+        transformation_action = QAction("Photometric Transformation…", self)
+        transformation_action.triggered.connect(self._open_transformation_dialog)
+        settings_menu.addAction(transformation_action)
 
         settings_menu.addSeparator()
 
@@ -55179,10 +55343,62 @@ class MainWindow(QMainWindow):
 
     def _show_about_dialog(self) -> None:
 
-        from photometry_app.core.packaged_format_smoke import about_dialog_content
+        from photometry_app.ui.discord_invite import build_about_message_box
 
-        title, message = about_dialog_content()
-        QMessageBox.information(self, title, message)
+        box = build_about_message_box(self)
+        box.exec()
+        box.deleteLater()
+
+    def _schedule_discord_invite(self) -> None:
+
+        from photometry_app.ui.discord_invite import should_show_discord_invite, start_discord_invite_timer
+
+        self._discord_invite_timer = start_discord_invite_timer(
+            self,
+            self._show_discord_invite,
+            enabled=should_show_discord_invite(getattr(self, "_settings", None)),
+        )
+
+    def _show_discord_invite(self) -> None:
+
+        from photometry_app.ui.discord_invite import (
+            DISCORD_INVITE_RETRY_MS,
+            DiscordInviteDialog,
+            should_show_discord_invite,
+        )
+
+        if not should_show_discord_invite(getattr(self, "_settings", None)):
+            return
+        if not self.isVisible():
+            return
+        app = QApplication.instance()
+        if app is not None and app.activeModalWidget() is not None:
+            QTimer.singleShot(DISCORD_INVITE_RETRY_MS, self, self._show_discord_invite)
+            return
+        existing = getattr(self, "_discord_invite_dialog", None)
+        if existing is not None and isValid(existing) and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
+        dialog = DiscordInviteDialog(self)
+        dialog.finished.connect(self._finish_discord_invite)
+        self._discord_invite_dialog = dialog
+        dialog.open()
+        dialog.raise_()
+        if self.isActiveWindow():
+            dialog.activateWindow()
+
+    def _finish_discord_invite(self, _result: int = 0) -> None:
+
+        from photometry_app.ui.discord_invite import apply_discord_invite_opt_out
+
+        dialog = getattr(self, "_discord_invite_dialog", None)
+        self._discord_invite_dialog = None
+        if dialog is None or not isValid(dialog):
+            return
+        if apply_discord_invite_opt_out(getattr(self, "_settings", None), opted_out=dialog.opt_out_checked()):
+            self._save_settings_snapshot()
+        dialog.deleteLater()
 
     def _check_for_updates(self) -> None:
 
@@ -58114,6 +58330,7 @@ class MainWindow(QMainWindow):
             terminate_callback=self._terminate_differential_workflow,
 
             clear_object_cache_callback=self._clear_differential_object_cache,
+            transformation_callback=self._open_transformation_dialog,
 
         )
 
@@ -59367,6 +59584,19 @@ class MainWindow(QMainWindow):
 
         self._update_source_period_button_state()
 
+    def _open_transformation_dialog(self) -> None:
+        from photometry_app.ui.transformation_dialog import TransformationDialog
+        root_path = Path(self._root_path_input.text()).expanduser()
+        if not root_path.is_dir():
+            QMessageBox.warning(self, "Photometric Transformation", "Choose a workspace folder first.")
+            return
+        dialog = TransformationDialog(self._settings or AppSettings.from_root(root_path), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._settings = dialog.settings
+            self._settings.save(root_path)
+            self._append_work_log("Photometric transformation settings saved. Generate the science results again to apply the selected profile.")
+            self.statusBar().showMessage("Transformation profile saved. Generate again to update results.", 8000)
+
     def _open_settings(self, *, focus_assistant: bool = False) -> None:
 
         root_path = Path(self._root_path_input.text()).expanduser()
@@ -59519,6 +59749,11 @@ class MainWindow(QMainWindow):
 
             return AppMode.CLUSTER_FLOW
 
+        if current_widget is self._binary_light_panel:
+            return AppMode.BINARY_LIGHT_LAB
+        if current_widget is self._magnetosphere_panel:
+            return AppMode.AURORA_MAGNETOSPHERE
+
         return AppMode.DIFFERENTIAL_PHOTOMETRY
 
     def _sync_app_mode_controls(self) -> None:
@@ -59548,6 +59783,8 @@ class MainWindow(QMainWindow):
         self._app_mode_galaxy_merger_action.blockSignals(True)
 
         self._app_mode_cluster_flow_action.blockSignals(True)
+        self._app_mode_binary_light_action.blockSignals(True)
+        self._app_mode_magnetosphere_action.blockSignals(True)
 
         self._app_mode_differential_action.setChecked(mode == AppMode.DIFFERENTIAL_PHOTOMETRY)
 
@@ -59572,6 +59809,8 @@ class MainWindow(QMainWindow):
         self._app_mode_galaxy_merger_action.setChecked(mode == AppMode.GALAXY_MERGER)
 
         self._app_mode_cluster_flow_action.setChecked(mode == AppMode.CLUSTER_FLOW)
+        self._app_mode_binary_light_action.setChecked(mode == AppMode.BINARY_LIGHT_LAB)
+        self._app_mode_magnetosphere_action.setChecked(mode == AppMode.AURORA_MAGNETOSPHERE)
 
         self._app_mode_differential_action.blockSignals(False)
 
@@ -59596,6 +59835,8 @@ class MainWindow(QMainWindow):
         self._app_mode_galaxy_merger_action.blockSignals(False)
 
         self._app_mode_cluster_flow_action.blockSignals(False)
+        self._app_mode_binary_light_action.blockSignals(False)
+        self._app_mode_magnetosphere_action.blockSignals(False)
 
         if self._settings is not None:
 
@@ -59673,7 +59914,7 @@ class MainWindow(QMainWindow):
 
             self._file_menu.addAction(self._open_folder_action)
 
-        elif current_mode in {AppMode.BLACK_HOLE, AppMode.GALAXY_MERGER, AppMode.CLUSTER_FLOW}:
+        elif current_mode in {AppMode.BLACK_HOLE, AppMode.GALAXY_MERGER, AppMode.CLUSTER_FLOW, AppMode.BINARY_LIGHT_LAB, AppMode.AURORA_MAGNETOSPHERE}:
 
             pass
 
@@ -59698,6 +59939,8 @@ class MainWindow(QMainWindow):
             AppMode.BLACK_HOLE,
             AppMode.GALAXY_MERGER,
             AppMode.CLUSTER_FLOW,
+            AppMode.BINARY_LIGHT_LAB,
+            AppMode.AURORA_MAGNETOSPHERE,
         }:
 
             return
@@ -59903,6 +60146,15 @@ class MainWindow(QMainWindow):
 
             status_message = "Cluster Flow mode active."
 
+        elif mode == AppMode.AURORA_MAGNETOSPHERE:
+            active_widget = self._magnetosphere_panel
+            status_message = "Aurora & Magnetosphere Lab — CME Impact Mode active."
+
+        elif mode == AppMode.BINARY_LIGHT_LAB:
+            active_widget = self._binary_light_panel
+
+            status_message = "Binary Light Lab mode active."
+
         else:
 
             active_widget = self._asteroid_detection_panel
@@ -60030,6 +60282,11 @@ class MainWindow(QMainWindow):
         elif mode == AppMode.CLUSTER_FLOW:
 
             mode_title = "Cluster Flow"
+
+        elif mode == AppMode.BINARY_LIGHT_LAB:
+            mode_title = "Binary Light Lab"
+        elif mode == AppMode.AURORA_MAGNETOSPHERE:
+            mode_title = "Aurora & Magnetosphere Lab"
 
         else:
 
@@ -72532,6 +72789,9 @@ class MainWindow(QMainWindow):
 
             return False
 
+        if self._current_hr_working_table.spectral_lookup_complete is False:
+            return False
+
         return self._current_hr_measurement_cache_key == self._current_hr_measurement_cache_key_for(source_image)
 
     def _update_hr_prepare_button_text(self) -> None:
@@ -74391,7 +74651,7 @@ class MainWindow(QMainWindow):
 
             temperature_kelvin = HrDiagramPlotWidget.color_index_to_temperature_kelvin(row.gaia_bp_rp)
 
-            lines.append(f"Temperature: {float(temperature_kelvin):,.0f} K")
+            lines.append(f"Temperature: {float(temperature_kelvin):,.0f} K (color estimate)")
 
         if row.parallax_mas is not None:
 
@@ -74427,7 +74687,15 @@ class MainWindow(QMainWindow):
 
             lines.append(f"Type: {details.object_type}")
 
-        if loading:
+        if row.literature_spectral_type:
+
+            lines.append(f"Spectral Type: {row.literature_spectral_type} (literature; {row.spectral_type_source})")
+            if row.spectral_type_reference:
+                lines.append(f"Spectral reference: {row.spectral_type_reference}")
+            if row.spectral_type_match_method:
+                lines.append(f"Classification match: {row.spectral_type_match_method}")
+
+        elif loading:
 
             lines.append("Spectral Type: loading...")
 
@@ -74435,7 +74703,9 @@ class MainWindow(QMainWindow):
 
             spectral_type = None if details is None else details.spectral_type
 
-            lines.append(f"Spectral Type: {spectral_type or 'unavailable'}")
+            lines.append(f"Spectral Type: {spectral_type or 'Unknown'}")
+            if spectral_type:
+                lines.append("Detail lookup only; HR filtering uses the matched literature catalog from Generate.")
 
         if details is not None and details.visual_magnitude is not None and row.gaia_g_mag is not None:
 
@@ -77155,13 +77425,18 @@ class MainWindow(QMainWindow):
 
         wcs_path = Path(solved_field.wcs_path) if solved_field is not None and getattr(solved_field, "wcs_path", None) else None
 
-        return measure_hr_sources(
+        table = measure_hr_sources(
             source_image,
             field_catalog.gaia_stars,
             self._settings,
             progress_callback=progress_callback,
             wcs_path=wcs_path,
         )
+        if solved_field is not None:
+            table.spectral_lookup_complete = enrich_hr_spectral_types(
+                table.rows, solved_field, self._hr_catalog_cache_dir(), progress_callback
+            )
+        return table
 
     def _hr_catalog_cache_dir(self) -> Path:
 
@@ -77410,6 +77685,13 @@ class MainWindow(QMainWindow):
             "used_for_zero_point",
 
             "flags",
+
+            "literature_spectral_type",
+            "spectral_type_source",
+            "spectral_type_reference",
+            "spectral_type_quality",
+            "spectral_type_object",
+            "spectral_type_match_method",
 
         ]
 
@@ -77783,9 +78065,23 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
 
+        self._magnetosphere_panel.shutdown()
+
         if hasattr(self, "_transient_blink_timer"):
 
             self._transient_blink_timer.stop()
+
+        discord_timer = getattr(self, "_discord_invite_timer", None)
+
+        if discord_timer is not None:
+
+            discord_timer.stop()
+
+        discord_dialog = getattr(self, "_discord_invite_dialog", None)
+
+        if discord_dialog is not None and isValid(discord_dialog):
+
+            discord_dialog.close()
 
         if hasattr(self, "_sky_explorer_survey_refresh_timer"):
 
@@ -80775,6 +81071,8 @@ class MainWindow(QMainWindow):
             self._oc_button,
 
             self._light_curve_filter_button,
+
+            self._light_curve_select_button,
 
             self._reset_plot_button,
 
@@ -84008,6 +84306,8 @@ class MainWindow(QMainWindow):
 
             measurements = grouped_measurements.get(source_key, [])
 
+            measurements = [item for item in measurements if not self._measurement_hidden_from_light_curve(item)]
+
             if not measurements:
 
                 skipped_keys.append(source_key)
@@ -84870,9 +85170,11 @@ class MainWindow(QMainWindow):
 
     def _ensure_default_light_curve_view_modes(self) -> None:
 
-        """Keep Overview + Standard Magnitude as the default viewing mode after Generate/Apply."""
+        """Show transformed magnitudes when available, otherwise the catalog zero-point view."""
 
-        axis_index = self._light_curve_y_axis_selector.findData("standard_magnitude")
+        report = self._current_processing_report
+        axis_mode = "transformed_magnitude" if report and any(row.transformation.get("status") == "applied" for row in report.measurements) else "standard_magnitude"
+        axis_index = self._light_curve_y_axis_selector.findData(axis_mode)
 
         if axis_index >= 0 and self._light_curve_y_axis_selector.currentIndex() != axis_index:
 
@@ -85661,6 +85963,14 @@ class MainWindow(QMainWindow):
         self._oc_button.setEnabled(self._series_selector.count() > 0)
 
         self._export_light_curve_button.setEnabled(self._series_selector.count() > 0)
+
+        has_light_curve = self._series_selector.count() > 0
+
+        if not has_light_curve and (self._light_curve_options_mode or self._light_curve_select_button.isChecked()):
+
+            self._show_light_curve_select_button(active=False)
+
+        self._light_curve_select_button.setEnabled(has_light_curve)
 
         self._sync_fit_period_button_state()
 
@@ -86642,6 +86952,14 @@ class MainWindow(QMainWindow):
 
             widths.append(self._oc_button.sizeHint().width())
 
+        if hasattr(self, "_light_curve_select_button"):
+
+            self._light_curve_select_button.setMinimumWidth(0)
+
+            self._light_curve_select_button.setMaximumWidth(16777215)
+
+            widths.append(self._light_curve_select_button.sizeHint().width())
+
         target_width = max(widths)
 
         self._fold_plot_button.setFixedWidth(target_width)
@@ -86651,6 +86969,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_oc_button"):
 
             self._oc_button.setFixedWidth(target_width)
+
+        if hasattr(self, "_light_curve_select_button"):
+
+            self._light_curve_select_button.setFixedWidth(target_width)
 
     def _update_fit_period_summary_label(self) -> None:
 
@@ -87383,6 +87705,8 @@ class MainWindow(QMainWindow):
                 series,
                 "No light-curve points are available for animation.",
                 fit_config=self._current_fit_config(),
+                reference_layers=self._reference_layers_for_series(series),
+                style_overrides=self._light_curve_widget.series_style_overrides(),
                 y_axis_mode=self._current_light_curve_y_axis_mode(),
                 x_axis_mode=self._current_light_curve_x_axis_mode(),
                 phase_period_hours=self._fit_period_spin.value() / _MINUTES_PER_HOUR,
@@ -87422,6 +87746,15 @@ class MainWindow(QMainWindow):
             preferred_comparison_source_ids=self._overview_preferred_comparison_source_ids(series.source_id),
 
         )
+
+        layers = _visible_light_curve_layers(
+            layers,
+            show_references=self._show_references_checkbox.isChecked(),
+            show_checks=self._show_checks_checkbox.isChecked(),
+        )
+        layers = _strip_hidden_light_curve_layers(layers, getattr(self, "_light_curve_hidden_keys", ()))
+        if not self._show_references_checkbox.isChecked():
+            status_note = None
 
         x_axis_mode = self._current_light_curve_x_axis_mode()
 
@@ -88213,6 +88546,8 @@ class MainWindow(QMainWindow):
 
         self._reference_measurement_frame_index_cache = {}
 
+        self._check_measurement_frame_index_cache = {}
+
         self._reference_source_row_keys_cache = {}
 
         self._source_catalog_entries_cache = []
@@ -88233,6 +88568,8 @@ class MainWindow(QMainWindow):
 
         reference_frame_index: dict[str, dict[tuple[Path, str | None], PhotometryMeasurement]] = {}
 
+        check_frame_index: dict[str, dict[tuple[Path, str | None], PhotometryMeasurement]] = {}
+
         reference_row_keys: dict[str, str] = {}
 
         usable_source_keys: set[tuple[str, str]] = set()
@@ -88244,6 +88581,12 @@ class MainWindow(QMainWindow):
             if measurement_has_usable_value(measurement):
 
                 usable_source_keys.add((measurement.catalog, measurement.source_id))
+
+            if measurement.is_check:
+
+                check_rows = check_frame_index.setdefault(measurement.source_id, {})
+
+                check_rows.setdefault((measurement.file_path, measurement.filter_name), measurement)
 
             if not measurement.is_reference:
 
@@ -88288,6 +88631,8 @@ class MainWindow(QMainWindow):
         self._source_measurement_map_cache = measurement_map
 
         self._reference_measurement_frame_index_cache = reference_frame_index
+
+        self._check_measurement_frame_index_cache = check_frame_index
 
         self._reference_source_row_keys_cache = reference_row_keys
 
@@ -90806,6 +91151,21 @@ class MainWindow(QMainWindow):
 
         return max(1, int(settings.nearby_reference_count))
 
+    def _reference_layers_for_series(self, series: LightCurveSeries) -> list[object]:
+        measurements = [row for row in self._overview_measurements()
+                        if (row.filter_name or "unknown") == (series.filter_name or "unknown")]
+        layers, _ = build_overview_light_curve_layers(
+            measurements, series.source_id,
+            max_comparison_stars=self._overview_max_comparison_stars(),
+        )
+        layers = _visible_light_curve_layers(
+            layers,
+            show_references=self._show_references_checkbox.isChecked(),
+            show_checks=self._show_checks_checkbox.isChecked(),
+        )
+        layers = _strip_hidden_light_curve_layers(layers, getattr(self, "_light_curve_hidden_keys", ()))
+        return [layer for layer in layers if layer.role != "target"]
+
     def _overview_preferred_comparison_source_ids(self, source_id: str | None) -> list[str]:
 
         """Comparison IDs shown in sticky Source Results for the selected target."""
@@ -92637,6 +92997,7 @@ class MainWindow(QMainWindow):
         if not series_replaced:
             updated_series.append(result.series)
         report.light_curves = updated_series
+        self._refresh_report_transformations(report)
         self._clear_source_lookup_caches()
         self._refresh_comparison_fit_views()
         comparison_names = ", ".join(result.comparison_source_names)
@@ -95082,6 +95443,8 @@ class MainWindow(QMainWindow):
 
             recent_period_error_bars_only=self._phase_recent_error_bars_only_checkbox.isChecked(),
 
+            reference_layers=self._reference_layers_for_series(series),
+
         )
         self._show_standard_magnitude_status_note(series.source_id, series.filter_name, y_axis_mode)
 
@@ -95136,6 +95499,15 @@ class MainWindow(QMainWindow):
             preferred_comparison_source_ids=self._overview_preferred_comparison_source_ids(source_id),
 
         )
+
+        layers = _visible_light_curve_layers(
+            layers,
+            show_references=self._show_references_checkbox.isChecked(),
+            show_checks=self._show_checks_checkbox.isChecked(),
+        )
+        layers = _strip_hidden_light_curve_layers(layers, getattr(self, "_light_curve_hidden_keys", ()))
+        if not self._show_references_checkbox.isChecked():
+            status_note = None
 
         if not layers:
 
@@ -95192,6 +95564,14 @@ class MainWindow(QMainWindow):
         filter_name: str | None,
         y_axis_mode: str,
     ) -> None:
+        if y_axis_mode == "transformed_magnitude":
+            report = self._current_processing_report
+            if report:
+                rows = [r for r in report.measurements if r.source_id == source_id and (r.filter_name or "unknown") == filter_name]
+                applied = sum(r.transformation.get("status") == "applied" for r in rows)
+                reasons = sorted({r.transformation.get("reason", "No transformation applied") for r in rows if r.transformation.get("status") != "applied"})
+                self.statusBar().showMessage(f"Transformed {applied}/{len(rows)} observations. " + "; ".join(reasons), 8000)
+            return
         if y_axis_mode != "standard_magnitude":
             return
         band = None
@@ -95263,6 +95643,10 @@ class MainWindow(QMainWindow):
 
         for point in series.points:
 
+            if y_axis_mode == "transformed_magnitude":
+                if point.transformation.get("status") == "applied":
+                    return True
+                continue
             if y_axis_mode == "calibrated_magnitude":
 
                 if point.calibrated_magnitude is not None:
@@ -96318,6 +96702,14 @@ class MainWindow(QMainWindow):
 
             note_lines.append(f"Comparison stars: {comparison_names}")
 
+        check_measurements = self._check_measurements_for(measurement)
+
+        if check_measurements:
+
+            check_names = ", ".join(self._check_star_label(item.source_name) for item in check_measurements)
+
+            note_lines.append(f"Check star: {check_names}")
+
         if measurement.flags:
 
             note_lines.append(f"Flags: {' | '.join(measurement.flags)}")
@@ -96453,6 +96845,14 @@ class MainWindow(QMainWindow):
         else:
 
             description += "."
+
+        check_measurements = self._check_measurements_for(measurement, image_path=image_path)
+
+        if check_measurements:
+
+            check_names = ", ".join(self._check_star_label(item.source_name) for item in check_measurements)
+
+            description += f" Check star: {check_names}."
 
         return image_path, measurement, comparison_measurements, description
 
@@ -96738,6 +97138,20 @@ class MainWindow(QMainWindow):
 
                     overlays.append(self._saturated_image_overlay(comparison, "Saturated"))
 
+            measured_checks = self._check_measurements_for(measurement, image_path)
+
+            for check in measured_checks:
+
+                overlays.extend(self._check_measurement_overlays(check))
+
+                if self._image_mark_saturated_checkbox.isChecked() and check.is_saturated:
+
+                    overlays.append(self._saturated_image_overlay(check, "Check saturated"))
+
+            if not measured_checks:
+
+                overlays.extend(self._unmeasured_check_overlays(image_path))
+
 
 
         if not manual_overlay_mode or config is None:
@@ -96766,6 +97180,10 @@ class MainWindow(QMainWindow):
 
             source_name = self._manual_source_display_name(source)
 
+            if source.role == ManualSourceRole.CHECK:
+
+                source_name = self._check_star_label(source_name)
+
             aperture_radius = source.aperture_radius
 
             annulus_inner_radius = source.annulus_inner_radius
@@ -96776,7 +97194,7 @@ class MainWindow(QMainWindow):
 
                 position = (preview.x, preview.y)
 
-                source_name = preview.name
+                source_name = self._check_star_label(preview.name) if source.role == ManualSourceRole.CHECK else preview.name
 
                 aperture_radius = preview.aperture_radius
 
@@ -96816,6 +97234,10 @@ class MainWindow(QMainWindow):
 
             )
 
+            if source.role == ManualSourceRole.CHECK:
+
+                overlays.append(self._check_square_overlay(source.source_id, position[0], position[1], aperture_radius))
+
         if preview is not None and not preview_added:
 
             overlays.append(
@@ -96824,7 +97246,7 @@ class MainWindow(QMainWindow):
 
                     source_id="manual-preview",
 
-                    name=preview.name,
+                    name=self._check_star_label(preview.name) if preview.role == ManualSourceRole.CHECK else preview.name,
 
                     x=preview.x,
 
@@ -96845,6 +97267,10 @@ class MainWindow(QMainWindow):
                 )
 
             )
+
+            if preview.role == ManualSourceRole.CHECK:
+
+                overlays.append(self._check_square_overlay("manual-preview", preview.x, preview.y, preview.aperture_radius))
 
         return overlays
 
@@ -97355,6 +97781,18 @@ class MainWindow(QMainWindow):
                 updated_series.append(restored_series)
 
             report.light_curves = updated_series
+
+        self._refresh_report_transformations(report)
+
+    def _refresh_report_transformations(self, report: ProcessingReport) -> None:
+        settings = self._settings
+        if settings is None or not (settings.transformation_enabled or any(row.transformation for row in report.measurements)):
+            return
+        from photometry_app.core.transformation import apply_transformations
+        radii = {row.file_path: report.field_catalog.radius_deg for row in report.measurements} if report.field_catalog else None
+        report.measurements = apply_transformations(report.measurements, settings, field_radii=radii)
+        report.light_curves = build_light_curve_series(report.measurements)
+        report.transformation_profiles = [p for p in settings.transformation_profiles if p.get("id") == settings.transformation_profile_id]
 
     def _build_equatorial_grid_overlays(
 
@@ -99450,17 +99888,197 @@ class MainWindow(QMainWindow):
 
         return bool(getattr(settings, "saturation_filter_enabled", True))
 
+    def _handle_light_curve_select_clicked(self, checked: bool) -> None:
+        if self._light_curve_select_sync:
+            return
+        if self._light_curve_options_mode:
+            self._light_curve_select_sync = True
+            self._light_curve_select_button.setChecked(True)
+            self._light_curve_select_sync = False
+            self._light_curve_options_menu.popup(
+                self._light_curve_select_button.mapToGlobal(QPoint(0, self._light_curve_select_button.height()))
+            )
+            return
+        self._light_curve_widget.set_region_select_enabled(bool(checked))
+        if not checked:
+            self._light_curve_widget.clear_region_overlay()
+            self._light_curve_region_points = []
+        elif checked:
+            self.statusBar().showMessage("Drag a rectangle on the light curve to select points.")
+
+    def _show_light_curve_options(self, points: list[dict[str, object]]) -> None:
+        self._light_curve_region_points = list(points)
+        self._light_curve_options_mode = True
+        self._light_curve_widget.set_region_select_enabled(False)
+        button = self._light_curve_select_button
+        button.setText("Options")
+        button.setToolTip("Choose what to do with the points inside the rectangle.")
+        self._light_curve_select_sync = True
+        button.setChecked(True)
+        self._light_curve_select_sync = False
+        self._sync_light_curve_toolbar_button_widths()
+        self._sync_light_curve_options_menu()
+
+    def _show_light_curve_select_button(self, *, active: bool) -> None:
+        self._light_curve_options_mode = False
+        self._light_curve_region_points = []
+        button = self._light_curve_select_button
+        button.setText("Select")
+        button.setToolTip("Draw a rectangle on the light curve to select the points inside it. Click again to turn selection off.")
+        self._light_curve_select_sync = True
+        button.setChecked(active)
+        self._light_curve_select_sync = False
+        self._sync_light_curve_toolbar_button_widths()
+        self._light_curve_widget.set_region_select_enabled(active)
+        if not active:
+            self._light_curve_widget.clear_region_overlay()
+
+    def _sync_light_curve_options_menu(self) -> None:
+        has_removed = bool(self._light_curve_hidden_keys)
+        self._light_curve_select_again_action.setEnabled(has_removed)
+        self._light_curve_remove_action.setEnabled(bool(self._light_curve_region_points))
+        self._light_curve_mark_action.setEnabled(bool(self._light_curve_region_points))
+
+    def _handle_light_curve_region_selected(self, points: object) -> None:
+        selected = list(points or [])
+        if not selected:
+            return
+        self._show_light_curve_options(selected)
+        self.statusBar().showMessage(f"Selected {len(selected)} light-curve point(s).")
+
+    def _handle_light_curve_region_overlay_cleared(self) -> None:
+        if not self._light_curve_options_mode:
+            return
+        self._show_light_curve_select_button(active=False)
+
+    def _remove_selected_light_curve_points(self) -> None:
+        if not self._light_curve_region_points:
+            return
+        keys = {item["key"] for item in self._light_curve_region_points if item.get("key")}
+        self._light_curve_hidden_keys.update(keys)
+        count = len(keys)
+        self._show_light_curve_select_button(active=False)
+        self._plot_selected_series()
+        self.statusBar().showMessage(f"Removed {count} point(s) from the light curve and extended report. No files were deleted.")
+
+    def _select_light_curve_region_again(self) -> None:
+        if not self._light_curve_hidden_keys:
+            return
+        self._show_light_curve_select_button(active=True)
+        self.statusBar().showMessage("Drag another rectangle. Points already removed stay off the light curve.")
+
+    def _reset_hidden_light_curve_points(self) -> None:
+        self._light_curve_hidden_keys.clear()
+        self._show_light_curve_select_button(active=False)
+        if self._current_processing_report is not None:
+            self._plot_selected_series()
+        self.statusBar().showMessage("Restored the light curve.")
+
+    def _mark_selected_light_curve_files(self) -> None:
+        paths = []
+        seen: set[str] = set()
+        for item in self._light_curve_region_points:
+            path = item.get("file_path")
+            if not isinstance(path, Path):
+                continue
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(path)
+        renamed: list[tuple[Path, Path]] = []
+        skipped = 0
+        for path in paths:
+            destination = marked_file_path(path)
+            if destination is None:
+                skipped += 1
+                continue
+            renamed.append((path, destination))
+        if not renamed:
+            self.statusBar().showMessage("No files were renamed. They may already be marked or missing.")
+            return
+        mapping = {str(old): new for old, new in renamed}
+        self._retarget_light_curve_file_paths(mapping)
+        self._rewrite_hidden_and_selected_paths(mapping)
+        self.statusBar().showMessage(f"Marked {len(renamed)} file(s) with (marked). Nothing was deleted.")
+        if skipped:
+            self.statusBar().showMessage(
+                f"Marked {len(renamed)} file(s) with (marked). {skipped} file(s) were already marked or missing. Nothing was deleted."
+            )
+
+    def _rewrite_hidden_and_selected_paths(self, mapping: dict[str, Path]) -> None:
+        def rewrite(key: tuple[str, str, str, str]) -> tuple[str, str, str, str]:
+            source_id, filter_name, file_path, observation = key
+            new_path = mapping.get(file_path)
+            if new_path is None:
+                return key
+            return (source_id, filter_name, str(new_path), observation)
+
+        self._light_curve_hidden_keys = {rewrite(key) for key in self._light_curve_hidden_keys}
+        for item in self._light_curve_region_points:
+            path = item.get("file_path")
+            if isinstance(path, Path) and str(path) in mapping:
+                new_path = mapping[str(path)]
+                item["file_path"] = new_path
+                if isinstance(item.get("key"), tuple):
+                    item["key"] = rewrite(item["key"])
+
+    def _retarget_light_curve_file_paths(self, mapping: dict[str, Path]) -> None:
+        from dataclasses import replace
+        report = self._current_processing_report
+        if report is None:
+            return
+        report.measurements = [
+            replace(measurement, file_path=mapping[str(measurement.file_path)]) if str(measurement.file_path) in mapping else measurement
+            for measurement in report.measurements
+        ]
+        updated_series = []
+        for series in report.light_curves:
+            points = []
+            changed = False
+            for point in series.points:
+                new_path = mapping.get(str(point.file_path))
+                if new_path is None:
+                    points.append(point)
+                    continue
+                points.append(replace(point, file_path=new_path))
+                changed = True
+            updated_series.append(replace(series, points=points) if changed else series)
+        report.light_curves = updated_series
+
+    def _measurement_hidden_from_light_curve(self, measurement: PhotometryMeasurement) -> bool:
+        if not self._light_curve_hidden_keys:
+            return False
+        return light_curve_hide_key(
+            measurement.source_id,
+            measurement.filter_name,
+            measurement.file_path,
+            measurement.observation_time,
+        ) in self._light_curve_hidden_keys
+
     def _series_for_display(self, series: LightCurveSeries | None) -> LightCurveSeries | None:
 
         if series is None:
 
             return None
 
-        if not self._saturation_frames_hidden():
+        points = list(series.points)
 
-            return series
+        if self._saturation_frames_hidden():
 
-        points = [point for point in series.points if not getattr(point, "is_saturated", False)]
+            points = [point for point in points if not getattr(point, "is_saturated", False)]
+
+        hidden_keys = getattr(self, "_light_curve_hidden_keys", None)
+
+        if hidden_keys:
+
+            points = [
+
+                point for point in points
+
+                if light_curve_hide_key(series.source_id, series.filter_name, point.file_path, point.observation_time) not in hidden_keys
+
+            ]
 
         if len(points) == len(series.points):
 
@@ -99545,6 +100163,170 @@ class MainWindow(QMainWindow):
         observation = point.observation_time.isoformat(sep=" ") if point.observation_time else "-"
 
         return (series.source_id, series.filter_name, point.file_path.name, observation)
+
+    def _check_star_label(self, name: str) -> str:
+
+        text = str(name or "").strip() or "Check Star"
+
+        if text.casefold().startswith("check"):
+
+            return text
+
+        return f"Check {text}"
+
+    def _check_square_overlay(self, source_id: str, x_value: float, y_value: float, radius: float) -> ImageOverlay:
+
+        """Square corners around a check star so it is not another round aperture."""
+
+        return ImageOverlay(
+
+            source_id=f"check-square:{source_id}",
+
+            name="",
+
+            x=float(x_value),
+
+            y=float(y_value),
+
+            aperture_radius=max(6.0, float(radius)),
+
+            annulus_inner_radius=0.0,
+
+            annulus_outer_radius=0.0,
+
+            color=self._manual_source_color_for_role(ManualSourceRole.CHECK),
+
+            show_annulus=False,
+
+            show_handles=False,
+
+            marker_style="brackets",
+
+            show_label=False,
+
+            pen_width=2.0,
+
+        )
+
+    def _check_measurement_overlays(self, measurement: PhotometryMeasurement) -> list[ImageOverlay]:
+
+        radius = measurement.aperture_radius or 5.0
+
+        aperture = ImageOverlay(
+
+            source_id=measurement.source_id,
+
+            name=self._check_star_label(measurement.source_name),
+
+            x=measurement.x,
+
+            y=measurement.y,
+
+            aperture_radius=radius,
+
+            annulus_inner_radius=measurement.annulus_inner_radius or max(radius + 2.0, 8.0),
+
+            annulus_outer_radius=measurement.annulus_outer_radius or max((measurement.annulus_inner_radius or 8.0) + 2.0, 12.0),
+
+            color=self._manual_source_color_for_role(ManualSourceRole.CHECK),
+
+            show_annulus=False,
+
+            show_handles=False,
+
+            pen_width=2.0,
+
+        )
+
+        return [aperture, self._check_square_overlay(measurement.source_id, measurement.x, measurement.y, radius)]
+
+    def _unmeasured_check_overlays(self, image_path: Path) -> list[ImageOverlay]:
+
+        """Draw a placed check star before its measurement exists on this frame."""
+
+        config = self._manual_config_for_object(self._selected_object_name())
+
+        check_source = None if config is None else config.check_source
+
+        if check_source is None:
+
+            return []
+
+        position = self._manual_overlay_positions_for_image(image_path, config).get(check_source.source_id)
+
+        if position is None:
+
+            return []
+
+        radius = check_source.aperture_radius or 5.0
+
+        aperture = ImageOverlay(
+
+            source_id=check_source.source_id,
+
+            name=self._check_star_label(check_source.name),
+
+            x=position[0],
+
+            y=position[1],
+
+            aperture_radius=radius,
+
+            annulus_inner_radius=check_source.annulus_inner_radius,
+
+            annulus_outer_radius=check_source.annulus_outer_radius,
+
+            color=self._manual_source_color_for_role(ManualSourceRole.CHECK),
+
+            show_annulus=False,
+
+            show_handles=False,
+
+            pen_width=2.0,
+
+        )
+
+        return [aperture, self._check_square_overlay(check_source.source_id, position[0], position[1], radius)]
+
+    def _check_measurements_for(
+
+        self,
+
+        measurement: PhotometryMeasurement | None,
+
+        image_path: Path | None = None,
+
+    ) -> list[PhotometryMeasurement]:
+
+        report = self._current_processing_report
+
+        if report is None or measurement is None:
+
+            return []
+
+        self._ensure_source_lookup_caches(report)
+
+        path = measurement.file_path if image_path is None else image_path
+
+        selected: list[PhotometryMeasurement] = []
+
+        for source_id, frames in self._check_measurement_frame_index_cache.items():
+
+            if source_id == measurement.source_id:
+
+                continue
+
+            match = frames.get((path, measurement.filter_name))
+
+            if match is None or not np.isfinite(match.x) or not np.isfinite(match.y):
+
+                continue
+
+            selected.append(match)
+
+        selected.sort(key=lambda row: (row.source_name or row.source_id).casefold())
+
+        return selected
 
     def _comparison_measurements_for(self, measurement: PhotometryMeasurement, image_path: Path | None = None) -> list[PhotometryMeasurement]:
 

@@ -105,25 +105,61 @@ class MainWindowAboutDialogTest(unittest.TestCase):
 
     def test_about_dialog_mentions_developer_site_and_alpha_review_limit(self) -> None:
 
+        _app = QApplication.instance() or QApplication([])
+
+        parent = QWidget()
+
+        from photometry_app.ui.discord_invite import build_about_message_box
+
+        box = build_about_message_box(parent)
+
+        self.assertIs(box.parent(), parent)
+
+        self.assertEqual(box.windowTitle(), "About Citizen Astronomy (CAst)")
+
+        text = box.text()
+
+        self.assertIn(f"Version {APP_VERSION}", text)
+
+        self.assertIn("Developed by Ogetay. For more info, please visit:", text)
+
+        self.assertIn("https://github.com/OgetayKayali/citizen-astronomy", text)
+
+        self.assertIn("Logo designed by Ege Palaz", text)
+
+        self.assertIn("https://palaz.se", text)
+
+        self.assertIn("https://discord.gg/w5dxBQ5Fj", text)
+
+        self.assertIn("Join the Discord to ask questions and follow updates:", text)
+
+        self.assertIn("We answer questions there and share more detail about the app.", text)
+
+        self.assertIn("Alpha build only.", text)
+
+        box.show()
+
+        QApplication.processEvents()
+
+        linked = [label for label in box.findChildren(QLabel) if label.openExternalLinks()]
+
+        self.assertTrue(linked, "About dialog links should open in the browser")
+
+        box.close()
+
+        parent.deleteLater()
+
         window = MainWindow.__new__(MainWindow)
 
-        with patch("photometry_app.ui.main_window.QMessageBox.information") as information:
+        with patch("photometry_app.ui.discord_invite.build_about_message_box") as build:
+
+            build.return_value.exec.return_value = 0
 
             MainWindow._show_about_dialog(window)
 
-        args, _kwargs = information.call_args
+        build.assert_called_once_with(window)
 
-        self.assertEqual(args[0], window)
-
-        self.assertEqual(args[1], "About Citizen Astronomy (CAst)")
-
-        self.assertIn(f"Version {APP_VERSION}", args[2])
-
-        self.assertIn("Developed by Ogetay. For more info, please visit: https://github.com/OgetayKayali/citizen-astronomy", args[2])
-
-        self.assertIn("Logo designed by Ege Palaz (https://palaz.se).", args[2])
-
-        self.assertIn("Alpha build only.", args[2])
+        build.return_value.exec.assert_called_once_with()
 
 
 
@@ -626,7 +662,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertTrue(dialog._pull_periods_checkbox.isChecked())
 
-            self.assertTrue(dialog._calculate_periods_checkbox.isChecked())
+            self.assertFalse(dialog._calculate_periods_checkbox.isChecked())
 
             self.assertFalse(dialog._measurements_checkbox.isChecked())
 
@@ -706,7 +742,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             dialog._pull_periods_checkbox.setChecked(False)
 
-            dialog._calculate_periods_checkbox.setChecked(False)
+            dialog._calculate_periods_checkbox.setChecked(True)
 
             dialog._default_button.click()
 
@@ -714,7 +750,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertTrue(dialog._pull_periods_checkbox.isChecked())
 
-            self.assertTrue(dialog._calculate_periods_checkbox.isChecked())
+            self.assertFalse(dialog._calculate_periods_checkbox.isChecked())
 
             self.assertTrue(dialog._designation_filters_checkbox.isChecked())
 
@@ -762,7 +798,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertTrue(dialog._generate_button.isEnabled())
 
-            generate.assert_called_once_with(_DifferentialWorkflowOptions(False, False, True, True, True))
+            generate.assert_called_once_with(_DifferentialWorkflowOptions(False, False, True, False, True))
 
         finally:
 
@@ -1931,6 +1967,14 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
     def test_differential_left_wrappers_are_plain_widgets(self) -> None:
 
+        self.assertTrue(self.window._show_references_checkbox.isChecked())
+
+        self.assertTrue(self.window._show_checks_checkbox.isChecked())
+
+        self.assertEqual(self.window._light_curve_select_button.text(), "Select")
+
+        self.assertFalse(self.window._light_curve_select_button.isEnabled())
+
         self.assertFalse(self.window._workspace_actions_group.inherits("QGroupBox"))
 
         self.assertFalse(self.window._differential_results_group.inherits("QGroupBox"))
@@ -2003,6 +2047,12 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             dialog._interface_tips_enabled_input.setChecked(False)
 
             self.assertFalse(dialog.build_settings().interface_tips_enabled)
+
+            self.assertTrue(dialog._show_discord_invite_input.isChecked())
+
+            dialog._show_discord_invite_input.setChecked(False)
+
+            self.assertFalse(dialog.build_settings().show_discord_invite)
 
         finally:
 
@@ -15717,7 +15767,150 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertTrue(all(not overlay.show_label for overlay in saturation_overlays))
 
+    def test_check_star_image_marker_is_distinct_from_comparison_circles(self) -> None:
 
+        measurement_time = datetime(2026, 3, 16, 1, 0, 0)
+        image_path = Path("frame_01.fits")
+        target = PhotometryMeasurement(
+            source_id="vsx-1",
+            source_name="W UMa",
+            catalog="vsx",
+            object_name="Demo",
+            file_path=image_path,
+            observation_time=measurement_time,
+            filter_name="L",
+            ra_deg=10.0,
+            dec_deg=20.0,
+            x=50.0,
+            y=60.0,
+            flux=5000.0,
+            flux_error=15.0,
+            instrumental_magnitude=-9.0,
+            differential_magnitude=0.32,
+            is_variable=True,
+            is_reference=False,
+        )
+        comparison = PhotometryMeasurement(
+            source_id="comp-1",
+            source_name="Comparison",
+            catalog="gaia",
+            object_name="Demo",
+            file_path=image_path,
+            observation_time=measurement_time,
+            filter_name="L",
+            ra_deg=11.0,
+            dec_deg=21.0,
+            x=80.0,
+            y=90.0,
+            flux=4000.0,
+            flux_error=12.0,
+            instrumental_magnitude=-8.0,
+            differential_magnitude=0.1,
+            is_variable=False,
+            is_reference=True,
+        )
+        check = PhotometryMeasurement(
+            source_id="check-1",
+            source_name="TYC 1",
+            catalog="manual",
+            object_name="Demo",
+            file_path=image_path,
+            observation_time=measurement_time,
+            filter_name="L",
+            ra_deg=12.0,
+            dec_deg=22.0,
+            x=140.0,
+            y=150.0,
+            flux=900.0,
+            flux_error=8.0,
+            instrumental_magnitude=-6.0,
+            differential_magnitude=1.4,
+            is_variable=True,
+            is_reference=False,
+            is_check=True,
+            aperture_radius=9.0,
+        )
+        previous_report = self.window._current_processing_report
+        self.window._current_processing_report = ProcessingReport(
+            object_name="Demo",
+            files_processed=1,
+            solved_files=1,
+            field_catalog=None,
+            measurements=[target, comparison, check],
+        )
+        self.window._clear_source_lookup_caches()
+        try:
+            overlays = self.window._build_image_overlays(image_path, target, [comparison])
+        finally:
+            self.window._current_processing_report = previous_report
+            self.window._clear_source_lookup_caches()
+
+        by_id = {overlay.source_id: overlay for overlay in overlays}
+        self.assertEqual(by_id["comp-1"].color, "gold")
+        self.assertEqual(by_id["comp-1"].marker_style, "circle")
+        self.assertEqual(by_id["check-1"].color, "deepskyblue")
+        self.assertEqual(by_id["check-1"].name, "Check TYC 1")
+        self.assertEqual(by_id["check-1"].marker_style, "circle")
+        square = by_id["check-square:check-1"]
+        self.assertEqual(square.marker_style, "brackets")
+        self.assertEqual(square.color, "deepskyblue")
+        self.assertFalse(square.show_label)
+        self.assertEqual(square.x, 140.0)
+        self.assertEqual(square.y, 150.0)
+
+    def test_aperture_editor_check_star_uses_a_square_as_well_as_a_blue_circle(self) -> None:
+
+        image_path = Path("frame_01.fits")
+        config = ManualPhotometryConfig(
+            object_name="Demo",
+            mode=ObjectPhotometryMode.MANUAL,
+            sources=[
+                ManualSourceConfig(
+                    source_id="manual-target", name="Target", role=ManualSourceRole.TARGET,
+                    ra_deg=10.0, dec_deg=20.0, reference_frame_name=image_path.name,
+                    reference_x=40.0, reference_y=50.0, aperture_radius=6.0,
+                    annulus_inner_radius=10.0, annulus_outer_radius=14.0,
+                ),
+                ManualSourceConfig(
+                    source_id="manual-comp", name="Comp", role=ManualSourceRole.COMPARISON,
+                    ra_deg=11.0, dec_deg=21.0, reference_frame_name=image_path.name,
+                    reference_x=70.0, reference_y=80.0, aperture_radius=6.0,
+                    annulus_inner_radius=10.0, annulus_outer_radius=14.0,
+                ),
+                ManualSourceConfig(
+                    source_id="manual-check", name="TYC 1", role=ManualSourceRole.CHECK,
+                    ra_deg=12.0, dec_deg=22.0, reference_frame_name=image_path.name,
+                    reference_x=100.0, reference_y=110.0, aperture_radius=7.0,
+                    annulus_inner_radius=11.0, annulus_outer_radius=15.0,
+                ),
+            ],
+        )
+        target = PhotometryMeasurement(
+            source_id="manual-target", source_name="Target", catalog="manual", object_name="Demo",
+            file_path=image_path, observation_time=datetime(2026, 3, 16, 1, 0, 0), filter_name="L",
+            ra_deg=10.0, dec_deg=20.0, x=40.0, y=50.0, flux=1000.0, flux_error=10.0,
+            instrumental_magnitude=-8.0, differential_magnitude=0.2, is_variable=True, is_reference=False,
+        )
+        with (
+            patch.object(self.window, "_manual_config_for_object", return_value=config),
+            patch.object(
+                self.window,
+                "_manual_overlay_positions_for_image",
+                return_value={
+                    "manual-target": (40.0, 50.0),
+                    "manual-comp": (70.0, 80.0),
+                    "manual-check": (100.0, 110.0),
+                },
+            ),
+        ):
+            overlays = self.window._build_image_overlays(image_path, target, [])
+        by_id = {overlay.source_id: overlay for overlay in overlays}
+        self.assertEqual(by_id["manual-comp"].color, "gold")
+        self.assertEqual(by_id["manual-target"].color, "lime")
+        self.assertEqual(by_id["manual-check"].color, "deepskyblue")
+        self.assertEqual(by_id["manual-check"].name, "Check TYC 1")
+        self.assertEqual(by_id["check-square:manual-check"].marker_style, "brackets")
+        self.assertEqual(by_id["check-square:manual-check"].color, "deepskyblue")
 
     def test_fold_uses_literature_period_when_available(self) -> None:
 

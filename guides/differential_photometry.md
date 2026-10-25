@@ -118,6 +118,47 @@ If CAst finds more than one object grouping, **Loaded Results** opens after the 
 
 ## 4. Configure the workflow
 
+### Photometric Transformation (B/V)
+
+Use **Photometric Transformation…** in the workflow or **Settings → Photometric Transformation…** to calculate and manage instrument profiles. This is separate from bias/dark/flat calibration. A catalog zero point alone does not remove the color response of the telescope, camera, and filters.
+
+The default **Setup** tab supports RGB imaging filters, separate linear blue/green channels, and photometric B/V filters. Filter manufacturers can be selected or typed, with a model/series and other setup details. Brand information describes the equipment; it does **not** supply universal coefficients. A calibration measures the combined response of your telescope, camera, filters, and other optics. **What do I need?** explains reference fields and image requirements. Use **Close** to leave your current settings unchanged. Without an enabled calibration, differential photometry already proceeds without transformation. To disable an existing calibration, uncheck automatic transformation in **Advanced** and choose **Save setup**.
+
+1. Choose your **Filter type** and **Filters** brand/model. Add any reducer, IR-cut filter, camera mode, or channel extraction details under **Advanced → Fit settings**. Telescope and camera can be filled from image headers when available. A saved calibration can instead be selected at the top; selecting it restores its equipment information.
+2. Use **Choose images…** or **Choose folder…** to add calibrated observations of an AAVSO standard field, such as M67, NGC 7790, or a Landolt field. A folder includes supported images in its subfolders. Several repeats in both channels, unsaturated stars with good color coverage, and stable low-airmass conditions are recommended. Image requirements are explained in **What do I need?**; no confirmation checkbox is required.
+3. Check the detected channels. In RGB mode, common blue/green names (including `B`/`G`, `TB`/`TG`, and manufacturer-prefixed names) are recognized. In photometric mode, CAst looks for B/V. Ambiguous names require a selection in the two channel menus. An entire RGB set can be selected: **red and other unused frames are listed and omitted from this B/V calibration**. Missing `FILTER` headers must be corrected in the images. The selected type supplies context; RGB green is not assumed to be Sloan g, Gaia G, or an already-standard V measurement.
+4. Choose **Calibrate automatically**. CAst plate-solves the images, retrieves AAVSO VSP's standard-field catalog, measures standards once, selects a suitable SNR cutoff, screens unreliable measurements and exposures, fits the coefficients, and validates the result on separate stars. Automatic selection tries SNR 100, 75, 50, 40, 30, then 20, targeting 20 distinct standards measured in both bands after screening. It keeps the highest cutoff meeting that target and the required color coverage; if fewer are available, it keeps the cutoff giving the most usable standards, subject to the minimum validation requirements. Saturation, overlap, and other quality exclusions remain in force. The cutoff is never chosen by searching for a passing validation score. A network connection is required for the catalog lookup. Images need exposure time and observation date metadata. Known airmass outside 1–2 is rejected. A field wider than one degree is cropped around the standard field, such as M67, so the measured area stays within one degree. Frames that do not already share a plate-solution orientation are aligned before measurement.
+5. When validation passes, choose **Use calibration** to save and enable the result in one action. Generate the science results again to apply it. In **Advanced**, **Save setup**, with automatic transformation unchecked, remembers the equipment without enabling a transformation. Recalibrate after equipment changes and review the calibration at least annually.
+
+The **Advanced** tab separates **Fit settings** from **Measurements & residuals**, retaining manual measurement and refitting, CSV import/export, exact input header names, provenance, date, pairing interval, profile exports, the measurement table, and residual plots. **Minimum SNR** on Measurements & residuals shows the selected calibration signal-to-noise cutoff. Changing it updates exclusions without measuring the images again and switches off automatic SNR selection for subsequent image calibration. **Choose SNR automatically** in Fit settings restores automatic selection. **Automatically exclude outliers and unreliable exposures** controls quality screening during calibration and refitting. Click **Reason / validation** to group rows by exclusion category, such as SNR or overlapping apertures. Low-SNR, saturated, near-saturated, flagged, or overlapping-standard measurements are initially excluded. Missing catalog errors are not invented. Inspect images for blends with other field stars as well. Check or uncheck rows to adjust the fit, then choose **Refit and validate**; exclusions and their reasons are retained. Editing the setup or measurements invalidates the previous result.
+
+The residual plot uses catalog B−V; triangles mark withheld validation stars. Gray crosses mark excluded measurements, and the plot scale follows included data. Excluded values outside the plot range remain available in the table and CSV. Screening uses a robust color-response estimate from fitting stars, with a 4.5-sigma cutoff including measurement uncertainty and ensemble scatter, and a 0.05 mag minimum rejection threshold. Frames with at least six fitting stars and more than 25% inconsistent measurements are excluded when another usable frame in that band remains. This also excludes validation measurements from those frames. A uniform brightness offset is handled by each exposure’s zero point. Individual validation-star residuals are never clipped to obtain a pass; both their per-star means and their individual-observation RMS must pass accuracy checks. Entire stars, including all their repeat exposures, are withheld to avoid testing on the fitting data. If an automatic fit fails, its measurements remain available for inspection and export. Direct camera RAW files and combined color cubes require separate linear channel extraction before this workflow; they are not automatically converted here.
+
+The current acceptance limits are CAst implementation choices, not universal AAVSO rules: at least 12 distinct standards measured in both bands, a training color span of at least 0.8 mag, fitting and validation RMS no greater than 0.03 mag per band, maximum absolute mean validation-star residual no greater than 0.05 mag, and color-term uncertainty no greater than 0.1. Calibration observations with dates must fall within 31 days of the profile date. A failed fit can be inspected and its measurements exported, but cannot become an active profile. Do not remove standards solely to make a nonlinear response pass.
+
+The fitting model is `B − b = Z_B,exposure + Tb_bv × (B−V)` and `V − v = Z_V,exposure + Tv_bv × (B−V)`, with instrumental magnitudes normalized by exposure time. Each exposure has its own zero point. The consistent color coefficient is `Tbv = 1 / (1 − Tb_bv + Tv_bv)`. Generalized least squares accounts for catalog errors shared across repeated measurements; the supplied catalog B and V errors are assumed independent because their covariance is unavailable.
+
+During science reduction, CAst pairs B/V observations of each target within the selected time limit (default 120 seconds), without pairing across UTC dates or reusing an observation. Choose a shorter interval for rapidly varying objects. Both frames must share suitable, independent comparison stars with actual B and V catalog magnitudes and uncertainties. Gaia G is not used as a substitute. The ensemble is solved jointly, retaining color and coefficient covariance. Check stars are excluded from the comparison ensemble. A profile must match the current telescope/camera/optical setup and be within one year of the science observation. Target and comparison colors must lie within the fitted training range.
+
+The calculation assumes negligible differential extinction. Science frames wider than one degree, and airmass outside 1–2, are left untransformed. Calibration images wider than one degree are cropped around the standard field before the fit. Missing airmass metadata is not proof of suitable observing conditions. Strongly mismatched, narrowband, dual-band, or emission-line observations require separate scientific validation and should not be represented as broadband B/V merely because a stellar fit is possible.
+
+When transformations are available, the light-curve axis **Transformed Magnitude (B/V)** shows them separately from the original **Standard Magnitude** values. Unavailable points are not substituted into that view; its status message explains exclusions. Single-band observations without contemporaneous color remain untransformed. External target-color corrections and integrated RAW channel extraction are not included in this version. Independent per-filter SNR binning clears transformation results; transform the original paired exposures instead.
+
+Profiles can be exported/imported as CAst JSON including all calibration observations and diagnostics. Imported profiles are refitted and revalidated. **Export TG/TA coefficients…** writes the B/V coefficients and uncertainties in INI form; it does not export a transformed ensemble to TransformApplier. Importing an INI coefficient list without calibration/validation evidence is not supported.
+
+For measurements calculated elsewhere, **Load measurements CSV…** accepts these columns:
+
+```csv
+star_id,exposure_id,band,instrumental_magnitude,instrumental_error,B,V,B_error,V_error,enabled,reason,observation_date
+000-EXAMPLE-1,B-frame-1,B,-7.123,0.004,12.450,11.820,0.010,0.009,true,,2026-10-01
+```
+
+`band` is the intended standard B or V band; instrumental magnitude is `−2.5 log10(net flux / exposure seconds)`. Catalog values for each star must be consistent across rows. Record the standard-field chart/source and calibration date in the dialog. This example illustrates the schema, not a real standard star.
+
+AAVSO export now derives `TRANS=YES` from an applied calculation, never the legacy checkbox. Successful results use output B/V even when the input channels were TB/TG. Untransformed known channels cannot be relabeled as a different standard band through the global filter override. `MTYPE=STD` can still accompany `TRANS=NO` for zero-point-calibrated data. Accepted/rejected observation tables include transformation status, reason, profile ID, output band, magnitude, and error. The additional `*_transformations.json` report contains the calibration profiles, paired files, comparison IDs, color, covariance, and separate random/systematic error components. Shared coefficient and comparison-catalog errors must not be divided by the square root of the number of observations.
+
+Method references: [AAVSO CCD/CMOS guide, Chapter 6 and Appendix D](https://aavso.org/wp-content/uploads/2026/07/CCD-CMOS-English.pdf), [Transform Generator guide](https://www.aavso.org/sites/default/files/software/tg/TransformGeneratorUsersGuideUpdate2023_Final.pdf), and [VSP standard-field API](https://archive.aavso.org/index.php/api-vsp).
+
 Section **2. Pipeline** contains the reduction stages.
 
 ### Pipeline options
@@ -128,7 +169,7 @@ Section **2. Pipeline** contains the reduction stages.
 - **Filter Targets** — required and kept on.
 - **Light Curves** — required and kept on.
 - **Pull Periods** — requests catalog/literature periods where available.
-- **Calculate Periods** — lets CAst infer periods from measured data.
+- **Calculate Periods** — lets CAst infer periods from measured data. Off by default; enable it when needed.
 - **Create Measurements Table** — prepares the detailed table during the run. Leave it off when first-run speed matters; the Measurements tab can load it later.
 
 Calibration and alignment are optional. Plate solving, target filtering, and light-curve construction are core stages.
@@ -145,7 +186,7 @@ For a first run:
 
 1. leave the designation families enabled;
 2. keep **Brightest Variables** at a manageable percentage if the field is very dense;
-3. leave **Pull Periods** and **Calculate Periods** on;
+3. leave **Pull Periods** on; enable **Calculate Periods** only if you want to infer a period from these observations;
 4. leave **Create Measurements Table** off unless you need every measurement row immediately.
 
 > **Screenshot needed:** Filter Targets with Brightest Variables and Analyze Best visible.
@@ -190,7 +231,7 @@ After Generate, the workspace normally opens with:
 - **Filter: Overview**
 - Y axis **Standard Magnitude**
 
-Overview is a quality-control view. It can show the selected target, filters, comparison stars, and check star together.
+Overview is a quality-control view. It shows the selected target across filters together with comparison and check stars. Individual filter views also show their corresponding reference stars by default: selecting R shows the target and references measured in R. Use **Show references** and **Show check**, beside **Filter**, to hide or show the comparison stars and the check star on the light curve without changing the photometry. The check star is also marked on the image with a blue circle and square, separate from the gold comparison circles and the green target circle. Both switches apply to Overview and stay in their chosen state when switching filters. Single-filter fitting and folding remain available with references visible.
 
 ### Results tabs
 
@@ -221,8 +262,17 @@ The light-curve toolbar includes:
 - **Fold**;
 - **O-C**;
 - fit controls and **Fit Period**;
-- **Filter**;
+- **Filter** and **Select**;
 - **Export**.
+
+**Select** is on the light-curve row with **Fold**, **O-C**, and **Filter**. It draws a rectangle on the light curve and selects the points inside it. Click **Select** again to turn it off. When the rectangle contains at least one point, the button becomes **Options**:
+
+- **Remove** hides those points on the light curve and leaves them out of the extended report. It does not delete files or measurements.
+- **Mark files** renames each selected file so the name starts with `(marked)`. Nothing is deleted.
+- **Select again** is available after a removal, to draw another rectangle while the hidden points stay hidden.
+- **Reset** puts the hidden points back on the light curve.
+
+After **Remove**, the button returns to **Select**.
 
 Open **Settings → Light Curve** for axes, fit mode, inference method, phase controls, grid, valid-only display, and aperture-tracking options.
 

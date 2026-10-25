@@ -8,10 +8,11 @@ from pathlib import Path
 APP_DISPLAY_NAME = "Citizen Astronomy (CAst)"
 APP_WINDOW_TITLE_NAME = "Citizen Astronomy"
 APP_USER_MODEL_ID = "CitizenAstronomy.CAst"
-APP_VERSION = "0.1.1-alpha.18"
+APP_VERSION = "0.1.1-alpha.19"
 APP_UPDATE_CHANNEL = "alpha"
 # Set this to the public "owner/repository" before publishing the first update.
 APP_UPDATE_GITHUB_REPOSITORY = "OgetayKayali/citizen-astronomy"
+APP_DISCORD_INVITE_URL = "https://discord.gg/w5dxBQ5Fj"
 APP_UPDATE_MANIFEST_ASSET_NAME = "CitizenAstronomy-update.json"
 # Unsigned macOS builds are zip-distributed .app bundles, not Velopack installs.
 APP_MANAGED_UPDATES_SUPPORTED = os.name == "nt"

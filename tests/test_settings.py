@@ -115,6 +115,17 @@ class SettingsTest(unittest.TestCase):
             loaded = AppSettings.from_root(root)
             self.assertEqual(loaded.astrometry_timeout_seconds, 600)
 
+    def test_settings_round_trip_preserves_discord_invite_opt_out(self) -> None:
+        from dataclasses import replace
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = replace(AppSettings.defaults(root), show_discord_invite=False)
+            settings.save(root)
+            loaded = AppSettings.from_root(root)
+            self.assertFalse(loaded.show_discord_invite)
+            self.assertTrue(AppSettings.defaults(root).show_discord_invite)
+
     def test_settings_default_theme_uses_last_saved_app_theme(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:

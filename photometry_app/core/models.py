@@ -50,6 +50,8 @@ class AppMode(StrEnum):
     SKY_EXPLORER = "sky_explorer"
     DISTANCE_MAP = "distance_map"
     BLACK_HOLE = "black_hole"
+    BINARY_LIGHT_LAB = "binary_light_lab"
+    AURORA_MAGNETOSPHERE = "aurora_magnetosphere"
     GALAXY_MERGER = "galaxy_merger"
     CLUSTER_FLOW = "cluster_flow"
     ASTRO_TOOLS = "astro_tools"
@@ -191,6 +193,7 @@ class PhotometryMeasurement:
     standard_catalog_band: str | None = None
     standard_catalog_source: str | None = None
     band_magnitudes: dict[str, dict[str, object]] = field(default_factory=dict)
+    transformation: dict[str, Any] = field(default_factory=dict)
     is_check: bool = False
     flags: list[str] = field(default_factory=list)
     comparison_source_ids: list[str] = field(default_factory=list)
@@ -301,6 +304,12 @@ class ScienceObservation:
     dec_deg: float
     x: float
     y: float
+    transformation_status: str = ""
+    transformation_reason: str = ""
+    transformation_profile_id: str = ""
+    transformed_band: str = ""
+    transformed_magnitude: float | None = None
+    transformed_magnitude_error: float | None = None
 
     @property
     def accepted_for_science_export(self) -> bool:
@@ -365,6 +374,12 @@ class ScienceObservation:
             "dec_deg",
             "x",
             "y",
+            "transformation_status",
+            "transformation_reason",
+            "transformation_profile_id",
+            "transformed_band",
+            "transformed_magnitude",
+            "transformed_magnitude_error",
         ]
 
     def to_export_dict(self) -> dict[str, object]:
@@ -443,6 +458,7 @@ class LightCurvePoint:
     calibrated_magnitude_error: float | None = None
     standard_magnitude: float | None = None
     standard_magnitude_error: float | None = None
+    transformation: dict[str, Any] = field(default_factory=dict)
     comparison_reference_flux: float | None = None
     differential_magnitude_error: float | None = None
     quality_score: float = 1.0
@@ -480,6 +496,7 @@ class ProcessingReport:
     file_notes: dict[str, list[str]] = field(default_factory=dict)
     photometry_mode: ObjectPhotometryMode = ObjectPhotometryMode.AUTO
     manual_config: ManualPhotometryConfig | None = None
+    transformation_profiles: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def variable_star_selection_label(self) -> str:

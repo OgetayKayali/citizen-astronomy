@@ -1,0 +1,6 @@
+NASA Earth Observatory — Blue Marble: Next Generation, January 2004, with topography.
+Source: https://science.nasa.gov/earth/earth-observatory/blue-marble-next-generation/base-topography/
+Original: https://assets.science.nasa.gov/content/dam/science/esd/eo/images/bmng/bmng-topography/january/world.topo.200401.3x5400x2700.jpg
+NASA imagery by Reto Stockli, NASA Earth Observatory; MODIS land observations.
+Downloaded 2026-10-23. Reduced to 2048 x 1024 for the bundled OpenGL Earth texture.
+NASA imagery used for educational visualization; no NASA endorsement implied.

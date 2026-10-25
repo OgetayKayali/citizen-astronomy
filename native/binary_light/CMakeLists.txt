@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.20)
+project(cast_binary_light CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_library(cast_binary_light SHARED cast_binary_light.cpp variable.cpp variable_bridge.cpp vendor/src/photometry/binary.cpp)
+if(MSVC)
+    target_compile_options(cast_binary_light PRIVATE /W3 /permissive- /utf-8 /O2)
+endif()
+
+set_target_properties(cast_binary_light PROPERTIES OUTPUT_NAME cast_stellar_lab)

@@ -70,6 +70,8 @@ class ModeLauncherWidgetTest(unittest.TestCase):
                 AppMode.BLACK_HOLE,
                 AppMode.GALAXY_MERGER,
                 AppMode.CLUSTER_FLOW,
+                AppMode.BINARY_LIGHT_LAB,
+                AppMode.AURORA_MAGNETOSPHERE,
             },
         )
 
@@ -91,7 +93,7 @@ class ModeLauncherWidgetTest(unittest.TestCase):
         self.assertEqual(SCIENCE_WORKFLOW_LABEL, "Detect & Measure")
         self.assertEqual(VISUALIZATIONS_TOOLS_LABEL, "Explore, Visualize & Process")
         self.assertEqual(SIMULATIONS_LABEL, "Simulations")
-        self.assertEqual([entry.title for entry in SIMULATION_ENTRIES], ["Black Hole", "Galaxy Merger", "Cluster Flow"])
+        self.assertEqual([entry.title for entry in SIMULATION_ENTRIES], ["Black Hole", "Galaxy Merger", "Cluster Flow", "Binary Light Lab", "Aurora & Magnetosphere Lab"])
 
     def test_launcher_header_names_the_app_and_version(self) -> None:
         launcher = ModeLauncherWidget()
@@ -211,6 +213,8 @@ class ModeLauncherWidgetTest(unittest.TestCase):
             AppMode.BLACK_HOLE,
             AppMode.GALAXY_MERGER,
             AppMode.CLUSTER_FLOW,
+            AppMode.BINARY_LIGHT_LAB,
+            AppMode.AURORA_MAGNETOSPHERE,
         ):
             received.clear()
             launcher._cards_by_mode[mode].click()  # noqa: SLF001

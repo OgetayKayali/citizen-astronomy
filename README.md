@@ -107,6 +107,18 @@ Take a solved field image and turn it into a Gaia-based 3D parallax map -- distr
 
 A more detailed guide can be found at [Distance Map Guide](guides/distance_map.md).
 
+## Binary Light Lab
+
+Open **Simulations → Binary Light Lab** to explore eclipsing binaries with the original PhysicsEngine solver and stellar renderer, adapted to CAst. The Library includes the six original detached binaries plus 16 runnable examples covering Roche/contact binaries, radial and nonradial pulsators, rotating spots, dwarf novae, novae and flares. Each has editable controls, live surfaces and light curves, recording, and system/CSV exports. New models are educational approximations with their limits stated in the interface.
+
+See the [Binary Light Lab guide](guides/binary_light_lab.md).
+
+## Aurora & Magnetosphere Lab
+
+Open **Simulations → Aurora & Magnetosphere Lab** for CME Impact Mode. Compare quiet and equal-pressure northward/southward IMF events, with separate upstream and near-Earth readouts, Shue (1998) magnetopause and Jelínek (2012) bow-shock estimates, explicit 60:1 time compression, and a normalized Newell coupling driver. A teaching flux budget explains tail memory and recovery; an optional topology view distinguishes closed, open and interplanetary connectivity. Empirical applicability limits are shown, and disturbed field geometry remains schematic. This mode does not solve MHD, reconnection or auroral precipitation.
+
+See the [Aurora & Magnetosphere Lab guide](guides/aurora_magnetosphere.md) for controls, scientific scope, sources, and validation commands.
+
 ## Supported inputs
 
 - `.fit` / `.fits` (FITS)
@@ -171,3 +183,5 @@ This project is licensed under the [Creative Commons Attribution-NonCommercial-N
 
 Developed by [Ogetay](https://ogetay.com)
 Logo designed by [Ege Palaz](https://palaz.se)
+
+Join the [Discord](https://discord.gg/w5dxBQ5Fj) to ask questions and follow updates. We answer questions there and share more detail about the app.

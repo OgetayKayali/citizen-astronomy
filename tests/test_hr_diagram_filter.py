@@ -16,6 +16,8 @@ from photometry_app.core.hr_diagram_filter import (
     hr_diagram_filter_work_log_lines,
     luminosity_class_for_position,
     spectral_type_for_temperature,
+    star_spectral_type,
+    star_luminosity_class,
     summarize_hr_diagram_filter,
 )
 from photometry_app.ui.hr_diagram_filter_dialog import HrDiagramFilterDialog
@@ -124,6 +126,7 @@ class HrDiagramFilterTest(unittest.TestCase):
     def test_stellar_class_removes_unclassified_and_unselected_stars(self) -> None:
         diagram_filter = HrDiagramFilter(
             stellar_class_enabled=True,
+            allow_estimated_classes=True,
             spectral_types=frozenset({"G"}),
             luminosity_classes=frozenset({"Main Sequence"}),
         )
@@ -146,6 +149,57 @@ class HrDiagramFilterTest(unittest.TestCase):
         self.assertIn("whose class was not selected", notes)
         self.assertEqual(summary.kept_spectral_types, {"G": 1})
         self.assertEqual(summary.kept_luminosity_classes, {"Main Sequence": 1})
+
+    def test_published_b_star_survives_without_luminosity_class(self) -> None:
+        rows = [
+            _star(source_id="HD61954", gaia_bp_rp=0.060519, gaia_absolute_magnitude=-1.2561, literature_spectral_type="B6Ib"),
+            _star(source_id="B-no-luminosity", gaia_bp_rp=0.5, literature_spectral_type="B8"),
+            _star(source_id="color-only", gaia_bp_rp=-0.2),
+        ]
+        settings = HrDiagramFilter(stellar_class_enabled=True, spectral_types=frozenset({"O", "B"}))
+        summary = summarize_hr_diagram_filter(rows, settings)
+        self.assertEqual(summary.kept, 2)
+        self.assertEqual(summary.kept_literature, 2)
+        self.assertEqual(star_luminosity_class(rows[0]), "Supergiants")
+        self.assertIsNone(star_luminosity_class(rows[1]))
+        widget = HrDiagramPlotWidget()
+        widget.set_axes("gaia_bp_rp", "gaia_absolute_magnitude")
+        widget.set_filters(hide_flagged=False, hide_saturated=True, require_parallax=True)
+        widget.set_diagram_filter(settings)
+        widget.plot_working_table(HrWorkingTable(rows=rows, plane_labels=[], measured_count=3, usable_count=3))
+        self.assertEqual(widget.plotted_row_count(), 2)
+
+    def test_fallback_is_explicit_and_never_replaces_published_types(self) -> None:
+        blue = _star(gaia_bp_rp=-0.2)
+        self.assertIsNone(star_spectral_type(blue))
+        self.assertEqual(star_spectral_type(blue, allow_estimated=True), "B")
+        white_dwarf = _star(gaia_bp_rp=-0.2, literature_spectral_type="DA2")
+        self.assertIsNone(star_spectral_type(white_dwarf, allow_estimated=True))
+        self.assertEqual(star_luminosity_class(white_dwarf), "White Dwarfs")
+        published_a = _star(gaia_bp_rp=-0.2, literature_spectral_type="A0V")
+        self.assertEqual(star_spectral_type(published_a, allow_estimated=True), "A")
+
+    def test_broad_ob_requires_both_selected(self) -> None:
+        row = _star(literature_spectral_type="OB-")
+        for selected, expected in [({"O"}, 0), ({"B"}, 0), ({"O", "B"}, 1)]:
+            summary = summarize_hr_diagram_filter([row], HrDiagramFilter(stellar_class_enabled=True, spectral_types=frozenset(selected)))
+            self.assertEqual(summary.kept, expected)
+
+    def test_dialog_class_filters_are_independent_and_fallback_defaults_off(self) -> None:
+        dialog = HrDiagramFilterDialog(HrDiagramFilter())
+        dialog._stellar_group.setChecked(True)
+        self.assertTrue(dialog._spectral_enabled.isChecked())
+        self.assertFalse(dialog._luminosity_class_enabled.isChecked())
+        self.assertFalse(dialog.filter_settings().allow_estimated_classes)
+        self.assertEqual(dialog.filter_settings().luminosity_classes, frozenset())
+        dialog._spectral_enabled.setChecked(False)
+        dialog._luminosity_class_enabled.setChecked(True)
+        dialog._estimated_classes.setChecked(True)
+        settings = dialog.filter_settings()
+        self.assertEqual(settings.spectral_types, frozenset())
+        self.assertTrue(settings.luminosity_classes)
+        restored = HrDiagramFilterDialog(settings)
+        self.assertEqual(restored.filter_settings(), settings)
 
     def test_inactive_filter_keeps_every_star(self) -> None:
         summary = summarize_hr_diagram_filter([_star(), _star(source_id="2", gaia_bp_rp=None)], HrDiagramFilter())
@@ -176,6 +230,42 @@ class HrDiagramFilterTest(unittest.TestCase):
         self.assertAlmostEqual(settings.distance_max_pc, 80)
         self.assertFalse(settings.luminosity_enabled)
         self.assertFalse(settings.stellar_class_enabled)
+
+    def test_sections_stay_closed_and_do_not_claim_to_remove_stars_until_turned_on(self) -> None:
+        dialog = HrDiagramFilterDialog(HrDiagramFilter())
+        for card in (
+            dialog._color_group,
+            dialog._distance_group,
+            dialog._luminosity_group,
+            dialog._stellar_group,
+        ):
+            self.assertFalse(card.isChecked())
+            self.assertTrue(card._body.isHidden())
+            self.assertEqual(card._switch.text(), "Off")
+            self.assertNotIn("removed", card.summary_text().lower())
+            self.assertIn("Not applied", card.summary_text())
+
+        dialog._color_group.setChecked(True)
+        self.assertFalse(dialog._color_group._body.isHidden())
+        self.assertEqual(dialog._color_group._switch.text(), "On")
+        self.assertIn("removed", dialog._color_group.summary_text().lower())
+        self.assertEqual(dialog._badge.text(), "1 on")
+
+        dialog._clear_sections()
+        self.assertFalse(dialog.filter_settings().is_active)
+        self.assertTrue(dialog._color_group._body.isHidden())
+        self.assertEqual(dialog._badge.text(), "All off")
+        self.assertFalse(dialog._clear_button.isEnabled())
+
+    def test_empty_stellar_class_tells_the_user_to_choose_one(self) -> None:
+        dialog = HrDiagramFilterDialog(HrDiagramFilter())
+        dialog._stellar_group.setChecked(True)
+        for box in dialog._spectral_boxes.values():
+            box.setChecked(False)
+        for box in dialog._luminosity_class_boxes.values():
+            box.setChecked(False)
+        self.assertIn("Choose at least one", dialog._stellar_group.summary_text())
+        self.assertFalse(dialog.filter_settings().stellar_class_enabled)
 
     def test_plot_hides_stars_missing_the_selected_color(self) -> None:
         widget = HrDiagramPlotWidget()

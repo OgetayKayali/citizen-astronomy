@@ -70,6 +70,7 @@ binaries = [
     data_file("photometry_app/native/cast_blackhole.dll", "photometry_app/native"),
     data_file("photometry_app/native/cast_merger.dll", "photometry_app/native"),
     data_file("photometry_app/native/cast_cluster_flow.dll", "photometry_app/native"),
+    data_file("photometry_app/native/cast_stellar_lab.dll", "photometry_app/native"),
     data_file("photometry_app/native/vcomp140.dll", "photometry_app/native"),
 ]
 hiddenimports = [

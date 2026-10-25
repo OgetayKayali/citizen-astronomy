@@ -100,6 +100,7 @@ def apply_differential_photometry(
     for measurement in measurements:
         if (
             measurement.is_reference
+            and not measurement.is_check
             and measurement.flux
             and measurement.flux > 0
             and not measurement.is_saturated
@@ -133,7 +134,7 @@ def apply_differential_photometry(
         comparison_reference_flux = measurement.comparison_reference_flux
         comparison_scatter = measurement.comparison_scatter
         quality_weight = measurement.quality_weight
-        if not measurement.is_reference and measurement.flux and measurement.flux > 0:
+        if (not measurement.is_reference or measurement.is_check) and measurement.flux and measurement.flux > 0:
             calibrated_magnitude = None
             calibrated_magnitude_error = None
             zero_point_magnitude = None
@@ -198,6 +199,7 @@ def apply_differential_photometry(
                 zero_point_magnitude_error=zero_point_magnitude_error,
                 zero_point_source_count=zero_point_source_count,
                 standard_magnitude=standard_magnitude,
+                transformation={},
                 standard_magnitude_error=standard_magnitude_error,
                 standard_zero_point_magnitude=standard_zero_point_magnitude,
                 standard_zero_point_magnitude_error=standard_zero_point_magnitude_error,
@@ -823,6 +825,7 @@ def _build_light_curve_series_from_rows(
             calibrated_magnitude=row.calibrated_magnitude,
             calibrated_magnitude_error=row.calibrated_magnitude_error,
             standard_magnitude=row.standard_magnitude,
+            transformation=dict(row.transformation),
             standard_magnitude_error=row.standard_magnitude_error,
             comparison_reference_flux=row.comparison_reference_flux,
             differential_magnitude_error=row.differential_magnitude_error,
@@ -919,6 +922,7 @@ def _overview_light_curve_point_from_row(
         calibrated_magnitude=calibrated_magnitude,
         calibrated_magnitude_error=calibrated_magnitude_error,
         standard_magnitude=standard_magnitude,
+        transformation=dict(row.transformation),
         standard_magnitude_error=standard_magnitude_error,
         comparison_reference_flux=comparison_reference_flux,
         differential_magnitude_error=differential_magnitude_error,

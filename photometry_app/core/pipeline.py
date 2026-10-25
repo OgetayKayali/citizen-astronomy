@@ -1587,6 +1587,15 @@ class PhotometryPipeline:
         _emit_progress(progress_callback, "Scoring measurement quality and marking low-quality points for the cleaned view.")
 
         measurements = apply_measurement_quality_analysis(measurements)
+        from photometry_app.core.transformation import apply_transformations, transformation_applied
+        measurements = apply_transformations(measurements, settings, field_radii={
+            scan.path: solution.solved_field.radius_deg for scan, solution in solved_results if solution.solved_field is not None
+        })
+        if settings.transformation_enabled:
+            count = sum(transformation_applied(row) for row in measurements)
+            message = f"Photometric transformation: {count} B/V measurements transformed; other rows retain their untransformed values."
+            notes.append(message)
+            _emit_progress(progress_callback, message)
 
         excluded_count = sum(1 for measurement in measurements if measurement.excluded_from_analysis)
 
@@ -1633,6 +1642,7 @@ class PhotometryPipeline:
             photometry_mode=ObjectPhotometryMode.MANUAL if using_manual_mode else ObjectPhotometryMode.AUTO,
 
             manual_config=manual_config if using_manual_mode else auto_manual_config,
+            transformation_profiles=[p for p in settings.transformation_profiles if p.get("id") == settings.transformation_profile_id],
 
         )
 
@@ -3846,6 +3856,13 @@ def _processing_report_cache_inputs(
         "reference_star_min_magnitude": settings.reference_star_min_magnitude,
         "reference_star_max_magnitude": settings.reference_star_max_magnitude,
         "nearby_reference_count": int(settings.nearby_reference_count),
+        "transformation": {
+            "version": 1, "enabled": settings.transformation_enabled,
+            "profiles": settings.transformation_profiles, "selected": settings.transformation_profile_id,
+            "optical_setup": settings.transformation_optical_setup,
+            "telescope": settings.telescope, "camera": settings.camera,
+            "max_pair_seconds": settings.transformation_max_pair_seconds,
+        },
         "photometry_settings_signature": _photometry_settings_signature(settings, manual_config),
     }
 
@@ -3955,6 +3972,7 @@ def _measurement_to_payload(measurement: PhotometryMeasurement) -> dict[str, obj
         "zero_point_source_count": measurement.zero_point_source_count,
 
         "standard_magnitude": measurement.standard_magnitude,
+        "transformation": measurement.transformation,
 
         "standard_magnitude_error": measurement.standard_magnitude_error,
 
@@ -4073,6 +4091,7 @@ def _measurement_from_payload(payload: dict[str, object]) -> PhotometryMeasureme
         zero_point_source_count=int(payload.get("zero_point_source_count", 0) or 0),
 
         standard_magnitude=float(payload["standard_magnitude"]) if payload.get("standard_magnitude") is not None else None,
+        transformation=dict(payload.get("transformation") or {}),
 
         standard_magnitude_error=float(payload["standard_magnitude_error"]) if payload.get("standard_magnitude_error") is not None else None,
 

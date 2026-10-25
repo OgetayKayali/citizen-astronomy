@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 import math
 
 from pathlib import Path
+from types import SimpleNamespace
 
 
 
@@ -719,6 +720,8 @@ def resolve_light_curve_theme_colors(theme: str, custom_colors: dict[str, str] |
 
 
 def light_curve_axis_label(y_axis_mode: str) -> str:
+    if y_axis_mode == "transformed_magnitude":
+        return "Transformed Magnitude (B/V)"
 
     if y_axis_mode == "calibrated_magnitude":
 
@@ -752,6 +755,7 @@ def _is_magnitude_axis(y_axis_mode: str) -> bool:
         "differential_magnitude",
         "calibrated_magnitude",
         "standard_magnitude",
+        "transformed_magnitude",
         "instrumental_magnitude",
     }
 
@@ -1636,7 +1640,48 @@ def build_light_curve_plot_payload(
 
     phase_anchor_jd: float | None = None,
 
+    reference_layers: list[object] | None = None,
+
+    style_overrides: dict[str, dict[str, str]] | None = None,
+
 ) -> LightCurvePlotPayload:
+
+    if reference_layers:
+        # Keep the target's fit and time/phase origin unchanged when adding references.
+        payload = build_light_curve_plot_payload(
+            series, empty_message, fit_config=fit_config, y_axis_mode=y_axis_mode,
+            x_axis_mode=x_axis_mode, phase_period_hours=phase_period_hours,
+            phase_anchor_mode=phase_anchor_mode, phase_anchor_jd=phase_anchor_jd,
+        )
+        if not payload.points:
+            return payload
+        target = SimpleNamespace(role="target", legend_label=payload.title, series=series)
+        styled = build_overview_light_curve_plot_payload(
+            [target, *reference_layers], empty_message, y_axis_mode=y_axis_mode,
+            x_axis_mode="jd", style_overrides=style_overrides,
+        )
+        by_key = {(layer.source_id, layer.filter_name, layer.role): layer for layer in styled.layers}
+        target_style = by_key.get((series.source_id, series.filter_name or "unknown", "target"))
+        if target_style is None:
+            target_style = LightCurveSeriesLayer(payload.title, "target", _OVERVIEW_SERIES_COLORS[0],
+                                                source_id=series.source_id, filter_name=series.filter_name or "unknown")
+        rendered = [replace(target_style, points=payload.points)]
+        frame_x = {point.source_point.file_path: point.x for point in payload.points}
+        for layer in reference_layers:
+            reference = layer.series
+            if reference.filter_name != series.filter_name:
+                continue
+            style = by_key.get((reference.source_id, reference.filter_name or "unknown", layer.role))
+            if style is None:
+                continue
+            points = tuple(replace(point, x=frame_x[point.source_point.file_path]) for point in style.points
+                           if point.source_point.file_path in frame_x)
+            if points:
+                rendered.append(replace(style, points=points))
+        if len(rendered) == 1:
+            return payload
+        return replace(payload, layers=tuple(rendered), show_legend=True,
+                       points=tuple(point for layer in rendered for point in layer.points))
 
     title = f"{series.source_name} [{series.filter_name}]"
 
@@ -3208,6 +3253,8 @@ def _timed_series_points(series: LightCurveSeries, y_axis_mode: str) -> list[tup
 
 
 def _light_curve_point_value(point: object, y_axis_mode: str) -> float | None:
+    if y_axis_mode == "transformed_magnitude":
+        return getattr(point, "transformation", {}).get("magnitude")
 
     if y_axis_mode == "calibrated_magnitude":
 
@@ -3240,6 +3287,8 @@ def _light_curve_point_value(point: object, y_axis_mode: str) -> float | None:
 
 
 def _light_curve_point_error(point: object, y_axis_mode: str) -> float | None:
+    if y_axis_mode == "transformed_magnitude":
+        return getattr(point, "transformation", {}).get("error")
 
     if y_axis_mode == "calibrated_magnitude":
 

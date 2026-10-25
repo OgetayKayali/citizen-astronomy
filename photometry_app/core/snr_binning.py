@@ -481,6 +481,7 @@ def _aggregate_measurement_bin(
     flags.extend(source_flags)
     return replace(
         anchor,
+        transformation={"status": "unavailable", "reason": "SNR binning changes the observations; transform matched original B/V exposures instead."} if anchor.transformation else {},
         observation_time=timestamp,
         flux=flux_result.get("flux"),
         flux_error=flux_result.get("flux_error"),

@@ -4,6 +4,7 @@ from typing import Any
 
 import math
 import re
+import time
 
 import numpy as np
 import requests
@@ -112,6 +113,12 @@ _VSP_BAND_ALIASES = {
 
 _MATCH_SEPARATION_ARCSEC = 2.0
 _VSP_API_URL = "https://app.aavso.org/vsp/api/chart/"
+_VSP_RETRY_STATUS = {429, 500, 502, 503, 504}
+_VSP_ATTEMPTS = 3
+
+
+class VspServiceError(RuntimeError):
+    """AAVSO VSP did not return a chart."""
 _APASS_CATALOG = "II/336/apass9"
 _AUID_RE = re.compile(r"^\d{3}-?[A-Z0-9]{3}-?[A-Z0-9]{3}$", re.IGNORECASE)
 _GAIA_NAME_RE = re.compile(r"^(?:gaia\s+(?:e?dr)\d+\s+)?\d{10,}$", re.IGNORECASE)
@@ -406,8 +413,12 @@ def query_vsp_field(
     aavso_chart_id: str | None = None,
     mag_limit: float | None = None,
     timeout_seconds: float = 30.0,
+    standard_field: bool = False,
+    raise_service_errors: bool = False,
 ) -> tuple[list[CatalogStar], str | None]:
     params: dict[str, object] = {"format": "json", "all": "on"}
+    if standard_field:
+        params["special"] = "std_field"
     chart_id = str(aavso_chart_id or "").strip()
     if chart_id:
         params["chartid"] = chart_id
@@ -419,10 +430,14 @@ def query_vsp_field(
         params["maglimit"] = f"{float(mag_limit):.1f}" if mag_limit is not None and np.isfinite(mag_limit) else "16.5"
 
     try:
-        response = requests.get(_VSP_API_URL, params=params, timeout=timeout_seconds)
-        response.raise_for_status()
-        payload = response.json()
-    except Exception:
+        payload = _request_vsp_payload(params, timeout_seconds)
+    except VspServiceError:
+        if raise_service_errors:
+            raise
+        return [], None
+    if not isinstance(payload, dict):
+        if raise_service_errors:
+            raise VspServiceError("AAVSO VSP returned a response that was not a chart.")
         return [], None
 
     returned_chart_id = str(payload.get("chartid") or chart_id or "").strip() or None
@@ -473,6 +488,33 @@ def query_vsp_field(
             )
         )
     return stars, returned_chart_id
+
+
+def _request_vsp_payload(params: dict[str, object], timeout_seconds: float) -> object:
+    last_error = "AAVSO VSP did not respond."
+    for attempt in range(_VSP_ATTEMPTS):
+        try:
+            response = requests.get(_VSP_API_URL, params=params, timeout=timeout_seconds)
+        except requests.RequestException as exc:
+            last_error = f"AAVSO VSP could not be reached ({exc.__class__.__name__})."
+        else:
+            if response.status_code in _VSP_RETRY_STATUS:
+                last_error = f"AAVSO VSP returned HTTP {response.status_code}."
+            else:
+                try:
+                    response.raise_for_status()
+                    return response.json()
+                except requests.RequestException as exc:
+                    raise VspServiceError(f"AAVSO VSP returned HTTP {response.status_code}.") from exc
+                except ValueError as exc:
+                    raise VspServiceError("AAVSO VSP returned a response that was not a chart.") from exc
+        if attempt + 1 < _VSP_ATTEMPTS:
+            _pause_before_vsp_retry(attempt)
+    raise VspServiceError(last_error)
+
+
+def _pause_before_vsp_retry(attempt: int) -> None:
+    time.sleep(1.5 * (attempt + 1))
 
 
 def merge_band_magnitudes_by_sky_match(

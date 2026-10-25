@@ -1,4 +1,5 @@
 from __future__ import annotations
+from photometry_app.core.transformation import transformation_applied
 
 
 from collections.abc import Callable
@@ -357,6 +358,12 @@ def export_processing_report(
     name_stem = _safe_suffix(export_name_stem) if export_name_stem else report.object_name
 
     selected_measurements = measurements if measurements is not None else report.measurements
+    transformation_path = output_dir / f"{name_stem}{name_suffix}_transformations.json"
+    transformation_path.write_text(json.dumps({"profiles": report.transformation_profiles, "observations": [
+        {"source_id": row.source_id, "file_path": str(row.file_path), "input_filter": row.filter_name,
+         "untransformed_standard_magnitude": row.standard_magnitude, **row.transformation}
+        for row in selected_measurements if row.transformation
+    ]}, indent=2), encoding="utf-8")
 
     selected_light_curves = light_curves if light_curves is not None else report.light_curves
 
@@ -541,6 +548,7 @@ def export_processing_report(
     return {
 
         "measurements_csv": measurements_path,
+        "transformations_json": transformation_path,
 
         "light_curves_csv": light_curves_path,
 
@@ -1431,6 +1439,12 @@ def _science_observation_rows(
                 x=measurement.x,
 
                 y=measurement.y,
+                transformation_status=measurement.transformation.get("status", ""),
+                transformation_reason=measurement.transformation.get("reason", ""),
+                transformation_profile_id=measurement.transformation.get("profile_id", ""),
+                transformed_band=measurement.transformation.get("band", ""),
+                transformed_magnitude=measurement.transformation.get("magnitude"),
+                transformed_magnitude_error=measurement.transformation.get("error"),
 
             )
 
@@ -1552,9 +1566,9 @@ def _science_calibration_context(
 
 
 
-    if metadata.transformed and calibrated_magnitude is not None:
+    if transformation_applied(measurement):
 
-        calibration_state = "transformed_candidate_std"
+        calibration_state = "transformed_standard"
 
         aavso_mtype_candidate = "STD"
 
@@ -2286,9 +2300,11 @@ def _aavso_extended_observation(
 
     warnings: list[str] = []
 
-    if metadata.transformed and standard_magnitude is None:
+    if metadata.transformed and not transformation_applied(measurement):
 
-        warnings.append("Transformed export requested but no calibrated standard magnitude was available; row exported as DIF.")
+        warnings.append("Legacy transformed flag ignored: no verified transformation was applied to this observation.")
+    if measurement.transformation.get("status") == "unavailable":
+        warnings.append("Transformation unavailable: " + measurement.transformation.get("reason", "Unknown reason"))
 
 
 
@@ -2310,7 +2326,7 @@ def _aavso_extended_observation(
 
     comparison_reference_mag = None
 
-    if len(comparison_measurements) > 1 or len(measurement.comparison_source_ids) > 1:
+    if len(comparison_measurements) > 1 or (not transformation_applied(measurement) and len(measurement.comparison_source_ids) > 1):
 
         comparison_name = "ENSEMBLE"
 
@@ -2347,10 +2363,20 @@ def _aavso_extended_observation(
     check_mag = _aavso_number(check_measurement.instrumental_magnitude, precision=3, default="na") if check_measurement else "na"
 
     export_filter_name = metadata.filter_system.strip() if metadata.filter_system else (measurement.filter_name or "")
+    if transformation_applied(measurement):
+        export_filter_name = measurement.transformation["band"]
 
     filter_code, filter_note = _aavso_filter_code(export_filter_name)
+    source_filter_code, _ = _aavso_filter_code(measurement.filter_name)
+    if (not transformation_applied(measurement) and source_filter_code != "O"
+            and filter_code in {"U", "B", "V", "R", "I", "SU", "SG", "SR", "SI", "SZ"}
+            and filter_code != source_filter_code):
+        filter_code = source_filter_code
+        export_filter_name = measurement.filter_name or ""
+        filter_note = "Standard-band override ignored: no transformation applied"
+        warnings.append(filter_note)
 
-    if metadata.filter_system and measurement.filter_name and measurement.filter_name.strip() != metadata.filter_system.strip():
+    if not transformation_applied(measurement) and metadata.filter_system and export_filter_name == metadata.filter_system.strip() and measurement.filter_name and measurement.filter_name.strip() != metadata.filter_system.strip():
 
         override_note = f"Source filter: {_aavso_free_text(measurement.filter_name)}; exported as {_aavso_free_text(metadata.filter_system)} per settings"
 
@@ -2402,7 +2428,7 @@ def _aavso_extended_observation(
 
         filter_code,
 
-        "YES" if mtype == "STD" and metadata.transformed else "NO",
+        "YES" if transformation_applied(measurement) else "NO",
 
         mtype,
 
@@ -2416,7 +2442,7 @@ def _aavso_extended_observation(
 
         _aavso_number(airmass, precision=3, default="na"),
 
-        "na",
+        measurement.transformation["group"] if transformation_applied(measurement) else "na",
 
         _aavso_text(metadata.aavso_chart_id, 20),
 
@@ -2555,6 +2581,13 @@ def _resolved_export_calibration(
     reference_lookup: dict[str, object],
 
 ) -> tuple[float | None, float | None, float | None, int]:
+    if transformation_applied(measurement):
+        return (measurement.transformation["magnitude"], measurement.transformation["error"],
+                measurement.standard_zero_point_magnitude, len(measurement.transformation["comparison_ids"]))
+    if (measurement.standard_magnitude is not None and measurement.standard_catalog_source in {"vsp", "apass"}
+            and not any(flag.startswith("Derived SNR bin") for flag in measurement.flags)):
+        return (measurement.standard_magnitude, measurement.standard_magnitude_error,
+                measurement.standard_zero_point_magnitude, measurement.standard_zero_point_source_count)
 
     zero_point_mag = measurement.zero_point_magnitude
 
@@ -2646,7 +2679,12 @@ def _check_diagnostics_for_measurement(
 
     check_calibrated_magnitude = None
 
-    if check_measurement.calibrated_magnitude is not None:
+    if transformation_applied(measurement):
+        if not transformation_applied(check_measurement):
+            return empty
+        check_calibrated_magnitude = check_measurement.transformation["magnitude"]
+        check_reference_magnitude = check_measurement.band_magnitudes.get(measurement.transformation["band"], {}).get("mag")
+    elif check_measurement.calibrated_magnitude is not None:
 
         check_calibrated_magnitude = check_measurement.calibrated_magnitude
 
@@ -2873,6 +2911,9 @@ def _aavso_notes(
 ) -> str:
 
     note_parts: list[str] = []
+    if transformation_applied(measurement):
+        result = measurement.transformation
+        note_parts.append(f"Transform {result['profile_id']}: {result['method']}; input {measurement.filter_name}; B-V={result['color']:.3f}")
 
     if metadata.reduction_notes:
 
@@ -3298,7 +3339,9 @@ def _comparison_measurements_for_export(
 
 ) -> list[PhotometryMeasurement]:
 
-    if not measurement.comparison_source_ids:
+    comparison_ids = (measurement.transformation["comparison_ids"] if transformation_applied(measurement)
+                      else measurement.comparison_source_ids)
+    if not comparison_ids:
 
         return []
 
@@ -3308,7 +3351,7 @@ def _comparison_measurements_for_export(
 
         measurement_index.reference_by_frame_filter_source[source_key]
 
-        for source_key in [(*frame_filter_key, source_id) for source_id in measurement.comparison_source_ids]
+        for source_key in [(*frame_filter_key, source_id) for source_id in comparison_ids]
 
         if source_key in measurement_index.reference_by_frame_filter_source
 

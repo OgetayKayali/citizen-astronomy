@@ -1,0 +1,6 @@
+{
+  "src/photometry/binary.hpp": "1a9a4da730eafe9fc14f9d6b7be3ecae2fdcec0b095b62d12ed46af8efb3be2b",
+  "src/photometry/binary.cpp": "780c6e79a71ee995027ad1ef271f699558a9087b8656e794e84a6640bab0a6c5",
+  "apps/photometry/shaders.hpp": "65b8d7f03172f12ca8eb626824cb902e1a356c9d9b3a2be77115ef7cdc87c03a",
+  "tests/test_photometry.cpp": "6436ddf9eaceae56645b15dd491cf5f76429fc056d688307676cbc53cfeeecff"
+}

@@ -13341,6 +13341,12 @@ class SettingsDialog(QDialog):
         self._interface_tips_enabled_input.setChecked(bool(getattr(settings, "interface_tips_enabled", True)))
         self._show_mode_launcher_on_startup_input = QCheckBox("Show mode picker on startup")
         self._show_mode_launcher_on_startup_input.setChecked(bool(getattr(settings, "show_mode_launcher_on_startup", True)))
+        self._show_discord_invite_input = QCheckBox("Show the Discord reminder")
+        self._show_discord_invite_input.setChecked(bool(getattr(settings, "show_discord_invite", True)))
+        self._show_discord_invite_input.setToolTip(
+            "A few minutes after CAst opens, a reminder invites you to the Discord. "
+            "It appears once each session. Turn this off if you have already joined or do not want the reminder."
+        )
         self._keep_mode_state_on_switch_input = QCheckBox("Keep mode memory when switching")
         self._keep_mode_state_on_switch_input.setChecked(bool(getattr(settings, "keep_mode_state_on_switch", False)))
         self._keep_mode_state_on_switch_input.setToolTip(
@@ -13441,8 +13447,10 @@ class SettingsDialog(QDialog):
         for item in ("UTC", "JD_UTC", "HJD_UTC", "BJD_TDB"):
             self._time_standard_input.addItem(item)
         self._time_standard_input.setCurrentText(settings.time_standard or "UTC")
-        self._transformed_input = QCheckBox("Measurements are transformed to the standard system")
-        self._transformed_input.setChecked(settings.transformed)
+        self._transformed_input = QCheckBox("Determined automatically from applied transformation profiles")
+        self._transformed_input.setChecked(False)
+        self._transformed_input.setEnabled(False)
+        self._transformed_input.setToolTip("Configure coefficients under Settings > Photometric Transformation. A checkbox cannot certify transformed data.")
         self._reduction_notes_input = QPlainTextEdit(settings.reduction_notes)
         self._reduction_notes_input.setPlaceholderText("Optional notes about calibration, exclusions, or reduction choices")
         self._reduction_notes_input.setTabChangesFocus(True)
@@ -13526,6 +13534,7 @@ class SettingsDialog(QDialog):
         form_layout.addRow("Settings Location Mode", self._use_default_settings_location_input)
         form_layout.addRow("Interface Tips", self._interface_tips_enabled_input)
         form_layout.addRow("Mode Picker", self._show_mode_launcher_on_startup_input)
+        form_layout.addRow("Discord", self._show_discord_invite_input)
         form_layout.addRow("", self._keep_mode_state_on_switch_input)
         image_display_layout = QHBoxLayout()
         image_display_layout.addWidget(self._image_display_stretch_mode_input)
@@ -14556,6 +14565,7 @@ class SettingsDialog(QDialog):
             config_path=self._settings.config_path,
             interface_tips_enabled=self._interface_tips_enabled_input.isChecked(),
             show_mode_launcher_on_startup=self._show_mode_launcher_on_startup_input.isChecked(),
+            show_discord_invite=self._show_discord_invite_input.isChecked(),
             keep_mode_state_on_switch=self._keep_mode_state_on_switch_input.isChecked(),
             nearby_reference_count=self._nearby_reference_count_input.value(),
             wcs_sanity_check_enabled=self._wcs_sanity_check_enabled_input.isChecked(),
@@ -14692,6 +14702,12 @@ class SettingsDialog(QDialog):
             observation_timezone=self._observation_timezone_input.currentText().strip() or "UTC",
             time_standard=self._time_standard_input.currentText().strip() or "UTC",
             transformed=self._transformed_input.isChecked(),
+            transformation_enabled=self._settings.transformation_enabled,
+            transformation_profiles=self._settings.transformation_profiles,
+            transformation_profile_id=self._settings.transformation_profile_id,
+            transformation_optical_setup=self._settings.transformation_optical_setup,
+            transformation_equipment=dict(self._settings.transformation_equipment),
+            transformation_max_pair_seconds=self._settings.transformation_max_pair_seconds,
             reduction_notes=self._reduction_notes_input.toPlainText().strip(),
             photometry_aperture_mode=aperture_mode,
             aperture_radius_pixels=self._aperture_radius_pixels_input.value(),
@@ -14949,6 +14965,7 @@ class SettingsDialog(QDialog):
         )
         self._interface_tips_enabled_input.setChecked(bool(defaults.interface_tips_enabled))
         self._show_mode_launcher_on_startup_input.setChecked(bool(defaults.show_mode_launcher_on_startup))
+        self._show_discord_invite_input.setChecked(bool(getattr(defaults, "show_discord_invite", True)))
         self._keep_mode_state_on_switch_input.setChecked(bool(defaults.keep_mode_state_on_switch))
         self._cache_dir_input.setText(str(defaults.cache_dir))
         self._nearby_reference_count_input.setValue(defaults.nearby_reference_count)

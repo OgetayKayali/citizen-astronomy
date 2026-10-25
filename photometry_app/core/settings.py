@@ -10,7 +10,7 @@ import os
 
 import uuid
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pathlib import Path
 
@@ -898,6 +898,12 @@ class AppSettings:
     time_standard: str = "UTC"
 
     transformed: bool = False
+    transformation_enabled: bool = False
+    transformation_profiles: list[dict] = field(default_factory=list)
+    transformation_profile_id: str = ""
+    transformation_optical_setup: str = ""
+    transformation_equipment: dict[str, str] = field(default_factory=dict)
+    transformation_max_pair_seconds: float = 120.0
 
     reduction_notes: str = ""
 
@@ -910,6 +916,8 @@ class AppSettings:
     interface_tips_enabled: bool = True
 
     show_mode_launcher_on_startup: bool = True
+
+    show_discord_invite: bool = True
 
     keep_mode_state_on_switch: bool = False
 
@@ -2376,6 +2384,12 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         time_standard=time_standard,
 
         transformed=bool(payload.get("transformed", False)),
+        transformation_enabled=bool(payload.get("transformation_enabled", False)),
+        transformation_profiles=[p for p in payload.get("transformation_profiles", []) if isinstance(p, dict)],
+        transformation_profile_id=str(payload.get("transformation_profile_id", "")),
+        transformation_optical_setup=str(payload.get("transformation_optical_setup", "")),
+        transformation_equipment={str(k): str(v) for k, v in payload.get("transformation_equipment", {}).items()} if isinstance(payload.get("transformation_equipment", {}), dict) else {},
+        transformation_max_pair_seconds=float(payload.get("transformation_max_pair_seconds", 120.0)),
 
         reduction_notes=reduction_notes,
 
@@ -2388,6 +2402,8 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
         interface_tips_enabled=bool(payload.get("interface_tips_enabled", True)),
 
         show_mode_launcher_on_startup=bool(payload.get("show_mode_launcher_on_startup", True)),
+
+        show_discord_invite=bool(payload.get("show_discord_invite", True)),
 
         keep_mode_state_on_switch=bool(payload.get("keep_mode_state_on_switch", False)),
 
@@ -3117,6 +3133,12 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "time_standard": _coerce_time_standard(settings.time_standard),
 
         "transformed": bool(settings.transformed),
+        "transformation_enabled": settings.transformation_enabled,
+        "transformation_profiles": settings.transformation_profiles,
+        "transformation_profile_id": settings.transformation_profile_id,
+        "transformation_optical_setup": settings.transformation_optical_setup,
+        "transformation_equipment": settings.transformation_equipment,
+        "transformation_max_pair_seconds": settings.transformation_max_pair_seconds,
 
         "reduction_notes": _coerce_metadata_text(settings.reduction_notes, preserve_newlines=True),
 
@@ -3129,6 +3151,8 @@ def _settings_payload(settings: AppSettings, config_base_path: Path) -> dict[str
         "interface_tips_enabled": bool(settings.interface_tips_enabled),
 
         "show_mode_launcher_on_startup": bool(settings.show_mode_launcher_on_startup),
+
+        "show_discord_invite": bool(settings.show_discord_invite),
 
         "keep_mode_state_on_switch": bool(settings.keep_mode_state_on_switch),
 

@@ -214,6 +214,13 @@ class HrMeasurementRow:
 
     flags: list[str] = field(default_factory=list)
 
+    literature_spectral_type: str | None = None
+    spectral_type_source: str | None = None
+    spectral_type_reference: str | None = None
+    spectral_type_quality: str | None = None
+    spectral_type_object: str | None = None
+    spectral_type_match_method: str | None = None
+
 
 
     @property
@@ -249,6 +256,8 @@ class HrWorkingTable:
     zero_point_offset_mag: float | None = None
 
     zero_point_source_count: int = 0
+
+    spectral_lookup_complete: bool | None = None
 
 
 

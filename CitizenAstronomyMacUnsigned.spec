@@ -56,6 +56,8 @@ datas = [
 ]
 if ICON_ICNS.is_file():
     datas.append(data_file(str(ICON_ICNS.relative_to(ROOT)), "assets"))
+if (ROOT / "photometry_app/native/libcast_stellar_lab.dylib").is_file():
+    datas.append(data_file("photometry_app/native/libcast_stellar_lab.dylib", "photometry_app/native"))
 datas += data_tree("guides", "guides")
 datas += data_tree("photometry_app/data", "photometry_app/data")
 datas += data_tree("assets/moon_tiles", "assets/moon_tiles")

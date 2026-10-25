@@ -248,12 +248,18 @@ Useful controls include:
 - an editable plot title: double-click the title to open **Edit HR Diagram Title**; the title is used in exports and default file names
 - display downsampling: the interactive plot shows at most 2000 points, chosen the same way every time, and always keeps the selected star. Scientific exports use every plottable row.
 
-**Filter...** sits on the plot toolbar between **Advanced...** and **Only Group**. Check any of color/temperature, distance, luminosity, or stellar class. A checked section removes stars outside its range and stars that do not have that measurement. **Apply** writes the ranges, the missing-data removals, and the out-of-range removals to the Work Log. The button reads **Filter On** while a section is checked. **Clear** turns the sections off; **Apply** again to update the diagram.
+**Filter...** sits on the plot toolbar between **Advanced...** and **Only Group**. Each section has an On/Off switch and stays closed until it is On. A section removes stars only while it is On: stars outside its range, and stars that do not have that measurement. **Apply** writes the ranges and the removal counts to the Work Log. The toolbar button reads **Filter On** while a section is On. **Turn all off** switches every section off; **Apply** again to update the diagram.
 
 - **Color / temperature** uses Gaia BP-RP and the same temperature scale as the plot. A star with no Gaia BP-RP is removed.
 - **Distance** is parsecs = 1000 / Gaia parallax in mas. Missing or non-positive parallax is removed.
 - **Luminosity** is solar luminosity from Gaia absolute G, with solar absolute G = 4.67. A star with no Gaia absolute G magnitude is removed.
-- **Stellar class** can use spectral type (O, B, A, F, G, K, M from that temperature) and luminosity class (Supergiants, Giants, Subgiants, Main Sequence, White Dwarfs). Luminosity class is the nearest class guide within 1.75 mag. A star that cannot be classified is removed. A star has to match a checked spectral type and a checked luminosity class. Clear every box in one group to skip that group.
+- **Stellar class** uses published SIMBAD spectral classifications by default. **Filter spectral type** and **Filter luminosity class** are independent switches; luminosity-class filtering starts off. A published B star can therefore pass an O+B selection even when its luminosity class is unknown. When both criteria are enabled, a star must match both. **None** ignores a row; **All** selects every supported class in that row, but does not include Unknown classifications.
+
+During generation, one bulk SIMBAD field query retrieves published types, quality flags, and bibliographic references. Results, including empty searches, are cached for 30 days. Matching prefers exact Gaia DR3 identifiers; a position fallback requires a unique counterpart within one arcsecond after moving Gaia positions to epoch J2000 using proper motion. Ambiguous matches and conflicting Gaia IDs are rejected. The Work Log reports coverage and cache/network failures. If SIMBAD is unavailable, an older cache is used when available; otherwise the image still loads with Unknown classifications and Generate retries the lookup.
+
+Literature coverage is incomplete, especially for faint stars. **Allow estimated fallback when no literature type is available** is off by default. Turning it on uses the uncorrected Gaia BP-RP temperature and the nearest luminosity guide within 1.75 mag only for stars without a published type. These estimates are not spectroscopic classifications. Unsupported or ambiguous published types are never replaced with an estimate. A broad `OB` classification passes only when both O and B are selected. Composite types, intermediate luminosity classes, and classes outside the supported groups remain Unknown for the relevant filter.
+
+The star info card shows the original published type, source, reference, and match method. HR JSON and CSV exports retain these fields plus the catalog object name and quality flag. Data source: [CDS/SIMBAD](https://simbad.cds.unistra.fr/simbad/); cite the supplied spectral-type reference when using a classification scientifically. Literature types change class filtering, not the plot's measured axes or its approximate color-temperature scale.
 
 The filter also updates Source Results and the motion overlays. It stays on for this session. Hide Saturated, Require Parallax, the apparent-magnitude range, and Only Group still apply afterward.
 
@@ -420,7 +426,7 @@ Scientific exports outline motion-group members, include the class and age guide
 - Reddening / extinction corrections and true isochrone overlays for specific clusters
 - PSF photometry for crowded fields
 - Explicit membership probabilities instead of a single dominant DBSCAN cluster
-- Deeper integration of SIMBAD spectral types into automated classification
+- Extend literature spectral-type coverage with additional published catalogs
 - Distance-prior or Bayesian absolute-magnitude treatments for noisy parallaxes
 
 ---

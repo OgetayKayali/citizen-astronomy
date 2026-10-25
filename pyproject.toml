@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "citizen-photometry"
-version = "0.1.1a18"
+version = "0.1.1a19"
 description = "Desktop tool for citizen-science photometry from FITS image series."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,4 +43,4 @@ citizen-photometry = "photometry_app.main:main"
 include = ["photometry_app*"]
 
 [tool.setuptools.package-data]
-photometry_app = ["data/*.json"]
+photometry_app = ["data/*.json", "data/earth_blue_marble.jpg", "data/earth_blue_marble.txt", "native/cast_stellar_lab.dll", "native/libcast_stellar_lab.so", "native/libcast_stellar_lab.dylib"]

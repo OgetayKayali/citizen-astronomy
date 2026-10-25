@@ -143,19 +143,22 @@ def run_packaged_format_smoke(*, fixtures_dir: str | Path, output_path: str | Pa
 
 
 def about_dialog_content() -> tuple[str, str]:
-    from photometry_app.app_metadata import APP_DISPLAY_NAME, APP_VERSION
+    from photometry_app.app_metadata import APP_DISCORD_INVITE_URL, APP_DISPLAY_NAME, APP_VERSION
 
     return (
         f"About {APP_DISPLAY_NAME}",
         f"Version {APP_VERSION}\n\n"
         "Developed by Ogetay. For more info, please visit: https://github.com/OgetayKayali/citizen-astronomy\n\n"
         "Logo designed by Ege Palaz (https://palaz.se).\n\n"
+        "Join the Discord to ask questions and follow updates: "
+        f"{APP_DISCORD_INVITE_URL}\n"
+        "We answer questions there and share more detail about the app.\n\n"
         "Alpha build only.",
     )
 
 
 def run_about_dialog_smoke() -> dict[str, object]:
-    from photometry_app.app_metadata import APP_VERSION
+    from photometry_app.app_metadata import APP_DISCORD_INVITE_URL, APP_VERSION
     from PySide6.QtWidgets import QMessageBox
 
     title, message = about_dialog_content()
@@ -163,6 +166,8 @@ def run_about_dialog_smoke() -> dict[str, object]:
         return {"success": False, "error": "application version missing from About dialog text"}
     if "Alpha build only." not in message:
         return {"success": False, "error": "alpha-build notice missing from About dialog text"}
+    if APP_DISCORD_INVITE_URL not in message:
+        return {"success": False, "error": "discord invite missing from About dialog text"}
 
     existing = QCoreApplication.instance()
     if existing is None:

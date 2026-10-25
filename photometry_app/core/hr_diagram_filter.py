@@ -1,7 +1,7 @@
 """Display filters for HR Diagram mode.
 
-Color and spectral type use Gaia BP-RP. Distance uses Gaia parallax.
-Luminosity and luminosity class use Gaia absolute G. A star with no value
+Color uses Gaia BP-RP. Stellar classes prefer literature, with optional
+estimated fallback. Distance uses Gaia parallax. A star with no value
 for an enabled filter is removed.
 """
 
@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from photometry_app.core.distance_map import parallax_to_distance_pc
+from photometry_app.core.hr_spectral_types import literature_spectral_type, literature_luminosity_class
 
 
 SOLAR_ABSOLUTE_G_MAGNITUDE = 4.67
@@ -191,7 +192,8 @@ class HrDiagramFilter:
     luminosity_max_solar: float = LUMINOSITY_MAX_SOLAR
     stellar_class_enabled: bool = False
     spectral_types: frozenset[str] = field(default_factory=lambda: frozenset(SPECTRAL_TYPE_ORDER))
-    luminosity_classes: frozenset[str] = field(default_factory=lambda: frozenset(LUMINOSITY_CLASS_ORDER))
+    luminosity_classes: frozenset[str] = field(default_factory=frozenset)
+    allow_estimated_classes: bool = False
 
     def normalized(self) -> HrDiagramFilter:
         temperature_min = _clamp(_finite_or(self.temperature_min_k, TEMPERATURE_MIN_K), TEMPERATURE_MIN_K, TEMPERATURE_MAX_K)
@@ -237,6 +239,7 @@ class HrDiagramFilter:
             stellar_class_enabled=stellar_class_enabled,
             spectral_types=spectral_types,
             luminosity_classes=luminosity_classes,
+            allow_estimated_classes=bool(self.allow_estimated_classes),
         )
 
     @property
@@ -258,6 +261,8 @@ class HrDiagramFilterSummary:
     removed: dict[str, int]
     kept_spectral_types: dict[str, int]
     kept_luminosity_classes: dict[str, int]
+    kept_literature: int = 0
+    kept_estimated: int = 0
 
 
 def star_temperature_k(row: object) -> float | None:
@@ -281,14 +286,24 @@ def star_luminosity_solar(row: object) -> float | None:
     return luminosity
 
 
-def star_spectral_type(row: object) -> str | None:
+def star_spectral_type(row: object, *, allow_estimated: bool = False) -> str | None:
+    published = getattr(row, "literature_spectral_type", None)
+    if published:
+        return literature_spectral_type(published)
+    if not allow_estimated:
+        return None
     temperature = star_temperature_k(row)
     if temperature is None:
         return None
     return spectral_type_for_temperature(temperature)
 
 
-def star_luminosity_class(row: object) -> str | None:
+def star_luminosity_class(row: object, *, allow_estimated: bool = False) -> str | None:
+    published = getattr(row, "literature_spectral_type", None)
+    if published:
+        return literature_luminosity_class(published)
+    if not allow_estimated:
+        return None
     bp_rp = _finite(getattr(row, "gaia_bp_rp", None))
     absolute_magnitude = _finite(getattr(row, "gaia_absolute_magnitude", None))
     if bp_rp is None or absolute_magnitude is None:
@@ -322,13 +337,16 @@ def hr_diagram_filter_rejection(row: object, diagram_filter: HrDiagramFilter) ->
             return "outside_luminosity"
     if active.stellar_class_enabled:
         if active.spectral_types:
-            spectral_type = star_spectral_type(row)
+            spectral_type = star_spectral_type(row, allow_estimated=active.allow_estimated_classes)
             if spectral_type is None:
                 return "missing_stellar_class"
-            if spectral_type not in active.spectral_types:
+            if spectral_type == "OB":
+                if not {"O", "B"}.issubset(active.spectral_types):
+                    return "outside_stellar_class"
+            elif spectral_type not in active.spectral_types:
                 return "outside_stellar_class"
         if active.luminosity_classes:
-            luminosity_class = star_luminosity_class(row)
+            luminosity_class = star_luminosity_class(row, allow_estimated=active.allow_estimated_classes)
             if luminosity_class is None:
                 return "missing_stellar_class"
             if luminosity_class not in active.luminosity_classes:
@@ -348,16 +366,22 @@ def summarize_hr_diagram_filter(rows: list[object], diagram_filter: HrDiagramFil
     kept_spectral: Counter[str] = Counter()
     kept_luminosity: Counter[str] = Counter()
     kept = 0
+    kept_literature = kept_estimated = 0
     for row in rows:
         reason = hr_diagram_filter_rejection(row, active)
         if reason is None:
             kept += 1
+            if active.stellar_class_enabled:
+                if getattr(row, "literature_spectral_type", None):
+                    kept_literature += 1
+                else:
+                    kept_estimated += 1
             if active.stellar_class_enabled and active.spectral_types:
-                spectral_type = star_spectral_type(row)
+                spectral_type = star_spectral_type(row, allow_estimated=active.allow_estimated_classes)
                 if spectral_type is not None:
                     kept_spectral[spectral_type] += 1
             if active.stellar_class_enabled and active.luminosity_classes:
-                luminosity_class = star_luminosity_class(row)
+                luminosity_class = star_luminosity_class(row, allow_estimated=active.allow_estimated_classes)
                 if luminosity_class is not None:
                     kept_luminosity[luminosity_class] += 1
             continue
@@ -369,6 +393,8 @@ def summarize_hr_diagram_filter(rows: list[object], diagram_filter: HrDiagramFil
         removed=removed,
         kept_spectral_types=dict(kept_spectral),
         kept_luminosity_classes=dict(kept_luminosity),
+        kept_literature=kept_literature,
+        kept_estimated=kept_estimated,
     )
 
 
@@ -443,10 +469,11 @@ def hr_diagram_filter_work_log_lines(
     lines.extend(_criterion_lines(active, summary, include_counts=True))
     lines.append(f"This filter keeps {summary.kept} of {summary.considered} stars.")
     if active.stellar_class_enabled and summary.kept:
+        lines.append(f"Classification sources among kept stars: {summary.kept_literature} literature; {summary.kept_estimated} estimated fallback.")
         if active.spectral_types:
             lines.append(
                 "Kept spectral types: "
-                + _count_phrase(summary.kept_spectral_types, SPECTRAL_TYPE_ORDER)
+                + _count_phrase(summary.kept_spectral_types, SPECTRAL_TYPE_ORDER + ("OB",))
                 + "."
             )
         if active.luminosity_classes:
@@ -529,25 +556,16 @@ def _criterion_lines(active: HrDiagramFilter, summary: HrDiagramFilterSummary, *
         if luminosity_names:
             parts.append("luminosity classes " + _join_names(luminosity_names))
         text = "Stellar class: " + "; ".join(parts) + "."
-        if spectral_names:
-            text += " Spectral type comes from the Gaia BP-RP temperature."
-        if luminosity_names:
-            text += (
-                " Luminosity class is the nearest class guide within "
-                f"{STELLAR_CLASS_MAGNITUDE_TOLERANCE:.2f} mag of absolute G at that BP-RP "
-                "(Supergiants, Giants, Subgiants, Main Sequence, White Dwarfs)."
-            )
+        text += " Classes use published SIMBAD spectral types. Broad OB types require both O and B selected."
+        if active.allow_estimated_classes:
+            text += " Estimated fallback is ON for stars without a published type: Gaia BP-RP temperature and class guides within 1.75 mag."
+        else:
+            text += " Literature only; no color-based classification fallback."
         if include_counts:
             missing = summary.removed["missing_stellar_class"]
             outside = summary.removed["outside_stellar_class"]
             remaining -= missing + outside
-            if spectral_names and not luminosity_names:
-                missing_detail = "with no Gaia BP-RP, so spectral type was unavailable"
-            else:
-                missing_detail = (
-                    "with no stellar class (missing Gaia BP-RP or absolute G, or farther than "
-                    f"{STELLAR_CLASS_MAGNITUDE_TOLERANCE:.2f} mag from every class guide)"
-                )
+            missing_detail = "with no stellar class available for the enabled criteria (Unknown or an unsupported literature classification)"
             text += (
                 f" Removed {_stars(missing)} {missing_detail}."
                 f" Removed {_stars(outside)} whose class was not selected."

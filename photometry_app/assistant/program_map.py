@@ -110,6 +110,27 @@ MODES: tuple[ModeInfo, ...] = (
         "observation_deck",
         on_launcher=False,
     ),
+    ModeInfo(
+        AppMode.BINARY_LIGHT_LAB,
+        "Binary Light Lab",
+        "no files needed (.starlab and legacy .binary systems can be loaded inside the mode)",
+        "The stellar variability lab: six original spherical binaries plus 16 runnable Library models for Roche/contact binaries, "
+        "pulsators, spots, accretion outbursts, novae and flares. Model-specific controls, live flux or magnitude curves, "
+        "exposure integration, seeded noise and documented educational approximations. "
+        "Save and load systems and export model/observation CSV files. Display appearance does not affect photometry.",
+        "binary_light_lab",
+    ),
+    ModeInfo(
+        AppMode.AURORA_MAGNETOSPHERE,
+        "Aurora & Magnetosphere Lab",
+        "no files needed",
+        "CME Impact Mode: interactive 3D Earth and magnetosphere, proton dynamic pressure, "
+        "Shue (1998) magnetopause and Jelinek (2012) bow-shock estimates with applicability limits, "
+        "separate upstream/near-Earth wind, normalized Newell coupling and schematic tail memory. "
+        "North/south IMF comparison, 60:1 compressed time, deterministic scrubbing and optional "
+        "closed/open/IMF topology examples; no MHD, reconnection solver or auroral precipitation.",
+        "aurora_magnetosphere",
+    ),
 )
 
 MENUS: tuple[tuple[str, str], ...] = (
