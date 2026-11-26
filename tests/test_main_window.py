@@ -129,7 +129,7 @@ class MainWindowAboutDialogTest(unittest.TestCase):
 
         self.assertIn("https://palaz.se", text)
 
-        self.assertIn("https://discord.gg/w5dxBQ5Fj", text)
+        self.assertIn("https://discord.gg/w2XThVpXx6", text)
 
         self.assertIn("Join the Discord to ask questions and follow updates:", text)
 

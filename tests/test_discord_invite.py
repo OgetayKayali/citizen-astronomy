@@ -45,10 +45,10 @@ class DiscordInviteLogicTest(unittest.TestCase):
 
     def test_about_links_keep_the_visible_sentence_and_drop_trailing_punctuation(self) -> None:
         html = message_to_linked_html(
-            "Visit https://palaz.se).\nJoin https://discord.gg/w5dxBQ5Fj"
+            "Visit https://palaz.se).\nJoin https://discord.gg/w2XThVpXx6"
         )
         self.assertIn('<a href="https://palaz.se">https://palaz.se</a>).', html)
-        self.assertIn('<a href="https://discord.gg/w5dxBQ5Fj">https://discord.gg/w5dxBQ5Fj</a>', html)
+        self.assertIn('<a href="https://discord.gg/w2XThVpXx6">https://discord.gg/w2XThVpXx6</a>', html)
         self.assertIn("<br>", html)
         self.assertNotIn("\n", html)
 

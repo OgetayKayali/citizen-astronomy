@@ -60,7 +60,7 @@ This log also tracks finished fixes and features staged for the next published u
 
 ### Announcement
 
-- CAst has a Discord server. Join to follow updates and talk about the app: https://discord.gg/w5dxBQ5Fj
+- CAst has a Discord server. Join to follow updates and talk about the app: https://discord.gg/w2XThVpXx6
 
 ### Black Hole
 

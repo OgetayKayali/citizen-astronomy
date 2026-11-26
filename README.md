@@ -184,4 +184,4 @@ This project is licensed under the [Creative Commons Attribution-NonCommercial-N
 Developed by [Ogetay](https://ogetay.com)
 Logo designed by [Ege Palaz](https://palaz.se)
 
-Join the [Discord](https://discord.gg/w5dxBQ5Fj) to ask questions and follow updates. We answer questions there and share more detail about the app.
+Join the [Discord](https://discord.gg/w2XThVpXx6) to ask questions and follow updates. We answer questions there and share more detail about the app.

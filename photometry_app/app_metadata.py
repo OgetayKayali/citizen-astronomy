@@ -12,7 +12,7 @@ APP_VERSION = "0.1.1-alpha.20"
 APP_UPDATE_CHANNEL = "alpha"
 # Set this to the public "owner/repository" before publishing the first update.
 APP_UPDATE_GITHUB_REPOSITORY = "OgetayKayali/citizen-astronomy"
-APP_DISCORD_INVITE_URL = "https://discord.gg/w5dxBQ5Fj"
+APP_DISCORD_INVITE_URL = "https://discord.gg/w2XThVpXx6"
 APP_UPDATE_MANIFEST_ASSET_NAME = "CitizenAstronomy-update.json"
 # Unsigned macOS builds are zip-distributed .app bundles, not Velopack installs.
 APP_MANAGED_UPDATES_SUPPORTED = os.name == "nt"
