@@ -15526,11 +15526,13 @@ class SettingsDialog(QDialog):
 
 
 class PreviewSelectionDialog(QDialog):
-    def __init__(self, preview: VariableSelectionPreview, parent: QWidget | None = None) -> None:
+    def __init__(self, preview: VariableSelectionPreview, parent: QWidget | None = None, *, choose_targets: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle("Select Sources To Process")
         self.resize(900, 640)
         self._preview = preview
+        self._choose_targets = choose_targets
+        self._hidden_selected_keys: set[str] = set()
         self._accepted_source_keys: list[str] | None = None
         self._designation_checkboxes: dict[VariableStarDesignationFamily, QCheckBox] = {}
         self._family_counts = self._build_family_counts()
@@ -15592,14 +15594,15 @@ class PreviewSelectionDialog(QDialog):
         filters_row.addWidget(QLabel("Sources"))
         filters_row.addWidget(self._name_filter_input, stretch=1)
         filters_row.addWidget(self._type_filter_combo)
+        self._type_filter_combo.setVisible(not choose_targets)
 
         self._process_default_button = QPushButton("Process Default")
         self._process_default_button.clicked.connect(self._accept_default)
-        self._apply_process_default_button_style()
         process_all_button = QPushButton("Process All Visible")
         process_all_button.clicked.connect(self._accept_all_visible)
         process_button = QPushButton("Process Selected")
         process_button.clicked.connect(self.accept)
+        self._style_primary_button(process_button if choose_targets else self._process_default_button)
         cancel_button = QPushButton("Cancel")
         cancel_button.clicked.connect(self.reject)
 
@@ -15619,15 +15622,18 @@ class PreviewSelectionDialog(QDialog):
         root_layout.addLayout(button_row)
         self.setLayout(root_layout)
 
+        if choose_targets:
+            process_button.setDefault(True)
+            self._source_table.itemSelectionChanged.connect(self._update_selection_count)
         self._refresh_rows()
 
-    def _apply_process_default_button_style(self) -> None:
+    def _style_primary_button(self, button: QPushButton) -> None:
         accent = self.palette().color(QPalette.ColorRole.Highlight)
         text_color = "#ffffff" if accent.lightness() < 128 else "#1f1f1f"
         hover_color = accent.lighter(110).name().lower()
         pressed_color = accent.darker(110).name().lower()
         border_color = accent.darker(122).name().lower()
-        self._process_default_button.setStyleSheet(
+        button.setStyleSheet(
             "QPushButton {"
             f"background-color: {accent.name().lower()};"
             f"color: {text_color};"
@@ -15669,9 +15675,9 @@ class PreviewSelectionDialog(QDialog):
             if item is None:
                 continue
             source_key = item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(source_key, str) and source_key and source_key not in selected_keys:
+            if isinstance(source_key, str) and source_key:
                 selected_keys.append(source_key)
-        return selected_keys
+        return list(dict.fromkeys(selected_keys + sorted(self._hidden_selected_keys)))
 
     def accept(self) -> None:
         if not self.selected_source_keys():
@@ -15705,7 +15711,7 @@ class PreviewSelectionDialog(QDialog):
     def _refresh_rows(self) -> None:
         source_name_filter = self._name_filter_input.text().strip().lower()
         source_type = str(self._type_filter_combo.currentData() or "all")
-        preselected_keys = set(self._current_default_source_keys())
+        preselected_keys = set(self.selected_source_keys() if self._choose_targets else self._current_default_source_keys())
         filtered_sources = []
         for entry in self._preview.candidate_sources:
             role = self._source_role(entry)
@@ -15722,6 +15728,8 @@ class PreviewSelectionDialog(QDialog):
         self._source_table.blockSignals(True)
         self._source_table.clearSelection()
         self._source_table.setRowCount(len(filtered_sources))
+        if self._choose_targets:
+            self._hidden_selected_keys = preselected_keys - {self._catalog_source_key(entry) for entry in filtered_sources}
         for row_index, entry in enumerate(filtered_sources):
             source_key = self._catalog_source_key(entry)
             values = [
@@ -15742,7 +15750,18 @@ class PreviewSelectionDialog(QDialog):
                     QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
                 )
         self._source_table.blockSignals(False)
-        self._summary_label.setText(self._summary_text(self._preview))
+        if self._choose_targets:
+            self._update_selection_count()
+        else:
+            self._summary_label.setText(self._summary_text(self._preview))
+
+    def _update_selection_count(self) -> None:
+        count = len(self.selected_source_keys())
+        self._summary_label.setText(
+            f"{self._preview.object_name} · {count} selected\n"
+            "Select one or more targets. Ctrl-click or Shift-click to select multiple rows. "
+            "Selections are retained when you search for another target."
+        )
 
     def _summary_text(self, preview: VariableSelectionPreview) -> str:
         variable_candidate_count = sum(1 for entry in preview.candidate_sources if entry.object_type != "exoplanet")

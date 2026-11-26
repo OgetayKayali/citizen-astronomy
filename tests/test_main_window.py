@@ -698,6 +698,10 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
             self.assertTrue(dialog.options().analyze_best_targets)
 
+            dialog._select_targets_checkbox.setChecked(True)
+            self.assertTrue(dialog.options().select_targets)
+            self.assertFalse(dialog.options().analyze_best_targets)
+
             dialog._brightest_variables_checkbox.setChecked(True)
 
             self.assertFalse(dialog._analyze_best_checkbox.isChecked())
@@ -971,6 +975,44 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
 
         self.assertEqual(self.window._differential_workflow_pending_steps, ["pull-periods", "measurements-table"])
 
+
+    def test_differential_workflow_select_targets_before_processing(self) -> None:
+        root = Path(self._config_dir.name)
+        self.window._root_path_input.setText(str(root))
+        summary = ObjectScanSummary(object_name="Alpha", files=[])
+        with patch.object(self.window, "_show_scan_results_summary_dialog"):
+            self.window._handle_scan_completed(ScanReport(root_path=root, object_summaries=[summary]))
+        preview = VariableSelectionPreview(
+            object_name="Alpha", total_variable_stars_found=2, analyzed_variable_star_count=0,
+            variable_star_limit_mode=VariableStarLimitMode.PERCENT, variable_star_limit_value=100,
+            candidate_sources=[
+                CatalogStar("vsx", "1", "W UMa", 145.9, 55.9, 8.0, True),
+                CatalogStar("vsx", "2", "VV UMa", 146.0, 55.8, 10.0, True),
+            ],
+        )
+        with (
+            patch("photometry_app.ui.main_window.PreviewWorker") as worker,
+            patch("photometry_app.ui.main_window.CachedProcessingReportWorker") as cache_worker,
+            patch.object(self.window, "_begin_processing") as process,
+            patch("photometry_app.ui.main_window.PreviewSelectionDialog") as dialog,
+        ):
+            options = _DifferentialWorkflowOptions(select_targets=True)
+            self.window._start_differential_workflow_generate(options)
+            worker.return_value.start.assert_called_once_with()
+            cache_worker.assert_not_called()
+            dialog.return_value.exec.return_value = QDialog.DialogCode.Rejected
+            self.window._handle_preview_completed(preview)
+            process.assert_not_called()
+            self.assertFalse(self.window._differential_workflow_active)
+
+            self.window._start_differential_workflow_generate(options)
+            chosen = ["vsx:1", "vsx:2"]
+            dialog.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            dialog.return_value.selected_source_keys.return_value = chosen
+            self.window._handle_preview_completed(preview)
+            self.assertEqual(self.window._pending_processing_settings_override.selected_catalog_source_ids["Alpha"], chosen)
+            process.assert_called_once_with(root, "Alpha")
+            cache_worker.assert_not_called()
 
     def test_differential_workflow_processing_settings_force_saved_manual_sources_to_auto_mode(self) -> None:
 
@@ -4787,6 +4829,29 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertIs(self.window._differential_results_splitter.widget(1), self.window._differential_results_group)
 
 
+
+    def test_select_targets_retains_multiple_rows_across_searches(self) -> None:
+        preview = VariableSelectionPreview(
+            object_name="test", total_variable_stars_found=2, analyzed_variable_star_count=0,
+            variable_star_limit_mode=VariableStarLimitMode.PERCENT, variable_star_limit_value=100,
+            candidate_sources=[
+                CatalogStar("vsx", "1", "W UMa", 145.9, 55.9, 8.0, True),
+                CatalogStar("vsx", "2", "VV UMa", 146.0, 55.8, 10.0, True),
+            ],
+        )
+        dialog = PreviewSelectionDialog(preview, self.window, choose_targets=True)
+        self.assertEqual(dialog.selected_source_keys(), [])
+        dialog.accept()
+        self.assertNotEqual(dialog.result(), QDialog.DialogCode.Accepted)
+        for name in ("W UMa", "VV UMa"):
+            dialog._name_filter_input.setText(name)
+            self.assertEqual(dialog._source_table.rowCount(), 1)
+            dialog._source_table.selectRow(0)
+        dialog._name_filter_input.clear()
+        self.assertEqual(len(dialog._source_table.selectionModel().selectedRows()), 2)
+        dialog.accept()
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+        self.assertCountEqual(dialog.selected_source_keys(), ["vsx:1", "vsx:2"])
 
     def test_preview_selection_dialog_accents_process_default_button(self) -> None:
 

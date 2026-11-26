@@ -220,17 +220,14 @@ The pipeline:
 
 ### Select Sources To Process
 
-Some runs show **Select Sources To Process** before full measurement.
+In **2. Pipeline → Filter Targets**, choose **Select Targets** below **Analyze Best**, then click **Generate**. CAst reads or solves one image to locate the field. Once the catalog is ready, **Select Sources To Process** opens before the full measurement run. Search for a target, select its row, and repeat for additional targets. The selection count includes targets from previous searches.
 
-- Filter by designation family or source type.
-- Source types can include variables, checks, exoplanets, and references.
+- Search by variable name or filter by designation family.
 - **Process Default** applies the configured preview limits.
 - **Process All Visible** takes every row remaining after the dialog filters.
-- **Process Selected** takes only the highlighted rows.
+- **Process Selected** measures the selected stars, including selections retained across searches.
 
 Use **Process Default** for a first pass. Use **Process Selected** when you already know the objects of interest.
-
-> **Screenshot needed:** Select Sources To Process with source-type filters and all three process buttons.
 
 ## 6. Read the workspace
 

@@ -2194,6 +2194,8 @@ class ProcessWorker(QThread):
         skip_wcs_sanity_diagnosis: bool = False,
 
         parent: object | None = None,
+        *,
+        selected_targets_only: bool = False,
 
     ) -> None:
 
@@ -2210,6 +2212,7 @@ class ProcessWorker(QThread):
         self._analyze_best_targets = bool(analyze_best_targets)
 
         self._skip_wcs_sanity_diagnosis = bool(skip_wcs_sanity_diagnosis)
+        self._selected_targets_only = selected_targets_only
 
         self._pipeline = PhotometryPipeline()
 
@@ -2254,6 +2257,7 @@ class ProcessWorker(QThread):
                 analyze_best_targets=self._analyze_best_targets,
 
                 skip_wcs_sanity_diagnosis=self._skip_wcs_sanity_diagnosis,
+                selected_targets_only=self._selected_targets_only,
 
                 progress_callback=progress_callback,
 
@@ -2400,7 +2404,7 @@ class PreviewWorker(QThread):
 
 
 
-    def __init__(self, root_path: Path, object_name: str, parent: object | None = None) -> None:
+    def __init__(self, root_path: Path, object_name: str, parent: object | None = None, *, settings_override: AppSettings | None = None) -> None:
 
         super().__init__(parent)
 
@@ -2409,6 +2413,7 @@ class PreviewWorker(QThread):
         self._object_name = object_name
 
         self._pipeline = PhotometryPipeline()
+        self._settings_override = settings_override
 
         self._cancel_requested = Event()
 
@@ -2447,6 +2452,8 @@ class PreviewWorker(QThread):
                 progress_callback=progress_callback,
 
                 cancel_requested=self.cancellation_requested,
+                settings_override=self._settings_override,
+                first_solved_frame_only=self._settings_override is not None,
 
             )
 

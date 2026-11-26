@@ -2,11 +2,22 @@
 
 Version history for Citizen Astronomy (CAst), newest first. Installer releases and delta updates are published on the [Releases](https://github.com/OgetayKayali/citizen-astronomy/releases) page.
 
-Current app version: **0.1.1-alpha.20**
+Current app version: **0.1.1-alpha.21**
 
 This log also tracks finished fixes and features staged for the next published update. Group notes by mode (or App/Display). Prefer one short bullet per change—not intermediate debugging steps.
 
-## Pending for next release (after 0.1.1-alpha.20)
+## Pending for next release (after 0.1.1-alpha.21)
+
+## 0.1.1-alpha.21
+
+### Differential photometry
+
+- Choose **Select Targets** below **Analyze Best**, then click **Generate**. Once one image has a sky solution, CAst lists the catalog variables inside that image. Select one or more stars across searches and click **Process Selected** to measure them across the sequence.
+- The differential photometry tutorial shows where to find the new option and how to measure a particular star.
+
+### App
+
+- The in-app notification and About dialog now open the current [Citizen Astronomy Discord invitation](https://discord.gg/w2XThVpXx6).
 
 ## 0.1.1-alpha.20
 

@@ -1101,6 +1101,7 @@ class _DifferentialWorkflowOptions:
     analyze_best_targets: bool = False
 
     brightest_variable_percent: int = 100
+    select_targets: bool = False
 
 
 
@@ -25250,7 +25251,6 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._brightest_variables_checkbox.setToolTip("Use the Settings > Differential Photometry Brightest Variable Stars to Analyze percentage for this run, or adjust the percent here without changing the saved default.")
 
-        self._brightest_variables_checkbox.toggled.connect(self._handle_brightest_variables_toggled)
 
         brightest_row.addWidget(self._brightest_variables_checkbox, stretch=1)
 
@@ -25274,9 +25274,16 @@ class _DifferentialWorkflowDialog(QDialog):
 
         self._analyze_best_checkbox.setToolTip("Estimate the field limit like Sky Explorer Mag Limit, then keep targets whose image ADU values are in the AAVSO-friendly range. Settings > Differential Photometry still provides the catalog/designation defaults.")
 
-        self._analyze_best_checkbox.toggled.connect(self._handle_analyze_best_toggled)
 
         filter_layout.addWidget(self._analyze_best_checkbox)
+
+        self._select_targets_checkbox = QCheckBox("Select Targets")
+        self._select_targets_checkbox.setToolTip("Generate opens a searchable list after one image has a sky solution. Choose one or more catalog targets for this run.")
+        filter_layout.addWidget(self._select_targets_checkbox)
+        self._target_modes = QButtonGroup(self)
+        for mode in (self._brightest_variables_checkbox, self._analyze_best_checkbox, self._select_targets_checkbox):
+            self._target_modes.addButton(mode)
+        self._target_modes.buttonToggled.connect(self._sync_target_filter_controls)
 
         filter_layout.addStretch(1)
 
@@ -25430,47 +25437,6 @@ class _DifferentialWorkflowDialog(QDialog):
 
 
 
-    def _handle_brightest_variables_toggled(self, checked: bool) -> None:
-
-        if checked:
-
-            self._analyze_best_checkbox.blockSignals(True)
-
-            self._analyze_best_checkbox.setChecked(False)
-
-            self._analyze_best_checkbox.blockSignals(False)
-
-        elif not self._analyze_best_checkbox.isChecked():
-
-            self._analyze_best_checkbox.blockSignals(True)
-
-            self._analyze_best_checkbox.setChecked(True)
-
-            self._analyze_best_checkbox.blockSignals(False)
-
-        self._sync_target_filter_controls()
-
-
-
-    def _handle_analyze_best_toggled(self, checked: bool) -> None:
-
-        if checked:
-
-            self._brightest_variables_checkbox.blockSignals(True)
-
-            self._brightest_variables_checkbox.setChecked(False)
-
-            self._brightest_variables_checkbox.blockSignals(False)
-
-        elif not self._brightest_variables_checkbox.isChecked():
-
-            self._brightest_variables_checkbox.blockSignals(True)
-
-            self._brightest_variables_checkbox.setChecked(True)
-
-            self._brightest_variables_checkbox.blockSignals(False)
-
-        self._sync_target_filter_controls()
 
 
 
@@ -25699,6 +25665,7 @@ class _DifferentialWorkflowDialog(QDialog):
             use_designation_filters=self._designation_filters_checkbox.isChecked(),
 
             analyze_best_targets=self._analyze_best_checkbox.isChecked(),
+            select_targets=self._select_targets_checkbox.isChecked(),
 
             brightest_variable_percent=max(1, min(100, int(self._brightest_percent_input.value()))),
 
@@ -58578,7 +58545,9 @@ class MainWindow(QMainWindow):
 
         manual_config = manual_configs.get(object_name)
 
-        if manual_config is not None and manual_config.mode != ObjectPhotometryMode.AUTO:
+        if options.select_targets:
+            manual_configs.pop(object_name, None)
+        elif manual_config is not None and manual_config.mode != ObjectPhotometryMode.AUTO:
 
             manual_configs[object_name] = replace(manual_config, mode=ObjectPhotometryMode.AUTO)
 
@@ -58603,6 +58572,8 @@ class MainWindow(QMainWindow):
         designation_text = "Settings-General designations" if options.use_designation_filters else "all designation families"
 
         target_text = "Analyze Best ADU range" if options.analyze_best_targets else f"top {max(1, min(100, int(options.brightest_variable_percent)))}% brightest variables"
+        if options.select_targets:
+            target_text = "user-selected catalog targets"
 
         return f"Filter Targets={designation_text}, {target_text}"
 
@@ -58644,6 +58615,11 @@ class MainWindow(QMainWindow):
             root_path,
             self._differential_workflow_should_assume_aligned_images(),
         )
+
+        if self._differential_workflow_options.select_targets:
+            self._set_differential_workflow_stage("finding targets", "Resolving a representative image and looking up its catalog sources.")
+            self._start_source_preview(root_path, object_name, processing_settings)
+            return True
 
         self._set_differential_workflow_stage(
             "loading cached results",
@@ -59443,6 +59419,9 @@ class MainWindow(QMainWindow):
 
             return
 
+        self._start_source_preview(root_path, object_name)
+
+    def _start_source_preview(self, root_path: Path, object_name: str, settings_override: AppSettings | None = None) -> None:
         self._pending_object_name = object_name
 
         self.statusBar().showMessage(f"Preparing {object_name} preview...")
@@ -59453,7 +59432,7 @@ class MainWindow(QMainWindow):
 
 
 
-        self._preview_worker = PreviewWorker(root_path=root_path, object_name=object_name, parent=self)
+        self._preview_worker = PreviewWorker(root_path=root_path, object_name=object_name, parent=self, settings_override=settings_override)
 
         self._preview_worker.progress_updated.connect(self._handle_process_progress)
 
@@ -59580,6 +59559,7 @@ class MainWindow(QMainWindow):
             analyze_best_targets=analyze_best_targets,
 
             skip_wcs_sanity_diagnosis=preserve_views,
+            selected_targets_only=self._differential_workflow_active and self._differential_workflow_options.select_targets,
 
             parent=self,
 
@@ -84775,6 +84755,27 @@ class MainWindow(QMainWindow):
 
     def _handle_preview_completed(self, preview: VariableSelectionPreview) -> None:
 
+        if self.sender() is not None and self.sender() is not self._preview_worker:
+            return
+        if self._differential_workflow_active and self._differential_workflow_options.select_targets:
+            self._pending_object_name = None
+            if not preview.candidate_sources:
+                self._fail_differential_workflow(" ".join(preview.notes) or "No catalog targets were found in the solved field.")
+                return
+            dialog = PreviewSelectionDialog(preview, self._differential_workflow_dialog or self, choose_targets=True)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                self._fail_differential_workflow("Target selection cancelled. Choose Generate to try again.")
+                return
+            settings = self._pending_processing_settings_override
+            keys = dialog.selected_source_keys()
+            if settings is None or not keys:
+                self._fail_differential_workflow("No targets were selected.")
+                return
+            settings.selected_catalog_source_ids = {**(settings.selected_catalog_source_ids or {}), preview.object_name: keys}
+            self._set_differential_workflow_stage("generating light curves", f"Measuring {len(keys)} selected target(s).")
+            self._begin_processing(Path(self._root_path_input.text()).expanduser(), preview.object_name)
+            return
+
         self._current_preview = None
 
         self._current_processing_report = None
@@ -84841,6 +84842,13 @@ class MainWindow(QMainWindow):
 
     def _handle_preview_failed(self, message: str) -> None:
 
+        if self.sender() is not None and self.sender() is not self._preview_worker:
+            return
+        if self._differential_workflow_active and self._differential_workflow_options.select_targets:
+            self._pending_object_name = None
+            self._fail_differential_workflow(summarize_catalog_service_error(message))
+            return
+
         object_name = self._pending_object_name or "selected object"
 
         user_message = summarize_catalog_service_error(message)
@@ -84888,7 +84896,8 @@ class MainWindow(QMainWindow):
 
         if self._differential_workflow_active:
 
-            self._set_differential_workflow_stage("generating light curves", display_message)
+            stage = "finding targets" if sender is not None and sender is self._preview_worker else "generating light curves"
+            self._set_differential_workflow_stage(stage, display_message)
 
     def _handle_processing_completed(self, report: ProcessingReport, *, save_cache: bool = True) -> None:
 

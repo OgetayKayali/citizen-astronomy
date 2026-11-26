@@ -2419,6 +2419,61 @@ class PipelineIntegrationTest(unittest.TestCase):
 
 
 
+    def test_target_picker_stops_after_first_solved_frame(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            object_dir = root / "Files" / "field"
+            object_dir.mkdir(parents=True)
+            for name in ("a.fits", "b.fits", "c.fits"):
+                self._write_solved_fits(object_dir / name)
+            settings = replace(AppSettings.from_root(root), wcs_sanity_check_enabled=False)
+            pipeline = PhotometryPipeline()
+            resolve = pipeline._resolve_summary_fields
+            checked = []
+
+            def resolve_frame(files, settings, **kwargs):
+                self.assertEqual(len(files), 1)
+                frame = files[0]
+                checked.append(frame.path.name)
+                if frame.path.name == "a.fits":
+                    return [(frame, PlateSolveResult(frame.path, WcsStatus.UNSOLVED, None))]
+                return resolve(files, settings, **kwargs)
+
+            with (
+                patch.object(pipeline, "_resolve_summary_fields", side_effect=resolve_frame),
+                patch("photometry_app.core.pipeline.CatalogService", FakeCatalogService),
+            ):
+                preview = pipeline.preview_variable_selection(
+                    root, "field", settings_override=settings, first_solved_frame_only=True,
+                )
+            self.assertEqual(checked, ["a.fits", "b.fits"])
+            self.assertEqual([source.name for source in preview.candidate_sources], ["R Cas"])
+            self.assertEqual(preview.preselected_source_keys, [])
+
+    def test_target_picker_processes_only_chosen_stars_even_in_named_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            object_dir = root / "Files" / "R Cas"
+            object_dir.mkdir(parents=True)
+            self._write_solved_fits(object_dir / "frame.fits")
+            settings = replace(
+                AppSettings.from_root(root), wcs_sanity_check_enabled=False,
+                variable_star_designation_filters=[VariableStarDesignationFamily.NAMED],
+                selected_catalog_source_ids={"R Cas": ["vsx:gaia-target"]},
+            )
+            catalog = FakeCatalogService(root).query_field_catalog(None)
+            catalog.variable_stars.append(CatalogStar("vsx", "gaia-target", "Gaia DR3 1234", 83.823, -5.392, 11.0, True))
+            pipeline = PhotometryPipeline()
+            with (
+                patch.object(pipeline, "_best_field_catalog_for_solved_results", return_value=catalog),
+                patch("photometry_app.core.pipeline.measure_targets", return_value=[]),
+            ):
+                report = pipeline.process_object(root, "R Cas", settings_override=settings, selected_targets_only=True)
+                self.assertEqual([item.source_id for item in report.field_catalog.variable_stars], ["gaia-target"])
+                settings.selected_catalog_source_ids["R Cas"].append("vsx:missing")
+                with self.assertRaisesRegex(ValueError, "Select Targets"):
+                    pipeline.process_object(root, "R Cas", settings_override=settings, selected_targets_only=True)
+
     def test_process_object_honors_explicitly_selected_catalog_sources(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:

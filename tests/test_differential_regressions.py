@@ -25,7 +25,7 @@ from photometry_app.core.models import (
     SolvedField,
 )
 from photometry_app.core.photometry import _estimate_flux_error, measure_manual_sources, measure_targets
-from photometry_app.core.pipeline import _references_on_detector
+from photometry_app.core.pipeline import _stars_on_detector
 from photometry_app.core.scanner import inspect_fits_file
 from photometry_app.core.settings import AppSettings
 from photometry_app.core.snr_binning import SnrBinningSettings, _aggregate_measurement_bin
@@ -197,10 +197,10 @@ def test_crowded_aperture_detector_edges_gain_and_failed_manual_centroid(tmp_pat
     field = SolvedField(144, 44, .1, 100, 100, source)
     center = CatalogStar("gaia", "center", "center", 144, 44, 12, False)
     outside = replace(center, source_id="edge", ra_deg=144.2)
-    assert _references_on_detector([outside, center], field, settings) == [center]
+    assert _stars_on_detector([outside, center], field, settings) == [center]
     sidecar = tmp_path / "field.wcs"
     fits.PrimaryHDU(header=wcs.to_header()).writeto(sidecar)
-    assert _references_on_detector([outside, center], replace(field, wcs_path=sidecar), settings) == [center]
+    assert _stars_on_detector([outside, center], replace(field, wcs_path=sidecar), settings) == [center]
     with patch("photometry_app.core.photometry._estimate_star_fwhm", return_value=9.49):
         m = measure_targets(source, scan, sidecar, [center], [], 5, 8, 12, settings=settings,
                             adaptive_frame_fwhm_pixels=1.5)[0]

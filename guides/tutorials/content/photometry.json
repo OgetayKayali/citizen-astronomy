@@ -86,12 +86,12 @@
           "title": "Start the measurement",
           "requires": "The [folder scan](#choose-folder) has found 24 practice images or 158 full-sequence images.",
           "actions": [
-            "For this L-filter practice run, clear **Pull Periods** (1). Leave **Calculate Periods**, **Create Measurements Table**, **Calibration**, and **Star Alignment** unchecked. The folder contains science exposures with embedded sky coordinates and includes no calibration masters.",
-            "Keep **Brightest Variables** at **100%** so you can choose AE UMa yourself. Click **Generate** (2). Allow the catalog lookup to finish. A first run can need internet access."
+            "For this L-filter practice run, clear **Pull Periods**. Leave **Calculate Periods**, **Create Measurements Table**, **Calibration**, and **Star Alignment** unchecked. The folder contains science exposures with embedded sky coordinates and includes no calibration masters.",
+            "Under **2. Pipeline → Filter Targets**, choose **Select Targets** below **Analyze Best**. Click **Generate**. CAst reads or solves one image to locate the field, then looks up its catalog sources."
           ],
-          "check": "CAst opens **Select Sources To Process** when the list is ready. If CAst offers an existing result for this folder, opening it takes you directly to the results. The example used a saved field catalog and the images’ embedded coordinates. See the [example settings](#recipe) to reproduce this selection.",
+          "check": "CAst opens **Select Sources To Process** when the list is ready. See the [example settings](#recipe) to reproduce this selection.",
           "image": "generate.webp",
-          "alt": "Workflow showing 158 loaded images, the cleared Pull Periods checkbox, 100% Brightest Variables, and Generate.",
+          "alt": "Differential Photometry Workflow with 158 AE UMa images loaded, Select Targets checked below Analyze Best, and Generate enabled.",
           "links": [
             {
               "id": "target",
@@ -163,7 +163,7 @@
           "requires": "Open the [source-selection window](#generate) before processing.",
           "actions": [
             "To measure the brightest few, set **Default selection** to **Absolute number of brightest stars** and enter a small count, such as **3** (1). Click **Process Default** (2).",
-            "To work by category instead, choose a category from **All types** (3) and narrow the list with **Sources** or **Designation Families**. Click **Process All Visible** (4) to measure every remaining row. A long list takes longer."
+            "To measure a group, narrow the list with **Sources** or **Designation Families**. Click **Process All Visible** (4) to measure every remaining row. A long list takes longer."
           ],
           "check": "After processing, **Source Results** lists the measured targets. Click a row to switch the light curve to that star.",
           "image": "other-sources.webp",

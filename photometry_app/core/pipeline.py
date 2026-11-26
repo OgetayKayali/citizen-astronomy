@@ -512,6 +512,10 @@ class PhotometryPipeline:
 
         cancel_requested: Callable[[], bool] | None = None,
 
+        *,
+        settings_override: AppSettings | None = None,
+        first_solved_frame_only: bool = False,
+
     ) -> VariableSelectionPreview:
 
         raw_progress = progress_callback
@@ -520,7 +524,7 @@ class PhotometryPipeline:
 
             _emit_progress(raw_progress, message, cancel_requested=cancel_requested)
 
-        settings = AppSettings.from_root(root_path)
+        settings = settings_override if settings_override is not None else AppSettings.from_root(root_path)
 
         report = self.scan_workspace(root_path)
 
@@ -580,15 +584,15 @@ class PhotometryPipeline:
 
         _emit_progress(progress_callback, f"Preparing preview for {object_name}.")
 
-        solved_results = self._resolve_summary_fields(
-
-            summary.files,
-
-            settings,
-
-            progress_callback=progress_callback,
-
-        )
+        if first_solved_frame_only:
+            solved_results = []
+            for frame in sorted(summary.files, key=lambda frame: frame.wcs_status != WcsStatus.SOLVED):
+                _emit_progress(progress_callback, f"Checking {frame.path.name} for the target list.")
+                solved_results = self._resolve_summary_fields([frame], settings, progress_callback=progress_callback)
+                if any(result.solved_field is not None for _, result in solved_results):
+                    break
+        else:
+            solved_results = self._resolve_summary_fields(summary.files, settings, progress_callback=progress_callback)
 
         representative_field = next((result.solved_field for _, result in solved_results if result.solved_field is not None), None)
 
@@ -639,6 +643,18 @@ class PhotometryPipeline:
         )
 
         total_variable_stars_found = len(field_catalog.variable_stars)
+        if first_solved_frame_only:
+            candidates = sorted(_stars_on_detector(field_catalog.variable_stars, representative_field), key=lambda star: star.name.casefold())
+            return VariableSelectionPreview(
+                object_name=object_name,
+                total_variable_stars_found=total_variable_stars_found,
+                analyzed_variable_star_count=0,
+                variable_star_limit_mode=settings.variable_star_limit_mode,
+                variable_star_limit_value=settings.variable_star_limit_value,
+                variable_star_designation_filters=settings.variable_star_designation_filters,
+                candidate_sources=candidates,
+                notes=[] if candidates else ["No catalog variable stars fall inside the solved image."],
+            )
 
         eligible_variable_stars = filter_variable_stars(field_catalog.variable_stars, settings.variable_star_designation_filters)
         designation_matched_count = len(eligible_variable_stars)
@@ -820,6 +836,9 @@ class PhotometryPipeline:
 
         cancel_requested: Callable[[], bool] | None = None,
 
+        *,
+        selected_targets_only: bool = False,
+
     ) -> ProcessingReport:
 
         raw_progress = progress_callback
@@ -995,11 +1014,16 @@ class PhotometryPipeline:
 
         explicit_source_keys = set((settings.selected_catalog_source_ids or {}).get(object_name, []))
 
-        selected_variable_stars = [entry for entry in eligible_variable_stars if _catalog_source_key(entry) in explicit_source_keys]
+        variable_candidates = field_catalog.variable_stars if selected_targets_only else eligible_variable_stars
+        selected_variable_stars = [entry for entry in variable_candidates if _catalog_source_key(entry) in explicit_source_keys]
 
         selected_exoplanets = [entry for entry in field_catalog.exoplanets if _catalog_source_key(entry) in explicit_source_keys]
 
         using_explicit_source_selection = bool(selected_variable_stars or selected_exoplanets)
+        if selected_targets_only:
+            matched_keys = {_catalog_source_key(entry) for entry in [*selected_variable_stars, *selected_exoplanets]}
+            if not matched_keys or matched_keys != explicit_source_keys:
+                raise ValueError("The selected targets could not all be found in the field catalog. Open Select Targets and choose again.")
 
         if not using_explicit_source_selection:
 
@@ -1045,15 +1069,14 @@ class PhotometryPipeline:
 
             selected_exoplanets = list(field_catalog.exoplanets)
 
-        selected_variable_stars, folder_match_notes = _ensure_object_folder_variable_stars(
-            selected_variable_stars,
-            field_catalog.variable_stars,
-            object_name,
-            name_hints=_object_target_name_hints(object_name, summary.files),
-        )
-        for folder_note in folder_match_notes:
-            notes.append(folder_note)
-            _emit_progress(progress_callback, folder_note)
+        if not selected_targets_only:
+            selected_variable_stars, folder_match_notes = _ensure_object_folder_variable_stars(
+                selected_variable_stars, field_catalog.variable_stars, object_name,
+                name_hints=_object_target_name_hints(object_name, summary.files),
+            )
+            for folder_note in folder_match_notes:
+                notes.append(folder_note)
+                _emit_progress(progress_callback, folder_note)
 
         selected_field_catalog = FieldCatalog(
 
@@ -1156,7 +1179,7 @@ class PhotometryPipeline:
 
         )
 
-        if len(eligible_variable_stars) != total_variable_stars_found:
+        if not selected_targets_only and len(eligible_variable_stars) != total_variable_stars_found:
 
             filter_note = (
 
@@ -1170,7 +1193,7 @@ class PhotometryPipeline:
 
             _emit_progress(progress_callback, filter_note)
 
-        if eligible_variable_stars and len(selected_variable_stars) != len(eligible_variable_stars):
+        if not selected_targets_only and eligible_variable_stars and len(selected_variable_stars) != len(eligible_variable_stars):
 
             selection_label = "Analyze Best AAVSO ADU range" if analyze_best_targets and not using_explicit_source_selection else _selection_label(settings.variable_star_limit_mode, settings.variable_star_limit_value)
 
@@ -1303,7 +1326,7 @@ class PhotometryPipeline:
             # Sample both orientations and the middle of a dithered sequence.
             # Pool reserves let the per-frame selector substitute a valid comparison.
             for index in sorted({0, len(fields) // 2, len(fields) - 1}):
-                eligible = _references_on_detector(field_catalog.gaia_stars, fields[index], settings)
+                eligible = _stars_on_detector(field_catalog.gaia_stars, fields[index], settings)
                 for star in select_reference_stars(
                     eligible, field_catalog.variable_stars + automatic_variable_stars,
                     minimum_magnitude=settings.reference_star_min_magnitude,
@@ -4202,7 +4225,7 @@ def _match_target_gaia_colors(targets: list[CatalogStar], gaia: list[CatalogStar
             target.metadata["bp_rp"] = color
 
 
-def _references_on_detector(stars: list[CatalogStar], field: SolvedField, settings: AppSettings) -> list[CatalogStar]:
+def _stars_on_detector(stars: list[CatalogStar], field: SolvedField, settings: AppSettings | None = None) -> list[CatalogStar]:
     from astropy.wcs import WCS
     from photometry_app.core.image_io import read_header
     from photometry_app.core.photometry import _usable_image_margin
@@ -4211,8 +4234,9 @@ def _references_on_detector(stars: list[CatalogStar], field: SolvedField, settin
         return []
     wcs = WCS(read_header(field.wcs_path)).celestial
     x, y = wcs.world_to_pixel_values([star.ra_deg for star in stars], [star.dec_deg for star in stars])
-    dx, dy = _usable_image_margin((field.height, field.width), settings.annulus_outer_radius_pixels,
-                                  settings.frame_edge_margin_percent)
+    dx, dy = (0.0, 0.0) if settings is None else _usable_image_margin(
+        (field.height, field.width), settings.annulus_outer_radius_pixels, settings.frame_edge_margin_percent,
+    )
     inside = (x >= dx) & (x < field.width - dx) & (y >= dy) & (y < field.height - dy)
     return [star for star, keep in zip(stars, inside) if keep]
 
