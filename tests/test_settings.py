@@ -2762,7 +2762,7 @@ class SettingsTest(unittest.TestCase):
 
             self.assertEqual(loaded_from_files.nearby_reference_count, 9)
 
-            self.assertEqual(loaded_from_files.photometry_aperture_mode, PhotometryApertureMode.FWHM_SCALED)
+            self.assertEqual(loaded_from_files.photometry_aperture_mode, PhotometryApertureMode.FIXED)
 
             self.assertEqual(loaded_from_files.variable_star_limit_value, 15)
 
@@ -2770,7 +2770,7 @@ class SettingsTest(unittest.TestCase):
 
             self.assertEqual(loaded_from_object.nearby_reference_count, 9)
 
-            self.assertEqual(loaded_from_object.photometry_aperture_mode, PhotometryApertureMode.FWHM_SCALED)
+            self.assertEqual(loaded_from_object.photometry_aperture_mode, PhotometryApertureMode.FIXED)
 
             self.assertEqual(loaded_from_object.variable_star_limit_value, 15)
 

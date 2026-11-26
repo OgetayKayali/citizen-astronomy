@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Find 3I/ATLAS in five telescope images and follow its motion against the stars.">
+<title>Comet and asteroid detection | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=full-sequences"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>Comet and asteroid detection</span></nav>
+<header class="guide-head"><h1>Comet and asteroid detection</h1><div class="guide-files"><div class="sequence-links"><a class="download-file" href="https://www.ogetay.com/citizen-astronomy-cast/datasets/3i-atlas-practice.zip" download>Download 3I/ATLAS practice set <small>ZIP · 418 MB</small></a><a class="download-file" href="https://www.ogetay.com/citizen-astronomy-cast/datasets/3i-atlas-full.zip" download>Download 3I/ATLAS full sequence <small>ZIP · 6.31 GB</small></a></div><span>The practice set contains the five exposures used in the walkthrough. To track the comet across the full night, extract the 76-frame sequence and open the 3I ATLAS full folder instead. <a href="#practice-files">See the file step</a>.</span></div></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Set up the example</h3><ol><li><a href="#launch">Open the moving-object workspace</a></li><li><a href="#practice-files">Unpack the five practice frames</a></li><li><a href="#settings-menu">Find the observing-site settings</a></li><li><a href="#site">Enter the telescope coordinates</a></li></ol></section><section class="step-group"><h3>Load frames and predict objects</h3><ol><li><a href="#open-folder">Open a folder and inspect it first</a></li><li><a href="#quick-open">Load a folder and search immediately</a></li><li><a href="#choose-folder">Choose the image directory</a></li><li><a href="#open-file">Open only one solved image</a></li><li><a href="#single-pick">Select the first exposure</a></li><li><a href="#generate">Generate known-object predictions</a></li></ol></section><section class="step-group"><h3>Check a known object</h3><ol><li><a href="#inspect">Locate 3I/ATLAS in the table</a></li><li><a href="#compare-asteroid">Inspect the main-belt asteroid (90) Antiope</a></li><li><a href="#center">Center the selected object</a></li><li><a href="#blink">Play the frames as a blink</a></li><li><a href="#blink-first">Compare frame 1 with frame 5</a></li><li><a href="#sky-view">Explore predicted sky motion</a></li></ol></section><section class="step-group"><h3>Measure the track</h3><ol><li><a href="#plots-open">Open the trajectory plots</a></li><li><a href="#plot-read">Read the five frame measurements</a></li><li><a href="#synthetic-open">Stack the images on the comet</a></li><li><a href="#stack-read">Check the stack and export it</a></li></ol></section><section class="step-group"><h3>Search for other movers</h3><ol><li><a href="#discover-open">Start a search for additional movers</a></li><li><a href="#discover-options">Run a quick practice scan</a></li><li><a href="#discover-results">Read the discovery results</a></li><li><a href="#discover-csv">Save a discovery summary</a></li></ol></section><section class="step-group"><h3>Save an image or animation</h3><ol><li><a href="#export-image">Export the current image</a></li><li><a href="#save-file">Name and save the still image</a></li><li><a href="#export-blink">Export a blink animation</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/asteroid_comet_detection.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="launch" aria-labelledby="title-launch">
+
+<p class="overline">Set up the example <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-launch">Open the moving-object workspace</h2>
+<p class="before"><strong>Start here</strong> Citizen Astronomy is installed and its launcher is open.</p>
+<ol class="actions"><li>Under <strong>Detect &amp; Measure</strong>, click <strong>Asteroid / Comet Detection</strong>. If a different workspace is already open, choose <strong>Mode</strong> and select <strong>Asteroid/Comet Detection</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/launch.webp" aria-label="Enlarge Screenshot for Open the moving-object workspace">
+<img src="images/moving-objects/launch.webp" loading="lazy" alt="The Asteroid / Comet Detection card is outlined in the middle of the launcher.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The workspace shows an <strong>Open</strong> button and an empty object table. Start with five images for a short practice run, or use one image for a catalogue check.</p></div>
+<nav class="next" aria-label="Continue from Open the moving-object workspace"><a class="choice" href="#practice-files">Prepare five practice images <span aria-hidden="true">→</span></a><a class="choice" href="#settings-menu">Set the observing site <span aria-hidden="true">→</span></a><a class="choice" href="#open-file">Use a single image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="practice-files" aria-labelledby="title-practice-files">
+
+<p class="overline">Set up the example <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-practice-files">Unpack the five practice frames</h2>
+<p class="before"><strong>Start here</strong> Download the <strong>3I/ATLAS practice set</strong> above.</p>
+<ol class="actions"><li>Extract the ZIP in your Downloads folder. Open <strong>3I practice</strong> and sort the files by <strong>Name</strong>.</li><li>Check for the five files ending in <strong>0001_c.fits</strong> through <strong>0005_c.fits</strong>. These are the five exposures outlined in the screenshot. Keep them together.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/practice-files.webp" aria-label="Enlarge Screenshot for Unpack the five practice frames">
+<img src="images/moving-objects/practice-files.webp" loading="lazy" alt="File browser sorted by Name with the first five original 3I FITS filenames selected and outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Your practice folder contains five FITS files, all beginning <strong>Light_3I_120.0s_Bin1_L</strong>. Their numbers run from 0001 through 0005.</p></div>
+<nav class="next" aria-label="Continue from Unpack the five practice frames"><a class="choice" href="#settings-menu">Enter the telescope location <span aria-hidden="true">→</span></a><a class="choice" href="#open-folder">Open the prepared folder <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="settings-menu" aria-labelledby="title-settings-menu">
+
+<p class="overline">Set up the example <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-settings-menu">Find the observing-site settings</h2>
+<p class="before"><strong>Start here</strong> The <a href="#launch">moving-object workspace</a> is open. The site is where the telescope took the images.</p>
+<ol class="actions"><li>Click <strong>Settings</strong> in the top menu bar.</li><li>Click <strong>Open Settings</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/settings-menu.webp" aria-label="Enlarge Screenshot for Find the observing-site settings">
+<img src="images/moving-objects/settings-menu.webp" loading="lazy" alt="Settings menu expanded with Settings and Open Settings marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A settings window opens with a row of tabs across the top.</p></div>
+<nav class="next" aria-label="Continue from Find the observing-site settings"><a class="choice" href="#site">Enter the example coordinates <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="site" aria-labelledby="title-site">
+
+<p class="overline">Set up the example <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-site">Enter the telescope coordinates</h2>
+<p class="before"><strong>Start here</strong> The <a href="#settings-menu">Settings window</a> is open. These coordinates come from the example FITS headers.</p>
+<ol class="actions"><li>Click the <strong>Setup</strong> tab. Scroll to <strong>Observing Site</strong> if the fields are below the visible area.</li><li>Enter <strong>31.5472</strong> for <strong>Observing Latitude</strong>.</li><li>Enter <strong>-99.3825</strong> for <strong>Observing Longitude</strong>. The minus sign indicates west longitude.</li><li>Click <strong>Save</strong>. For your own observing night, enter the site where those frames were taken.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/site.webp" aria-label="Enlarge Screenshot for Enter the telescope coordinates">
+<img src="images/moving-objects/site.webp" loading="lazy" alt="Setup tab showing latitude 31.5472, longitude −99.3825, and the Save button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The settings dialog closes. CAst can now use the example site when checking whether a predicted object was above the horizon.</p></div>
+<nav class="next" aria-label="Continue from Enter the telescope coordinates"><a class="choice" href="#open-folder">Open a sequence <span aria-hidden="true">→</span></a><a class="choice" href="#open-file">Open one solved image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="open-folder" aria-labelledby="title-open-folder">
+
+<p class="overline">Load frames and predict objects <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-open-folder">Open a folder and inspect it first</h2>
+<p class="before"><strong>Start here</strong> The <a href="#launch">moving-object workspace</a> is open and your image folder is available.</p>
+<ol class="actions"><li>Click <strong>File</strong> in the top left.</li><li>Choose <strong>Open Folder</strong>. You can also press <strong>Ctrl+Shift+O</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/open-folder.webp" aria-label="Enlarge Screenshot for Open a folder and inspect it first">
+<img src="images/moving-objects/open-folder.webp" loading="lazy" alt="File menu expanded with Open Folder outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The folder picker opens. This route lets you choose the reference frame before starting the catalogue search.</p></div>
+<nav class="next" aria-label="Continue from Open a folder and inspect it first"><a class="choice" href="#choose-folder">Choose the image directory <span aria-hidden="true">→</span></a><a class="choice" href="#quick-open">See the automatic route <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="quick-open" aria-labelledby="title-quick-open">
+
+<p class="overline">Load frames and predict objects <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-quick-open">Load a folder and search immediately</h2>
+<p class="before"><strong>Start here</strong> The <a href="#launch">moving-object workspace</a> is open with no source loaded. Set the <a href="#site">observing site</a> first.</p>
+<ol class="actions"><li>Click the gold <strong>Open</strong> button at the upper left of the workspace.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/quick-open.webp" aria-label="Enlarge Screenshot for Load a folder and search immediately">
+<img src="images/moving-objects/quick-open.webp" loading="lazy" alt="The Open workflow button is marked in the empty workspace.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The folder picker opens. With this shortcut CAst starts Generate automatically after you confirm the folder.</p></div>
+<nav class="next" aria-label="Continue from Load a folder and search immediately"><a class="choice" href="#choose-folder">Choose the image directory <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="choose-folder" aria-labelledby="title-choose-folder">
+
+<p class="overline">Load frames and predict objects <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-choose-folder">Choose the image directory</h2>
+<p class="before"><strong>Start here</strong> You opened a folder picker using <a href="#open-folder">File → Open Folder</a> or the <a href="#quick-open">Open shortcut</a>.</p>
+<ol class="actions"><li>Select <strong>3I practice</strong> for the five-frame walkthrough, or <strong>3I ATLAS full</strong> for the complete 76-frame observation. The <strong>Directory</strong> field should name the extracted folder containing the FITS files.</li><li>Click <strong>Choose</strong>. On Windows the native picker may label this button <strong>Select Folder</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/choose-folder.webp" aria-label="Enlarge Screenshot for Choose the image directory">
+<img src="images/moving-objects/choose-folder.webp" loading="lazy" alt="Directory field showing 3I practice and the Choose button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The first frame shows a star field. The File menu route leaves <strong>Generate</strong> ready. The gold Open shortcut starts the search, and the object table fills when it finishes.</p></div>
+<nav class="next" aria-label="Continue from Choose the image directory"><a class="choice" href="#generate">Start the search manually <span aria-hidden="true">→</span></a><a class="choice" href="#inspect">My search already finished <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="open-file" aria-labelledby="title-open-file">
+
+<p class="overline">Load frames and predict objects <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-open-file">Open only one solved image</h2>
+<p class="before"><strong>Start here</strong> The <a href="#launch">moving-object workspace</a> is open. A solved image includes a map from pixels to sky coordinates, often called a WCS.</p>
+<ol class="actions"><li>Click <strong>File</strong>.</li><li>Click <strong>Open File</strong> or press <strong>Ctrl+O</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/open-file.webp" aria-label="Enlarge Screenshot for Open only one solved image">
+<img src="images/moving-objects/open-file.webp" loading="lazy" alt="File menu with Open File and its Ctrl+O shortcut outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A file picker opens. This route is sufficient to identify predicted objects in one exposure. Blink and sequence searches need multiple frames.</p></div>
+<nav class="next" aria-label="Continue from Open only one solved image"><a class="choice" href="#single-pick">Select the first FITS file <span aria-hidden="true">→</span></a><a class="choice" href="#open-folder">Use a sequence instead <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="single-pick" aria-labelledby="title-single-pick">
+
+<p class="overline">Load frames and predict objects <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-single-pick">Select the first exposure</h2>
+<p class="before"><strong>Start here</strong> The <a href="#open-file">Open File picker</a> is open in either the original folder or your practice folder.</p>
+<ol class="actions"><li>Select <strong>Light_3I_120.0s_Bin1_L_20251207-040231_0001_c.fits</strong>. Check the filename in the field along the bottom.</li><li>Click <strong>Open</strong>. Wait while CAst reads the sky coordinates and queries the catalogue over the internet.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/single-pick.webp" aria-label="Enlarge Screenshot for Select the first exposure">
+<img src="images/moving-objects/single-pick.webp" loading="lazy" alt="File name field showing the first 3I FITS exposure and the Open control.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The first exposure and the predicted-object table appear. If the table stays empty, click <strong>Work Log</strong> and read the last message for a timestamp, sky-coordinate or catalogue error.</p></div>
+<nav class="next" aria-label="Continue from Select the first exposure"><a class="choice" href="#inspect">Locate the comet in the table <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="generate" aria-labelledby="title-generate">
+
+<p class="overline">Load frames and predict objects <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-generate">Generate known-object predictions</h2>
+<p class="before"><strong>Start here</strong> A <a href="#choose-folder">folder is loaded</a> through the File menu. Use the <a href="#site">example telescope location</a> and an internet connection.</p>
+<ol class="actions"><li>At the far right of the top row, open <strong>Frame</strong> and choose the entry beginning <strong>1.</strong> and ending <strong>0001_c.fits</strong>. Leave <strong>Group</strong> at <strong>All</strong> for these L / 120 s images.</li><li>Click <strong>Generate</strong> at the far left. Keep the window open while CAst queries the catalogue and measures nearby signals.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/generate.webp" aria-label="Enlarge Screenshot for Generate known-object predictions">
+<img src="images/moving-objects/generate.webp" loading="lazy" alt="Frame selector and Generate button marked on the workspace above the first image.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Rows appear in the object table. The first exposure started at 09:00:30 UTC on December 7, 2025. The app uses the FITS timestamp. In this run 50 predictions fell inside the frame. Catalogue updates can change the list.</p></div>
+<nav class="next" aria-label="Continue from Generate known-object predictions"><a class="choice" href="#inspect">Inspect 3I/ATLAS <span aria-hidden="true">→</span></a><a class="choice" href="#compare-asteroid">Inspect (90) Antiope instead <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="inspect" aria-labelledby="title-inspect">
+
+<p class="overline">Check a known object <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-inspect">Locate 3I/ATLAS in the table</h2>
+<p class="before"><strong>Start here</strong> <a href="#generate">Generate has finished</a> for the first exposure.</p>
+<ol class="actions"><li>Click <strong>3I/ATLAS</strong> in the <strong>Object</strong> column. Scroll within the table if needed.</li><li>Click <strong>Inspector</strong> just below the table. Read <strong>Current measured offset</strong> and <strong>Current frame SNR</strong>. Offset is the distance in pixels between the prediction and the nearby peak. SNR tells you how strongly that peak stands out from the local background.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/inspect.webp" aria-label="Enlarge Screenshot for Locate 3I/ATLAS in the table">
+<img src="images/moving-objects/inspect.webp" loading="lazy" alt="3I/ATLAS is selected, and the Inspector lists predicted position, measured offset and frame SNR.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The selected row says <strong>Comet</strong> and <strong>interstellar</strong>. The first practice frame gave an offset of 0.33 pixel and SNR 9.82. Check more than one exposure before attributing a peak to the comet.</p></div>
+<nav class="next" aria-label="Continue from Locate 3I/ATLAS in the table"><a class="choice" href="#center">Find it in the image <span aria-hidden="true">→</span></a><a class="choice" href="#compare-asteroid">Compare a main-belt asteroid <span aria-hidden="true">→</span></a><a class="choice" href="#plots-open">Check positions across frames <span aria-hidden="true">→</span></a><a class="choice" href="#discover-open">Look for other movers <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="compare-asteroid" aria-labelledby="title-compare-asteroid">
+
+<p class="overline">Check a known object <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-compare-asteroid">Inspect the main-belt asteroid (90) Antiope</h2>
+<p class="before"><strong>Start here</strong> <a href="#generate">Generate has finished</a> on the first exposure.</p>
+<ol class="actions"><li>Click <strong>(90) Antiope</strong> in the object table. Its <strong>Type</strong> is <strong>Asteroid</strong> and its <strong>Class</strong> is <strong>main-belt</strong>.</li><li>Click <strong>Inspector</strong>. Compare <strong>Motion rate</strong> with the comet’s 158.41 arcseconds per hour. An arcsecond is a unit of angle on the sky.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/compare-asteroid.webp" aria-label="Enlarge Screenshot for Inspect the main-belt asteroid (90) Antiope">
+<img src="images/moving-objects/compare-asteroid.webp" loading="lazy" alt="The selected (90) Antiope row and Inspector tab are marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Antiope moves about 24.8 arcseconds per hour here. It shifts less than 3I/ATLAS between these short practice exposures. The image controls now follow the asteroid you selected.</p></div>
+<nav class="next" aria-label="Continue from Inspect the main-belt asteroid (90) Antiope"><a class="choice" href="#center">Center this asteroid <span aria-hidden="true">→</span></a><a class="choice" href="#inspect">Switch back to 3I/ATLAS <span aria-hidden="true">→</span></a><a class="choice" href="#sky-view">Compare predicted sky motions <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="center" aria-labelledby="title-center">
+
+<p class="overline">Check a known object <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-center">Center the selected object</h2>
+<p class="before"><strong>Start here</strong> A <a href="#inspect">comet or asteroid row is selected</a>.</p>
+<ol class="actions"><li>Click <strong>Target Marker</strong> if it is off. This draws a marker at the selected position.</li><li>Click <strong>Center Object</strong>. Scroll up over the marked position to zoom in further. Click <strong>Target Marker</strong> again when you want a clear view of the underlying pixels.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/center.webp" aria-label="Enlarge Screenshot for Center the selected object">
+<img src="images/moving-objects/center.webp" loading="lazy" alt="Image toolbar marks Target Marker and Center Object; a crosshair shows 3I/ATLAS on the actual first frame.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The predicted location is centered in the image. You can now compare that patch across time, or save a marked still.</p></div>
+<nav class="next" aria-label="Continue from Center the selected object"><a class="choice" href="#blink">Play the sequence <span aria-hidden="true">→</span></a><a class="choice" href="#blink-first">Compare frame 1 and frame 5 here <span aria-hidden="true">→</span></a><a class="choice" href="#export-image">Save the marked view <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="blink" aria-labelledby="title-blink">
+
+<p class="overline">Check a known object <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-blink">Play the frames as a blink</h2>
+<p class="before"><strong>Start here</strong> A <a href="#choose-folder">folder with at least two images</a> is loaded. Select an object row to follow it during playback.</p>
+<ol class="actions"><li>Use <strong>Track Object</strong> to choose your reference. Turn it on to keep the selected prediction centered. Turn it off to keep the registered stars fixed and see the object move.</li><li>Click <strong>Blink</strong>. Wait for the first preload to finish. Watch several cycles, then click <strong>Blink</strong> again to pause. If a marker covers the pixels, turn off <strong>Target Marker</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/blink.webp" aria-label="Enlarge Screenshot for Play the frames as a blink">
+<img src="images/moving-objects/blink.webp" loading="lazy" alt="Track Object and Blink are highlighted above the 3I/ATLAS frame.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Frame</strong> number advances during playback and stops when paused. The practice images share a star grid, so with tracking off the background stays almost fixed.</p></div>
+<nav class="next" aria-label="Continue from Play the frames as a blink"><a class="choice" href="#blink-first">Blink between two example frames <span aria-hidden="true">→</span></a><a class="choice" href="#export-blink">Save the animation <span aria-hidden="true">→</span></a><a class="choice" href="#synthetic-open">Stack on the comet <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="blink-first" aria-labelledby="title-blink-first">
+
+<p class="overline">Check a known object <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-blink-first">Compare frame 1 with frame 5</h2>
+<p class="before"><strong>Start here</strong> You can use the frame switch on this page immediately. To reproduce the view in CAst, <a href="#center">center 3I/ATLAS</a>, switch off <strong>Track Object</strong> and <strong>Target Marker</strong>, and zoom in over the comet.</p>
+<ol class="actions"><li>Use this page’s <strong>Frame 1</strong> and <strong>Frame 5</strong> controls to switch between captures. In CAst, use the marked <strong>Frame</strong> selector to make the same change.</li><li>Watch the diffuse bright patch inside the outlined box. Compare its position with a nearby star outside the box. The zoom and sky position stay fixed between the two images.</li></ol>
+<figure class="capture"><div class="frame-switch" role="group" aria-label="Compare screenshots" hidden><button type="button">Frame 1</button><button type="button">Frame 5</button></div><a class="enlarge" href="images/moving-objects/blink-first.webp" aria-label="Enlarge Frame 1 for Compare frame 1 with frame 5">
+<img src="images/moving-objects/blink-first.webp" loading="lazy" alt="First exposure at fixed zoom, with the frame selector and the patch containing the comet marked.">
+<span class="zoom-label">Frame 1 · Enlarge screenshot <span aria-hidden="true">↗</span></span></a><a class="enlarge" href="images/moving-objects/blink-last.webp" aria-label="Enlarge Frame 5 for Compare frame 1 with frame 5">
+<img src="images/moving-objects/blink-last.webp" loading="lazy" alt="Fifth exposure at the same zoom and sky position; the comet has shifted within the marked box.">
+<span class="zoom-label">Frame 5 · Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The comet shifts across the box, while nearby stars stay in approximately the same places. Try toggling several times to see the movement.</p></div>
+<nav class="next" aria-label="Continue from Compare frame 1 with frame 5"><a class="choice" href="#plots-open">Measure the motion across all five frames <span aria-hidden="true">→</span></a><a class="choice" href="#export-blink">Save your blink <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="sky-view" aria-labelledby="title-sky-view">
+
+<p class="overline">Check a known object <span aria-hidden="true">/</span> Step 16</p>
+<h2 tabindex="-1" id="title-sky-view">Explore predicted sky motion</h2>
+<p class="before"><strong>Start here</strong> <a href="#generate">Generate has finished</a>. This chart shows catalogue positions without the background stars.</p>
+<ol class="actions"><li>Click <strong>Sky View</strong> beneath the object table.</li><li>Drag the <strong>Time</strong> slider left or right to move the predictions backward or forward from the observation time.</li><li>Click <strong>Now</strong> to return to the exposure time.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/sky-view.webp" aria-label="Enlarge Screenshot for Explore predicted sky motion">
+<img src="images/moving-objects/sky-view.webp" loading="lazy" alt="Sky View tab, Time slider, and Now button are marked above the predicted field.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The time offset returns to UTC +0.0 h. Use <a href="#blink">Blink</a> to inspect motion recorded in your actual images.</p></div>
+<nav class="next" aria-label="Continue from Explore predicted sky motion"><a class="choice" href="#blink">Inspect the recorded motion <span aria-hidden="true">→</span></a><a class="choice" href="#compare-asteroid">Select the main-belt asteroid <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="plots-open" aria-labelledby="title-plots-open">
+
+<p class="overline">Measure the track <span aria-hidden="true">/</span> Step 17</p>
+<h2 tabindex="-1" id="title-plots-open">Open the trajectory plots</h2>
+<p class="before"><strong>Start here</strong> A folder is loaded and an <a href="#inspect">object is selected</a>. Pause Blink if it is running.</p>
+<ol class="actions"><li>Click <strong>Plots</strong> in the top workflow row. Double-clicking the selected object row opens the same charts.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/plots-open.webp" aria-label="Enlarge Screenshot for Open the trajectory plots">
+<img src="images/moving-objects/plots-open.webp" loading="lazy" alt="Plots is marked in the top toolbar above the selected comet row.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A trajectory window opens with position plots, offset and signal-to-noise plots, and a measurement table.</p></div>
+<nav class="next" aria-label="Continue from Open the trajectory plots"><a class="choice" href="#plot-read">Read the five measurements <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="plot-read" aria-labelledby="title-plot-read">
+
+<p class="overline">Measure the track <span aria-hidden="true">/</span> Step 18</p>
+<h2 tabindex="-1" id="title-plot-read">Read the five frame measurements</h2>
+<p class="before"><strong>Start here</strong> The <a href="#plots-open">Plots window</a> is open for 3I/ATLAS.</p>
+<ol class="actions"><li>Click a row in the table to read a single exposure. <strong>Pred x/y</strong> gives the expected pixel position. <strong>Meas x/y</strong> gives the nearby measured peak. Scroll horizontally for <strong>Offset</strong> and <strong>SNR</strong>.</li><li>Compare the plotted measured positions with the predicted path above the table. Check the offset plot for a sudden jump to a different source.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/plot-read.webp" aria-label="Enlarge Screenshot for Read the five frame measurements">
+<img src="images/moving-objects/plot-read.webp" loading="lazy" alt="All five measurement rows outlined under the trajectory, offset and SNR plots for 3I/ATLAS.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Here all five frames have measurements and the offsets are approximately 0.3 to 1.1 pixels. Small offsets across several frames support the identification more strongly than a single close match.</p></div>
+<nav class="next" aria-label="Continue from Read the five frame measurements"><a class="choice" href="#synthetic-open">Combine the five exposures <span aria-hidden="true">→</span></a><a class="choice" href="#export-image">Save an image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="synthetic-open" aria-labelledby="title-synthetic-open">
+
+<p class="overline">Measure the track <span aria-hidden="true">/</span> Step 19</p>
+<h2 tabindex="-1" id="title-synthetic-open">Stack the images on the comet</h2>
+<p class="before"><strong>Start here</strong> The five-image folder is loaded with <a href="#inspect">3I/ATLAS selected</a>. Close the plots window and stop Blink if needed.</p>
+<ol class="actions"><li>Click <strong>Synthetic Track</strong> in the top row. Use the default object-centered settings for this example. If you enabled advanced settings previously, keep the object-centered crop and the predicted motion.</li><li>Wait for the preview. CAst shifts each exposure by the object’s predicted motion before combining them. Light from the moving target adds up in one place.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/synthetic-open.webp" aria-label="Enlarge Screenshot for Stack the images on the comet">
+<img src="images/moving-objects/synthetic-open.webp" loading="lazy" alt="Synthetic Track button marked above the selected object table.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Synthetic Tracking</strong> preview opens with a zoomed image, a frame count and the stack measurement.</p></div>
+<nav class="next" aria-label="Continue from Stack the images on the comet"><a class="choice" href="#stack-read">Read and save the stack <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="stack-read" aria-labelledby="title-stack-read">
+
+<p class="overline">Measure the track <span aria-hidden="true">/</span> Step 20</p>
+<h2 tabindex="-1" id="title-stack-read">Check the stack and export it</h2>
+<p class="before"><strong>Start here</strong> The <a href="#synthetic-open">Synthetic Tracking preview</a> is open.</p>
+<ol class="actions"><li>Click <strong>Overlays</strong> to choose which marks to display. Compare <strong>Predicted center</strong> with <strong>Measured peak</strong>. Read the used-frame count and the offset above the image.</li><li>To keep the stack, click <strong>Export Image…</strong>. Choose <strong>Raw FITS Files</strong> for the numerical stack or <strong>PNG Files</strong> for a rendered preview. Choose a destination, name the file, and click <strong>Save</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/stack-read.webp" aria-label="Enlarge Screenshot for Check the stack and export it">
+<img src="images/moving-objects/stack-read.webp" loading="lazy" alt="Actual stacked 3I/ATLAS preview with Overlays and Export Image marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The five-frame practice run used 5 of 5 frames, measured a stacked SNR of 6.95 and placed the peak 1.00 pixel from the predicted center. Different settings or frames can change these measurements.</p></div>
+<nav class="next" aria-label="Continue from Check the stack and export it"><a class="choice" href="#plots-open">Compare the individual frame positions <span aria-hidden="true">→</span></a><a class="choice" href="#discover-open">Search for other movers <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="discover-open" aria-labelledby="title-discover-open">
+
+<p class="overline">Search for other movers <span aria-hidden="true">/</span> Step 21</p>
+<h2 tabindex="-1" id="title-discover-open">Start a search for additional movers</h2>
+<p class="before"><strong>Start here</strong> <a href="#generate">Generate has finished</a> for your folder. Use at least three solved frames for the default search. Let any blink preload finish.</p>
+<ol class="actions"><li>Click <strong>Discover</strong> in the workflow row. If CAst offers an earlier result, choose <strong>Run New Scan</strong> for a fresh search or <strong>Restore Last Result</strong> to review it.</li><li>If the button is disabled, hover over it for the missing requirement. For a mixed folder, select a single filter/exposure group. The practice folder has only one group.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/discover-open.webp" aria-label="Enlarge Screenshot for Start a search for additional movers">
+<img src="images/moving-objects/discover-open.webp" loading="lazy" alt="Discover is highlighted in the top controls of the loaded workspace.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>For a new search, the <strong>Discover Pipeline</strong> dialog opens. Discover looks for sources whose positions change after the fixed star field is subtracted.</p></div>
+<nav class="next" aria-label="Continue from Start a search for additional movers"><a class="choice" href="#discover-options">Set up the practice scan <span aria-hidden="true">→</span></a><a class="choice" href="#discover-results">Read an existing result <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="discover-options" aria-labelledby="title-discover-options">
+
+<p class="overline">Search for other movers <span aria-hidden="true">/</span> Step 22</p>
+<h2 tabindex="-1" id="title-discover-options">Run a quick practice scan</h2>
+<p class="before"><strong>Start here</strong> The <a href="#discover-open">Discover Pipeline dialog</a> is open for the five-frame practice folder.</p>
+<ol class="actions"><li>Set <strong>Preset</strong> to <strong>Fast scan</strong>.</li><li>Set <strong>Alignment</strong> to <strong>Already aligned</strong>. These example exposures were registered to the same star grid. For a different sequence with drifting stars, choose <strong>Align first</strong>.</li><li>Set <strong>Working Binning</strong> to <strong>4x4</strong>. This combines neighboring pixels for a smaller working image.</li><li>Clear <strong>If no candidates are found, retry automatically with the detailed full-resolution search</strong> for this short practice scan.</li><li>Click <strong>Run Discover</strong>. Leave the progress window open until the batch finishes. If you enabled a final synthetic sweep separately, choose <strong>No</strong> at its prompt to inspect residual-only results.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/discover-options.webp" aria-label="Enlarge Screenshot for Run a quick practice scan">
+<img src="images/moving-objects/discover-options.webp" loading="lazy" alt="Discover Pipeline with Fast scan, Already aligned, 4x4, the unchecked retry box and Run Discover marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Discover Results</strong> window summarizes known objects recovered and additional candidate tracks. Strong binning speeds the exercise and can hide faint or slow movers.</p></div>
+<nav class="next" aria-label="Continue from Run a quick practice scan"><a class="choice" href="#discover-results">Read the results <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="discover-results" aria-labelledby="title-discover-results">
+
+<p class="overline">Search for other movers <span aria-hidden="true">/</span> Step 23</p>
+<h2 tabindex="-1" id="title-discover-results">Read the discovery results</h2>
+<p class="before"><strong>Start here</strong> A <a href="#discover-options">Discover scan</a> has completed, or you restored a previous scan for the same group.</p>
+<ol class="actions"><li>Click <strong>Known Recovered</strong> to see catalogue objects the independent motion search linked across frames. The adjacent <strong>Known Missed</strong> tab lists predictions it did not recover.</li><li>Click <strong>Potential Discoveries</strong> to review stronger unmatched tracks. Use the number in parentheses to see whether there are any rows to inspect.</li><li>Click <strong>Borderline Review</strong> to see less consistent tracks. Follow up any interesting row by checking its position in the original images across several frames.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/discover-results.webp" aria-label="Enlarge Screenshot for Read the discovery results">
+<img src="images/moving-objects/discover-results.webp" loading="lazy" alt="Discovery results with the Known Recovered, Potential Discoveries and Borderline Review tabs marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>In this five-frame, 4×4-binned residual scan, zero tracks linked. The 50 catalogue predictions appear under <strong>Known Missed</strong>. The visible-limit benchmark was omitted in this capture, so <strong>Visible Limit</strong> reads <strong>Not estimated</strong>. The separate <a href="#inspect">first-frame match</a> and <a href="#stack-read">comet stack</a> still show 3I/ATLAS.</p></div>
+<nav class="next" aria-label="Continue from Read the discovery results"><a class="choice" href="#discover-csv">Save the run summary <span aria-hidden="true">→</span></a><a class="choice" href="#blink">Check a track in the original images <span aria-hidden="true">→</span></a><a class="choice" href="#discover-options">Review the scan settings <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="discover-csv" aria-labelledby="title-discover-csv">
+
+<p class="overline">Search for other movers <span aria-hidden="true">/</span> Step 24</p>
+<h2 tabindex="-1" id="title-discover-csv">Save a discovery summary</h2>
+<p class="before"><strong>Start here</strong> The <a href="#discover-results">Discover Results window</a> is open.</p>
+<ol class="actions"><li>Click <strong>Export…</strong> in the results window.</li><li>Choose <strong>Summary CSV…</strong>. Pick a folder, give the file a name, and click <strong>Save</strong>. Use <strong>Benchmark CSV…</strong> for individual known-object recovery rows or <strong>Candidate Review CSV…</strong> for candidate rows.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/discover-csv.webp" aria-label="Enlarge Screenshot for Save a discovery summary">
+<img src="images/moving-objects/discover-csv.webp" loading="lazy" alt="Discovery-results Export menu with Summary CSV highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Open the saved .csv file in a spreadsheet or text editor to review the run outside CAst.</p></div>
+<nav class="next" aria-label="Continue from Save a discovery summary"><a class="choice" href="#discover-results">Return to the results <span aria-hidden="true">→</span></a><a class="choice" href="#export-image">Save an image of the field <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="export-image" aria-labelledby="title-export-image">
+
+<p class="overline">Save an image or animation <span aria-hidden="true">/</span> Step 25</p>
+<h2 tabindex="-1" id="title-export-image">Export the current image</h2>
+<p class="before"><strong>Start here</strong> The <a href="#generate">source image</a> is open. Select and <a href="#center">center</a> the object if you want a marked close-up.</p>
+<ol class="actions"><li>Click <strong>Export</strong> on the image toolbar.</li><li>Choose <strong>Image…</strong>. The current framing, stretch and visible overlays determine how the exported view looks.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/export-image.webp" aria-label="Enlarge Screenshot for Export the current image">
+<img src="images/moving-objects/export-image.webp" loading="lazy" alt="Image toolbar Export menu opened with Image highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A save dialog opens for the rendered image.</p></div>
+<nav class="next" aria-label="Continue from Export the current image"><a class="choice" href="#save-file">Name the image and save it <span aria-hidden="true">→</span></a><a class="choice" href="#export-blink">Save motion instead <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="save-file" aria-labelledby="title-save-file">
+
+<p class="overline">Save an image or animation <span aria-hidden="true">/</span> Step 26</p>
+<h2 tabindex="-1" id="title-save-file">Name and save the still image</h2>
+<p class="before"><strong>Start here</strong> You chose <a href="#export-image">Export → Image…</a> in the image toolbar.</p>
+<ol class="actions"><li>In the save dialog, choose a destination folder. In <strong>File name</strong> type <strong>3I-ATLAS-frame-01.png</strong>. Leave <strong>PNG Files</strong> selected.</li><li>Click <strong>Save</strong>. Open that PNG in your image viewer and compare the visible star field and marker with the app.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/save-file.webp" aria-label="Enlarge Screenshot for Name and save the still image">
+<img src="images/moving-objects/save-file.webp" loading="lazy" alt="A PNG filename entered in the save dialog and Save outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The saved PNG shows the view you framed. The example image was successfully exported with the selected comet centered.</p></div>
+<nav class="next" aria-label="Continue from Name and save the still image"><a class="choice" href="#export-blink">Save an animation as well <span aria-hidden="true">→</span></a><a class="choice" href="#inspect">Inspect another object <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="export-blink" aria-labelledby="title-export-blink">
+
+<p class="overline">Save an image or animation <span aria-hidden="true">/</span> Step 27</p>
+<h2 tabindex="-1" id="title-export-blink">Export a blink animation</h2>
+<p class="before"><strong>Start here</strong> A <a href="#choose-folder">sequence</a> of at least two frames is loaded. Choose the framing, target marker and tracking state you want to share.</p>
+<ol class="actions"><li>Click <strong>Export</strong> on the image toolbar.</li><li>Choose <strong>Blink…</strong>. Select <strong>Animated GIF Files</strong> for a looping image or <strong>MP4 Video Files</strong> for a video. Pick a folder, enter a filename such as <strong>3I-ATLAS-blink.gif</strong>, then click <strong>Save</strong>.</li><li>Wait for export to finish. Open the saved file and check that the star field or the tracked target moves as you intended.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/moving-objects/export-blink.webp" aria-label="Enlarge Screenshot for Export a blink animation">
+<img src="images/moving-objects/export-blink.webp" loading="lazy" alt="Export menu with Blink highlighted between Image and Trail.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The five-frame example exported as an animated GIF. A still frame can be saved separately from the same menu.</p><a class="sample" href="examples/3i-atlas-blink.gif">View the five-frame blink animation ↗</a></div>
+<nav class="next" aria-label="Continue from Export a blink animation"><a class="choice" href="#blink">Adjust how the blink plays <span aria-hidden="true">→</span></a><a class="choice" href="#export-image">Save a still image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

@@ -1,5 +1,7 @@
 # HR Diagram
 
+[Open the illustrated HR Diagram tutorial](tutorials/hr-diagram.html). Follow a star in the M46 image to its position on the color–magnitude diagram. Each task opens directly.
+
 ## Introduction
 
 Every star has a place on a map drawn more than a century ago -- a map that still tells us more about stellar life than almost any other plot in astronomy.

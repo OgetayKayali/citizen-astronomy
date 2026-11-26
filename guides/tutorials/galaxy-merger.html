@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="How do two spiral galaxies change as they pass each other? Start with a short recording, then revisit the same moment as starlight, a map of density, or individual particles.">
+<title>Galaxy Merger | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=observations-3"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>Galaxy Merger</span></nav>
+<header class="guide-head"><h1>Galaxy Merger</h1><p class="preset-note">Citizen Astronomy for Windows with OpenGL 3.3 support. The Galaxy merger scene is included with the app.</p></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Set up an encounter</h3><ol><li><a href="#launch">Open Galaxy Merger</a></li><li><a href="#scene">Choose a starting scene</a></li><li><a href="#prepare">Set up a short first run</a></li><li><a href="#initial-arms">Give one galaxy four spiral arms</a></li><li><a href="#run">Run the simulation</a></li><li><a href="#stop">Keep part of an unfinished run</a></li><li><a href="#resume">Continue a stopped calculation</a></li></ol></section><section class="step-group"><h3>Explore the recording</h3><ol><li><a href="#playback">Play, scrub and move the camera</a></li><li><a href="#passage">Jump to the closest approach</a></li><li><a href="#optical">Turn a galaxy face-on or edge-on</a></li><li><a href="#light">Adjust starlight and dust</a></li><li><a href="#look">Save or reuse an optical look</a></li><li><a href="#density">Read the galaxies as a density field</a></li><li><a href="#particles">Inspect individual particles</a></li><li><a href="#sky">Place stars behind the encounter</a></li></ol></section><section class="step-group"><h3>Save or share</h3><ol><li><a href="#save-recording">Save the simulation for later</a></li><li><a href="#load-recording">Reopen an existing recording</a></li><li><a href="#still">Save the current frame as a PNG</a></li><li><a href="#video">Export a playable MP4 movie</a></li><li><a href="#sequence">Export a numbered PNG sequence</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/galaxy_merger.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="launch" aria-labelledby="title-launch">
+
+<p class="overline">Set up an encounter <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-launch">Open Galaxy Merger</h2>
+<p class="before"><strong>Start here</strong> Start Citizen Astronomy. If a workspace is open, choose <strong>Mode → Choose Mode…</strong> to return to the launcher.</p>
+<ol class="actions"><li>Scroll down to <strong>Simulations</strong>. Click the <strong>Galaxy Merger</strong> card, outlined in amber.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/launch.webp" aria-label="Enlarge Screenshot for Open Galaxy Merger">
+<img src="images/galaxy-merger/launch.webp" loading="lazy" alt="The Simulations row on the CAst launcher with the Galaxy Merger card outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The left panel says <strong>GALAXY MERGER</strong>. Its status says the scene is loaded. The sky view can be empty until you run the simulation.</p></div>
+<nav class="next" aria-label="Continue from Open Galaxy Merger"><a class="choice" href="#scene">Choose a starting scene <span aria-hidden="true">→</span></a><a class="choice" href="#load-recording">Open a recording you already have <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="scene" aria-labelledby="title-scene">
+
+<p class="overline">Set up an encounter <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-scene">Choose a starting scene</h2>
+<p class="before"><strong>Start here</strong> Open <a href="#launch">Galaxy Merger</a>. Save any <a href="#save-recording">recording you want to keep</a> before changing scenes.</p>
+<ol class="actions"><li>Click <strong>Simulation</strong> (1). For this example, leave <strong>Galaxy merger</strong> selected. For another encounter, choose <strong>Retrograde merger</strong>, where one disk spins against the orbital motion, or <strong>Seeded merger</strong>, an alternative spiral model.</li><li>If you have a scene file instead, click <strong>Load scene</strong> (2), select the <strong>.scene</strong> file and click <strong>Open</strong>. A scene supplies the starting conditions for a new run.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/scene.webp" aria-label="Enlarge Screenshot for Choose a starting scene">
+<img src="images/galaxy-merger/scene.webp" loading="lazy" alt="The Simulation selector and Load scene button marked separately in the file controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The selected scene name appears next to <strong>Simulation</strong>. The <strong>Run</strong> button is available.</p></div>
+<nav class="next" aria-label="Continue from Choose a starting scene"><a class="choice" href="#prepare">Set up the short preview <span aria-hidden="true">→</span></a><a class="choice" href="#load-recording">Open an existing trajectory instead <span aria-hidden="true">→</span></a><a class="choice" href="#initial-arms">Change the starting spiral pattern <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="prepare" aria-labelledby="title-prepare">
+
+<p class="overline">Set up an encounter <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-prepare">Set up a short first run</h2>
+<p class="before"><strong>Start here</strong> Select the built-in <a href="#scene">Galaxy merger scene</a>. Scroll to <strong>Parameters</strong>. Click the section heading if it is folded.</p>
+<ol class="actions"><li>Under <strong>Resolution</strong>, click <strong>Minimal</strong> (1). This reduces the number of particles CAst tracks.</li><li>Click the number beside <strong>Steps</strong> (2), press <strong>Ctrl+A</strong>, type <strong>400</strong> and press <strong>Enter</strong>.</li><li>Set <strong>Sample every</strong> (3) to <strong>20</strong> the same way. Leave <strong>dt</strong> at <strong>0.005</strong>. CAst will save a snapshot once every 20 calculation steps.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/prepare.webp" aria-label="Enlarge Screenshot for Set up a short first run">
+<img src="images/galaxy-merger/prepare.webp" loading="lazy" alt="Parameters panel with Minimal resolution, Steps at 400 and Sample every at 20 marked in order.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The panel shows Minimal, 400 steps and a sampling interval of 20. This run covers 2 simulation time units, enough to practice playback while the galaxies are still separate.</p></div>
+<nav class="next" aria-label="Continue from Set up a short first run"><a class="choice" href="#run">Calculate the preview <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="initial-arms" aria-labelledby="title-initial-arms">
+
+<p class="overline">Set up an encounter <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-initial-arms">Give one galaxy four spiral arms</h2>
+<p class="before"><strong>Start here</strong> Select the built-in <a href="#scene">Galaxy merger scene</a>. To compare with an earlier run, <a href="#save-recording">save that recording</a> first.</p>
+<ol class="actions"><li>Expand <strong>Parameters</strong>, then click the <strong>left</strong> heading (1), below <strong>Softening</strong>. This opens the starting conditions for the galaxy named left.</li><li>Scroll to <strong>Initial arms</strong> (2), click its menu and choose <strong>Four</strong>. Leave the right galaxy unchanged so you can compare them. Scroll back up to <strong>Run</strong> when ready.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/initial-arms.webp" aria-label="Enlarge Screenshot for Give one galaxy four spiral arms">
+<img src="images/galaxy-merger/initial-arms.webp" loading="lazy" alt="The left galaxy section is expanded, and the Initial arms selector reads Four. Both controls are outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The Initial arms field reads Four. The next run starts the left galaxy with that spiral pattern. Gravity can change its shape as the galaxies interact.</p></div>
+<nav class="next" aria-label="Continue from Give one galaxy four spiral arms"><a class="choice" href="#run">Calculate the changed scene <span aria-hidden="true">→</span></a><a class="choice" href="#prepare">Choose a budget for the experiment <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="run" aria-labelledby="title-run">
+
+<p class="overline">Set up an encounter <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-run">Run the simulation</h2>
+<p class="before"><strong>Start here</strong> An editable scene is loaded. For a quick first attempt, use the <a href="#prepare">400-step settings</a>.</p>
+<ol class="actions"><li>Scroll to the top of the left panel. Click <strong>Run</strong> once.</li><li>Wait until the progress bar disappears and the playback controls are available. For a long run, use the <a href="#stop">Stop branch</a> to keep a partial result.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/run.webp" aria-label="Enlarge Screenshot for Run the simulation">
+<img src="images/galaxy-merger/run.webp" loading="lazy" alt="The Run button directly below the resolution status is outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>During calculation, <strong>Stop</strong> replaces <strong>Run</strong>. Afterward, <strong>Playback</strong> shows a time readout and the view displays the galaxies.</p></div>
+<nav class="next" aria-label="Continue from Run the simulation"><a class="choice" href="#playback">Watch the result <span aria-hidden="true">→</span></a><a class="choice" href="#stop">Stop before the calculation finishes <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="stop" aria-labelledby="title-stop">
+
+<p class="overline">Set up an encounter <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-stop">Keep part of an unfinished run</h2>
+<p class="before"><strong>Start here</strong> An encounter is currently calculating. Look for the progress bar near the top of the panel.</p>
+<ol class="actions"><li>Click <strong>Stop</strong>. Wait for the status to say <strong>Stopped at step</strong> before using the recording.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/stop.webp" aria-label="Enlarge Screenshot for Keep part of an unfinished run">
+<img src="images/galaxy-merger/stop.webp" loading="lazy" alt="The Stop button below an active simulation progress bar is highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The status gives the step reached. <strong>Continue</strong> appears beside <strong>Run</strong>. You can inspect or save the snapshots calculated so far.</p></div>
+<nav class="next" aria-label="Continue from Keep part of an unfinished run"><a class="choice" href="#resume">Continue from the stopping point <span aria-hidden="true">→</span></a><a class="choice" href="#playback">Inspect the partial recording <span aria-hidden="true">→</span></a><a class="choice" href="#save-recording">Save the partial recording <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="resume" aria-labelledby="title-resume">
+
+<p class="overline">Set up an encounter <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-resume">Continue a stopped calculation</h2>
+<p class="before"><strong>Start here</strong> You <a href="#stop">stopped a run</a> in this session and have kept its settings.</p>
+<ol class="actions"><li>Click <strong>Continue</strong> beside <strong>Run</strong>. Keep the same parameters to preserve the stopping point.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/resume.webp" aria-label="Enlarge Screenshot for Continue a stopped calculation">
+<img src="images/galaxy-merger/resume.webp" loading="lazy" alt="Continue is marked under the status showing the step reached when the run was stopped.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The progress bar returns and advances from the saved step. Choosing <strong>Run</strong> would start the scene over.</p></div>
+<nav class="next" aria-label="Continue from Continue a stopped calculation"><a class="choice" href="#playback">Replay the finished recording <span aria-hidden="true">→</span></a><a class="choice" href="#stop">Stop the calculation again <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="playback" aria-labelledby="title-playback">
+
+<p class="overline">Explore the recording <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-playback">Play, scrub and move the camera</h2>
+<p class="before"><strong>Start here</strong> Finish or stop <a href="#run">a run</a>, or <a href="#load-recording">load a recording</a>. Scroll to <strong>Playback</strong> and expand the heading if needed.</p>
+<ol class="actions"><li>Click <strong>Play</strong> (1) to move forward. Click the same button when it says <strong>Pause</strong> to hold a moment.</li><li>While paused, drag <strong>Time</strong> (2) left or right. The number above the slider is the simulated time at the selected snapshot.</li><li>Drag <strong>Speed</strong> (3) to the right for faster playback. To look around, left-drag in the galaxy view to orbit, right-drag to pan, and scroll to zoom. Click <strong>Frame</strong> beside Play to bring the encounter back into view.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/playback.webp" aria-label="Enlarge Screenshot for Play, scrub and move the camera">
+<img src="images/galaxy-merger/playback.webp" loading="lazy" alt="Real galaxy recording with Play, Time and Speed outlined next to the two galaxies.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Dragging Time changes the positions shown on screen. In the 400-step example the time runs from 0 to 2. A longer encounter gives you more of the orbit to explore.</p></div>
+<nav class="next" aria-label="Continue from Play, scrub and move the camera"><a class="choice" href="#optical">View a disk face-on or edge-on <span aria-hidden="true">→</span></a><a class="choice" href="#passage">Find the closest approach <span aria-hidden="true">→</span></a><a class="choice" href="#density">See the density field <span aria-hidden="true">→</span></a><a class="choice" href="#particles">See individual particles <span aria-hidden="true">→</span></a><a class="choice" href="#save-recording">Save the data for later <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="passage" aria-labelledby="title-passage">
+
+<p class="overline">Explore the recording <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-passage">Jump to the closest approach</h2>
+<p class="before"><strong>Start here</strong> Use a longer recording to see a close encounter. To reproduce this example, <a href="#scene">select Galaxy merger</a>, choose Minimal, set <strong>dt</strong> to <strong>0.005</strong>, <strong>Steps</strong> to <strong>16000</strong> and <strong>Sample every</strong> to <strong>80</strong>, then <a href="#run">run to completion</a>.</p>
+<ol class="actions"><li>Pause playback. Open <strong>Appearance</strong> and set <strong>Picture</strong> to <strong>Optical</strong>.</li><li>Click <strong>First passage</strong> (1). CAst frames the galaxies at their first close approach in the recording.</li><li>Click <strong>After passage</strong> (2) to advance to a later view. Use the two buttons above this tutorial screenshot to compare those actual frames.</li></ol>
+<figure class="capture"><div class="frame-switch" role="group" aria-label="Compare screenshots" hidden><button type="button">First passage</button><button type="button">After passage</button></div><a class="enlarge" href="images/galaxy-merger/passage.webp" aria-label="Enlarge First passage for Jump to the closest approach">
+<img src="images/galaxy-merger/passage.webp" loading="lazy" alt="Optical view at first passage with First passage and After passage outlined.">
+<span class="zoom-label">First passage · Enlarge screenshot <span aria-hidden="true">↗</span></span></a><a class="enlarge" href="images/galaxy-merger/tails.webp" aria-label="Enlarge After passage for Jump to the closest approach">
+<img src="images/galaxy-merger/tails.webp" loading="lazy" alt="The same encounter at a later time selected by After passage, with both camera buttons outlined.">
+<span class="zoom-label">After passage · Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>In this run <strong>First passage</strong> selects simulation time <strong>40.8</strong>, with the two bright centers close together. At <strong>55.2</strong>, the later frame shows two more widely separated centers within elongated clouds of light. A shorter recording may end before the galaxies pass.</p></div>
+<nav class="next" aria-label="Continue from Jump to the closest approach"><a class="choice" href="#optical">Inspect a disk orientation <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save the frame you selected <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="optical" aria-labelledby="title-optical">
+
+<p class="overline">Explore the recording <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-optical">Turn a galaxy face-on or edge-on</h2>
+<p class="before"><strong>Start here</strong> <a href="#playback">Pause a recording</a>. Scroll the left panel to <strong>Appearance</strong> and expand the heading.</p>
+<ol class="actions"><li>Click the <strong>Picture</strong> selector (1) and choose <strong>Optical</strong> to reconstruct light from the recorded particles.</li><li>Click <strong>Face-on disk</strong> (2) to look down on the first disk.</li><li>Click <strong>Edge-on disk</strong> (3) to look along its plane. Click <strong>Frame current light</strong> above the two buttons to frame the emitting material again.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/optical.webp" aria-label="Enlarge Screenshot for Turn a galaxy face-on or edge-on">
+<img src="images/galaxy-merger/optical.webp" loading="lazy" alt="The optical picture of two galaxies with the Picture selector and Face-on disk and Edge-on disk buttons marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The camera turns around the first galaxy, making the disk appear broader or thinner. Its playback time stays the same.</p></div>
+<nav class="next" aria-label="Continue from Turn a galaxy face-on or edge-on"><a class="choice" href="#light">Adjust starlight and dust <span aria-hidden="true">→</span></a><a class="choice" href="#density">Compare the density view <span aria-hidden="true">→</span></a><a class="choice" href="#particles">Compare the particle view <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="light" aria-labelledby="title-light">
+
+<p class="overline">Explore the recording <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-light">Adjust starlight and dust</h2>
+<p class="before"><strong>Start here</strong> Choose the <a href="#optical">Optical picture</a>, pause on a frame and scroll down through <strong>Appearance</strong>.</p>
+<ol class="actions"><li>Drag <strong>Exposure</strong> (1) a short distance to the right. Watch the faint outer light as you move it.</li><li>Drag <strong>Dust</strong> (2) to change how strongly foreground dust absorbs starlight. Compare the same region while keeping the camera still.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/light.webp" aria-label="Enlarge Screenshot for Adjust starlight and dust">
+<img src="images/galaxy-merger/light.webp" loading="lazy" alt="Face-on optical reconstruction with the Exposure and Dust sliders outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The brightness and dust contrast change on the same frame. These are illustrative brightness settings for the rendering.</p></div>
+<nav class="next" aria-label="Continue from Adjust starlight and dust"><a class="choice" href="#look">Keep the optical settings <span aria-hidden="true">→</span></a><a class="choice" href="#sky">Add a star background <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save this view <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="look" aria-labelledby="title-look">
+
+<p class="overline">Explore the recording <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-look">Save or reuse an optical look</h2>
+<p class="before"><strong>Start here</strong> Choose <a href="#optical">Optical</a> and scroll down through <strong>Appearance</strong> to the controls below <strong>Stellar texture</strong>.</p>
+<ol class="actions"><li>To keep the current settings, click <strong>Save look</strong> (1). Choose a folder, type a name such as <strong>My galaxy.look</strong>, and click <strong>Save</strong>.</li><li>To apply an existing look, click <strong>Load look</strong> (2). Select a <strong>.look</strong> file and click <strong>Open</strong>. The bundled broadband and nebular looks are examples.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/look.webp" aria-label="Enlarge Screenshot for Save or reuse an optical look">
+<img src="images/galaxy-merger/look.webp" loading="lazy" alt="The neighboring Save look and Load look buttons are each outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Loading a look applies its optical settings to the current scene. To keep the particle motions as well, save the recording separately.</p></div>
+<nav class="next" aria-label="Continue from Save or reuse an optical look"><a class="choice" href="#save-recording">Keep the particle recording <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save a picture with this look <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="density" aria-labelledby="title-density">
+
+<p class="overline">Explore the recording <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-density">Read the galaxies as a density field</h2>
+<p class="before"><strong>Start here</strong> <a href="#playback">Pause a recording</a> at a time you want to inspect and expand <strong>Appearance</strong>.</p>
+<ol class="actions"><li>Click <strong>Picture</strong> (1) and choose <strong>Illustrative volume</strong>. Nearby particles now contribute to a continuous map of where material is concentrated.</li><li>Click <strong>Resolution</strong> (2) and choose <strong>Standard</strong> to start. This control changes the density map’s detail.</li><li>Drag <strong>Field brightness</strong> (3) to see fainter material. Zoom out with the mouse wheel if the map fills the frame.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/density.webp" aria-label="Enlarge Screenshot for Read the galaxies as a density field">
+<img src="images/galaxy-merger/density.webp" loading="lazy" alt="Illustrative volume rendered from the simulation with Picture, Resolution and Field brightness marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A colored volume replaces the starlight picture. The palette illustrates the distribution of material at the selected time.</p></div>
+<nav class="next" aria-label="Continue from Read the galaxies as a density field"><a class="choice" href="#particles">Inspect the underlying particles <span aria-hidden="true">→</span></a><a class="choice" href="#optical">Return to starlight <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save this density map <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="particles" aria-labelledby="title-particles">
+
+<p class="overline">Explore the recording <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-particles">Inspect individual particles</h2>
+<p class="before"><strong>Start here</strong> <a href="#playback">Pause a recording</a> and expand <strong>Appearance</strong>.</p>
+<ol class="actions"><li>Click <strong>Picture</strong> (1) and choose <strong>Particles</strong>.</li><li>Drag <strong>Point scale</strong> (2) left to shrink the points or right to make them larger. Zoom with the mouse wheel to inspect one disk.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/particles.webp" aria-label="Enlarge Screenshot for Inspect individual particles">
+<img src="images/galaxy-merger/particles.webp" loading="lazy" alt="Particles from a real run with Picture set to Particles and the Point scale slider outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The smooth picture resolves into colored points. Each point represents a simulation particle. Its displayed size changes while its recorded position stays fixed.</p></div>
+<nav class="next" aria-label="Continue from Inspect individual particles"><a class="choice" href="#density">See where particles gather <span aria-hidden="true">→</span></a><a class="choice" href="#optical">Reconstruct their starlight <span aria-hidden="true">→</span></a><a class="choice" href="#sky">Add a star background <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="sky" aria-labelledby="title-sky">
+
+<p class="overline">Explore the recording <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-sky">Place stars behind the encounter</h2>
+<p class="before"><strong>Start here</strong> A <a href="#playback">recording</a> is visible. Scroll down to <strong>Background</strong> and click its heading.</p>
+<ol class="actions"><li>Check <strong>Stars</strong> (1) to draw a star field behind the galaxies.</li><li>Clear <strong>Real catalog stars</strong> (2) to use generated stars, as shown here. To use Hipparcos positions instead, check it and click <strong>Download star catalog</strong> if prompted.</li><li>Move <strong>Star brightness</strong> (3) until the points are visible. Clear <strong>Stars</strong> again to remove them.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/sky.webp" aria-label="Enlarge Screenshot for Place stars behind the encounter">
+<img src="images/galaxy-merger/sky.webp" loading="lazy" alt="The Background section with Stars on, Real catalog stars off and the Star brightness slider marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Stars appear behind the galaxies. They are a backdrop, independent of the particles in the encounter. Saved images and video include any enabled background.</p></div>
+<nav class="next" aria-label="Continue from Place stars behind the encounter"><a class="choice" href="#still">Save the view as a PNG <span aria-hidden="true">→</span></a><a class="choice" href="#video">Make a movie <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="save-recording" aria-labelledby="title-save-recording">
+
+<p class="overline">Save or share <span aria-hidden="true">/</span> Step 16</p>
+<h2 tabindex="-1" id="title-save-recording">Save the simulation for later</h2>
+<p class="before"><strong>Start here</strong> You have a <a href="#run">finished</a> or <a href="#stop">stopped</a> calculation. Scroll to the top of the left panel.</p>
+<ol class="actions"><li>Click <strong>Save recording</strong>. Choose a folder and enter a name such as <strong>First encounter.traj</strong>. Click <strong>Save</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/save-recording.webp" aria-label="Enlarge Screenshot for Save the simulation for later">
+<img src="images/galaxy-merger/save-recording.webp" loading="lazy" alt="Save recording is highlighted in the three-button file row.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The .traj file stores your calculated snapshots for playback. To continue calculating a stopped run, keep the current session open and use Continue.</p></div>
+<nav class="next" aria-label="Continue from Save the simulation for later"><a class="choice" href="#load-recording">Reopen the recording <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save a single picture <span aria-hidden="true">→</span></a><a class="choice" href="#video">Export a movie <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="load-recording" aria-labelledby="title-load-recording">
+
+<p class="overline">Save or share <span aria-hidden="true">/</span> Step 17</p>
+<h2 tabindex="-1" id="title-load-recording">Reopen an existing recording</h2>
+<p class="before"><strong>Start here</strong> Open <a href="#launch">Galaxy Merger</a> and locate the <strong>.traj</strong> file you want to view. Save any current recording you want to keep.</p>
+<ol class="actions"><li>Click <strong>Load recording</strong> at the top of the left panel. Select your <strong>.traj</strong> file and click <strong>Open</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/load-recording.webp" aria-label="Enlarge Screenshot for Reopen an existing recording">
+<img src="images/galaxy-merger/load-recording.webp" loading="lazy" alt="Load recording in the top-left file row is marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Playback becomes available with the recorded time range. To change physical parameters and calculate a different encounter, select a new scene.</p></div>
+<nav class="next" aria-label="Continue from Reopen an existing recording"><a class="choice" href="#playback">Explore the saved snapshots <span aria-hidden="true">→</span></a><a class="choice" href="#scene">Start a different encounter <span aria-hidden="true">→</span></a><a class="choice" href="#video">Export the recording as a movie <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="still" aria-labelledby="title-still">
+
+<p class="overline">Save or share <span aria-hidden="true">/</span> Step 18</p>
+<h2 tabindex="-1" id="title-still">Save the current frame as a PNG</h2>
+<p class="before"><strong>Start here</strong> <a href="#playback">Pause the recording</a> on the view you want to keep. Scroll to <strong>Export</strong> and click the section heading. Set <strong>Format</strong> to <strong>PNG sequence</strong> so Browse selects a folder.</p>
+<ol class="actions"><li>Choose a <strong>Preset</strong> (1), such as <strong>1920 x 1080</strong>, for the saved picture size.</li><li>Click <strong>Browse</strong> (2) and choose an output folder. Choose a fresh folder if you want to keep a previous frame.png.</li><li>Click <strong>Save frame</strong> (3).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/still.webp" aria-label="Enlarge Screenshot for Save the current frame as a PNG">
+<img src="images/galaxy-merger/still.webp" loading="lazy" alt="Export controls with the size Preset, Browse and Save frame outlined in that order.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The status says <strong>Wrote</strong> followed by a path. Open <strong>frame.png</strong> there to see the camera view without the control panel.</p></div>
+<nav class="next" aria-label="Continue from Save the current frame as a PNG"><a class="choice" href="#video">Save a moving version <span aria-hidden="true">→</span></a><a class="choice" href="#sequence">Save individual animation frames <span aria-hidden="true">→</span></a><a class="choice" href="#playback">Choose a different time <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="video" aria-labelledby="title-video">
+
+<p class="overline">Save or share <span aria-hidden="true">/</span> Step 19</p>
+<h2 tabindex="-1" id="title-video">Export a playable MP4 movie</h2>
+<p class="before"><strong>Start here</strong> Use a <a href="#playback">finished or loaded recording</a> and your chosen camera angle. Expand <strong>Export</strong>.</p>
+<ol class="actions"><li>Set <strong>Format</strong> (1) to <strong>MP4 (ffmpeg)</strong>. Choose a size under <strong>Preset</strong> and keep <strong>FPS</strong> at 30 for this example.</li><li>Click <strong>Browse</strong> (2). Pick a folder, type <strong>Galaxy preview.mp4</strong> and click <strong>Save</strong>.</li><li>Enter a starting time in <strong>From</strong> (3) and an ending time in <strong>To</strong> (4). For the short preview, use <strong>0</strong> and <strong>2</strong>. These are times on the simulation’s playback slider.</li><li>Click <strong>Export</strong> (5). Wait for the export status to report completion, then open the MP4 in a video player.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/video.webp" aria-label="Enlarge Screenshot for Export a playable MP4 movie">
+<img src="images/galaxy-merger/video.webp" loading="lazy" alt="Movie settings with MP4 Format, Browse, From, To and Export outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The frame count and target filename appear below the time range. At 30 frames per simulation time unit, a range from 0 to 2 produces 60 frames.</p></div>
+<nav class="next" aria-label="Continue from Export a playable MP4 movie"><a class="choice" href="#sequence">Export numbered PNGs instead <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save one frame <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="sequence" aria-labelledby="title-sequence">
+
+<p class="overline">Save or share <span aria-hidden="true">/</span> Step 20</p>
+<h2 tabindex="-1" id="title-sequence">Export a numbered PNG sequence</h2>
+<p class="before"><strong>Start here</strong> A <a href="#playback">recording</a> is available. Expand <strong>Export</strong>. Choose your image size under <strong>Preset</strong>.</p>
+<ol class="actions"><li>Set <strong>Format</strong> (1) to <strong>PNG sequence</strong>.</li><li>Click <strong>Browse</strong> (2) and select a folder for the images. Set <strong>From</strong> and <strong>To</strong> to the part of the recording you want to keep.</li><li>Click <strong>Export</strong> (3). If you stop a sequence early, leave its settings in place and click <strong>Continue</strong> in the Export section to finish it.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/galaxy-merger/sequence.webp" aria-label="Enlarge Screenshot for Export a numbered PNG sequence">
+<img src="images/galaxy-merger/sequence.webp" loading="lazy" alt="Export panel highlighting PNG sequence format, the output folder chooser, and Export.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The selected folder fills with numbered PNG images, one per exported frame. Each uses the chosen camera and appearance.</p></div>
+<nav class="next" aria-label="Continue from Export a numbered PNG sequence"><a class="choice" href="#video">Create a single MP4 file <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save only the current view <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

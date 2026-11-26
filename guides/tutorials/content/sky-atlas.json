@@ -1,0 +1,760 @@
+{
+  "title": "Sky Atlas",
+  "intro": "Find the Orion Nebula, read its height above your horizon, or see where your own image fits on the sky.",
+  "dataset": "Start Citizen Astronomy (CAst). The Orion and Moon exercises use the built-in atlas. For the optional overlay exercise, bring an image with a sky-coordinate solution.",
+  "outcome": "Find an object by name, plan for a site and time, choose which sky layers to display, and place a registered image on the map.",
+  "heroAlt": "Sky Atlas centered on Orion, with constellation lines linking bright stars, Rigel and Sirius labeled, and the Milky Way behind the chart.",
+  "groups": [
+    {
+      "title": "Find your way around",
+      "steps": [
+        {
+          "id": "launch",
+          "title": "Open Sky Atlas",
+          "requires": "Start CAst. If you are in another workspace, use **Mode → Choose Mode…** to return to the launcher.",
+          "actions": [
+            "Under **Explore, Visualize & Process**, click the **Sky Atlas** card (1)."
+          ],
+          "check": "The sky replaces the launcher. Stars are drawn as points, while circles mark cataloged objects. You can explore immediately, without opening an image folder.",
+          "image": "launch.webp",
+          "alt": "Sky Atlas outlined in the launcher row alongside Sky Explorer and HR Diagram.",
+          "links": [
+            {
+              "id": "dock",
+              "label": "Find the hidden controls"
+            },
+            {
+              "id": "search-open",
+              "label": "Find an object"
+            },
+            {
+              "id": "overlay-open",
+              "label": "Show my own image"
+            }
+          ]
+        },
+        {
+          "id": "dock",
+          "title": "Reveal the bottom controls",
+          "requires": "[Open Sky Atlas](#launch).",
+          "actions": [
+            "Move the pointer to the bottom center of the sky and leave it there for a moment. A row of square buttons slides up in the outlined area (1).",
+            "Hold the pointer over an icon to read its tooltip. Move back into the sky to let the controls slide away."
+          ],
+          "check": "The first button is a magnifying glass. The bar also contains the clock, observing site, sky layers and settings. If it disappears, move the pointer back to the bottom center of the atlas.",
+          "image": "dock.webp",
+          "alt": "Full chart with the bottom-center dock outlined.",
+          "links": [
+            {
+              "id": "pan",
+              "label": "Move around the sky"
+            },
+            {
+              "id": "search-open",
+              "label": "Look up a target"
+            },
+            {
+              "id": "site-open",
+              "label": "Set my observing site"
+            },
+            {
+              "id": "grids",
+              "label": "Choose a coordinate grid"
+            },
+            {
+              "id": "settings-open",
+              "label": "Control the catalogs"
+            },
+            {
+              "id": "overlay-open",
+              "label": "Use an image overlay"
+            }
+          ]
+        },
+        {
+          "id": "pan",
+          "title": "Pan across the sky and zoom",
+          "requires": "[Open the atlas](#launch). Use this whenever you want to explore by eye.",
+          "actions": [
+            "Place the pointer in the marked part of the sky (1). Hold the left mouse button, drag a short distance and release.",
+            "Roll the mouse wheel forward to zoom in, or backward to see a wider area. Look at **FOV** along the bottom edge of the map. FOV means field of view."
+          ],
+          "check": "Dragging brings different stars into the frame. A smaller FOV spans fewer degrees of sky and lets you distinguish objects that previously appeared close together.",
+          "image": "pan.webp",
+          "alt": "Sky chart with a small rectangle in the central star field showing where to start the drag.",
+          "links": [
+            {
+              "id": "search-open",
+              "label": "Center on a named object"
+            },
+            {
+              "id": "reset",
+              "label": "Recover the opening view"
+            },
+            {
+              "id": "outlines",
+              "label": "Identify constellations"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Find a target and read its details",
+      "steps": [
+        {
+          "id": "search-open",
+          "title": "Open the sky search",
+          "requires": "[Reveal the bottom controls](#dock).",
+          "actions": [
+            "Click the magnifying glass at the left end of the bar (1). Its tooltip says **Search the sky**."
+          ],
+          "check": "A search window opens with a box for a name, catalog ID or alias. It can find entries in downloaded catalogs even when their map layers are hidden.",
+          "image": "search-open.webp",
+          "alt": "Bottom bar with its leftmost magnifying glass marked.",
+          "links": [
+            {
+              "id": "search",
+              "label": "Find the Orion Nebula"
+            },
+            {
+              "id": "moon-search",
+              "label": "Find the Moon"
+            }
+          ]
+        },
+        {
+          "id": "search",
+          "title": "Find the Orion Nebula (M42)",
+          "requires": "The [search window](#search-open) is open.",
+          "actions": [
+            "Click the search box (1) and type **M42**. Wait for the results to appear.",
+            "Click the **Nebula  Orion Nebula** row (2), or press **Enter** while that row is highlighted. Check that its catalog line says **Messier**."
+          ],
+          "check": "The search closes, the chart centers on the Orion Nebula and an information panel appears at upper left. The number of other matches depends on which catalogs are installed.",
+          "image": "search.webp",
+          "alt": "Search box containing M42 and the Orion Nebula result in the Messier catalog.",
+          "links": [
+            {
+              "id": "pin",
+              "label": "Read the coordinates"
+            },
+            {
+              "id": "site-open",
+              "label": "Check visibility from my site"
+            },
+            {
+              "id": "grids",
+              "label": "Identify the coordinate lines"
+            }
+          ]
+        },
+        {
+          "id": "pin",
+          "title": "Read where the object is",
+          "requires": "[Find M42](#search), or locate a labeled star or object in the atlas.",
+          "actions": [
+            "Click the object’s marker in the sky (1) to pin it. Double-click a visible marker if you also want to center it.",
+            "Read the panel at upper left (2). **RA** and **Dec** locate the object on the celestial sphere. **Alt** tells you how far above or below the local horizon it is. **Az** gives its compass direction."
+          ],
+          "check": "At Greenwich on 6 January 2026 at 23:00 UTC, this example places M42 about **33°** above the horizon toward the south. Your Alt and Az depend on your own site and time.",
+          "image": "pin.webp",
+          "alt": "Marker centered on the Orion Nebula and a pinned panel showing its name, magnitude and coordinates.",
+          "links": [
+            {
+              "id": "references",
+              "label": "Open an object reference"
+            },
+            {
+              "id": "site-open",
+              "label": "Change the observing site"
+            },
+            {
+              "id": "time-open",
+              "label": "Try another hour"
+            },
+            {
+              "id": "moon-search",
+              "label": "Inspect the Moon"
+            }
+          ]
+        },
+        {
+          "id": "references",
+          "title": "Open a catalog entry or research papers",
+          "requires": "[Pin a named object](#pin).",
+          "actions": [
+            "In the marked row below the object type (1), click **SIMBAD** for an object record, **ADS** for papers, or **VizieR** for catalog data.",
+            "Return to CAst when you want to continue exploring the map."
+          ],
+          "check": "Your browser opens the chosen service with the object identifier. The services need an internet connection. The links available depend on the selected object.",
+          "image": "references.webp",
+          "alt": "Pinned Orion Nebula panel with the SIMBAD, ADS and VizieR links outlined together.",
+          "links": [
+            {
+              "id": "search-open",
+              "label": "Look up another target"
+            },
+            {
+              "id": "catalogs",
+              "label": "Choose deep-sky catalogs"
+            }
+          ]
+        },
+        {
+          "id": "moon-search",
+          "title": "Search for the Moon",
+          "requires": "[Open sky search](#search-open). Set the [site](#site) and [UTC time](#time) first if you want a view for a particular night.",
+          "actions": [
+            "Type **Moon** in the search box (1).",
+            "Select **Natural Satellite  Moon** under **Solar System** (2)."
+          ],
+          "check": "The atlas centers on the Moon’s position for the selected site and time and pins its details. At a wide field of view it may appear only as a small disk.",
+          "image": "moon-search.webp",
+          "alt": "Moon in the search field with the Solar System result highlighted.",
+          "links": [
+            {
+              "id": "moon",
+              "label": "Zoom in on the lunar disk"
+            },
+            {
+              "id": "time-open",
+              "label": "Change the observing date"
+            }
+          ]
+        },
+        {
+          "id": "moon",
+          "title": "Inspect the lunar disk",
+          "requires": "[Select the Moon](#moon-search). If the Moon is below your horizon, turn off the [ground layer](#horizon) to inspect it anyway.",
+          "actions": [
+            "Place the pointer over the lunar disk (1) and roll the wheel forward a few notches at a time. If the disk slips toward an edge, drag to bring it back toward the middle.",
+            "Roll backward when you want to see the surrounding field again."
+          ],
+          "check": "The lit part of the Moon fills more of the view. Its shape and orientation follow the selected observing time and site.",
+          "image": "moon.webp",
+          "alt": "Close-up of the rendered Moon, with its bright terrain and dark limb enclosed by a numbered outline.",
+          "links": [
+            {
+              "id": "time-open",
+              "label": "Look on a different date"
+            },
+            {
+              "id": "reset",
+              "label": "Return to the wide sky"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Plan for a place and time",
+      "steps": [
+        {
+          "id": "site-open",
+          "title": "Open Observer Location",
+          "requires": "[Reveal the dock](#dock).",
+          "actions": [
+            "Click the map-pin icon (1). Its tooltip says **Observer location**."
+          ],
+          "check": "The Observer Location window opens with a map and a **Saved Site** panel. Its coordinates set the observer position used by CAst.",
+          "image": "site-open.webp",
+          "alt": "Bottom-center controls with the location pin outlined.",
+          "links": [
+            {
+              "id": "site",
+              "label": "Enter a site or reuse one"
+            }
+          ]
+        },
+        {
+          "id": "site",
+          "title": "Set your observing site",
+          "requires": "[Open Observer Location](#site-open). Use your own coordinates or the Greenwich example shown.",
+          "actions": [
+            "In **Name** (1), enter a label. In **Latitude** (2) and **Longitude** (3), enter degrees. South and west use negative values. For this example enter **Greenwich**, **51.48**, and **0.00**.",
+            "Enter **Elevation** in metres (4), for example **46**. Leave **Keep this site in quick-switch presets** checked if you want to use it again. For a previously saved site, pick it under **Saved Sites** and click **Load** instead.",
+            "Click **Save Location** (5)."
+          ],
+          "check": "The window closes and the atlas footer shows the active site. Altitude, azimuth and the horizon now refer to that location.",
+          "image": "site.webp",
+          "alt": "Saved Site controls showing Greenwich, latitude, longitude, elevation, and Save Location.",
+          "links": [
+            {
+              "id": "time-open",
+              "label": "Set the observing time"
+            },
+            {
+              "id": "horizon",
+              "label": "See the local horizon"
+            },
+            {
+              "id": "pin",
+              "label": "Read the target’s altitude"
+            }
+          ]
+        },
+        {
+          "id": "time-open",
+          "title": "Freeze the sky and open the clock",
+          "requires": "[Reveal the dock](#dock).",
+          "actions": [
+            "Look at the third button from the left (1). If its tooltip says **Pause time**, click it. When the clock is paused, the button shows a play triangle, as in the screenshot.",
+            "Click the **Date and time** button immediately to its left (2)."
+          ],
+          "check": "A UTC date and time editor appears above the dock. Pausing makes it easier to compare two moments while holding the sky still.",
+          "image": "time-open.webp",
+          "alt": "Clock pause/play control and the adjacent date-time control numbered in click order.",
+          "links": [
+            {
+              "id": "time",
+              "label": "Enter a time or advance one hour"
+            },
+            {
+              "id": "pin",
+              "label": "Inspect the frozen chart"
+            }
+          ]
+        },
+        {
+          "id": "time",
+          "title": "Choose a UTC date or step one hour",
+          "requires": "[Open the date and time popup](#time-open).",
+          "actions": [
+            "Click the date and time field (1). Select and edit each part, or open the calendar to pick the date. For the Orion example, set **6 January 2026, 23:00 UTC**.",
+            "Click **+1 h** (2) to jump one hour forward. Use **-1 h** to undo that jump. **+1 d** and **-1 d** change the day.",
+            "For the Orion example, click outside the popup to keep the selected time. If you want to return to the present, click **Now** (3) before closing the popup. Click the play triangle on the dock when you want time to advance again."
+          ],
+          "check": "The UTC field changes to the selected moment. With a target pinned, compare **Alt** and **Az** before and after the hour jump.",
+          "image": "time.webp",
+          "alt": "UTC date editor, +1 h and Now buttons marked separately.",
+          "links": [
+            {
+              "id": "pin",
+              "label": "Read the altitude at this time"
+            },
+            {
+              "id": "moon-search",
+              "label": "Find the Moon at this time"
+            },
+            {
+              "id": "horizon",
+              "label": "Look at the horizon"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Choose map layers and catalogs",
+      "steps": [
+        {
+          "id": "grids",
+          "title": "Choose the kind of grid",
+          "requires": "[Reveal the dock](#dock).",
+          "actions": [
+            "Click **Toggle equatorial grid** (1) for right ascension and declination lines. Click it again to hide them.",
+            "Click **Toggle alt-az grid** (2) for the altitude and azimuth lines at your observing site. For an easy comparison, show one grid at a time."
+          ],
+          "check": "Each button switches its own grid. Use equatorial coordinates to match a catalog position and local coordinates to decide where to look from the ground.",
+          "image": "grids.webp",
+          "alt": "Two adjacent grid buttons numbered on the dock.",
+          "links": [
+            {
+              "id": "compare-grids",
+              "label": "Compare both grids on Orion"
+            },
+            {
+              "id": "horizon",
+              "label": "Show the ground"
+            },
+            {
+              "id": "outlines",
+              "label": "Show constellation lines"
+            }
+          ]
+        },
+        {
+          "id": "compare-grids",
+          "title": "Compare the two grids on one field",
+          "requires": "[Find M42](#search) and zoom out enough to see several stars. For the same sky orientation, use the example [site](#site) and [time](#time).",
+          "actions": [
+            "In the atlas, use the marked grid button (1) for the view you want. If the other grid is still visible, click its button to turn it off.",
+            "Use **Equatorial** and **Local horizon** above the tutorial screenshot to compare the same frozen sky. Follow a bright star as you switch diagrams."
+          ],
+          "check": "The stars keep their positions in this comparison. The two grids run in different directions because one follows Earth’s rotation axis and the other follows the observer’s horizon.",
+          "image": "equatorial.webp",
+          "alt": "Equatorial grid drawn across Orion, with the responsible button marked.",
+          "links": [
+            {
+              "id": "horizon",
+              "label": "Show the ground"
+            },
+            {
+              "id": "outlines",
+              "label": "Trace constellations"
+            }
+          ],
+          "imageLabel": "Equatorial",
+          "comparison": {
+            "label": "Local horizon",
+            "image": "horizontal.webp",
+            "alt": "The same chart with altitude and azimuth lines and the corresponding dock button marked."
+          }
+        },
+        {
+          "id": "outlines",
+          "title": "Trace the constellations",
+          "requires": "[Reveal the dock](#dock).",
+          "actions": [
+            "Click **Toggle constellations** (1), the connected-points icon immediately to the right of the grid buttons.",
+            "Look for lines joining the brighter stars. Click the same button again to hide the outlines and names."
+          ],
+          "check": "In the Orion field, the lines help you trace the pattern around the nebula even when other catalogs are crowded.",
+          "image": "outlines.webp",
+          "alt": "A wide chart with constellation outlines and the connected-points dock button highlighted.",
+          "links": [
+            {
+              "id": "search",
+              "label": "Locate M42 in Orion"
+            },
+            {
+              "id": "options-open",
+              "label": "Change how the chart looks"
+            },
+            {
+              "id": "settings-open",
+              "label": "Adjust star and object density"
+            }
+          ]
+        },
+        {
+          "id": "horizon",
+          "title": "See which objects are above the ground",
+          "requires": "[Set your site](#site) and [UTC time](#time). Reveal the bottom dock.",
+          "actions": [
+            "Click **Toggle ground and horizon** (1). Drag the map or zoom out until the horizon crosses the frame.",
+            "Look above the horizon line for visible sky. If a selected object falls below the line, switch the ground off to inspect it, or try another observing time."
+          ],
+          "check": "The ground covers the part of the celestial sphere below your local horizon. An object above the line has positive altitude.",
+          "image": "horizon.webp",
+          "alt": "An all-sky view with the ground across its lower portion and the horizon control outlined.",
+          "links": [
+            {
+              "id": "time",
+              "label": "Check one hour later"
+            },
+            {
+              "id": "pin",
+              "label": "Read a target’s exact altitude"
+            }
+          ]
+        },
+        {
+          "id": "settings-open",
+          "title": "Open the catalog settings",
+          "requires": "[Reveal the dock](#dock).",
+          "actions": [
+            "Click the gear labeled **Sky Atlas settings** (1), next to the custom overlay button."
+          ],
+          "check": "**Sky Atlas Settings** opens with two pages, **Stars** and **Deep-Sky Objects**.",
+          "image": "settings-open.webp",
+          "alt": "Dock with the settings gear outlined.",
+          "links": [
+            {
+              "id": "stars",
+              "label": "Set the faintest stars"
+            },
+            {
+              "id": "catalogs",
+              "label": "Choose deep-sky catalogs"
+            }
+          ]
+        },
+        {
+          "id": "stars",
+          "title": "Set the faintest stars to draw",
+          "requires": "[Open Sky Atlas Settings](#settings-open) and click **Stars** in the left column.",
+          "actions": [
+            "Drag **Limiting magnitude** (1). Move right to include fainter stars, left to keep the brighter ones. Read the estimated star count and download size under **Star catalog download** before confirming.",
+            "Click **OK** at the bottom of the dialog to apply. If a download starts, keep using the map while it runs. Zoom in to see the fainter stars as they become available."
+          ],
+          "check": "At a modest limit the estimate names Hipparcos. Deeper limits may require larger Tycho-2 or Gaia data downloads. **Cancel** in the settings dialog restores your saved values.",
+          "image": "stars.webp",
+          "alt": "Stars page with the limiting-magnitude slider and Hipparcos download estimate visible.",
+          "links": [
+            {
+              "id": "catalogs",
+              "label": "Set which deep-sky objects appear"
+            },
+            {
+              "id": "pan",
+              "label": "Zoom in to inspect the field"
+            }
+          ]
+        },
+        {
+          "id": "catalogs",
+          "title": "Choose which deep-sky objects and names appear",
+          "requires": "[Open Sky Atlas Settings](#settings-open).",
+          "actions": [
+            "Click **Deep-Sky Objects** (1). Under **Catalogs to show**, check **Messier** (2) for the Orion Nebula example. Select any additional catalogs you need.",
+            "Drag **Label limiting magnitude** (3) to the right to label fainter objects. The separate **Object limiting magnitude** controls which markers appear.",
+            "Click **OK** (4) to apply. Enabling a catalog for the first time may start a download."
+          ],
+          "check": "The map displays the enabled objects within the chosen brightness limits. Zoom in to bring out labels in crowded fields.",
+          "image": "catalogs.webp",
+          "alt": "Deep-Sky Objects page with its navigation row, Messier checkbox, label limit slider and OK button outlined.",
+          "links": [
+            {
+              "id": "search-open",
+              "label": "Look up a catalog object"
+            },
+            {
+              "id": "stars",
+              "label": "Set the star limit"
+            }
+          ]
+        },
+        {
+          "id": "options-open",
+          "title": "Open the display options",
+          "requires": "[Reveal the dock](#dock).",
+          "actions": [
+            "Click **Sky View options** (1), the sliders icon between the settings gear and the full-screen button."
+          ],
+          "check": "A popup opens with Milky Way and constellation controls and a **Reset View** button at the bottom.",
+          "image": "options-open.webp",
+          "alt": "Bottom toolbar with the sliders icon highlighted.",
+          "links": [
+            {
+              "id": "milky-way",
+              "label": "Adjust the Milky Way background"
+            },
+            {
+              "id": "reset",
+              "label": "Return to the opening field"
+            }
+          ]
+        },
+        {
+          "id": "milky-way",
+          "title": "Change the Milky Way background",
+          "requires": "[Open Sky View options](#options-open).",
+          "actions": [
+            "Check **Milky Way** (1) to show the background.",
+            "Open **Preset** (2) and try **Dark sky** or **Atlas**. Drag **Opacity** (3) left to make the backdrop less prominent, or right to bring it forward.",
+            "Click in the sky to close the popup."
+          ],
+          "check": "The haze and dark lanes behind the stars change in strength. Object positions stay fixed while you adjust the background.",
+          "image": "milky-way.webp",
+          "alt": "Milky Way group with its on/off checkbox, preset list and opacity slider outlined.",
+          "links": [
+            {
+              "id": "outlines",
+              "label": "Add constellation lines"
+            },
+            {
+              "id": "reset",
+              "label": "Find the opening view"
+            }
+          ]
+        },
+        {
+          "id": "reset",
+          "title": "Return to the opening view",
+          "requires": "[Open Sky View options](#options-open) when you have panned or zoomed away from your starting point.",
+          "actions": [
+            "At the bottom of the popup, click **Reset View** (1)."
+          ],
+          "check": "The camera moves back toward the opening wide field near Orion. You can search for a target again from here.",
+          "image": "reset.webp",
+          "alt": "Reset View button marked below the constellation style controls.",
+          "links": [
+            {
+              "id": "search-open",
+              "label": "Find a target"
+            },
+            {
+              "id": "overlay-open",
+              "label": "Add a registered image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Place your own image on the sky",
+      "steps": [
+        {
+          "id": "overlay-open",
+          "title": "Open the custom image overlays",
+          "requires": "[Reveal the dock](#dock). Use this branch to display an image of a field you photographed.",
+          "actions": [
+            "Click **Custom sky map overlays** (1), the four-square icon between the horizon button and the settings gear."
+          ],
+          "check": "The **Custom Sky Map** popup opens. A survey is a named collection of your registered images.",
+          "image": "overlay-open.webp",
+          "alt": "Dock with the custom sky map overlay button outlined.",
+          "links": [
+            {
+              "id": "edit-survey",
+              "label": "Create or edit a survey"
+            },
+            {
+              "id": "show-survey",
+              "label": "Display a survey I already have"
+            }
+          ]
+        },
+        {
+          "id": "edit-survey",
+          "title": "Open the survey editor",
+          "requires": "[Open Custom Sky Map](#overlay-open).",
+          "actions": [
+            "Click **Edit Surveys** (1)."
+          ],
+          "check": "A **Custom Sky Map Surveys** window opens. The left side lists your surveys and the right side lists the images in the selected survey.",
+          "image": "edit-survey.webp",
+          "alt": "Custom Sky Map popup with Edit Surveys marked.",
+          "links": [
+            {
+              "id": "new-survey",
+              "label": "Begin a new survey"
+            },
+            {
+              "id": "add-image",
+              "label": "Add to an existing survey"
+            }
+          ]
+        },
+        {
+          "id": "new-survey",
+          "title": "Create a survey for one field or filter",
+          "requires": "[Open the survey editor](#edit-survey).",
+          "actions": [
+            "Click **New Survey** (1) below the list on the left."
+          ],
+          "check": "A new entry appears and its Name, Filter and image controls become available.",
+          "image": "new-survey.webp",
+          "alt": "Survey editor with New Survey highlighted below the list.",
+          "links": [
+            {
+              "id": "add-image",
+              "label": "Name it and add an image"
+            }
+          ]
+        },
+        {
+          "id": "add-image",
+          "title": "Name the survey and add an image",
+          "requires": "[Create a new survey](#new-survey), or click a survey that you already have. Keep a registered image handy. Registration means the file contains the sky position for its pixels.",
+          "actions": [
+            "Click **Name** (1) and give the collection a recognizable name. The example uses **Lagoon field**. Optionally choose a **Filter** (2), such as **Ha** for a hydrogen-alpha image.",
+            "Click **Add Image…** (3)."
+          ],
+          "check": "A file picker opens. CAst accepts FITS, XISF, PNG and TIFF overlays.",
+          "image": "add-image.webp",
+          "alt": "Name, Filter and Add Image button marked on the survey’s detail panel.",
+          "links": [
+            {
+              "id": "choose-image",
+              "label": "Select the image file"
+            }
+          ]
+        },
+        {
+          "id": "choose-image",
+          "title": "Select the registered image",
+          "requires": "The file picker opened from [Add Image](#add-image). Use a plate-solved file. For a PNG or TIFF, a matching FITS sidecar can supply the sky coordinates.",
+          "actions": [
+            "Browse to the image or enter its name (1). The illustrated example selects **Lagoon.png** and keeps its matching **Lagoon.fits** coordinate file in the same folder.",
+            "Click **Open** (2) and wait for the import. If the image lacks a usable coordinate solution, the app attempts a plate solve. A solved FITS or XISF image is the simplest starting point."
+          ],
+          "check": "The file name appears in the survey’s Images list after import succeeds.",
+          "image": "choose-image.webp",
+          "alt": "The file name field containing Lagoon.png and the Open button marked in order.",
+          "links": [
+            {
+              "id": "save-survey",
+              "label": "Save the completed survey"
+            },
+            {
+              "id": "add-image",
+              "label": "Choose another image"
+            }
+          ]
+        },
+        {
+          "id": "save-survey",
+          "title": "Check the imported image and save",
+          "requires": "[Import an image](#choose-image) and wait for its name to appear.",
+          "actions": [
+            "Check the **Images** list (1) under the correct survey name. To add another exposure or tile, repeat **Add Image…**.",
+            "Click **OK** (2) to save the collection and return to the atlas."
+          ],
+          "check": "Your named collection is available in the Survey list. Its images are drawn at the coordinates supplied by each image’s sky solution.",
+          "image": "save-survey.webp",
+          "alt": "Survey editor with Lagoon.png in the images list and OK outlined.",
+          "links": [
+            {
+              "id": "show-survey",
+              "label": "Display and blend the survey"
+            }
+          ]
+        },
+        {
+          "id": "show-survey",
+          "title": "Show an existing survey and set its opacity",
+          "requires": "[Open Custom Sky Map](#overlay-open). At least one survey must contain an [imported image](#choose-image).",
+          "actions": [
+            "Open **Survey** (1) and choose your collection. The example uses **Lagoon field (Ha)**. Check **Show custom sky overlays** (2) to display it.",
+            "Drag **Opacity** (3) left to blend the image into the atlas, or right to make it stronger. Click away from the popup when you have finished.",
+            "[Search](#search-open) for the target in your image and zoom in. Choosing a survey keeps your current view, so you may need to travel to its field."
+          ],
+          "check": "The image appears in its sky footprint. If you cannot see a difference, confirm the right survey is selected, its checkbox is on, and the map is centered on its target.",
+          "image": "show-survey.webp",
+          "alt": "Survey dropdown, Show custom sky overlays checkbox and opacity slider numbered on the popup.",
+          "links": [
+            {
+              "id": "field",
+              "label": "Compare the registered image with the atlas"
+            },
+            {
+              "id": "add-image",
+              "label": "Add another field"
+            }
+          ]
+        },
+        {
+          "id": "field",
+          "title": "Compare the overlay with the atlas alone",
+          "requires": "[Display your survey](#show-survey) and zoom toward its target. The example uses the Lagoon Nebula, **M8**.",
+          "actions": [
+            "Find the marked field (1). Use **Atlas only** and **With image** above the tutorial screenshot to inspect the change at fixed scale.",
+            "To repeat it in CAst, toggle **Show custom sky overlays** in [Custom Sky Map](#show-survey) while keeping the view on the same sky position."
+          ],
+          "check": "The Lagoon Nebula and nearby catalog markers stay in the same positions. The registered image adds fine structure and many faint stars inside the footprint.",
+          "image": "field-off.webp",
+          "alt": "Atlas view centered on the Lagoon Nebula with the target area marked before the image is shown.",
+          "links": [
+            {
+              "id": "show-survey",
+              "label": "Adjust the blend"
+            },
+            {
+              "id": "search-open",
+              "label": "Find another field"
+            }
+          ],
+          "imageLabel": "Atlas only",
+          "comparison": {
+            "label": "With image",
+            "image": "field-on.webp",
+            "alt": "Same position and scale with Lagoon.png visible over the marked area."
+          }
+        }
+      ]
+    }
+  ]
+}

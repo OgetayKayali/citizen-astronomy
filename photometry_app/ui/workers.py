@@ -1400,6 +1400,7 @@ def _evaluate_comparison_source_group_core(
 
             measurement,
 
+            requested_comparison_source_ids=list(comparison_source_ids),
             comparison_source_ids=list(comparison_source_ids),
 
             comparison_source_names=list(comparison_names),

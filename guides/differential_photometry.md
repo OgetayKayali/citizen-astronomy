@@ -1,5 +1,7 @@
 # Differential Photometry
 
+Follow the [illustrated beginner tutorial for AE UMa](tutorials/photometry.html) to measure your first light curve or jump directly to a task.
+
 Differential photometry measures how a target changes relative to stars in the same field. The target and comparison stars pass through nearly the same atmosphere and optical path, so much of the shared transparency variation divides out.
 
 CAst turns an image sequence into a reviewable measurement workspace. It can identify cataloged variables and exoplanet hosts in the field, select comparison stars for each target, measure every frame, build light curves, estimate periods, search uncataloged field stars for variability, and write a science report with an AAVSO Extended Format file and preflight review.
@@ -61,32 +63,38 @@ Each useful frame should contain:
 - enough stars for registration, plate solving, and comparison photometry;
 - valid celestial WCS, or enough pointing/scale information for CAst to solve the frame.
 
-If a timestamp has no timezone, CAst interprets it using **Settings → Open Settings → Differential Photometry → Image Timestamp Timezone**. Set this before processing if the camera wrote local time.
+The general scanner currently treats timezone-less `DATE-OBS` as UTC. For local camera timestamps, normalize them before scanning. **Prepare OSC / Bayer** provides explicit timezone and exposure start/mid/end controls and writes UTC exposure-start timestamps.
 
 ### Monochrome and color-camera data
 
 Differential measurement requires a two-dimensional image plane. A monochrome FITS/XISF/TIFF sequence is the normal input.
 
-When the scan finds camera RAW files, CAst shows a warning before loading the dataset. Choose **Yes** only after reviewing the limitations. CAst decodes each RAW file as linear 16-bit RGB, then averages the demosaiced red, green, and blue channels into one synthetic luminance plane for aperture photometry.
+Use **Prepare OSC / Bayer…** in the Differential Photometry workflow or **Settings → Prepare OSC / Bayer photometry…** for native color-sensor data. Raw Bayer FITS and camera RAW files cannot go directly into the measurement pipeline. The former demosaiced synthetic-luminance shortcut has been removed.
 
-This direct RAW path is convenient, but it is not equivalent to monochrome measurements through a defined photometric filter. Bayer demosaicing, camera white balance and channel response, differences between the colors of target and comparison stars, and incomplete filter or exposure metadata can introduce systematic error. Treat direct RAW results as provisional until they are validated. Do not submit them to AAVSO as a standard passband merely because CAst produced an export file.
+1. Select the original science mosaic file/folder and a **new** output directory. Originals are preserved. FITS Bayer mosaics and LibRaw-supported **2×2 RGB Bayer** cameras are accepted; X-Trans, layered sensors, rendered RGB, and debayered images are not native inputs.
+2. Supply raw calibration masters or folders of calibration exposures. Use matching sensor geometry, gain/ISO, offset, read mode, temperature, and optical setup. Raw preparation requires a flat and either bias or a matched-exposure dark. Darks must include their bias pedestal and are never exposure-scaled. A matched dark replaces bias subtraction, so bias is not subtracted twice. Flats need a matched dark-flat, a dark at the flat exposure, or bias (only when flat dark current is negligible). Supply **unnormalized** flats.
+3. Select the camera profile. **Auto** reads `BAYERPAT`/`BAYERPATN`/`CFAPAT`, `XBAYROFF`, `YBAYROFF`, and `ROWORDER`. Verify these against the camera's convention. An explicit RGGB/BGGR/GRBG/GBRG override describes the first 2×2 block in actual array row order and bypasses header orientation/offset conventions. RAW decoding uses visible native sensor samples and their color indices, never `postprocess`.
+4. Supply measured gain in electrons/ADU (`EGAIN`), read noise in electrons RMS (`RDNOISE`), and sensor saturation in original ADU (`SATURATE`/`SATLEVEL`), or enter overrides. The acquisition `GAIN` setting is **not** assumed to be electrons/ADU. Camera RAW white level is available from LibRaw. EXIF exposure and observation time are read when supported by the container. If unavailable, supply acquisition metadata in a JSON sidecar such as `frame.CR2.json` with `DATE-OBS` and `EXPTIME` (and optionally `INSTRUME`, `EGAIN`, `RDNOISE`, `SATURATE`, or `OBJECT`); filesystem dates are never used as observation times. Missing exposure time can be supplied for science frames; masters require their own exposure metadata.
+5. Set the timestamp timezone and whether `DATE-OBS` means exposure start, midpoint, or end. Explicit timestamp offsets take precedence over the timezone field. The **DWARF Mini timing** preset selects exposure end and requires the phone timezone at acquisition; verify that convention for the firmware used. Ambiguous/nonexistent DST times require an explicit UTC offset. Profiles can be saved and loaded as JSON.
+6. Prepare **TG + TB** for simultaneous green/blue photometry, or select a single channel. Optional TR is also available. Green is the **sum of both green samples per 2×2 cell**; blue/red retain their one sample per cell. There is no demosaicing, gamma, white balance, or interpolation. Calibration happens on the mosaic first; flats are normalized separately for all four Bayer phases. Invalid flat samples remain NaN; negative calibrated signals are retained.
+7. Choose **Use prepared folder**, then scan it. Do not enable Calibration or resampling alignment again. Each output image has its own WCS, adjusted to the sampled channel centers, and a linear `FILTER=TG/TB/TR` plane. Supported SIP distortion is adjusted too; unsupported lookup/alternate WCS is rejected rather than silently reused. Plate-solve each channel when no WCS is available. The pipeline disables WCS reuse for prepared OSC images.
+8. Review aperture and annulus radii: output pixels span **2×2 sensor pixels**. Inspect PSF sampling and aperture-growth stability. Undersampled stars can retain pixel-phase errors even without demosaicing; use sufficiently sampled acquisition and verify a stable independent check star. Use the same extraction and optics for transformation standards and science.
 
-For precision work with one-shot-color or other multichannel data:
+The products carry `VARIANCE` (ADU²), `SATFRAC` (maximum original-sample saturation fraction per output cell), camera/extraction provenance, and a shared exposure identifier. Automatic and manual photometry use these maps. Saturation remains detectable even when subtraction or flat correction lowers a calibrated value. Invalid samples in an aperture are rejected, not interpolated. The annulus excludes near-saturated pixels.
 
-1. calibrate and debayer the frames in the usual preprocessing software;
-2. extract one consistent channel or a linear luminance plane;
-3. save each result as a two-dimensional scientific image;
-4. place one filter/channel sequence in the folder you will open.
+Science variance includes shot/read noise and available master variance, propagates through flat correction, and adds for the two green samples. Aperture errors use squared fractional pixel weights plus uncertainty in the local median background. Master folders provide a sample-based median variance estimate; a single master without `VARIANCE` generates a visible warning and `OSCUNC=PARTIAL`. Flat-normalization uncertainty and covariance between reused masters are not fully modeled; calibration errors shared across a time series must not be averaged away as independent noise. Check-star residuals and repeat calibrations remain necessary to assess systematic error. A successful extraction alone does not establish a particular photometric precision.
 
-Do not mix red, green, blue, and luminance measurements as if they were one filter. Process them as separate, consistently named series when color-dependent photometry is required.
+For already calibrated mosaics, select **Already calibrated** and supply no masters. These inputs require `VARIANCE` and original-sensor `SATFRAC` extensions; a calibrated image alone cannot reliably recover pre-calibration saturation or its noise history. `osc-preparation.json` records the profile, inputs, products, warnings, and completion status. Cancelled/failed runs are explicitly marked incomplete; existing output directories are never overwritten.
 
-Other multichannel FITS, XISF, or TIFF data are not collapsed automatically by the Differential Photometry measurement engine. Export a two-dimensional channel or luminance plane first.
+Use both prepared channels in **Photometric Transformation…**, selecting RGB, to fit/apply a validated B/V profile. Science B/G pairs must share the same original exposure identifier. Untransformed TG/TB/TR require matching V/B/R comparison magnitudes; Gaia G is not substituted. Export uses `#OBSTYPE=DSLR`, keeps untransformed channel names with `TRANS=NO`, and writes standard B/V only after a successful transformation. VSP AUIDs take precedence over display labels. Ensemble exports use `CNAME=ENSEMBLE`, `CMAG=na`, comparison IDs in notes, and the check star's calculated magnitude. Mixed CCD/DSLR exports must be separated.
+
+Other multichannel FITS, XISF, or TIFF data are not automatically collapsed by the Differential Photometry engine. Rendered/demosaiced color images are outside this native OSC workflow.
 
 ### Calibrated versus uncalibrated frames
 
 You can provide already calibrated light frames. Alternatively, enable **Calibration** in the Differential Photometry Workflow and supply bias, dark, and flat frames when prompted.
 
-For camera RAW precision work, calibrate the sensor data before demosaicing in software designed for the camera format, then export one consistent linear channel or luminance sequence. CAst's direct RAW path begins with a demosaiced RGB decode, so applying masters afterward is not equivalent to calibration on the original Bayer samples.
+For native OSC, use the dedicated preparation workflow above. The general Calibration dialog refuses native Bayer images and already prepared OSC channels to avoid applying the wrong calibration order or double calibration.
 
 Already aligned frames can be marked through **Settings → Alignment**. Do not claim a stack is aligned merely because the telescope tracked well; this option means the images share the same pixel geometry.
 
@@ -142,7 +150,7 @@ During science reduction, CAst pairs B/V observations of each target within the 
 
 The calculation assumes negligible differential extinction. Science frames wider than one degree, and airmass outside 1–2, are left untransformed. Calibration images wider than one degree are cropped around the standard field before the fit. Missing airmass metadata is not proof of suitable observing conditions. Strongly mismatched, narrowband, dual-band, or emission-line observations require separate scientific validation and should not be represented as broadband B/V merely because a stellar fit is possible.
 
-When transformations are available, the light-curve axis **Transformed Magnitude (B/V)** shows them separately from the original **Standard Magnitude** values. Unavailable points are not substituted into that view; its status message explains exclusions. Single-band observations without contemporaneous color remain untransformed. External target-color corrections and integrated RAW channel extraction are not included in this version. Independent per-filter SNR binning clears transformation results; transform the original paired exposures instead.
+When transformations are available, the light-curve axis **Transformed Magnitude (B/V)** shows them separately from the original **Standard Magnitude** values. Unavailable points are not substituted into that view; its status message explains exclusions. Single-band observations without contemporaneous color remain untransformed. External target-color corrections are not included. Native RAW channel extraction is available through Prepare OSC / Bayer. Independent per-filter SNR binning clears transformation results; transform the original paired exposures instead.
 
 Profiles can be exported/imported as CAst JSON including all calibration observations and diagnostics. Imported profiles are refitted and revalidated. **Export TG/TA coefficients…** writes the B/V coefficients and uncertainties in INI form; it does not export a transformed ensemble to TransformApplier. Importing an INI coefficient list without calibration/validation evidence is not supported.
 
@@ -319,7 +327,9 @@ CAst begins with an automatic target-specific ensemble. Three levels of control 
 
 ### Automatic ensemble
 
-For each variable, CAst ranks eligible Gaia stars primarily by magnitude similarity and then by separation. Known variables and stars near known variables are excluded from the comparison pool.
+The automatic selector checks detector coverage and excludes Gaia sources near known variables. It prefers a VSP sequence for the measured band, followed by APASS. Among those candidates it favors catalog errors of 0.05 mag or smaller, brightness within 1.5 mag of the target, and a short angular separation. For clear images, Gaia BP−RP colors within 0.5 mag are preferred when available. The selector measures reserve stars so a saturated or missing reference can be replaced on an individual frame. With at least three measurements, it favors references whose typical signal-to-noise ratio reaches that of the target, up to a target precision of 0.02 mag.
+
+Comparison agreement uses each reference's flux relative to its own typical level for that field, filter and observing night. A global outlier score alone cannot exclude a variable-star measurement. An isolated excursion with supporting local evidence or a measurement defect can still be flagged.
 
 Comparison stars are labeled with the AAVSO Unique Identifier (AUID / UID) when they match the VSP sequence, or with an APASS designation when only APASS photometry is available. Gaia source numbers remain only when neither catalog has a match. Manual aperture names that you assign are kept.
 
@@ -552,7 +562,7 @@ The AAVSO file uses:
 
 `NAME, DATE, MAG, MERR, FILT, TRANS, MTYPE, CNAME, CMAG, KNAME, KMAG, AMASS, GROUP, CHART, NOTES`
 
-DATE is Julian Date at mid-exposure. FILT is mapped from recognized aliases; unknown values use `O`. MTYPE is STD when a suitable standard-magnitude context exists, otherwise DIF.
+DATE is UTC Julian Date at mid-exposure. Light curves and O–C analysis use the same midpoint. The raw measurement table also retains exposure start. L, Lum and Luminance calibrated to a V sequence export as CV with TRANS=NO. A clear measurement requires a matching comparison band for export. Gaia G alone supplies no V zero point. Other eligible differential observations can export as DIF.
 
 ---
 
@@ -665,7 +675,7 @@ This section follows the implemented reduction in calculation order.
 
 ## 1. Observation times
 
-The scanner reads `DATE-OBS`. XISF metadata can supply its observation start through the image reader. Naive timestamps use the configured Image Timestamp Timezone.
+The scanner reads `DATE-OBS`. XISF metadata can supply its observation start through the image reader. The general scanner treats naive timestamps as UTC. OSC preparation explicitly converts the camera timezone and start/mid/end convention to UTC exposure start before scanning.
 
 The light-curve sequence uses the observation time converted to UTC-based Julian Date. The AAVSO exporter shifts the timestamp by half the exposure:
 
@@ -1029,12 +1039,12 @@ where \(z\) is zenith distance. This simple geometric form becomes less reliable
 
 # Limitations
 
-- Photometry requires 2D image data; CAst does not perform a complete debayer/channel-extraction workflow inside Differential Photometry.
+- Photometry requires separate 2D channels. Native OSC preparation supports 2×2 Bayer mosaics without demosaicing; rendered RGB and other CFA layouts are not supported by that workflow.
 - Aperture photometry is not PSF fitting. Crowded and blended fields can require another program.
 - First-order shared transparency can cancel, but second-order color extinction is not modeled.
-- CAst does not calculate transformation coefficients. The Transformed Data flag is for coefficients established and applied by the observer.
+- B/V transformation requires a validated instrument profile and paired measurements. A checkbox alone cannot label an observation transformed.
 - Standard Magnitude is only as reliable as filter matching, comparison catalogs, and field conditions.
-- The active error pipeline does not yet include configured gain/read noise/dark current, scintillation, or empirical series scatter in each MERR.
+- Prepared OSC images propagate gain/read-noise and available master uncertainties. The legacy monochrome error model is unchanged. Scintillation, detector nonlinearity, shared calibration covariance, and empirical time-series scatter are not fully included in each MERR.
 - Core reduction times are not barycentrically corrected.
 - Sub-millimagnitude work is limited by flat-field residuals, fringing, detector nonlinearity, scintillation, guiding, and other systematics not fully modeled here.
 - Discovery scores prioritize inspection. They do not establish novelty or astrophysical class.

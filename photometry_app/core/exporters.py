@@ -24,7 +24,6 @@ from statistics import median
 
 from pathlib import Path
 
-from datetime import timedelta
 
 
 
@@ -200,6 +199,9 @@ _AAVSO_FILTER_ALIASES = {
     "clear": "CV",
 
     "unfiltered": "CV",
+    "l": "CV",
+    "lum": "CV",
+    "luminance": "CV",
 
     "ha": "HA",
 
@@ -310,6 +312,7 @@ class AavsoExtendedObservation:
     warnings: list[str]
 
     zero_point_mag: float | None = None
+    observation_type: str = "CCD"
 
 
 
@@ -1003,6 +1006,7 @@ def _write_measurements_csv(measurements: list[PhotometryMeasurement], output_pa
                 "file_path",
 
                 "observation_time",
+                "exposure_midpoint_utc",
 
                 "filter_name",
 
@@ -1069,6 +1073,7 @@ def _write_measurements_csv(measurements: list[PhotometryMeasurement], output_pa
                     str(measurement.file_path),
 
                     measurement.observation_time.isoformat() if measurement.observation_time else "",
+                    measurement.midpoint_utc.isoformat() if measurement.midpoint_utc else "",
 
                     measurement.filter_name or "",
 
@@ -1340,9 +1345,9 @@ def _science_observation_rows(
 
                 filter_name=measurement.filter_name or "",
 
-                observation_time_utc=measurement.observation_time.isoformat() if measurement.observation_time else "",
+                observation_time_utc=measurement.midpoint_utc.isoformat() if measurement.midpoint_utc else "",
 
-                julian_date_utc=_julian_date_utc(measurement.observation_time),
+                julian_date_utc=_julian_date_utc(measurement.midpoint_utc),
 
                 file_path=str(measurement.file_path),
 
@@ -1575,8 +1580,9 @@ def _science_calibration_context(
     elif calibrated_magnitude is not None:
 
         calibration_state = "zero_point_calibrated_untransformed"
-
-        aavso_mtype_candidate = "STD"
+        aavso_mtype_candidate = "STD" if _has_standard_passband(measurement) else (
+            "DIF" if measurement.differential_magnitude is not None else "na"
+        )
 
     elif measurement.differential_magnitude is not None:
 
@@ -2213,6 +2219,10 @@ def _write_aavso_extended_file(
 ) -> int:
 
     metadata = science_metadata or ScienceExportMetadata()
+    observation_types = {item.observation_type for item in observations}
+    if len(observation_types) > 1:
+        raise ValueError("AAVSO Extended requires one OBSTYPE per file. Export OSC/DSLR and monochrome observations separately.")
+    observation_type = next(iter(observation_types), "CCD")
 
     lines = [
 
@@ -2226,7 +2236,7 @@ def _write_aavso_extended_file(
 
         "#DATE=JD",
 
-        "#OBSTYPE=CCD",
+        f"#OBSTYPE={observation_type}",
 
         f"#{','.join(_AAVSO_EXTENDED_COLUMNS)}",
 
@@ -2234,9 +2244,17 @@ def _write_aavso_extended_file(
 
 
 
+    groups = {}
     for item in observations:
-
-        lines.append(item.export_line)
+        fields = item.export_line.split(",")
+        if fields[5] == "YES" and fields[12] != "na":
+            key = (fields[0], fields[12])
+            if key not in groups:
+                groups[key] = len(groups) + 1
+            if groups[key] > 99999:
+                raise ValueError("Too many transformation groups for one AAVSO report.")
+            fields[12] = str(groups[key])
+        lines.append(",".join(fields))
 
 
 
@@ -2284,6 +2302,14 @@ def _aavso_extended_observation(
 
     comparison_measurements = _comparison_measurements_for_export(measurement, measurement_index)
 
+    observation_type, osc_warning = _aavso_camera_type(measurement.file_path)
+    if observation_type == "DSLR" and not transformation_applied(measurement):
+        expected_band = {"TG": "V", "TB": "B", "TR": "R"}.get(str(measurement.filter_name or "").upper())
+        if (expected_band is None or measurement.standard_magnitude is None
+                or measurement.standard_catalog_band != expected_band
+                or measurement.standard_catalog_source == "gaia-g"):
+            return None, "osc_requires_matching_catalog_passband"
+
     observation_timestamp = _aavso_observation_timestamp(measurement)
 
     standard_magnitude, standard_magnitude_error, zero_point_mag, zero_point_source_count = _resolved_export_calibration(
@@ -2298,7 +2324,18 @@ def _aavso_extended_observation(
 
 
 
+    if not transformation_applied(measurement):
+        if not _has_standard_passband(measurement):
+            standard_magnitude = standard_magnitude_error = zero_point_mag = None
+            zero_point_source_count = 0
+            if _aavso_filter_code(measurement.filter_name)[0] in {"CV", "CR"}:
+                return None, "clear_requires_matching_catalog_passband"
+        else:
+            comparison_measurements = [row for row in comparison_measurements
+                                       if row.band_magnitudes.get(measurement.standard_catalog_band, {}).get("source") in {"vsp", "apass"}]
     warnings: list[str] = []
+    if osc_warning:
+        warnings.append(osc_warning)
 
     if metadata.transformed and not transformation_applied(measurement):
 
@@ -2314,6 +2351,20 @@ def _aavso_extended_observation(
 
     export_magnitude_error = standard_magnitude_error if mtype == "STD" else measurement.differential_magnitude_error
 
+    if mtype == "DIF" and measurement.requested_comparison_source_ids is not None:
+        # A normalized ensemble can have an arbitrary origin. AAVSO DIF needs
+        # the magnitude difference from the physical comparison named in CNAME.
+        comparison_measurements = comparison_measurements[:1]
+        if not comparison_measurements or not measurement.flux:
+            return None, "differential_requires_measured_comparison"
+        comparison = comparison_measurements[0]
+        if comparison.flux is None or comparison.flux <= 0 or measurement.flux <= 0:
+            return None, "differential_requires_measured_comparison"
+        export_magnitude = -2.5 * math.log10(measurement.flux / comparison.flux)
+        export_magnitude_error = None
+        if measurement.flux_error is not None and comparison.flux_error is not None:
+            export_magnitude_error = (2.5 / math.log(10)) * math.hypot(
+                measurement.flux_error / measurement.flux, comparison.flux_error / comparison.flux)
     if export_magnitude is None:
 
         return None, "submit_ready_magnitude_missing"
@@ -2326,7 +2377,7 @@ def _aavso_extended_observation(
 
     comparison_reference_mag = None
 
-    if len(comparison_measurements) > 1 or (not transformation_applied(measurement) and len(measurement.comparison_source_ids) > 1):
+    if len(comparison_measurements) > 1 or (not transformation_applied(measurement) and not comparison_measurements and len(measurement.comparison_source_ids) > 1):
 
         comparison_name = "ENSEMBLE"
 
@@ -2334,9 +2385,9 @@ def _aavso_extended_observation(
 
         comparison_row = comparison_measurements[0]
 
-        comparison_name = _aavso_text(comparison_row.source_name or comparison_row.source_id, 20)
+        comparison_name = _aavso_source_name(comparison_row, reference_lookup)
 
-        comparison_reference_mag = _aavso_reference_magnitude(comparison_row, reference_lookup, zero_point_mag)
+        comparison_reference_mag = _catalog_passband_magnitude(comparison_row, reference_lookup, measurement.filter_name)
 
         comparison_mag = _aavso_number(comparison_row.instrumental_magnitude, precision=3, default="na")
 
@@ -2356,11 +2407,15 @@ def _aavso_extended_observation(
 
     check_measurement = _aavso_check_measurement(measurement, measurement_index)
 
-    check_name = _aavso_text(check_measurement.source_name or check_measurement.source_id, 20) if check_measurement else "na"
+    check_name = _aavso_source_name(check_measurement, reference_lookup) if check_measurement else "na"
 
-    check_reference_mag = _aavso_reference_magnitude(check_measurement, reference_lookup, zero_point_mag) if check_measurement else None
+    check_reference_mag = _catalog_passband_magnitude(check_measurement, reference_lookup, measurement.filter_name) if check_measurement else None
 
     check_mag = _aavso_number(check_measurement.instrumental_magnitude, precision=3, default="na") if check_measurement else "na"
+    if comparison_name == "ENSEMBLE" and check_measurement is not None:
+        check_value = (check_measurement.transformation.get("magnitude") if transformation_applied(check_measurement)
+                       else check_measurement.standard_magnitude)
+        check_mag = _aavso_number(check_value, precision=3, default="na")
 
     export_filter_name = metadata.filter_system.strip() if metadata.filter_system else (measurement.filter_name or "")
     if transformation_applied(measurement):
@@ -2369,7 +2424,6 @@ def _aavso_extended_observation(
     filter_code, filter_note = _aavso_filter_code(export_filter_name)
     source_filter_code, _ = _aavso_filter_code(measurement.filter_name)
     if (not transformation_applied(measurement) and source_filter_code != "O"
-            and filter_code in {"U", "B", "V", "R", "I", "SU", "SG", "SR", "SI", "SZ"}
             and filter_code != source_filter_code):
         filter_code = source_filter_code
         export_filter_name = measurement.filter_name or ""
@@ -2415,6 +2469,12 @@ def _aavso_extended_observation(
     )
 
 
+
+    if comparison_name == "ENSEMBLE":
+        ids = ";".join(_aavso_source_name(row, reference_lookup) for row in comparison_measurements)
+        notes = _aavso_note_text(("" if notes == "na" else notes + " ") + "Comparison AUIDs/IDs: " + ids)
+    if osc_warning:
+        notes = _aavso_note_text(("" if notes == "na" else notes + " ") + osc_warning)
 
     fields = [
 
@@ -2469,6 +2529,7 @@ def _aavso_extended_observation(
             warnings=warnings,
 
             zero_point_mag=zero_point_mag,
+            observation_type=observation_type,
 
         ),
 
@@ -2478,6 +2539,26 @@ def _aavso_extended_observation(
 
 
 
+
+
+def _aavso_source_name(measurement, reference_lookup):
+    from photometry_app.core.standard_magnitude import _usable_auid
+    star = reference_lookup.get(measurement.source_id)
+    metadata = getattr(star, "metadata", {})
+    auid = (_usable_auid(measurement.auid) or _usable_auid(metadata.get("auid")) or _usable_auid(measurement.source_id)
+            or _usable_auid(measurement.source_name))
+    return _aavso_text(auid or measurement.source_name or measurement.source_id, 20)
+
+
+@lru_cache(maxsize=512)
+def _aavso_camera_type(path):
+    try:
+        header = read_header(path)
+    except Exception:
+        return "CCD", None
+    kind = "DSLR" if header.get("OSCCHAN") or str(header.get("OBSTYPE", "")).upper() == "DSLR" else "CCD"
+    warning = "OSC calibration uncertainty is incomplete; review osc-preparation.json." if header.get("OSCUNC") == "PARTIAL" else None
+    return kind, warning
 
 
 def _write_science_export_readme(
@@ -2572,6 +2653,15 @@ def _aavso_zero_point_mag(
 
 
 
+def _has_standard_passband(measurement: PhotometryMeasurement) -> bool:
+    from photometry_app.core.standard_magnitude import normalize_photometric_band
+    band = normalize_photometric_band(measurement.filter_name)
+    return bool(band and measurement.standard_magnitude is not None and
+                measurement.standard_catalog_band == band and
+                measurement.standard_catalog_source in {"vsp", "apass"} and
+                measurement.standard_zero_point_source_count > 0)
+
+
 def _resolved_export_calibration(
 
     measurement: PhotometryMeasurement,
@@ -2584,8 +2674,7 @@ def _resolved_export_calibration(
     if transformation_applied(measurement):
         return (measurement.transformation["magnitude"], measurement.transformation["error"],
                 measurement.standard_zero_point_magnitude, len(measurement.transformation["comparison_ids"]))
-    if (measurement.standard_magnitude is not None and measurement.standard_catalog_source in {"vsp", "apass"}
-            and not any(flag.startswith("Derived SNR bin") for flag in measurement.flags)):
+    if _has_standard_passband(measurement):
         return (measurement.standard_magnitude, measurement.standard_magnitude_error,
                 measurement.standard_zero_point_magnitude, measurement.standard_zero_point_source_count)
 
@@ -2802,6 +2891,17 @@ def _check_reference_magnitude(
 
 
 
+
+
+def _catalog_passband_magnitude(row, reference_lookup, filter_name):
+    from photometry_app.core.standard_magnitude import get_band_magnitudes, normalize_photometric_band
+    band = normalize_photometric_band(filter_name)
+    for source in (row, reference_lookup.get(row.source_id)):
+        if source is not None:
+            entry = get_band_magnitudes(source).get(band, {})
+            if entry.get("source") in {"vsp", "apass"} and entry.get("mag") is not None:
+                return float(entry["mag"])
+    return None
 
 
 def _aavso_reference_magnitude(
@@ -3065,22 +3165,7 @@ def _aavso_airmass(
 
 def _aavso_observation_timestamp(measurement: PhotometryMeasurement) -> object:
 
-    observation_time = measurement.observation_time
-
-    if observation_time is None:
-
-        return None
-
-    exposure_seconds = _header_exposure_seconds(measurement.file_path)
-
-    if exposure_seconds is None or exposure_seconds <= 0:
-
-        return observation_time
-
-    return observation_time + timedelta(seconds=(exposure_seconds / 2.0))
-
-
-
+    return measurement.midpoint_utc
 
 
 @lru_cache(maxsize=512)
@@ -3096,44 +3181,6 @@ def _header_airmass(image_path: Path) -> float | None:
         return None
 
     for key in ("AIRMASS", "SECZ", "SECAIRM", "AIRMAS"):
-
-        value = header.get(key)
-
-        if value in (None, ""):
-
-            continue
-
-        try:
-
-            numeric = float(value)
-
-        except (TypeError, ValueError):
-
-            continue
-
-        if numeric > 0:
-
-            return numeric
-
-    return None
-
-
-
-
-
-@lru_cache(maxsize=512)
-
-def _header_exposure_seconds(image_path: Path) -> float | None:
-
-    try:
-
-        header = read_header(image_path)
-
-    except Exception:
-
-        return None
-
-    for key in ("EXPTIME", "EXPOSURE", "EXPOSURE_TIME"):
 
         value = header.get(key)
 

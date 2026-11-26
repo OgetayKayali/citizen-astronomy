@@ -1104,7 +1104,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         self.assertEqual(information.call_args.args[2], expected)
         self.assertIn(expected, self.window._work_log_output.toPlainText())
 
-    def test_scan_completed_warns_and_loads_camera_raw_when_accepted(self) -> None:
+    def test_scan_completed_routes_camera_raw_to_native_preparation(self) -> None:
         root_path = Path(self._config_dir.name)
         raw_result = FileScanResult(
             path=root_path / "frame.CR2",
@@ -1127,20 +1127,18 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         with (
             patch.object(self.window, "_show_scan_results_summary_dialog"),
             patch(
-                "photometry_app.ui.main_window.QMessageBox.warning",
+                "photometry_app.ui.main_window.QMessageBox.information",
                 return_value=QMessageBox.StandardButton.Yes,
             ) as warning,
         ):
             self.window._handle_scan_completed(report)
 
         warning.assert_called_once()
-        self.assertEqual(warning.call_args.args[1], "Color camera RAW photometry")
-        self.assertIn("synthetic luminance plane", warning.call_args.args[2])
-        self.assertEqual(warning.call_args.args[4], QMessageBox.StandardButton.Cancel)
-        self.assertIs(self.window._current_report, report)
-        self.assertIn("Camera RAW caution accepted", self.window._work_log_output.toPlainText())
+        self.assertEqual(warning.call_args.args[1], "Prepare OSC / Bayer")
+        self.assertIn("extract linear channels", warning.call_args.args[2])
+        self.assertIsNone(self.window._current_report)
 
-    def test_scan_completed_does_not_load_camera_raw_when_canceled(self) -> None:
+    def test_scan_completed_does_not_load_unprepared_camera_raw(self) -> None:
         root_path = Path(self._config_dir.name)
         raw_result = FileScanResult(
             path=root_path / "frame.nef",
@@ -1163,7 +1161,7 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
         with (
             patch.object(self.window, "_show_scan_results_summary_dialog") as summary_dialog,
             patch(
-                "photometry_app.ui.main_window.QMessageBox.warning",
+                "photometry_app.ui.main_window.QMessageBox.information",
                 return_value=QMessageBox.StandardButton.Cancel,
             ),
         ):
@@ -34897,6 +34895,41 @@ class MainWindowLightCurveSegmentTest(unittest.TestCase):
             self.assertEqual(button.minimumHeight(), expected_height)
 
             self.assertIn("QPushButton:disabled", button.styleSheet())
+
+    def test_comet_photometry_launch_uses_selected_target_group_and_observing_site(self) -> None:
+        path = Path(self._config_dir.name) / "comet.fit"
+        comet = SimpleNamespace(object_type="Comet", name="C/2026 Test")
+        result = SimpleNamespace(detections=[object(), comet])
+        self.window._current_asteroid_detection_result = result
+        self.window._asteroid_frame_paths = [path]
+        self.window._asteroid_frame_groups = {}
+        self.window._current_asteroid_source_image = path
+        settings = SimpleNamespace(observing_site_latitude_deg=40.0,
+                                   observing_site_longitude_deg=-75.0,
+                                   observing_site_elevation_m=250)
+        with patch.object(self.window, "_selected_asteroid_detection", return_value=comet), \
+                patch.object(self.window, "_selected_asteroid_result_row", return_value=1), \
+                patch.object(self.window, "_asteroid_task_running", return_value=False), \
+                patch.object(self.window, "_ensure_settings", return_value=settings), \
+                patch("photometry_app.ui.comet_photometry_dialog.CometPhotometryDialog") as dialog:
+            self.window._update_asteroid_synthetic_tracking_button_state()
+            button = self.window._asteroid_comet_photometry_button
+            self.assertTrue(button.isEnabled())
+            self.assertIn("QPushButton:disabled", button.styleSheet())
+            self.assertEqual(button.minimumHeight(), self.window._asteroid_synthetic_track_button.minimumHeight())
+            button.click()
+            dialog.return_value.exec.assert_called_once()
+            options = dialog.call_args.kwargs
+            self.assertIs(options["detection_result"], result)
+            self.assertEqual(options["detection_index"], 1)
+            self.assertEqual(options["frame_paths"], [path])
+            self.assertEqual(options["observer"], {"lat": 40.0, "lon": -75.0, "elevation": 0.25})
+            self.assertIs(options["parent"], self.window)
+            comet.object_type = "Asteroid"
+            with patch("photometry_app.ui.asteroid_photometry_dialog.AsteroidPhotometryDialog") as asteroid_dialog:
+                self.window._open_comet_photometry()
+                asteroid_dialog.return_value.exec.assert_called_once()
+                self.assertEqual(asteroid_dialog.call_args.kwargs["detection_index"], 1)
 
 
 

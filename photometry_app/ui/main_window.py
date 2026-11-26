@@ -24984,6 +24984,7 @@ class _DifferentialWorkflowDialog(QDialog):
 
         clear_object_cache_callback: Callable[[str], int] | None = None,
         transformation_callback: Callable[[], None] | None = None,
+        osc_callback: Callable[[], None] | None = None,
 
     ) -> None:
 
@@ -25111,6 +25112,10 @@ class _DifferentialWorkflowDialog(QDialog):
         generate_layout = QVBoxLayout(generate_group)
 
         generate_layout.setSpacing(6)
+        if osc_callback is not None:
+            self._osc_button = QPushButton("Prepare OSC / Bayer…")
+            self._osc_button.clicked.connect(osc_callback)
+            generate_layout.addWidget(self._osc_button)
         if transformation_callback is not None:
             self._transformation_button = QPushButton("Photometric Transformation…")
             self._transformation_button.setToolTip("Calculate and manage B/V instrument profiles, including extracted RGB channels.")
@@ -30484,6 +30489,10 @@ class MainWindow(QMainWindow):
 
         self._asteroid_synthetic_track_button.clicked.connect(self._start_asteroid_synthetic_tracking)
 
+        self._asteroid_comet_photometry_button = QPushButton("Photometry")
+        self._asteroid_comet_photometry_button.setToolTip("Select an asteroid for exposure photometry and a light curve, or a comet for coma photometry.")
+        self._asteroid_comet_photometry_button.clicked.connect(self._open_comet_photometry)
+
         self._asteroid_trajectory_button = QPushButton("Plots")
 
         self._asteroid_trajectory_button.setToolTip("Open plots for the selected predicted object across the current frame group.")
@@ -30937,6 +30946,8 @@ class MainWindow(QMainWindow):
         functional_actions_layout.addWidget(self._asteroid_3d_button)
 
         functional_actions_layout.addWidget(self._asteroid_synthetic_track_button)
+
+        functional_actions_layout.addWidget(self._asteroid_comet_photometry_button)
 
         functional_actions_layout.addWidget(self._asteroid_discover_button)
 
@@ -55010,6 +55021,9 @@ class MainWindow(QMainWindow):
         transformation_action = QAction("Photometric Transformation…", self)
         transformation_action.triggered.connect(self._open_transformation_dialog)
         settings_menu.addAction(transformation_action)
+        osc_action = QAction("Prepare OSC / Bayer photometry…", self)
+        osc_action.triggered.connect(self._open_osc_dialog)
+        settings_menu.addAction(osc_action)
 
         settings_menu.addSeparator()
 
@@ -58331,6 +58345,7 @@ class MainWindow(QMainWindow):
 
             clear_object_cache_callback=self._clear_differential_object_cache,
             transformation_callback=self._open_transformation_dialog,
+            osc_callback=self._open_osc_dialog,
 
         )
 
@@ -59583,6 +59598,24 @@ class MainWindow(QMainWindow):
             self._append_work_log(f"Queued processing for {object_name}.")
 
         self._update_source_period_button_state()
+
+    def _open_osc_dialog(self) -> None:
+        from photometry_app.ui.osc_dialog import OscPreparationDialog
+        root_path = Path(self._root_path_input.text()).expanduser()
+        dialog = OscPreparationDialog(root_path, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.output_root is not None:
+            self._root_path_input.setText(str(dialog.output_root))
+            self._load_settings_for_root(dialog.output_root, preserve_app_mode=True)
+            self._differential_workflow_scan_requested = True
+            workflow = self._differential_workflow_dialog
+            if workflow is not None and qt_object_is_valid(workflow):
+                workflow._calibration_checkbox.setChecked(False)
+                workflow._star_alignment_checkbox.setChecked(False)
+                workflow.set_scanning(dialog.output_root)
+                if self._settings is not None:
+                    workflow.set_filter_defaults(self._settings)
+            self._append_work_log("Prepared OSC channels selected. Review apertures in channel pixels; calibration and extraction are already complete.")
+            self._start_scan()
 
     def _open_transformation_dialog(self) -> None:
         from photometry_app.ui.transformation_dialog import TransformationDialog
@@ -64579,6 +64612,58 @@ class MainWindow(QMainWindow):
         self._asteroid_synthetic_track_button.setEnabled(not is_busy and can_track)
 
         self._asteroid_synthetic_track_button.setToolTip(guidance)
+
+        if hasattr(self, "_asteroid_comet_photometry_button"):
+            can_measure, reason = self._comet_photometry_availability()
+            self._asteroid_comet_photometry_button.setEnabled(not is_busy and can_measure)
+            self._asteroid_comet_photometry_button.setToolTip(reason)
+
+    def _comet_photometry_availability(self) -> tuple[bool, str]:
+        if getattr(self, "_current_asteroid_detection_result", None) is None:
+            return False, "Run Generate and select a predicted asteroid or comet to open Photometry."
+        detection = self._selected_asteroid_detection()
+        if detection is None or not any(kind in str(detection.object_type).lower() for kind in ("comet", "asteroid")):
+            return False, "Run Generate and select a predicted asteroid or comet to open Photometry."
+        if not getattr(self, "_asteroid_frame_paths", []):
+            return False, "Open a frame group to measure the selected object."
+        groups = getattr(self, "_asteroid_frame_groups", {})
+        active = getattr(self, "_asteroid_active_group_key", _ASTEROID_ALL_GROUP_KEY)
+        if active == _ASTEROID_ALL_GROUP_KEY and len(groups) > 1:
+            return False, "Choose one filter/exposure group for photometry."
+        workflow = "coma aperture and growth curve" if "comet" in str(detection.object_type).lower() else "individual exposures and light curve"
+        return True, f"Measure {detection.name}: {workflow}."
+
+    def _open_comet_photometry(self) -> None:
+        from photometry_app.ui.comet_photometry_dialog import CometPhotometryDialog
+
+        available, reason = self._comet_photometry_availability()
+        if not available:
+            QMessageBox.information(self, "Photometry", reason)
+            return
+        if self._asteroid_task_running() or (self._asteroid_preload_worker is not None and self._asteroid_preload_worker.isRunning()):
+            self.statusBar().showMessage("Wait for the current asteroid/comet task to finish.", 5000)
+            return
+        self._asteroid_blink_timer.stop()
+        self._asteroid_blink_button.setChecked(False)
+        settings = self._ensure_settings()
+        observer = None
+        if settings.observing_site_latitude_deg is not None and settings.observing_site_longitude_deg is not None:
+            observer = {"lat": settings.observing_site_latitude_deg,
+                        "lon": settings.observing_site_longitude_deg,
+                        "elevation": (settings.observing_site_elevation_m or 0) / 1000}
+        dialog_type = CometPhotometryDialog
+        if "comet" not in str(self._selected_asteroid_detection().object_type).lower():
+            from photometry_app.ui.asteroid_photometry_dialog import AsteroidPhotometryDialog
+            dialog_type = AsteroidPhotometryDialog
+        dialog = dialog_type(
+            frame_paths=self._asteroid_frame_paths,
+            frame_metadata=self._asteroid_frame_metadata,
+            detection_result=self._current_asteroid_detection_result,
+            detection_index=self._selected_asteroid_result_row(),
+            reference_path=self._current_asteroid_source_image or self._asteroid_frame_paths[0],
+            observer=observer, parent=self,
+        )
+        dialog.exec()
 
     def _select_asteroid_discovery_candidate_row(self, candidate: MovingObjectCandidate) -> bool:
 
@@ -81659,6 +81744,8 @@ class MainWindow(QMainWindow):
 
             self._asteroid_synthetic_track_button,
 
+            self._asteroid_comet_photometry_button,
+
             self._asteroid_discover_button,
 
             self._asteroid_trajectory_button,
@@ -82248,6 +82335,8 @@ class MainWindow(QMainWindow):
         self._asteroid_3d_button.setFixedWidth(width_for_labels("Trajectory View"))
 
         self._asteroid_synthetic_track_button.setFixedWidth(width_for_labels("Synthetic Track"))
+
+        self._asteroid_comet_photometry_button.setFixedWidth(width_for_labels("Photometry"))
 
         self._asteroid_display_section_label.setFixedWidth(width_for_labels("Display"))
 
@@ -84644,41 +84733,19 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Images excluded", message)
 
     def _confirm_camera_raw_differential_use(self, report: ScanReport) -> bool:
-        raw_count = sum(
-            1
-            for summary in report.object_summaries
-            for result in summary.files
+        native_count = sum(
+            1 for summary in report.object_summaries for result in summary.files
             if is_raw_camera_image_path(result.path)
+            or any("Native Bayer/RAW" in reason for reason in result.reasons)
         )
-        if raw_count == 0:
+        if not native_count:
             return True
-
-        noun = "file" if raw_count == 1 else "files"
-        message = (
-            f"This folder contains {raw_count} camera RAW {noun}.\n\n"
-            "Camera RAW frames such as CR2, CR3, NEF, ARW, and DNG come from color sensors. "
-            "CAst will decode each file as linear 16-bit RGB and average the demosaiced color channels "
-            "into one synthetic luminance plane.\n\n"
-            "This is not equivalent to monochrome photometry through a defined filter. Bayer demosaicing, "
-            "camera white balance and channel response, differences in star color, and missing filter or "
-            "exposure metadata can introduce systematic error. Validate the result before scientific use "
-            "or AAVSO submission.\n\n"
-            "Proceed with caution?"
+        QMessageBox.information(
+            self, "Prepare OSC / Bayer",
+            f"Found {native_count} native Bayer/RAW image(s). Use Prepare OSC / Bayer in the workflow "
+            "or Settings menu to calibrate and extract linear channels, then scan the prepared folder."
         )
-        reply = QMessageBox.warning(
-            self,
-            "Color camera RAW photometry",
-            message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return False
-
-        self._append_work_log(
-            f"Camera RAW caution accepted for {raw_count} {noun}; using a synthetic luminance plane for Differential Photometry."
-        )
-        return True
+        return False
 
     def _handle_scan_failed(self, message: str) -> None:
 
@@ -95564,6 +95631,10 @@ class MainWindow(QMainWindow):
         filter_name: str | None,
         y_axis_mode: str,
     ) -> None:
+        payload = self._light_curve_widget.current_payload()
+        if payload is not None and payload.axis_warning:
+            self.statusBar().showMessage(payload.axis_warning, 8000)
+            return
         if y_axis_mode == "transformed_magnitude":
             report = self._current_processing_report
             if report:
@@ -95641,6 +95712,9 @@ class MainWindow(QMainWindow):
 
     def _series_has_valid_light_curve_values(self, series: LightCurveSeries, y_axis_mode: str) -> bool:
 
+        if y_axis_mode == "standard_magnitude":
+            return available_standard_plot_axis(series.points) is not None
+
         for point in series.points:
 
             if y_axis_mode == "transformed_magnitude":
@@ -95650,14 +95724,6 @@ class MainWindow(QMainWindow):
             if y_axis_mode == "calibrated_magnitude":
 
                 if point.calibrated_magnitude is not None:
-
-                    return True
-
-                continue
-
-            if y_axis_mode == "standard_magnitude":
-
-                if point.standard_magnitude is not None:
 
                     return True
 
@@ -97692,6 +97758,7 @@ class MainWindow(QMainWindow):
 
                     measurement,
 
+                    requested_comparison_source_ids=list(resolved_comparison_ids),
                     comparison_source_ids=list(resolved_comparison_ids),
 
                     comparison_source_names=[comparison_name_lookup.get(item, item) for item in resolved_comparison_ids],

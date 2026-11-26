@@ -1,0 +1,651 @@
+{
+  "title": "Comet and asteroid detection",
+  "intro": "Find 3I/ATLAS in five telescope images and follow its motion against the stars.",
+  "dataset": "3I practice · five FITS exposures of 3I/ATLAS · 120 seconds each · luminance filter.",
+  "outcome": "Locate 3I/ATLAS and the main-belt asteroid (90) Antiope, inspect their measured positions, and save a still image or a blink animation.",
+  "groups": [
+    {
+      "title": "Set up the example",
+      "steps": [
+        {
+          "id": "launch",
+          "title": "Open the moving-object workspace",
+          "requires": "Citizen Astronomy is installed and its launcher is open.",
+          "actions": [
+            "Under **Detect & Measure**, click **Asteroid / Comet Detection**. If a different workspace is already open, choose **Mode** and select **Asteroid/Comet Detection**."
+          ],
+          "check": "The workspace shows an **Open** button and an empty object table. Start with five images for a short practice run, or use one image for a catalogue check.",
+          "image": "launch.webp",
+          "alt": "The Asteroid / Comet Detection card is outlined in the middle of the launcher.",
+          "links": [
+            {
+              "id": "practice-files",
+              "label": "Prepare five practice images"
+            },
+            {
+              "id": "settings-menu",
+              "label": "Set the observing site"
+            },
+            {
+              "id": "open-file",
+              "label": "Use a single image"
+            }
+          ]
+        },
+        {
+          "id": "practice-files",
+          "title": "Unpack the five practice frames",
+          "requires": "Download the **3I/ATLAS practice set** above.",
+          "actions": [
+            "Extract the ZIP in your Downloads folder. Open **3I practice** and sort the files by **Name**.",
+            "Check for the five files ending in **0001_c.fits** through **0005_c.fits**. These are the five exposures outlined in the screenshot. Keep them together."
+          ],
+          "check": "Your practice folder contains five FITS files, all beginning **Light_3I_120.0s_Bin1_L**. Their numbers run from 0001 through 0005.",
+          "image": "practice-files.webp",
+          "alt": "File browser sorted by Name with the first five original 3I FITS filenames selected and outlined.",
+          "links": [
+            {
+              "id": "settings-menu",
+              "label": "Enter the telescope location"
+            },
+            {
+              "id": "open-folder",
+              "label": "Open the prepared folder"
+            }
+          ]
+        },
+        {
+          "id": "settings-menu",
+          "title": "Find the observing-site settings",
+          "requires": "The [moving-object workspace](#launch) is open. The site is where the telescope took the images.",
+          "actions": [
+            "Click **Settings** in the top menu bar.",
+            "Click **Open Settings**."
+          ],
+          "check": "A settings window opens with a row of tabs across the top.",
+          "image": "settings-menu.webp",
+          "alt": "Settings menu expanded with Settings and Open Settings marked.",
+          "links": [
+            {
+              "id": "site",
+              "label": "Enter the example coordinates"
+            }
+          ]
+        },
+        {
+          "id": "site",
+          "title": "Enter the telescope coordinates",
+          "requires": "The [Settings window](#settings-menu) is open. These coordinates come from the example FITS headers.",
+          "actions": [
+            "Click the **Setup** tab. Scroll to **Observing Site** if the fields are below the visible area.",
+            "Enter **31.5472** for **Observing Latitude**.",
+            "Enter **-99.3825** for **Observing Longitude**. The minus sign indicates west longitude.",
+            "Click **Save**. For your own observing night, enter the site where those frames were taken."
+          ],
+          "check": "The settings dialog closes. CAst can now use the example site when checking whether a predicted object was above the horizon.",
+          "image": "site.webp",
+          "alt": "Setup tab showing latitude 31.5472, longitude −99.3825, and the Save button.",
+          "links": [
+            {
+              "id": "open-folder",
+              "label": "Open a sequence"
+            },
+            {
+              "id": "open-file",
+              "label": "Open one solved image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Load frames and predict objects",
+      "steps": [
+        {
+          "id": "open-folder",
+          "title": "Open a folder and inspect it first",
+          "requires": "The [moving-object workspace](#launch) is open and your image folder is available.",
+          "actions": [
+            "Click **File** in the top left.",
+            "Choose **Open Folder**. You can also press **Ctrl+Shift+O**."
+          ],
+          "check": "The folder picker opens. This route lets you choose the reference frame before starting the catalogue search.",
+          "image": "open-folder.webp",
+          "alt": "File menu expanded with Open Folder outlined.",
+          "links": [
+            {
+              "id": "choose-folder",
+              "label": "Choose the image directory"
+            },
+            {
+              "id": "quick-open",
+              "label": "See the automatic route"
+            }
+          ]
+        },
+        {
+          "id": "quick-open",
+          "title": "Load a folder and search immediately",
+          "requires": "The [moving-object workspace](#launch) is open with no source loaded. Set the [observing site](#site) first.",
+          "actions": [
+            "Click the gold **Open** button at the upper left of the workspace."
+          ],
+          "check": "The folder picker opens. With this shortcut CAst starts Generate automatically after you confirm the folder.",
+          "image": "quick-open.webp",
+          "alt": "The Open workflow button is marked in the empty workspace.",
+          "links": [
+            {
+              "id": "choose-folder",
+              "label": "Choose the image directory"
+            }
+          ]
+        },
+        {
+          "id": "choose-folder",
+          "title": "Choose the image directory",
+          "requires": "You opened a folder picker using [File → Open Folder](#open-folder) or the [Open shortcut](#quick-open).",
+          "actions": [
+            "Select **3I practice** for the five-frame walkthrough, or **3I ATLAS full** for the complete 76-frame observation. The **Directory** field should name the extracted folder containing the FITS files.",
+            "Click **Choose**. On Windows the native picker may label this button **Select Folder**."
+          ],
+          "check": "The first frame shows a star field. The File menu route leaves **Generate** ready. The gold Open shortcut starts the search, and the object table fills when it finishes.",
+          "image": "choose-folder.webp",
+          "alt": "Directory field showing 3I practice and the Choose button.",
+          "links": [
+            {
+              "id": "generate",
+              "label": "Start the search manually"
+            },
+            {
+              "id": "inspect",
+              "label": "My search already finished"
+            }
+          ]
+        },
+        {
+          "id": "open-file",
+          "title": "Open only one solved image",
+          "requires": "The [moving-object workspace](#launch) is open. A solved image includes a map from pixels to sky coordinates, often called a WCS.",
+          "actions": [
+            "Click **File**.",
+            "Click **Open File** or press **Ctrl+O**."
+          ],
+          "check": "A file picker opens. This route is sufficient to identify predicted objects in one exposure. Blink and sequence searches need multiple frames.",
+          "image": "open-file.webp",
+          "alt": "File menu with Open File and its Ctrl+O shortcut outlined.",
+          "links": [
+            {
+              "id": "single-pick",
+              "label": "Select the first FITS file"
+            },
+            {
+              "id": "open-folder",
+              "label": "Use a sequence instead"
+            }
+          ]
+        },
+        {
+          "id": "single-pick",
+          "title": "Select the first exposure",
+          "requires": "The [Open File picker](#open-file) is open in either the original folder or your practice folder.",
+          "actions": [
+            "Select **Light_3I_120.0s_Bin1_L_20251207-040231_0001_c.fits**. Check the filename in the field along the bottom.",
+            "Click **Open**. Wait while CAst reads the sky coordinates and queries the catalogue over the internet."
+          ],
+          "check": "The first exposure and the predicted-object table appear. If the table stays empty, click **Work Log** and read the last message for a timestamp, sky-coordinate or catalogue error.",
+          "image": "single-pick.webp",
+          "alt": "File name field showing the first 3I FITS exposure and the Open control.",
+          "links": [
+            {
+              "id": "inspect",
+              "label": "Locate the comet in the table"
+            }
+          ]
+        },
+        {
+          "id": "generate",
+          "title": "Generate known-object predictions",
+          "requires": "A [folder is loaded](#choose-folder) through the File menu. Use the [example telescope location](#site) and an internet connection.",
+          "actions": [
+            "At the far right of the top row, open **Frame** and choose the entry beginning **1.** and ending **0001_c.fits**. Leave **Group** at **All** for these L / 120 s images.",
+            "Click **Generate** at the far left. Keep the window open while CAst queries the catalogue and measures nearby signals."
+          ],
+          "check": "Rows appear in the object table. The first exposure started at 09:00:30 UTC on December 7, 2025. The app uses the FITS timestamp. In this run 50 predictions fell inside the frame. Catalogue updates can change the list.",
+          "image": "generate.webp",
+          "alt": "Frame selector and Generate button marked on the workspace above the first image.",
+          "links": [
+            {
+              "id": "inspect",
+              "label": "Inspect 3I/ATLAS"
+            },
+            {
+              "id": "compare-asteroid",
+              "label": "Inspect (90) Antiope instead"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Check a known object",
+      "steps": [
+        {
+          "id": "inspect",
+          "title": "Locate 3I/ATLAS in the table",
+          "requires": "[Generate has finished](#generate) for the first exposure.",
+          "actions": [
+            "Click **3I/ATLAS** in the **Object** column. Scroll within the table if needed.",
+            "Click **Inspector** just below the table. Read **Current measured offset** and **Current frame SNR**. Offset is the distance in pixels between the prediction and the nearby peak. SNR tells you how strongly that peak stands out from the local background."
+          ],
+          "check": "The selected row says **Comet** and **interstellar**. The first practice frame gave an offset of 0.33 pixel and SNR 9.82. Check more than one exposure before attributing a peak to the comet.",
+          "image": "inspect.webp",
+          "alt": "3I/ATLAS is selected, and the Inspector lists predicted position, measured offset and frame SNR.",
+          "links": [
+            {
+              "id": "center",
+              "label": "Find it in the image"
+            },
+            {
+              "id": "compare-asteroid",
+              "label": "Compare a main-belt asteroid"
+            },
+            {
+              "id": "plots-open",
+              "label": "Check positions across frames"
+            },
+            {
+              "id": "discover-open",
+              "label": "Look for other movers"
+            }
+          ]
+        },
+        {
+          "id": "compare-asteroid",
+          "title": "Inspect the main-belt asteroid (90) Antiope",
+          "requires": "[Generate has finished](#generate) on the first exposure.",
+          "actions": [
+            "Click **(90) Antiope** in the object table. Its **Type** is **Asteroid** and its **Class** is **main-belt**.",
+            "Click **Inspector**. Compare **Motion rate** with the comet’s 158.41 arcseconds per hour. An arcsecond is a unit of angle on the sky."
+          ],
+          "check": "Antiope moves about 24.8 arcseconds per hour here. It shifts less than 3I/ATLAS between these short practice exposures. The image controls now follow the asteroid you selected.",
+          "image": "compare-asteroid.webp",
+          "alt": "The selected (90) Antiope row and Inspector tab are marked.",
+          "links": [
+            {
+              "id": "center",
+              "label": "Center this asteroid"
+            },
+            {
+              "id": "inspect",
+              "label": "Switch back to 3I/ATLAS"
+            },
+            {
+              "id": "sky-view",
+              "label": "Compare predicted sky motions"
+            }
+          ]
+        },
+        {
+          "id": "center",
+          "title": "Center the selected object",
+          "requires": "A [comet or asteroid row is selected](#inspect).",
+          "actions": [
+            "Click **Target Marker** if it is off. This draws a marker at the selected position.",
+            "Click **Center Object**. Scroll up over the marked position to zoom in further. Click **Target Marker** again when you want a clear view of the underlying pixels."
+          ],
+          "check": "The predicted location is centered in the image. You can now compare that patch across time, or save a marked still.",
+          "image": "center.webp",
+          "alt": "Image toolbar marks Target Marker and Center Object; a crosshair shows 3I/ATLAS on the actual first frame.",
+          "links": [
+            {
+              "id": "blink",
+              "label": "Play the sequence"
+            },
+            {
+              "id": "blink-first",
+              "label": "Compare frame 1 and frame 5 here"
+            },
+            {
+              "id": "export-image",
+              "label": "Save the marked view"
+            }
+          ]
+        },
+        {
+          "id": "blink",
+          "title": "Play the frames as a blink",
+          "requires": "A [folder with at least two images](#choose-folder) is loaded. Select an object row to follow it during playback.",
+          "actions": [
+            "Use **Track Object** to choose your reference. Turn it on to keep the selected prediction centered. Turn it off to keep the registered stars fixed and see the object move.",
+            "Click **Blink**. Wait for the first preload to finish. Watch several cycles, then click **Blink** again to pause. If a marker covers the pixels, turn off **Target Marker**."
+          ],
+          "check": "The **Frame** number advances during playback and stops when paused. The practice images share a star grid, so with tracking off the background stays almost fixed.",
+          "image": "blink.webp",
+          "alt": "Track Object and Blink are highlighted above the 3I/ATLAS frame.",
+          "links": [
+            {
+              "id": "blink-first",
+              "label": "Blink between two example frames"
+            },
+            {
+              "id": "export-blink",
+              "label": "Save the animation"
+            },
+            {
+              "id": "synthetic-open",
+              "label": "Stack on the comet"
+            }
+          ]
+        },
+        {
+          "id": "blink-first",
+          "title": "Compare frame 1 with frame 5",
+          "requires": "You can use the frame switch on this page immediately. To reproduce the view in CAst, [center 3I/ATLAS](#center), switch off **Track Object** and **Target Marker**, and zoom in over the comet.",
+          "actions": [
+            "Use this page’s **Frame 1** and **Frame 5** controls to switch between captures. In CAst, use the marked **Frame** selector to make the same change.",
+            "Watch the diffuse bright patch inside the outlined box. Compare its position with a nearby star outside the box. The zoom and sky position stay fixed between the two images."
+          ],
+          "check": "The comet shifts across the box, while nearby stars stay in approximately the same places. Try toggling several times to see the movement.",
+          "image": "blink-first.webp",
+          "alt": "First exposure at fixed zoom, with the frame selector and the patch containing the comet marked.",
+          "links": [
+            {
+              "id": "plots-open",
+              "label": "Measure the motion across all five frames"
+            },
+            {
+              "id": "export-blink",
+              "label": "Save your blink"
+            }
+          ],
+          "imageLabel": "Frame 1",
+          "comparison": {
+            "image": "blink-last.webp",
+            "label": "Frame 5",
+            "alt": "Fifth exposure at the same zoom and sky position; the comet has shifted within the marked box."
+          }
+        },
+        {
+          "id": "sky-view",
+          "title": "Explore predicted sky motion",
+          "requires": "[Generate has finished](#generate). This chart shows catalogue positions without the background stars.",
+          "actions": [
+            "Click **Sky View** beneath the object table.",
+            "Drag the **Time** slider left or right to move the predictions backward or forward from the observation time.",
+            "Click **Now** to return to the exposure time."
+          ],
+          "check": "The time offset returns to UTC +0.0 h. Use [Blink](#blink) to inspect motion recorded in your actual images.",
+          "image": "sky-view.webp",
+          "alt": "Sky View tab, Time slider, and Now button are marked above the predicted field.",
+          "links": [
+            {
+              "id": "blink",
+              "label": "Inspect the recorded motion"
+            },
+            {
+              "id": "compare-asteroid",
+              "label": "Select the main-belt asteroid"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Measure the track",
+      "steps": [
+        {
+          "id": "plots-open",
+          "title": "Open the trajectory plots",
+          "requires": "A folder is loaded and an [object is selected](#inspect). Pause Blink if it is running.",
+          "actions": [
+            "Click **Plots** in the top workflow row. Double-clicking the selected object row opens the same charts."
+          ],
+          "check": "A trajectory window opens with position plots, offset and signal-to-noise plots, and a measurement table.",
+          "image": "plots-open.webp",
+          "alt": "Plots is marked in the top toolbar above the selected comet row.",
+          "links": [
+            {
+              "id": "plot-read",
+              "label": "Read the five measurements"
+            }
+          ]
+        },
+        {
+          "id": "plot-read",
+          "title": "Read the five frame measurements",
+          "requires": "The [Plots window](#plots-open) is open for 3I/ATLAS.",
+          "actions": [
+            "Click a row in the table to read a single exposure. **Pred x/y** gives the expected pixel position. **Meas x/y** gives the nearby measured peak. Scroll horizontally for **Offset** and **SNR**.",
+            "Compare the plotted measured positions with the predicted path above the table. Check the offset plot for a sudden jump to a different source."
+          ],
+          "check": "Here all five frames have measurements and the offsets are approximately 0.3 to 1.1 pixels. Small offsets across several frames support the identification more strongly than a single close match.",
+          "image": "plot-read.webp",
+          "alt": "All five measurement rows outlined under the trajectory, offset and SNR plots for 3I/ATLAS.",
+          "links": [
+            {
+              "id": "synthetic-open",
+              "label": "Combine the five exposures"
+            },
+            {
+              "id": "export-image",
+              "label": "Save an image"
+            }
+          ]
+        },
+        {
+          "id": "synthetic-open",
+          "title": "Stack the images on the comet",
+          "requires": "The five-image folder is loaded with [3I/ATLAS selected](#inspect). Close the plots window and stop Blink if needed.",
+          "actions": [
+            "Click **Synthetic Track** in the top row. Use the default object-centered settings for this example. If you enabled advanced settings previously, keep the object-centered crop and the predicted motion.",
+            "Wait for the preview. CAst shifts each exposure by the object’s predicted motion before combining them. Light from the moving target adds up in one place."
+          ],
+          "check": "The **Synthetic Tracking** preview opens with a zoomed image, a frame count and the stack measurement.",
+          "image": "synthetic-open.webp",
+          "alt": "Synthetic Track button marked above the selected object table.",
+          "links": [
+            {
+              "id": "stack-read",
+              "label": "Read and save the stack"
+            }
+          ]
+        },
+        {
+          "id": "stack-read",
+          "title": "Check the stack and export it",
+          "requires": "The [Synthetic Tracking preview](#synthetic-open) is open.",
+          "actions": [
+            "Click **Overlays** to choose which marks to display. Compare **Predicted center** with **Measured peak**. Read the used-frame count and the offset above the image.",
+            "To keep the stack, click **Export Image…**. Choose **Raw FITS Files** for the numerical stack or **PNG Files** for a rendered preview. Choose a destination, name the file, and click **Save**."
+          ],
+          "check": "The five-frame practice run used 5 of 5 frames, measured a stacked SNR of 6.95 and placed the peak 1.00 pixel from the predicted center. Different settings or frames can change these measurements.",
+          "image": "stack-read.webp",
+          "alt": "Actual stacked 3I/ATLAS preview with Overlays and Export Image marked.",
+          "links": [
+            {
+              "id": "plots-open",
+              "label": "Compare the individual frame positions"
+            },
+            {
+              "id": "discover-open",
+              "label": "Search for other movers"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Search for other movers",
+      "steps": [
+        {
+          "id": "discover-open",
+          "title": "Start a search for additional movers",
+          "requires": "[Generate has finished](#generate) for your folder. Use at least three solved frames for the default search. Let any blink preload finish.",
+          "actions": [
+            "Click **Discover** in the workflow row. If CAst offers an earlier result, choose **Run New Scan** for a fresh search or **Restore Last Result** to review it.",
+            "If the button is disabled, hover over it for the missing requirement. For a mixed folder, select a single filter/exposure group. The practice folder has only one group."
+          ],
+          "check": "For a new search, the **Discover Pipeline** dialog opens. Discover looks for sources whose positions change after the fixed star field is subtracted.",
+          "image": "discover-open.webp",
+          "alt": "Discover is highlighted in the top controls of the loaded workspace.",
+          "links": [
+            {
+              "id": "discover-options",
+              "label": "Set up the practice scan"
+            },
+            {
+              "id": "discover-results",
+              "label": "Read an existing result"
+            }
+          ]
+        },
+        {
+          "id": "discover-options",
+          "title": "Run a quick practice scan",
+          "requires": "The [Discover Pipeline dialog](#discover-open) is open for the five-frame practice folder.",
+          "actions": [
+            "Set **Preset** to **Fast scan**.",
+            "Set **Alignment** to **Already aligned**. These example exposures were registered to the same star grid. For a different sequence with drifting stars, choose **Align first**.",
+            "Set **Working Binning** to **4x4**. This combines neighboring pixels for a smaller working image.",
+            "Clear **If no candidates are found, retry automatically with the detailed full-resolution search** for this short practice scan.",
+            "Click **Run Discover**. Leave the progress window open until the batch finishes. If you enabled a final synthetic sweep separately, choose **No** at its prompt to inspect residual-only results."
+          ],
+          "check": "The **Discover Results** window summarizes known objects recovered and additional candidate tracks. Strong binning speeds the exercise and can hide faint or slow movers.",
+          "image": "discover-options.webp",
+          "alt": "Discover Pipeline with Fast scan, Already aligned, 4x4, the unchecked retry box and Run Discover marked.",
+          "links": [
+            {
+              "id": "discover-results",
+              "label": "Read the results"
+            }
+          ]
+        },
+        {
+          "id": "discover-results",
+          "title": "Read the discovery results",
+          "requires": "A [Discover scan](#discover-options) has completed, or you restored a previous scan for the same group.",
+          "actions": [
+            "Click **Known Recovered** to see catalogue objects the independent motion search linked across frames. The adjacent **Known Missed** tab lists predictions it did not recover.",
+            "Click **Potential Discoveries** to review stronger unmatched tracks. Use the number in parentheses to see whether there are any rows to inspect.",
+            "Click **Borderline Review** to see less consistent tracks. Follow up any interesting row by checking its position in the original images across several frames."
+          ],
+          "check": "In this five-frame, 4×4-binned residual scan, zero tracks linked. The 50 catalogue predictions appear under **Known Missed**. The visible-limit benchmark was omitted in this capture, so **Visible Limit** reads **Not estimated**. The separate [first-frame match](#inspect) and [comet stack](#stack-read) still show 3I/ATLAS.",
+          "image": "discover-results.webp",
+          "alt": "Discovery results with the Known Recovered, Potential Discoveries and Borderline Review tabs marked.",
+          "links": [
+            {
+              "id": "discover-csv",
+              "label": "Save the run summary"
+            },
+            {
+              "id": "blink",
+              "label": "Check a track in the original images"
+            },
+            {
+              "id": "discover-options",
+              "label": "Review the scan settings"
+            }
+          ]
+        },
+        {
+          "id": "discover-csv",
+          "title": "Save a discovery summary",
+          "requires": "The [Discover Results window](#discover-results) is open.",
+          "actions": [
+            "Click **Export…** in the results window.",
+            "Choose **Summary CSV…**. Pick a folder, give the file a name, and click **Save**. Use **Benchmark CSV…** for individual known-object recovery rows or **Candidate Review CSV…** for candidate rows."
+          ],
+          "check": "Open the saved .csv file in a spreadsheet or text editor to review the run outside CAst.",
+          "image": "discover-csv.webp",
+          "alt": "Discovery-results Export menu with Summary CSV highlighted.",
+          "links": [
+            {
+              "id": "discover-results",
+              "label": "Return to the results"
+            },
+            {
+              "id": "export-image",
+              "label": "Save an image of the field"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Save an image or animation",
+      "steps": [
+        {
+          "id": "export-image",
+          "title": "Export the current image",
+          "requires": "The [source image](#generate) is open. Select and [center](#center) the object if you want a marked close-up.",
+          "actions": [
+            "Click **Export** on the image toolbar.",
+            "Choose **Image…**. The current framing, stretch and visible overlays determine how the exported view looks."
+          ],
+          "check": "A save dialog opens for the rendered image.",
+          "image": "export-image.webp",
+          "alt": "Image toolbar Export menu opened with Image highlighted.",
+          "links": [
+            {
+              "id": "save-file",
+              "label": "Name the image and save it"
+            },
+            {
+              "id": "export-blink",
+              "label": "Save motion instead"
+            }
+          ]
+        },
+        {
+          "id": "save-file",
+          "title": "Name and save the still image",
+          "requires": "You chose [Export → Image…](#export-image) in the image toolbar.",
+          "actions": [
+            "In the save dialog, choose a destination folder. In **File name** type **3I-ATLAS-frame-01.png**. Leave **PNG Files** selected.",
+            "Click **Save**. Open that PNG in your image viewer and compare the visible star field and marker with the app."
+          ],
+          "check": "The saved PNG shows the view you framed. The example image was successfully exported with the selected comet centered.",
+          "image": "save-file.webp",
+          "alt": "A PNG filename entered in the save dialog and Save outlined.",
+          "links": [
+            {
+              "id": "export-blink",
+              "label": "Save an animation as well"
+            },
+            {
+              "id": "inspect",
+              "label": "Inspect another object"
+            }
+          ]
+        },
+        {
+          "id": "export-blink",
+          "title": "Export a blink animation",
+          "requires": "A [sequence](#choose-folder) of at least two frames is loaded. Choose the framing, target marker and tracking state you want to share.",
+          "actions": [
+            "Click **Export** on the image toolbar.",
+            "Choose **Blink…**. Select **Animated GIF Files** for a looping image or **MP4 Video Files** for a video. Pick a folder, enter a filename such as **3I-ATLAS-blink.gif**, then click **Save**.",
+            "Wait for export to finish. Open the saved file and check that the star field or the tracked target moves as you intended."
+          ],
+          "check": "The five-frame example exported as an animated GIF. A still frame can be saved separately from the same menu.",
+          "image": "export-blink.webp",
+          "alt": "Export menu with Blink highlighted between Image and Trail.",
+          "links": [
+            {
+              "id": "blink",
+              "label": "Adjust how the blink plays"
+            },
+            {
+              "id": "export-image",
+              "label": "Save a still image"
+            }
+          ],
+          "example": {
+            "file": "3i-atlas-blink.gif",
+            "label": "View the five-frame blink animation"
+          }
+        }
+      ]
+    }
+  ]
+}

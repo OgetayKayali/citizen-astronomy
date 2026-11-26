@@ -1278,10 +1278,6 @@ def _settings_from_payload(payload: dict[str, object], config_path: Path, use_la
 
         photometry_aperture_mode = PhotometryApertureMode.FWHM_SCALED
 
-    if photometry_aperture_mode == PhotometryApertureMode.FIXED:
-
-        photometry_aperture_mode = PhotometryApertureMode.FWHM_SCALED
-
     aperture_radius_pixels = max(1.0, float(payload.get("aperture_radius_pixels", 5.0)))
 
     annulus_inner_radius_pixels = max(aperture_radius_pixels + 0.5, float(payload.get("annulus_inner_radius_pixels", 8.0)))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 import re
 from datetime import datetime, timezone
@@ -82,7 +83,7 @@ def is_raw_camera_image_path(path: Path) -> bool:
 
 
 def read_header(path: Path) -> Header:
-    if path.suffix.lower() in _FITS_IMAGE_SUFFIXES:
+    if path.suffix.lower() in _FITS_IMAGE_SUFFIXES or path.suffix.lower() == ".wcs":
         with fits.open(path) as hdul:
             return hdul[0].header.copy()
     if path.suffix.lower() in _STANDARD_IMAGE_SUFFIXES:
@@ -92,6 +93,25 @@ def read_header(path: Path) -> Header:
         header, _width, _height = _read_raw_camera_image_header_and_shape(path)
         return header
     return _read_xisf_header(path)
+
+
+@lru_cache(maxsize=512)
+def header_exposure_seconds(image_path: Path) -> float | None:
+    try:
+        header = read_header(image_path)
+    except Exception:
+        return None
+    for key in ("EXPTIME", "EXPOSURE", "EXPOSURE_TIME"):
+        value = header.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(numeric) and numeric > 0:
+            return numeric
+    return None
 
 
 def read_header_and_shape(path: Path) -> tuple[Header, int | None, int | None]:
@@ -159,25 +179,11 @@ def read_differential_photometry_image_data(
     path: Path,
     dtype: type[np.floating] | type[float] = float,
 ) -> np.ndarray:
-    """Load a Differential Photometry frame as one measurable image plane.
-
-    Camera RAW files are decoded as linear 16-bit RGB by LibRaw. Differential
-    aperture photometry needs one two-dimensional plane, so the three
-    demosaiced color channels are averaged into a synthetic luminance plane.
-    """
-
-    image = np.asarray(read_photometry_image_data(path, dtype=dtype))
-    if not is_raw_camera_image_path(path) or image.ndim == 2:
-        return image
-    if image.ndim != 3:
-        raise ValueError("Camera RAW data could not be converted to a two-dimensional luminance plane.")
-    if image.shape[-1] in {1, 3, 4}:
-        channels = image[..., :3]
-        return np.asarray(np.mean(channels, axis=-1), dtype=dtype)
-    if image.shape[0] in {1, 3, 4}:
-        channels = image[:3]
-        return np.asarray(np.mean(channels, axis=0), dtype=dtype)
-    raise ValueError("Camera RAW data does not expose a recognizable RGB channel axis.")
+    """Read a science plane; native mosaics must pass through OSC preparation."""
+    from photometry_app.core.osc import has_cfa
+    if is_raw_camera_image_path(path) or has_cfa(read_header(path)):
+        raise ValueError("Native Bayer/RAW image: use Prepare OSC / Bayer to calibrate and extract linear channels before differential photometry.")
+    return np.asarray(read_photometry_image_data(path, dtype=dtype))
 
 
 def photometry_xisf_scale_factor(metadata: dict) -> float | None:

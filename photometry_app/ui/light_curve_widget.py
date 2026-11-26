@@ -239,12 +239,17 @@ class LightCurvePlotWidget(QWidget):
 
         self._status_label.hide()
 
+        self._axis_warning_label = QLabel()
+        self._axis_warning_label.setWordWrap(True)
+        self._axis_warning_label.hide()
+
 
 
         layout = QVBoxLayout()
 
         layout.setContentsMargins(0, 0, 0, 0)
 
+        layout.addWidget(self._axis_warning_label)
         layout.addWidget(self._plot_widget)
 
         self.setLayout(layout)
@@ -1295,6 +1300,8 @@ class LightCurvePlotWidget(QWidget):
     def _render_payload(self, payload: LightCurvePlotPayload) -> None:
 
         self._payload = payload
+        self._axis_warning_label.setText(payload.axis_warning or "")
+        self._axis_warning_label.setVisible(bool(payload.axis_warning))
 
         self._plot_item.clear()
 

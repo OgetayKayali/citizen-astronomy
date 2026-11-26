@@ -1,5 +1,7 @@
 # Galaxy Merger
 
+Use the [illustrated Galaxy Merger tutorial](tutorials/galaxy-merger.html) to choose an encounter and follow the galaxies through a close pass. You can open any task directly.
+
 ## Introduction
 
 **Galaxy Merger** is the PhysicsEngine galaxy merger lab running inside CAst. Two disk galaxies fall toward each other. Each has a dark halo, a central bulge, a stellar disk, a cold gas disk that forms new stars, and a hot gas atmosphere. The mode integrates every particle under gravity, records the encounter, and lets you scrub through it as starlight and dust, a density volume, or individual particles.

@@ -13457,6 +13457,7 @@ class SettingsDialog(QDialog):
         self._reduction_notes_input.setFixedHeight(78)
         self._photometry_aperture_mode_input = QComboBox()
         self._photometry_aperture_mode_input.addItem("Adaptive from image FWHM", PhotometryApertureMode.FWHM_SCALED)
+        self._photometry_aperture_mode_input.addItem("Fixed pixel radii", PhotometryApertureMode.FIXED)
         selected_aperture_mode_index = self._photometry_aperture_mode_input.findData(settings.photometry_aperture_mode)
         if selected_aperture_mode_index >= 0:
             self._photometry_aperture_mode_input.setCurrentIndex(selected_aperture_mode_index)
@@ -13573,6 +13574,11 @@ class SettingsDialog(QDialog):
         reference_magnitude_container = QWidget()
         reference_magnitude_container.setLayout(reference_magnitude_grid)
         differential_photometry_form_layout.addRow("Reference-Star Magnitude Range", reference_magnitude_container)
+        self._photometry_aperture_mode_input.currentIndexChanged.connect(self._update_aperture_inputs)
+        differential_photometry_form_layout.addRow("Aperture sizing", self._photometry_aperture_mode_input)
+        differential_photometry_form_layout.addRow("Fixed aperture radius", self._aperture_radius_pixels_input)
+        differential_photometry_form_layout.addRow("Fixed inner sky radius", self._annulus_inner_radius_pixels_input)
+        differential_photometry_form_layout.addRow("Fixed outer sky radius", self._annulus_outer_radius_pixels_input)
         differential_photometry_form_layout.addRow("Adaptive Aperture Scale", self._aperture_radius_fwhm_scale_input)
         differential_photometry_form_layout.addRow("Adaptive Annulus Inner Scale", self._annulus_inner_radius_fwhm_scale_input)
         differential_photometry_form_layout.addRow("Adaptive Annulus Outer Scale", self._annulus_outer_radius_fwhm_scale_input)
@@ -14556,7 +14562,7 @@ class SettingsDialog(QDialog):
         limit_mode = self._variable_star_limit_mode_input.currentData()
         if not isinstance(limit_mode, VariableStarLimitMode):
             limit_mode = VariableStarLimitMode(str(limit_mode).strip().lower())
-        aperture_mode = PhotometryApertureMode.FWHM_SCALED
+        aperture_mode = PhotometryApertureMode(self._photometry_aperture_mode_input.currentData())
         return replace(
             self._assistant_settings_panel.apply_to(self._settings),
             astrometry_api_key=self._api_key_input.text().strip() or None,
@@ -15240,18 +15246,19 @@ class SettingsDialog(QDialog):
             return str(config_path.expanduser()) == str(self._default_config_path.expanduser())
 
     def _update_aperture_inputs(self) -> None:
+        fixed = self._photometry_aperture_mode_input.currentData() == PhotometryApertureMode.FIXED
         for widget in (
             self._aperture_radius_pixels_input,
             self._annulus_inner_radius_pixels_input,
             self._annulus_outer_radius_pixels_input,
         ):
-            widget.setEnabled(False)
+            widget.setEnabled(fixed)
         for widget in (
             self._aperture_radius_fwhm_scale_input,
             self._annulus_inner_radius_fwhm_scale_input,
             self._annulus_outer_radius_fwhm_scale_input,
         ):
-            widget.setEnabled(True)
+            widget.setEnabled(not fixed)
 
     def _update_variable_limit_input(self) -> None:
         mode = self._variable_star_limit_mode_input.currentData()

@@ -1,5 +1,7 @@
 # Sky Atlas
 
+[Open the illustrated Sky Atlas tutorial](tutorials/sky-atlas.html). Search for a target, change your observing site and time, or add an image to the atlas. Each task opens directly.
+
 ## Introduction
 
 **Sky Atlas** is CAst's interactive all-sky map. You can search every downloaded catalog from a centered window, click objects to pin their details, change the observing time and site, tune how many stars and deep-sky objects are drawn, inspect the live Moon, and lay your own sky-registered images over the atlas as custom surveys. Use it when you want context: where an object sits, what surrounds it, and how the sky looks from a given place at a given time.

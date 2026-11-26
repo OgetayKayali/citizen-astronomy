@@ -147,6 +147,9 @@ def inspect_fits_file(path: Path, object_folder: str, observation_timezone: str 
     filename_metadata = _parse_filename_metadata(path, observation_timezone=observation_timezone)
     try:
         header, width, height = read_header_and_shape(path)
+        from photometry_app.core.osc import has_cfa
+        from photometry_app.core.image_io import is_raw_camera_image_path
+        native_osc = has_cfa(header) or is_raw_camera_image_path(path)
         header_date_obs_value = header.get("DATE-OBS")
         header_date_obs = _parse_date_obs(header_date_obs_value, observation_timezone=observation_timezone)
         metadata = ObservationMetadata(
@@ -162,6 +165,9 @@ def inspect_fits_file(path: Path, object_folder: str, observation_timezone: str 
         solved, wcs_reasons = validate_wcs(header, path)
         reasons.extend(wcs_reasons)
         status = WcsStatus.SOLVED if solved else WcsStatus.UNSOLVED
+        if native_osc:
+            status = WcsStatus.INVALID
+            reasons.append("Native Bayer/RAW mosaic: use Prepare OSC / Bayer before differential photometry.")
     except Exception as exc:
         metadata = ObservationMetadata(
             date_obs=None,

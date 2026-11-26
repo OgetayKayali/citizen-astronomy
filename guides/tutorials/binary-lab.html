@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Why do two stars that shine steadily appear to fade together? Watch one pass in front of the other and record their combined light. Then change your viewing angle or the temperature of one star and see which features of the eclipse survive.">
+<title>Binary Light Lab | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=observations-3"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>Binary Light Lab</span></nav>
+<header class="guide-head"><h1>Binary Light Lab</h1><p class="preset-note">CAst with the Binary Light Lab engine and OpenGL 3.3 graphics. The bundled Algol-like system supplies both stars. You can start without telescope images.</p></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Record your first eclipse</h3><ol><li><a href="#launch">Open Binary Light Lab</a></li><li><a href="#preset">Choose the Algol-like binary</a></li><li><a href="#record">Play, record, and pause</a></li><li><a href="#prediction">Read the two eclipse depths</a></li><li><a href="#phase">Jump to a particular phase</a></li></ol></section><section class="step-group"><h3>Change the stars or the view</h3><ol><li><a href="#inclination">Turn an eclipse on and off</a></li><li><a href="#temperature">Make the eclipse depths more alike</a></li><li><a href="#glow">Adjust the visible stellar glow</a></li></ol></section><section class="step-group"><h3>Observe the light</h3><ol><li><a href="#band">Compare red and blue light</a></li><li><a href="#noise">Add scatter to a recording</a></li><li><a href="#magnitude">Read the curve in magnitudes</a></li></ol></section><section class="step-group"><h3>Explore the stellar library</h3><ol><li><a href="#library">Load a different type of star system</a></li><li><a href="#roche">Inspect the Beta Lyrae model</a></li></ol></section><section class="step-group"><h3>Export curves or keep a system</h3><ol><li><a href="#model">Export the ideal model curve</a></li><li><a href="#observations">Export the recorded samples</a></li><li><a href="#name-csv">Name the two CSV files</a></li><li><a href="#save">Save an editable star system</a></li><li><a href="#name-system">Name the system file</a></li><li><a href="#load">Open a saved star system</a></li><li><a href="#open-file">Choose the saved system</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/binary_light_lab.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="launch" aria-labelledby="title-launch">
+
+<p class="overline">Record your first eclipse <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-launch">Open Binary Light Lab</h2>
+<p class="before"><strong>Start here</strong> Start Citizen Astronomy (CAst).</p>
+<ol class="actions"><li>Scroll to <strong>Simulations</strong> on the mode launcher. Click <strong>Binary Light Lab</strong> (1). If another workspace is open, choose <strong>Mode → Binary Light Lab</strong> from its top menu.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/launch.webp" aria-label="Enlarge Screenshot for Open Binary Light Lab">
+<img src="images/binary-lab/launch.webp" loading="lazy" alt="The five simulation cards on the launcher, with Binary Light Lab outlined and numbered.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The left panel shows a preset menu and <strong>Play</strong>. The star view and the <strong>LIVE LIGHT CURVE</strong> graph appear to the right. At the opening phase one star can cover part of the other.</p></div>
+<nav class="next" aria-label="Continue from Open Binary Light Lab"><a class="choice" href="#preset">Choose the eclipse example <span aria-hidden="true">→</span></a><a class="choice" href="#library">Explore another kind of star <span aria-hidden="true">→</span></a><a class="choice" href="#load">Open a saved system <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="preset" aria-labelledby="title-preset">
+
+<p class="overline">Record your first eclipse <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-preset">Choose the Algol-like binary</h2>
+<p class="before"><strong>Start here</strong> <a href="#launch">Open Binary Light Lab</a>. If a previous model is playing, click <strong>Pause</strong> first.</p>
+<ol class="actions"><li>Open the preset menu below <strong>Binary Light Lab</strong> (1) and select <strong>Algol-like / unequal temperatures</strong>. If that name is already showing, leave it selected.</li><li>For a fresh run of the current example, click <strong>Restart</strong> below the menu. Export any recording you want to keep before restarting.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/preset.webp" aria-label="Enlarge Screenshot for Choose the Algol-like binary">
+<img src="images/binary-lab/preset.webp" loading="lazy" alt="Preset menu highlighted above the description of the Algol-like binary and the Play and Restart buttons.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The description identifies a hot primary star and a cooler companion. At phase zero the companion partly blocks the hotter star in this example.</p></div>
+<nav class="next" aria-label="Continue from Choose the Algol-like binary"><a class="choice" href="#record">Start recording <span aria-hidden="true">→</span></a><a class="choice" href="#inclination">Change the viewing angle <span aria-hidden="true">→</span></a><a class="choice" href="#temperature">Compare the star temperatures <span aria-hidden="true">→</span></a><a class="choice" href="#glow">Adjust the glow around the stars <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="record" aria-labelledby="title-record">
+
+<p class="overline">Record your first eclipse <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-record">Play, record, and pause</h2>
+<p class="before"><strong>Start here</strong> Open a periodic system in the lab. The screenshots use the <a href="#preset">Algol-like example</a>. If you just loaded your own binary, you can record it the same way.</p>
+<ol class="actions"><li>Click <strong>Play</strong> (1). The stars start moving, and the counter beside the graph (2) begins counting samples. Each sample measures the two stars’ combined light.</li><li>Watch the gold line above <strong>Phase / one cycle</strong> travel across the graph. Let it reach the right edge and wrap to the left to record a full orbit.</li><li>Click <strong>Pause</strong> in the same spot (1). To keep adding samples from this phase, click <strong>Play</strong> again.</li></ol>
+<figure class="capture"><div class="frame-switch" role="group" aria-label="Compare screenshots" hidden><button type="button">Before playback</button><button type="button">During playback</button></div><a class="enlarge" href="images/binary-lab/play-ready.webp" aria-label="Enlarge Before playback for Play, record, and pause">
+<img src="images/binary-lab/play-ready.webp" loading="lazy" alt="The Play button and the zero-sample counter marked before playback begins.">
+<span class="zoom-label">Before playback · Enlarge screenshot <span aria-hidden="true">↗</span></span></a><a class="enlarge" href="images/binary-lab/play.webp" aria-label="Enlarge During playback for Play, record, and pause">
+<img src="images/binary-lab/play.webp" loading="lazy" alt="The same panel during recording, with Pause and the rising sample count outlined.">
+<span class="zoom-label">During playback · Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The cyan trace dips when one star crosses in front of the other. Pausing holds the stars, the gold cursor and the samples in place.</p></div>
+<nav class="next" aria-label="Continue from Play, record, and pause"><a class="choice" href="#prediction">Compare your trace with the prediction <span aria-hidden="true">→</span></a><a class="choice" href="#phase">Jump to a phase <span aria-hidden="true">→</span></a><a class="choice" href="#observations">Save recorded samples <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="prediction" aria-labelledby="title-prediction">
+
+<p class="overline">Record your first eclipse <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-prediction">Read the two eclipse depths</h2>
+<p class="before"><strong>Start here</strong> Use the <a href="#preset">Algol-like example</a>. You can reveal the prediction even before recording any samples.</p>
+<ol class="actions"><li>Select <strong>Show prediction</strong> (1) above the graph. Choose <strong>Relative flux</strong> in the menu beside it if another scale is showing.</li><li>Read the gray curve from left to right (2). Phase 0 and phase 1 are the same point in consecutive orbits, so the deep dip at the two ends is one eclipse. Find the shallower dip near phase 0.5.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/prediction.webp" aria-label="Enlarge Screenshot for Read the two eclipse depths">
+<img src="images/binary-lab/prediction.webp" loading="lazy" alt="Show prediction and the graph marked, showing a partially recorded cyan trace over the complete gray prediction.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Relative flux near 1 means you see the combined, uneclipsed light. In this example, blocking part of the hotter star removes more light than hiding the cooler star. Cyan marks show the phases you have recorded.</p></div>
+<nav class="next" aria-label="Continue from Read the two eclipse depths"><a class="choice" href="#temperature">Make the stars equally hot <span aria-hidden="true">→</span></a><a class="choice" href="#inclination">Make the eclipses disappear <span aria-hidden="true">→</span></a><a class="choice" href="#magnitude">Read differential magnitude <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="phase" aria-labelledby="title-phase">
+
+<p class="overline">Record your first eclipse <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-phase">Jump to a particular phase</h2>
+<p class="before"><strong>Start here</strong> Use the <a href="#preset">Algol-like example</a>. <a href="#observations">Export your samples</a> first if you want to keep them. Seeking starts a new recording.</p>
+<ol class="actions"><li>Double-click the number beside <strong>Seek phase</strong> (1), type <strong>0.250</strong>, and press <strong>Enter</strong>. Phase is the fraction of one orbit, so this jumps a quarter of the way around.</li><li>To return to the starting phase, click <strong>Restart</strong> (2). Use <strong>Play</strong> when you are ready to record at the new position.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/phase.webp" aria-label="Enlarge Screenshot for Jump to a particular phase">
+<img src="images/binary-lab/phase.webp" loading="lazy" alt="The Seek phase field at 0.250 and the Restart button outlined in the transport controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Seeking pauses playback, moves the cursor and clears the sample count. At phase 0.250 the two stellar disks are separated in this example.</p></div>
+<nav class="next" aria-label="Continue from Jump to a particular phase"><a class="choice" href="#record">Record from here <span aria-hidden="true">→</span></a><a class="choice" href="#prediction">Read the predicted curve <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="inclination" aria-labelledby="title-inclination">
+
+<p class="overline">Change the stars or the view <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-inclination">Turn an eclipse on and off</h2>
+<p class="before"><strong>Start here</strong> Choose the <a href="#preset">Algol-like example</a>, pause playback, and turn on <a href="#prediction">Show prediction</a>. Model changes clear existing samples.</p>
+<ol class="actions"><li>Click <strong>Model</strong> (1). Double-click <strong>Inclination / deg</strong> (2), type <strong>90</strong>, and press <strong>Enter</strong>. Look for the dips in the predicted curve (3). At this angle the orbit is edge-on.</li><li>Replace <strong>90</strong> with <strong>0</strong> and press <strong>Enter</strong>. The orbit is now face-on. Switch between the two screenshots to compare the graph at the same phase.</li></ol>
+<figure class="capture"><div class="frame-switch" role="group" aria-label="Compare screenshots" hidden><button type="button">Edge-on · 90°</button><button type="button">Face-on · 0°</button></div><a class="enlarge" href="images/binary-lab/edge-on.webp" aria-label="Enlarge Edge-on · 90° for Turn an eclipse on and off">
+<img src="images/binary-lab/edge-on.webp" loading="lazy" alt="Model tab, inclination at 90 degrees, and the eclipse dips in the predicted curve marked.">
+<span class="zoom-label">Edge-on · 90° · Enlarge screenshot <span aria-hidden="true">↗</span></span></a><a class="enlarge" href="images/binary-lab/face-on.webp" aria-label="Enlarge Face-on · 0° for Turn an eclipse on and off">
+<img src="images/binary-lab/face-on.webp" loading="lazy" alt="The same Model tab at zero degrees. The marked graph shows a flat prediction.">
+<span class="zoom-label">Face-on · 0° · Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>At 90° the stars can pass across each other along your line of sight. At 0° their disks stay separated, and the predicted flux stays at 1 across the orbit.</p></div>
+<nav class="next" aria-label="Continue from Turn an eclipse on and off"><a class="choice" href="#temperature">Change which star supplies the light <span aria-hidden="true">→</span></a><a class="choice" href="#preset">Restore the example <span aria-hidden="true">→</span></a><a class="choice" href="#model">Export the ideal curve <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="temperature" aria-labelledby="title-temperature">
+
+<p class="overline">Change the stars or the view <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-temperature">Make the eclipse depths more alike</h2>
+<p class="before"><strong>Start here</strong> Choose the <a href="#preset">Algol-like example</a> and turn on <a href="#prediction">Show prediction</a>. Recordings start over when you edit a star.</p>
+<ol class="actions"><li>Click <strong>Stars</strong> (1). Under <strong>PRIMARY / A</strong>, double-click <strong>Temperature / K</strong> (2). Replace <strong>10000</strong> with <strong>4800</strong> and press <strong>Enter</strong>. The primary now has the same temperature as the secondary.</li><li>Compare the dips in the predicted curve (3) with the <a href="#prediction">original unequal-temperature example</a>. Read the depth of each dip relative to the level outside eclipse.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/temperature.webp" aria-label="Enlarge Screenshot for Make the eclipse depths more alike">
+<img src="images/binary-lab/temperature.webp" loading="lazy" alt="Stars tab, primary temperature set to 4800 K, and the graph of more similar eclipse depths marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The stars now have more similar surface brightnesses. Covering a portion of either star removes a more similar amount of light, so the two eclipses are closer in depth.</p></div>
+<nav class="next" aria-label="Continue from Make the eclipse depths more alike"><a class="choice" href="#inclination">Try a different viewing angle <span aria-hidden="true">→</span></a><a class="choice" href="#band">Change the observed wavelength <span aria-hidden="true">→</span></a><a class="choice" href="#save">Save this star system <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="glow" aria-labelledby="title-glow">
+
+<p class="overline">Change the stars or the view <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-glow">Adjust the visible stellar glow</h2>
+<p class="before"><strong>Start here</strong> <a href="#launch">Open the lab</a> and pause at a phase where the two stars are separated. For the Algol-like model, try <a href="#phase">phase 0.250</a>.</p>
+<ol class="actions"><li>Click <strong>Look</strong> (1). Double-click <strong>Stellar glow</strong> (2), enter <strong>0</strong>, and press <strong>Enter</strong>. Look at the light outside the edge of each disk.</li><li>Enter <strong>1</strong> in the same field to restore the default glow.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/glow.webp" aria-label="Enlarge Screenshot for Adjust the visible stellar glow">
+<img src="images/binary-lab/glow.webp" loading="lazy" alt="Look tab and Stellar glow at zero marked next to the two separated stellar disks and the light curve.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Zero removes the soft halo from the rendered stars. The graph and sample count stay at their paused values while you change the display.</p></div>
+<nav class="next" aria-label="Continue from Adjust the visible stellar glow"><a class="choice" href="#phase">Choose another orbital phase <span aria-hidden="true">→</span></a><a class="choice" href="#record">Resume recording <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="band" aria-labelledby="title-band">
+
+<p class="overline">Observe the light <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-band">Compare red and blue light</h2>
+<p class="before"><strong>Start here</strong> Select the <a href="#preset">Algol-like example</a>, pause, and turn on <a href="#prediction">Show prediction</a>. Export any samples you want to keep before changing the band.</p>
+<ol class="actions"><li>Click <strong>Observe</strong> (1). Open the band menu (2), choose <strong>Blue / 390–490 nm</strong>, and look at both eclipse depths.</li><li>Use the same menu to choose <strong>Red / 600–750 nm</strong>. Compare each dip with the uneclipsed part of its own curve.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/band.webp" aria-label="Enlarge Screenshot for Compare red and blue light">
+<img src="images/binary-lab/band.webp" loading="lazy" alt="The Observe tab and wavelength menu selected to Blue / 390–490 nm are outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The cooler companion contributes a larger share of the light in the red band. In this example its eclipse makes a more pronounced secondary dip in red. Changing bands starts a new set of samples.</p></div>
+<nav class="next" aria-label="Continue from Compare red and blue light"><a class="choice" href="#noise">Add scatter to the measurements <span aria-hidden="true">→</span></a><a class="choice" href="#magnitude">Switch to a magnitude scale <span aria-hidden="true">→</span></a><a class="choice" href="#model">Export a model in this band <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="noise" aria-labelledby="title-noise">
+
+<p class="overline">Observe the light <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-noise">Add scatter to a recording</h2>
+<p class="before"><strong>Start here</strong> Select the <a href="#preset">Algol-like example</a>. In <strong>Observe</strong>, choose the <a href="#band">blue band</a> and turn on <a href="#prediction">Show prediction</a>.</p>
+<ol class="actions"><li>Find <strong>Noise / ppm</strong> in <strong>Observe</strong>. Double-click its number (1), type <strong>5000</strong>, and press <strong>Enter</strong>. This adds simulated measurement noise of 5,000 parts per million, or 0.5% of the reference flux.</li><li>Click <strong>Play</strong>, let samples build up, then click <strong>Pause</strong>. Inspect the cyan points around the smooth prediction (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/noise.webp" aria-label="Enlarge Screenshot for Add scatter to a recording">
+<img src="images/binary-lab/noise.webp" loading="lazy" alt="The Noise field at 5000 ppm and the plot outlined, with scattered cyan samples and the smooth predicted curve.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Individual recorded measurements scatter above and below the ideal curve. The gray prediction keeps its original shape. Setting noise back to zero starts a fresh recording.</p></div>
+<nav class="next" aria-label="Continue from Add scatter to a recording"><a class="choice" href="#observations">Export these samples <span aria-hidden="true">→</span></a><a class="choice" href="#magnitude">Read them as magnitudes <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="magnitude" aria-labelledby="title-magnitude">
+
+<p class="overline">Observe the light <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-magnitude">Read the curve in magnitudes</h2>
+<p class="before"><strong>Start here</strong> Start with a <a href="#prediction">prediction</a> or <a href="#record">recorded samples</a>.</p>
+<ol class="actions"><li>Open the units menu above the graph (1) and choose <strong>Differential mag</strong>. Read the numerical scale at the left (2).</li><li>Compare an eclipse with the level outside it. With the default <strong>Comparison flux</strong> of 1, the uneclipsed Algol-like pair is near zero differential magnitude.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/magnitude.webp" aria-label="Enlarge Screenshot for Read the curve in magnitudes">
+<img src="images/binary-lab/magnitude.webp" loading="lazy" alt="Differential mag selected above the marked plot, with the magnitude axis increasing downward.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>As the binary fades, its magnitude difference increases. Larger numbers appear lower on this graph, so eclipses still dip downward. Switch the menu to <strong>Relative flux</strong> to return.</p></div>
+<nav class="next" aria-label="Continue from Read the curve in magnitudes"><a class="choice" href="#prediction">Read relative flux <span aria-hidden="true">→</span></a><a class="choice" href="#observations">Save the measurements <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="library" aria-labelledby="title-library">
+
+<p class="overline">Explore the stellar library <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-library">Load a different type of star system</h2>
+<p class="before"><strong>Start here</strong> <a href="#launch">Open Binary Light Lab</a>. Save a custom system or recording you want to keep before selecting another example.</p>
+<ol class="actions"><li>Click <strong>Library</strong> (1). Each <strong>Load</strong> button names an example, with a short description underneath. Scroll inside the left panel to see more.</li><li>Click <strong>Load  EB · Beta Lyrae</strong> (2) to try an eclipsing pair whose surfaces are stretched by gravity.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/library.webp" aria-label="Enlarge Screenshot for Load a different type of star system">
+<img src="images/binary-lab/library.webp" loading="lazy" alt="Library tab and the Load EB · Beta Lyrae button marked in the variable-star atlas.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The preset menu switches to <strong>EB · Beta Lyrae</strong>. The workspace loads the new stars and starts a fresh set of observations.</p></div>
+<nav class="next" aria-label="Continue from Load a different type of star system"><a class="choice" href="#roche">Inspect the stretched stars <span aria-hidden="true">→</span></a><a class="choice" href="#record">Try playback <span aria-hidden="true">→</span></a><a class="choice" href="#preset">Return to the detached pair <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="roche" aria-labelledby="title-roche">
+
+<p class="overline">Explore the stellar library <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-roche">Inspect the Beta Lyrae model</h2>
+<p class="before"><strong>Start here</strong> Load <a href="#library">EB · Beta Lyrae from Library</a>. Check <strong>Show prediction</strong> above the graph to display the full curve.</p>
+<ol class="actions"><li>Check the preset name above the controls (1) and click <strong>Model</strong> (2). Scroll down the controls to find the <strong>A polar radius / Roche pole</strong> and <strong>B polar radius / Roche pole</strong> fields. They set how fully each star fills the region around it bounded by its Roche lobe.</li><li>Click <strong>Play</strong> and watch the shape each star presents as it turns. Compare the gently changing light outside eclipse with the flat portions of the <a href="#prediction">detached pair’s curve</a>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/roche.webp" aria-label="Enlarge Screenshot for Inspect the Beta Lyrae model">
+<img src="images/binary-lab/roche.webp" loading="lazy" alt="The selected EB · Beta Lyrae preset and Model tab marked next to the distorted stellar surfaces and the full predicted curve.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The stars have distorted shapes. The combined brightness can change between eclipses as their projected areas change. This model assumes a circular orbit with synchronized stellar rotation.</p></div>
+<nav class="next" aria-label="Continue from Inspect the Beta Lyrae model"><a class="choice" href="#library">Try another family <span aria-hidden="true">→</span></a><a class="choice" href="#save">Keep the system <span aria-hidden="true">→</span></a><a class="choice" href="#model">Export the ideal curve <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="model" aria-labelledby="title-model">
+
+<p class="overline">Export curves or keep a system <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-model">Export the ideal model curve</h2>
+<p class="before"><strong>Start here</strong> Choose any valid system. You can export the model before playback.</p>
+<ol class="actions"><li>Click <strong>Observe</strong>. Scroll down inside the left panel to the file buttons. Click <strong>Export model CSV…</strong> (1).</li><li>Choose the folder where you want the file. Enter a new name ending in <strong>.csv</strong>, such as <strong>algol-model.csv</strong>, and click <strong>Save</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/export.webp" aria-label="Enlarge Screenshot for Export the ideal model curve">
+<img src="images/binary-lab/export.webp" loading="lazy" alt="The Export model CSV button outlined at the bottom of the Observe controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The CSV contains model settings and 1,001 points. For the detached binary, the rows cover phase 0 to 1, with time in days, relative flux and magnitude change. Open the CSV in a spreadsheet to inspect the numbers.</p></div>
+<nav class="next" aria-label="Continue from Export the ideal model curve"><a class="choice" href="#observations">Export the recorded points as well <span aria-hidden="true">→</span></a><a class="choice" href="#save">Keep an editable system <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="observations" aria-labelledby="title-observations">
+
+<p class="overline">Export curves or keep a system <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-observations">Export the recorded samples</h2>
+<p class="before"><strong>Start here</strong> <a href="#record">Record a few samples</a> and pause. You can include <a href="#noise">simulated noise</a>.</p>
+<ol class="actions"><li>Click <strong>Observe</strong> and scroll down inside the left panel. Look at the sample counter (2) above the graph. If it reads zero, click <strong>Play</strong> briefly and then <strong>Pause</strong>.</li><li>Click <strong>Export observations…</strong> (1).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/observations.webp" aria-label="Enlarge Screenshot for Export the recorded samples">
+<img src="images/binary-lab/observations.webp" loading="lazy" alt="Export observations marked 1 and the sample counter marked 2 beside the light-curve controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Export model and observations</strong> file dialog opens. You choose one name for the ideal model, and CAst derives a second filename for the measurements.</p></div>
+<nav class="next" aria-label="Continue from Export the recorded samples"><a class="choice" href="#name-csv">Choose the name and save both files <span aria-hidden="true">→</span></a><a class="choice" href="#model">Save just the ideal model <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="name-csv" aria-labelledby="title-name-csv">
+
+<p class="overline">Export curves or keep a system <span aria-hidden="true">/</span> Step 16</p>
+<h2 tabindex="-1" id="title-name-csv">Name the two CSV files</h2>
+<p class="before"><strong>Start here</strong> Open <a href="#observations">Export observations…</a>.</p>
+<ol class="actions"><li>Choose a folder in the dialog, click <strong>File name</strong> (1), and enter <strong>my-eclipse.csv</strong>. Pick an unused base name to keep an earlier pair of exports.</li><li>Click <strong>Save</strong> (2). Open the chosen folder to find the two files.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/choose-csv.webp" aria-label="Enlarge Screenshot for Name the two CSV files">
+<img src="images/binary-lab/choose-csv.webp" loading="lazy" alt="The export dialog with my-eclipse.csv in the numbered File name field and Save highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p><strong>my-eclipse.csv</strong> contains the ideal curve. <strong>my-eclipse-observed.csv</strong> contains your recorded points. For an eclipsing binary, compare <strong>ideal_flux</strong> with <strong>measured_flux</strong> on a row, and use <strong>phase</strong> to locate that point in the orbit.</p></div>
+<nav class="next" aria-label="Continue from Name the two CSV files"><a class="choice" href="#noise">Change the simulated noise <span aria-hidden="true">→</span></a><a class="choice" href="#save">Keep an editable copy of the system <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="save" aria-labelledby="title-save">
+
+<p class="overline">Export curves or keep a system <span aria-hidden="true">/</span> Step 17</p>
+<h2 tabindex="-1" id="title-save">Save an editable star system</h2>
+<p class="before"><strong>Start here</strong> Choose or edit the system you want to revisit. <a href="#observations">Export its recorded points</a> separately if you want to keep those measurements.</p>
+<ol class="actions"><li>Click <strong>Observe</strong> and scroll down the controls on the left. Click <strong>Save system…</strong> (1).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/save-system.webp" aria-label="Enlarge Screenshot for Save an editable star system">
+<img src="images/binary-lab/save-system.webp" loading="lazy" alt="The Save system button marked in the Observe tab’s file controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Save system</strong> dialog opens for a CAst stellar model file. This file keeps the system and observing parameters for another session.</p></div>
+<nav class="next" aria-label="Continue from Save an editable star system"><a class="choice" href="#name-system">Name the system file <span aria-hidden="true">→</span></a><a class="choice" href="#load">Reopen an earlier system <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="name-system" aria-labelledby="title-name-system">
+
+<p class="overline">Export curves or keep a system <span aria-hidden="true">/</span> Step 18</p>
+<h2 tabindex="-1" id="title-name-system">Name the system file</h2>
+<p class="before"><strong>Start here</strong> Open <a href="#save">Save system…</a>.</p>
+<ol class="actions"><li>Choose a folder. Click <strong>File name</strong> (1) and type <strong>my-binary.starlab</strong>.</li><li>Click <strong>Save</strong> (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/choose-system.webp" aria-label="Enlarge Screenshot for Name the system file">
+<img src="images/binary-lab/choose-system.webp" loading="lazy" alt="The file name my-binary.starlab and the Save button highlighted in the dialog.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The selected folder contains <strong>my-binary.starlab</strong>. You can reopen it and continue changing the stars or observing settings.</p></div>
+<nav class="next" aria-label="Continue from Name the system file"><a class="choice" href="#load">Reopen the system <span aria-hidden="true">→</span></a><a class="choice" href="#observations">Save a recording too <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="load" aria-labelledby="title-load">
+
+<p class="overline">Export curves or keep a system <span aria-hidden="true">/</span> Step 19</p>
+<h2 tabindex="-1" id="title-load">Open a saved star system</h2>
+<p class="before"><strong>Start here</strong> Have a <strong>.starlab</strong> file available. Loading replaces the current system and starts a fresh recording.</p>
+<ol class="actions"><li>In the lab, click <strong>Observe</strong>. Scroll down in the left panel and click <strong>Load system…</strong> (1).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/load-system.webp" aria-label="Enlarge Screenshot for Open a saved star system">
+<img src="images/binary-lab/load-system.webp" loading="lazy" alt="The Load system button outlined in the Observe tab’s file controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Load system</strong> dialog lets you browse for a CAst Stellar Lab file.</p></div>
+<nav class="next" aria-label="Continue from Open a saved star system"><a class="choice" href="#open-file">Choose your system file <span aria-hidden="true">→</span></a><a class="choice" href="#save">Save the current system instead <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="open-file" aria-labelledby="title-open-file">
+
+<p class="overline">Export curves or keep a system <span aria-hidden="true">/</span> Step 20</p>
+<h2 tabindex="-1" id="title-open-file">Choose the saved system</h2>
+<p class="before"><strong>Start here</strong> Open <a href="#load">Load system…</a> and browse to the folder that contains the saved file.</p>
+<ol class="actions"><li>Click the file, or enter its name in <strong>File name</strong> (1). The example uses <strong>my-binary.starlab</strong>.</li><li>Click <strong>Open</strong> (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/binary-lab/open-system.webp" aria-label="Enlarge Screenshot for Choose the saved system">
+<img src="images/binary-lab/open-system.webp" loading="lazy" alt="The saved model name in File name and the Open button marked in the Load system dialog.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The description in the lab begins with <strong>Loaded</strong>. The controls now show the saved settings. Click <strong>Play</strong> to make a new recording from them.</p></div>
+<nav class="next" aria-label="Continue from Choose the saved system"><a class="choice" href="#record">Record the reopened system <span aria-hidden="true">→</span></a><a class="choice" href="#model">Export its ideal curve <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

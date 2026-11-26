@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Why does a single disk of gas look like a band across the black hole and an arc above it? Pause the gas, orbit the scene, and switch to a grid to see where the light bends. You can also jump straight to saving a picture or making a movie.">
+<title>Black Hole | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=observations-3"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>Black Hole</span></nav>
+<header class="guide-head"><h1>Black Hole</h1><p class="preset-note">The Windows build of CAst with OpenGL 3.3 graphics support. The lab opens with its own scene.</p></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Open the light lab</h3><ol><li><a href="#open">Open Black Hole</a></li><li><a href="#pause">Find the disk and pause the gas</a></li></ol></section><section class="step-group"><h3>Choose your viewpoint</h3><ol><li><a href="#orbit">Orbit with the mouse</a></li><li><a href="#angle">Set a camera angle you can repeat</a></li></ol></section><section class="step-group"><h3>Experiment with the black hole and its light</h3><ol><li><a href="#metric">Switch to a nonspinning black hole</a></li><li><a href="#spin">Change a rotating black hole’s spin</a></li><li><a href="#physical">Compare the two brightness treatments</a></li><li><a href="#disk">See where the gas is concentrated</a></li><li><a href="#grid">See gravitational lensing with a grid</a></li><li><a href="#sky">Change the Milky Way behind the disk</a></li></ol></section><section class="step-group"><h3>Save a still or make a movie</h3><ol><li><a href="#still">Save the current view as a picture</a></li><li><a href="#filename">Name and check your PNG</a></li><li><a href="#preview">Preview an orbit before exporting</a></li><li><a href="#movie">Export a playable MP4</a></li><li><a href="#export">Export numbered PNG frames</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/black_hole.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="open" aria-labelledby="title-open">
+
+<p class="overline">Open the light lab <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-open">Open Black Hole</h2>
+<p class="before"><strong>Start here</strong> Start the Windows version of Citizen Astronomy (CAst). The simulation supplies the gas and sky.</p>
+<ol class="actions"><li>Scroll down the mode picker to <strong>Simulations</strong>. Click the <strong>Black Hole</strong> card (1).</li><li>If you already have a workspace open, choose <strong>Mode → Black Hole</strong> from the top menu.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/open.webp" aria-label="Enlarge Screenshot for Open Black Hole">
+<img src="images/black-hole/open.webp" loading="lazy" alt="The Simulations row in the real CAst launcher, with the Black Hole card outlined and numbered.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Controls appear on the left and the simulated sky appears on the right. A <strong>Preparing fluid history…</strong> percentage may appear while CAst calculates the gas disk’s earlier motion.</p></div>
+<nav class="next" aria-label="Continue from Open Black Hole"><a class="choice" href="#pause">Find the disk and pause it <span aria-hidden="true">→</span></a><a class="choice" href="#metric">Choose a spinning or nonspinning hole <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save a picture <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="pause" aria-labelledby="title-pause">
+
+<p class="overline">Open the light lab <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-pause">Find the disk and pause the gas</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open Black Hole</a>. If the left controls are hidden, click in the view and press <strong>F1</strong>.</p>
+<ol class="actions"><li>Wait for the preparation percentage to disappear. Look for the thin band of bright gas across the center and the arc above it. Light from the far side of the same disk bends around the hole to reach you.</li><li>At the top of the left panel, click <strong>Pause</strong> (1). Click <strong>Play</strong> in the same spot when you want the gas to move again.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/pause.webp" aria-label="Enlarge Screenshot for Find the disk and pause the gas">
+<img src="images/black-hole/pause.webp" loading="lazy" alt="The simulated disk seen almost edge-on, with Pause marked in the left control panel.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The button changes to <strong>Play</strong> when paused. You can still move the camera and inspect the same moment from another angle.</p></div>
+<nav class="next" aria-label="Continue from Find the disk and pause the gas"><a class="choice" href="#orbit">Move around the paused disk <span aria-hidden="true">→</span></a><a class="choice" href="#disk">See where the gas is concentrated <span aria-hidden="true">→</span></a><a class="choice" href="#grid">See how light bends <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save this view <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="orbit" aria-labelledby="title-orbit">
+
+<p class="overline">Choose your viewpoint <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-orbit">Orbit with the mouse</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a>. For a steady comparison, <a href="#pause">pause the gas</a>. If a movie preview is on, clear <strong>Preview shot</strong> under <strong>Video export</strong>.</p>
+<ol class="actions"><li>Place the pointer in the marked area of the simulation (1). Hold the <strong>left mouse button</strong>, drag up or down a short distance, and release. Drag left or right to orbit around the other way.</li><li>Roll the mouse wheel over the simulation one notch at a time to move closer or farther away.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/orbit.webp" aria-label="Enlarge Screenshot for Orbit with the mouse">
+<img src="images/black-hole/orbit.webp" loading="lazy" alt="A numbered outline on the simulated gas disk marks a place to start a drag.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The band opens into a broader disk as you approach a face-on view. The wheel changes how much of the window the disk fills.</p></div>
+<nav class="next" aria-label="Continue from Orbit with the mouse"><a class="choice" href="#angle">Set the angle with a slider <span aria-hidden="true">→</span></a><a class="choice" href="#sky">Change the background sky <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save this angle <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="angle" aria-labelledby="title-angle">
+
+<p class="overline">Choose your viewpoint <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-angle">Set a camera angle you can repeat</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a>. If <strong>Preview shot</strong> is checked under <strong>Video export</strong>, clear it to control the camera.</p>
+<ol class="actions"><li>Click <strong>Camera</strong> (1) in the left panel to expand it. Drag <strong>Inclination</strong> (2) toward the left for a view from above the disk. Try the middle of the slider (90°) to look along its edge.</li><li>Drag <strong>Distance</strong> (3) a little to the right to see more of the surrounding sky. The value beside each slider records your setting.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/angle.webp" aria-label="Enlarge Screenshot for Set a camera angle you can repeat">
+<img src="images/black-hole/angle.webp" loading="lazy" alt="Expanded Camera section showing Inclination and Distance next to the live rendering.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The disk’s apparent tilt follows the inclination setting. Distance is measured in gravitational radii (rg), the length scale set by the black hole’s mass.</p></div>
+<nav class="next" aria-label="Continue from Set a camera angle you can repeat"><a class="choice" href="#grid">Reveal the bending of background light <span aria-hidden="true">→</span></a><a class="choice" href="#preview">Plan a camera move <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save the current angle <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="metric" aria-labelledby="title-metric">
+
+<p class="overline">Experiment with the black hole and its light <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-metric">Switch to a nonspinning black hole</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a>. Scroll to the top of the left panel.</p>
+<ol class="actions"><li>Click <strong>Spacetime</strong> (1) and choose <strong>Schwarzschild</strong>. This selects a black hole with zero spin.</li><li>Read the <strong>Horizon</strong> and <strong>ISCO</strong> values (2). The horizon marks the boundary beyond which light cannot escape. ISCO is the radius of the innermost stable circular orbit.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/metric.webp" aria-label="Enlarge Screenshot for Switch to a nonspinning black hole">
+<img src="images/black-hole/metric.webp" loading="lazy" alt="Schwarzschild selected with the Horizon and ISCO readout outlined beneath it.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The Spin slider disappears. The readout gives a horizon of 2.000 rg and an ISCO of 6.000 rg. Wait for gas preparation to finish if the percentage reappears.</p></div>
+<nav class="next" aria-label="Continue from Switch to a nonspinning black hole"><a class="choice" href="#spin">Compare with a rotating hole <span aria-hidden="true">→</span></a><a class="choice" href="#grid">Examine the warped grid <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="spin" aria-labelledby="title-spin">
+
+<p class="overline">Experiment with the black hole and its light <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-spin">Change a rotating black hole’s spin</h2>
+<p class="before"><strong>Start here</strong> At the top of the <a href="#open">Black Hole panel</a>, set <strong>Spacetime</strong> to <strong>Kerr (rotating)</strong>.</p>
+<ol class="actions"><li>Drag <strong>Spin</strong> (1) a little to the right and read the new spin value. Watch the <strong>Horizon</strong> and <strong>ISCO</strong> line below the slider as you change it.</li><li>Click <strong>Cinematic 0.6</strong> (2) to return to a spin of 0.60 with cinematic colors. Let the gas preparation finish.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/spin.webp" aria-label="Enlarge Screenshot for Change a rotating black hole’s spin">
+<img src="images/black-hole/spin.webp" loading="lazy" alt="Kerr selected with the Spin slider and Cinematic 0.6 button marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>For this disk, gas orbits in the same direction as the black hole spins. Increasing spin moves the innermost stable circular orbit inward. At 0.60 the readout is about 3.829 rg for the ISCO.</p></div>
+<nav class="next" aria-label="Continue from Change a rotating black hole’s spin"><a class="choice" href="#metric">Check the zero-spin reference <span aria-hidden="true">→</span></a><a class="choice" href="#physical">Explore brightness and color <span aria-hidden="true">→</span></a><a class="choice" href="#disk">Inspect the gas <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="physical" aria-labelledby="title-physical">
+
+<p class="overline">Experiment with the black hole and its light <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-physical">Compare the two brightness treatments</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a>. Use the default disk, or set <a href="#disk">Disk view</a> to <strong>Emission</strong>. <a href="#pause">Pause</a> to hold the gas still.</p>
+<ol class="actions"><li>Look at the two sides of the disk. At the top of the panel, check <strong>Physical appearance</strong> (1). Compare the brightness on each side while you keep the same viewpoint.</li><li>Clear <strong>Physical appearance</strong> to return to the cinematic colors. You can repeat the switch while the gas stays paused.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/physical.webp" aria-label="Enlarge Screenshot for Compare the two brightness treatments">
+<img src="images/black-hole/physical.webp" loading="lazy" alt="Physical appearance is checked, with a bright pale side and a dimmer side of the simulated gas disk.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>In this angled view one side becomes much brighter. Motion of the emitting gas and gravitational shifts affect the brightness in the physical rendering. The display colors are illustrative.</p></div>
+<nav class="next" aria-label="Continue from Compare the two brightness treatments"><a class="choice" href="#angle">Try the comparison at another angle <span aria-hidden="true">→</span></a><a class="choice" href="#disk">Inspect different gas properties <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save this appearance <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="disk" aria-labelledby="title-disk">
+
+<p class="overline">Experiment with the black hole and its light <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-disk">See where the gas is concentrated</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a>. Scroll inside the left panel to <strong>Disk &amp; time</strong>. Click the <strong>Visual effects</strong> header to collapse it if needed.</p>
+<ol class="actions"><li>Expand <strong>Disk &amp; time</strong> (1). Check <strong>Show disk</strong> and <strong>Evolving fluid</strong> (2). If a preparation percentage appears, wait for the disk to be ready.</li><li>Click <strong>Disk view</strong> (3) and choose <strong>Surface density</strong>. Compare the pattern in the disk’s band and in its lensed arc. Try <strong>Temperature</strong> for the gas temperature or <strong>Flow tracers</strong> to follow patterns as the gas moves.</li><li>Choose <strong>Emission</strong> in the same menu to return to the luminous disk.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/disk.webp" aria-label="Enlarge Screenshot for See where the gas is concentrated">
+<img src="images/black-hole/disk.webp" loading="lazy" alt="Disk &amp; time is expanded with Evolving fluid and Surface density marked. A color pattern replaces the golden emission view.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Each selection displays a different property of the same gas. Surface density describes how much gas lies in a patch of disk, measured through its thickness.</p></div>
+<nav class="next" aria-label="Continue from See where the gas is concentrated"><a class="choice" href="#physical">Compare emission brightness <span aria-hidden="true">→</span></a><a class="choice" href="#grid">Trace background light <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save a disk map <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="grid" aria-labelledby="title-grid">
+
+<p class="overline">Experiment with the black hole and its light <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-grid">See gravitational lensing with a grid</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a>. Scroll inside the left panel to <strong>Appearance &amp; quality</strong>. Collapse longer sections by clicking their headers if needed.</p>
+<ol class="actions"><li>Expand <strong>Appearance &amp; quality</strong> (1). Click <strong>Background</strong> (2) and choose <strong>Lensing grid</strong>.</li><li>Follow a grid line from the outer part of the view toward the dark center. To restore the sky, choose <strong>Stars</strong> in the same menu.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/grid.webp" aria-label="Enlarge Screenshot for See gravitational lensing with a grid">
+<img src="images/black-hole/grid.webp" loading="lazy" alt="The Lensing grid selection is outlined beside a live view of grid lines bent around the disk.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Lines that are nearly straight at the edge curve sharply near the hole. The grid reveals how the black hole bends light arriving from behind it.</p></div>
+<nav class="next" aria-label="Continue from See gravitational lensing with a grid"><a class="choice" href="#orbit">Follow the grid from another angle <span aria-hidden="true">→</span></a><a class="choice" href="#sky">Adjust the Milky Way <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save the warped grid <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="sky" aria-labelledby="title-sky">
+
+<p class="overline">Experiment with the black hole and its light <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-sky">Change the Milky Way behind the disk</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a>. If you see a grid or black background, set <a href="#grid">Background</a> to <strong>Stars</strong> first.</p>
+<ol class="actions"><li>Expand <strong>Visual effects</strong> (1) if its controls are hidden. Check <strong>Milky Way background</strong> (2).</li><li>Move <strong>Sky brightness</strong> (3) to the right to make the background easier to see. Watch a dark patch away from the bright disk as you adjust. Clear <strong>Milky Way background</strong> to try the generated star field.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/sky.webp" aria-label="Enlarge Screenshot for Change the Milky Way behind the disk">
+<img src="images/black-hole/sky.webp" loading="lazy" alt="Visual effects expanded with the Milky Way background checkbox and Sky brightness slider marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The brightness slider changes the panorama behind the disk. Its controls disappear when you switch the panorama off.</p></div>
+<nav class="next" aria-label="Continue from Change the Milky Way behind the disk"><a class="choice" href="#grid">Switch to the lensing grid <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save the sky and disk <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="still" aria-labelledby="title-still">
+
+<p class="overline">Save a still or make a movie <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-still">Save the current view as a picture</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a> and frame a view you want to keep. <a href="#pause">Pause</a> if you want to hold a particular moment.</p>
+<ol class="actions"><li>Scroll down the <strong>left control panel</strong> to the <strong>Save PNG...</strong> button (1), just above <strong>Video export</strong>. Clicking an expanded section heading collapses its controls and shortens the scroll.</li><li>Click <strong>Save PNG...</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/still.webp" aria-label="Enlarge Screenshot for Save the current view as a picture">
+<img src="images/black-hole/still.webp" loading="lazy" alt="Save PNG marked just above Video export, with the disk visible on the right.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A Save PNG file picker opens. The saved picture contains the simulation viewport. When the Milky Way panorama is visible, its credit appears in the corner.</p></div>
+<nav class="next" aria-label="Continue from Save the current view as a picture"><a class="choice" href="#filename">Choose the filename and save <span aria-hidden="true">→</span></a><a class="choice" href="#preview">Plan an animated shot <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="filename" aria-labelledby="title-filename">
+
+<p class="overline">Save a still or make a movie <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-filename">Name and check your PNG</h2>
+<p class="before"><strong>Start here</strong> Click <a href="#still">Save PNG...</a> so the file picker is open.</p>
+<ol class="actions"><li>Choose a folder you can find again. Click <strong>File name</strong> (1) and enter <strong>my-black-hole.png</strong>.</li><li>Click <strong>Save</strong> (2). Open that folder in File Explorer and double-click the PNG to view the picture.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/filename.webp" aria-label="Enlarge Screenshot for Name and check your PNG">
+<img src="images/black-hole/filename.webp" loading="lazy" alt="File picker footer with my-black-hole.png entered and the Save button marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The folder contains <strong>my-black-hole.png</strong> and <strong>my-black-hole.png.txt</strong>. Open the text file to read the scene settings that went with your picture.</p></div>
+<nav class="next" aria-label="Continue from Name and check your PNG"><a class="choice" href="#angle">Save another camera angle <span aria-hidden="true">→</span></a><a class="choice" href="#preview">Animate the camera instead <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="preview" aria-labelledby="title-preview">
+
+<p class="overline">Save a still or make a movie <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-preview">Preview an orbit before exporting</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a> and frame the disk. Scroll inside the left panel to <strong>Video export</strong>.</p>
+<ol class="actions"><li>Expand <strong>Video export</strong> (1) if its options are hidden. Click <strong>Camera preset</strong> (2) and choose <strong>Orbit</strong>. <strong>Sweep</strong> sets the angle the camera travels around the hole.</li><li>Check <strong>Preview shot</strong> (3). Leave <strong>Play preview</strong> clear and drag <strong>Shot position</strong> (4) from left to right to inspect the path, or check <strong>Play preview</strong> to watch it run.</li><li>Clear <strong>Preview shot</strong> when you want to position the camera manually again.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/preview.webp" aria-label="Enlarge Screenshot for Preview an orbit before exporting">
+<img src="images/black-hole/preview.webp" loading="lazy" alt="Orbit, Preview shot and Shot position marked in the expanded Video export panel with the initial orbit view on the right.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The camera moves through the orbit while you drag the slider. The chosen camera preset remains selected for export.</p></div>
+<nav class="next" aria-label="Continue from Preview an orbit before exporting"><a class="choice" href="#movie">Export a playable MP4 <span aria-hidden="true">→</span></a><a class="choice" href="#export">Export individual PNG frames <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save a single picture <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="movie" aria-labelledby="title-movie">
+
+<p class="overline">Save a still or make a movie <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-movie">Export a playable MP4</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a>. Scroll to <strong>Video export</strong> and expand it. Choose <strong>Current view</strong> to keep the camera still or <a href="#preview">preview an orbit</a>.</p>
+<ol class="actions"><li>For a short first test, set <strong>Resolution</strong> to <strong>720p</strong>, <strong>Frame rate</strong> to <strong>24 fps</strong>, and drag <strong>Duration</strong> to its left end for one second.</li><li>Open <strong>Format</strong> (1) and choose <strong>MP4 (H.264)</strong>. Click <strong>Browse output...</strong> (2), choose a folder, enter <strong>black-hole-orbit.mp4</strong>, and confirm. Leaving the output path blank instead uses the <strong>CAst Black Hole</strong> folder inside Pictures.</li><li>Click <strong>Export video / frames</strong> (3). Wait for the progress bar to finish and open the saved MP4 in a video player.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/movie.webp" aria-label="Enlarge Screenshot for Export a playable MP4">
+<img src="images/black-hole/movie.webp" loading="lazy" alt="MP4 selected, with Browse output and Export video / frames marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The export status reports the saved file. Choosing Orbit moves the camera during the clip. Current view keeps the same framing while the gas evolves unless <strong>Freeze disk animation</strong> is checked.</p></div>
+<nav class="next" aria-label="Continue from Export a playable MP4"><a class="choice" href="#export">Save the frames separately <span aria-hidden="true">→</span></a><a class="choice" href="#preview">Try a different camera path <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="export" aria-labelledby="title-export">
+
+<p class="overline">Save a still or make a movie <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-export">Export numbered PNG frames</h2>
+<p class="before"><strong>Start here</strong> <a href="#open">Open the lab</a>. Expand <strong>Video export</strong> and choose a camera preset. The <a href="#preview">orbit preview</a> lets you inspect the path first.</p>
+<ol class="actions"><li>Set <strong>Resolution</strong> (1) to <strong>720p</strong> and the <strong>Frame rate</strong> beneath it to <strong>24 fps</strong>. Drag <strong>Duration</strong> (2) all the way left for one second.</li><li>Set <strong>Format</strong> (3) to <strong>PNG sequence</strong>. Leave <strong>Output path</strong> blank to use Pictures → CAst Black Hole, or click <strong>Browse output...</strong> and choose a parent folder. CAst creates a new folder inside it.</li><li>Click <strong>Export video / frames</strong> (4). Wait for the saved status, then open the output folder to step through the individual images.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/black-hole/export.webp" aria-label="Enlarge Screenshot for Export numbered PNG frames">
+<img src="images/black-hole/export.webp" loading="lazy" alt="The 720p, one-second PNG sequence settings and the Export video / frames button marked in the live panel.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>At 24 frames per second, a one-second sequence contains 24 PNG images. The export also records the camera and scene settings.</p></div>
+<nav class="next" aria-label="Continue from Export numbered PNG frames"><a class="choice" href="#movie">Make a single video file <span aria-hidden="true">→</span></a><a class="choice" href="#preview">Adjust the shot <span aria-hidden="true">→</span></a><a class="choice" href="#still">Save just the current view <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

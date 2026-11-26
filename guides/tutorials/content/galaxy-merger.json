@@ -1,0 +1,518 @@
+{
+  "title": "Galaxy Merger",
+  "intro": "How do two spiral galaxies change as they pass each other? Start with a short recording, then revisit the same moment as starlight, a map of density, or individual particles.",
+  "dataset": "Citizen Astronomy for Windows with OpenGL 3.3 support. The Galaxy merger scene is included with the app.",
+  "outcome": "Run and replay a two-galaxy encounter, compare views of the same matter, and save a recording, a still image, or a movie.",
+  "groups": [
+    {
+      "title": "Set up an encounter",
+      "steps": [
+        {
+          "id": "launch",
+          "title": "Open Galaxy Merger",
+          "requires": "Start Citizen Astronomy. If a workspace is open, choose **Mode → Choose Mode…** to return to the launcher.",
+          "actions": [
+            "Scroll down to **Simulations**. Click the **Galaxy Merger** card, outlined in amber."
+          ],
+          "check": "The left panel says **GALAXY MERGER**. Its status says the scene is loaded. The sky view can be empty until you run the simulation.",
+          "image": "launch.webp",
+          "alt": "The Simulations row on the CAst launcher with the Galaxy Merger card outlined.",
+          "links": [
+            {
+              "id": "scene",
+              "label": "Choose a starting scene"
+            },
+            {
+              "id": "load-recording",
+              "label": "Open a recording you already have"
+            }
+          ]
+        },
+        {
+          "id": "scene",
+          "title": "Choose a starting scene",
+          "requires": "Open [Galaxy Merger](#launch). Save any [recording you want to keep](#save-recording) before changing scenes.",
+          "actions": [
+            "Click **Simulation** (1). For this example, leave **Galaxy merger** selected. For another encounter, choose **Retrograde merger**, where one disk spins against the orbital motion, or **Seeded merger**, an alternative spiral model.",
+            "If you have a scene file instead, click **Load scene** (2), select the **.scene** file and click **Open**. A scene supplies the starting conditions for a new run."
+          ],
+          "check": "The selected scene name appears next to **Simulation**. The **Run** button is available.",
+          "image": "scene.webp",
+          "alt": "The Simulation selector and Load scene button marked separately in the file controls.",
+          "links": [
+            {
+              "id": "prepare",
+              "label": "Set up the short preview"
+            },
+            {
+              "id": "load-recording",
+              "label": "Open an existing trajectory instead"
+            },
+            {
+              "id": "initial-arms",
+              "label": "Change the starting spiral pattern"
+            }
+          ]
+        },
+        {
+          "id": "prepare",
+          "title": "Set up a short first run",
+          "requires": "Select the built-in [Galaxy merger scene](#scene). Scroll to **Parameters**. Click the section heading if it is folded.",
+          "actions": [
+            "Under **Resolution**, click **Minimal** (1). This reduces the number of particles CAst tracks.",
+            "Click the number beside **Steps** (2), press **Ctrl+A**, type **400** and press **Enter**.",
+            "Set **Sample every** (3) to **20** the same way. Leave **dt** at **0.005**. CAst will save a snapshot once every 20 calculation steps."
+          ],
+          "check": "The panel shows Minimal, 400 steps and a sampling interval of 20. This run covers 2 simulation time units, enough to practice playback while the galaxies are still separate.",
+          "image": "prepare.webp",
+          "alt": "Parameters panel with Minimal resolution, Steps at 400 and Sample every at 20 marked in order.",
+          "links": [
+            {
+              "id": "run",
+              "label": "Calculate the preview"
+            }
+          ]
+        },
+        {
+          "id": "initial-arms",
+          "title": "Give one galaxy four spiral arms",
+          "requires": "Select the built-in [Galaxy merger scene](#scene). To compare with an earlier run, [save that recording](#save-recording) first.",
+          "actions": [
+            "Expand **Parameters**, then click the **left** heading (1), below **Softening**. This opens the starting conditions for the galaxy named left.",
+            "Scroll to **Initial arms** (2), click its menu and choose **Four**. Leave the right galaxy unchanged so you can compare them. Scroll back up to **Run** when ready."
+          ],
+          "check": "The Initial arms field reads Four. The next run starts the left galaxy with that spiral pattern. Gravity can change its shape as the galaxies interact.",
+          "image": "initial-arms.webp",
+          "alt": "The left galaxy section is expanded, and the Initial arms selector reads Four. Both controls are outlined.",
+          "links": [
+            {
+              "id": "run",
+              "label": "Calculate the changed scene"
+            },
+            {
+              "id": "prepare",
+              "label": "Choose a budget for the experiment"
+            }
+          ]
+        },
+        {
+          "id": "run",
+          "title": "Run the simulation",
+          "requires": "An editable scene is loaded. For a quick first attempt, use the [400-step settings](#prepare).",
+          "actions": [
+            "Scroll to the top of the left panel. Click **Run** once.",
+            "Wait until the progress bar disappears and the playback controls are available. For a long run, use the [Stop branch](#stop) to keep a partial result."
+          ],
+          "check": "During calculation, **Stop** replaces **Run**. Afterward, **Playback** shows a time readout and the view displays the galaxies.",
+          "image": "run.webp",
+          "alt": "The Run button directly below the resolution status is outlined.",
+          "links": [
+            {
+              "id": "playback",
+              "label": "Watch the result"
+            },
+            {
+              "id": "stop",
+              "label": "Stop before the calculation finishes"
+            }
+          ]
+        },
+        {
+          "id": "stop",
+          "title": "Keep part of an unfinished run",
+          "requires": "An encounter is currently calculating. Look for the progress bar near the top of the panel.",
+          "actions": [
+            "Click **Stop**. Wait for the status to say **Stopped at step** before using the recording."
+          ],
+          "check": "The status gives the step reached. **Continue** appears beside **Run**. You can inspect or save the snapshots calculated so far.",
+          "image": "stop.webp",
+          "alt": "The Stop button below an active simulation progress bar is highlighted.",
+          "links": [
+            {
+              "id": "resume",
+              "label": "Continue from the stopping point"
+            },
+            {
+              "id": "playback",
+              "label": "Inspect the partial recording"
+            },
+            {
+              "id": "save-recording",
+              "label": "Save the partial recording"
+            }
+          ]
+        },
+        {
+          "id": "resume",
+          "title": "Continue a stopped calculation",
+          "requires": "You [stopped a run](#stop) in this session and have kept its settings.",
+          "actions": [
+            "Click **Continue** beside **Run**. Keep the same parameters to preserve the stopping point."
+          ],
+          "check": "The progress bar returns and advances from the saved step. Choosing **Run** would start the scene over.",
+          "image": "resume.webp",
+          "alt": "Continue is marked under the status showing the step reached when the run was stopped.",
+          "links": [
+            {
+              "id": "playback",
+              "label": "Replay the finished recording"
+            },
+            {
+              "id": "stop",
+              "label": "Stop the calculation again"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Explore the recording",
+      "steps": [
+        {
+          "id": "playback",
+          "title": "Play, scrub and move the camera",
+          "requires": "Finish or stop [a run](#run), or [load a recording](#load-recording). Scroll to **Playback** and expand the heading if needed.",
+          "actions": [
+            "Click **Play** (1) to move forward. Click the same button when it says **Pause** to hold a moment.",
+            "While paused, drag **Time** (2) left or right. The number above the slider is the simulated time at the selected snapshot.",
+            "Drag **Speed** (3) to the right for faster playback. To look around, left-drag in the galaxy view to orbit, right-drag to pan, and scroll to zoom. Click **Frame** beside Play to bring the encounter back into view."
+          ],
+          "check": "Dragging Time changes the positions shown on screen. In the 400-step example the time runs from 0 to 2. A longer encounter gives you more of the orbit to explore.",
+          "image": "playback.webp",
+          "alt": "Real galaxy recording with Play, Time and Speed outlined next to the two galaxies.",
+          "links": [
+            {
+              "id": "optical",
+              "label": "View a disk face-on or edge-on"
+            },
+            {
+              "id": "passage",
+              "label": "Find the closest approach"
+            },
+            {
+              "id": "density",
+              "label": "See the density field"
+            },
+            {
+              "id": "particles",
+              "label": "See individual particles"
+            },
+            {
+              "id": "save-recording",
+              "label": "Save the data for later"
+            }
+          ]
+        },
+        {
+          "id": "passage",
+          "title": "Jump to the closest approach",
+          "requires": "Use a longer recording to see a close encounter. To reproduce this example, [select Galaxy merger](#scene), choose Minimal, set **dt** to **0.005**, **Steps** to **16000** and **Sample every** to **80**, then [run to completion](#run).",
+          "actions": [
+            "Pause playback. Open **Appearance** and set **Picture** to **Optical**.",
+            "Click **First passage** (1). CAst frames the galaxies at their first close approach in the recording.",
+            "Click **After passage** (2) to advance to a later view. Use the two buttons above this tutorial screenshot to compare those actual frames."
+          ],
+          "check": "In this run **First passage** selects simulation time **40.8**, with the two bright centers close together. At **55.2**, the later frame shows two more widely separated centers within elongated clouds of light. A shorter recording may end before the galaxies pass.",
+          "image": "passage.webp",
+          "alt": "Optical view at first passage with First passage and After passage outlined.",
+          "links": [
+            {
+              "id": "optical",
+              "label": "Inspect a disk orientation"
+            },
+            {
+              "id": "still",
+              "label": "Save the frame you selected"
+            }
+          ],
+          "imageLabel": "First passage",
+          "comparison": {
+            "image": "tails.webp",
+            "alt": "The same encounter at a later time selected by After passage, with both camera buttons outlined.",
+            "label": "After passage"
+          }
+        },
+        {
+          "id": "optical",
+          "title": "Turn a galaxy face-on or edge-on",
+          "requires": "[Pause a recording](#playback). Scroll the left panel to **Appearance** and expand the heading.",
+          "actions": [
+            "Click the **Picture** selector (1) and choose **Optical** to reconstruct light from the recorded particles.",
+            "Click **Face-on disk** (2) to look down on the first disk.",
+            "Click **Edge-on disk** (3) to look along its plane. Click **Frame current light** above the two buttons to frame the emitting material again."
+          ],
+          "check": "The camera turns around the first galaxy, making the disk appear broader or thinner. Its playback time stays the same.",
+          "image": "optical.webp",
+          "alt": "The optical picture of two galaxies with the Picture selector and Face-on disk and Edge-on disk buttons marked.",
+          "links": [
+            {
+              "id": "light",
+              "label": "Adjust starlight and dust"
+            },
+            {
+              "id": "density",
+              "label": "Compare the density view"
+            },
+            {
+              "id": "particles",
+              "label": "Compare the particle view"
+            }
+          ]
+        },
+        {
+          "id": "light",
+          "title": "Adjust starlight and dust",
+          "requires": "Choose the [Optical picture](#optical), pause on a frame and scroll down through **Appearance**.",
+          "actions": [
+            "Drag **Exposure** (1) a short distance to the right. Watch the faint outer light as you move it.",
+            "Drag **Dust** (2) to change how strongly foreground dust absorbs starlight. Compare the same region while keeping the camera still."
+          ],
+          "check": "The brightness and dust contrast change on the same frame. These are illustrative brightness settings for the rendering.",
+          "image": "light.webp",
+          "alt": "Face-on optical reconstruction with the Exposure and Dust sliders outlined.",
+          "links": [
+            {
+              "id": "look",
+              "label": "Keep the optical settings"
+            },
+            {
+              "id": "sky",
+              "label": "Add a star background"
+            },
+            {
+              "id": "still",
+              "label": "Save this view"
+            }
+          ]
+        },
+        {
+          "id": "look",
+          "title": "Save or reuse an optical look",
+          "requires": "Choose [Optical](#optical) and scroll down through **Appearance** to the controls below **Stellar texture**.",
+          "actions": [
+            "To keep the current settings, click **Save look** (1). Choose a folder, type a name such as **My galaxy.look**, and click **Save**.",
+            "To apply an existing look, click **Load look** (2). Select a **.look** file and click **Open**. The bundled broadband and nebular looks are examples."
+          ],
+          "check": "Loading a look applies its optical settings to the current scene. To keep the particle motions as well, save the recording separately.",
+          "image": "look.webp",
+          "alt": "The neighboring Save look and Load look buttons are each outlined.",
+          "links": [
+            {
+              "id": "save-recording",
+              "label": "Keep the particle recording"
+            },
+            {
+              "id": "still",
+              "label": "Save a picture with this look"
+            }
+          ]
+        },
+        {
+          "id": "density",
+          "title": "Read the galaxies as a density field",
+          "requires": "[Pause a recording](#playback) at a time you want to inspect and expand **Appearance**.",
+          "actions": [
+            "Click **Picture** (1) and choose **Illustrative volume**. Nearby particles now contribute to a continuous map of where material is concentrated.",
+            "Click **Resolution** (2) and choose **Standard** to start. This control changes the density map’s detail.",
+            "Drag **Field brightness** (3) to see fainter material. Zoom out with the mouse wheel if the map fills the frame."
+          ],
+          "check": "A colored volume replaces the starlight picture. The palette illustrates the distribution of material at the selected time.",
+          "image": "density.webp",
+          "alt": "Illustrative volume rendered from the simulation with Picture, Resolution and Field brightness marked.",
+          "links": [
+            {
+              "id": "particles",
+              "label": "Inspect the underlying particles"
+            },
+            {
+              "id": "optical",
+              "label": "Return to starlight"
+            },
+            {
+              "id": "still",
+              "label": "Save this density map"
+            }
+          ]
+        },
+        {
+          "id": "particles",
+          "title": "Inspect individual particles",
+          "requires": "[Pause a recording](#playback) and expand **Appearance**.",
+          "actions": [
+            "Click **Picture** (1) and choose **Particles**.",
+            "Drag **Point scale** (2) left to shrink the points or right to make them larger. Zoom with the mouse wheel to inspect one disk."
+          ],
+          "check": "The smooth picture resolves into colored points. Each point represents a simulation particle. Its displayed size changes while its recorded position stays fixed.",
+          "image": "particles.webp",
+          "alt": "Particles from a real run with Picture set to Particles and the Point scale slider outlined.",
+          "links": [
+            {
+              "id": "density",
+              "label": "See where particles gather"
+            },
+            {
+              "id": "optical",
+              "label": "Reconstruct their starlight"
+            },
+            {
+              "id": "sky",
+              "label": "Add a star background"
+            }
+          ]
+        },
+        {
+          "id": "sky",
+          "title": "Place stars behind the encounter",
+          "requires": "A [recording](#playback) is visible. Scroll down to **Background** and click its heading.",
+          "actions": [
+            "Check **Stars** (1) to draw a star field behind the galaxies.",
+            "Clear **Real catalog stars** (2) to use generated stars, as shown here. To use Hipparcos positions instead, check it and click **Download star catalog** if prompted.",
+            "Move **Star brightness** (3) until the points are visible. Clear **Stars** again to remove them."
+          ],
+          "check": "Stars appear behind the galaxies. They are a backdrop, independent of the particles in the encounter. Saved images and video include any enabled background.",
+          "image": "sky.webp",
+          "alt": "The Background section with Stars on, Real catalog stars off and the Star brightness slider marked.",
+          "links": [
+            {
+              "id": "still",
+              "label": "Save the view as a PNG"
+            },
+            {
+              "id": "video",
+              "label": "Make a movie"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Save or share",
+      "steps": [
+        {
+          "id": "save-recording",
+          "title": "Save the simulation for later",
+          "requires": "You have a [finished](#run) or [stopped](#stop) calculation. Scroll to the top of the left panel.",
+          "actions": [
+            "Click **Save recording**. Choose a folder and enter a name such as **First encounter.traj**. Click **Save**."
+          ],
+          "check": "The .traj file stores your calculated snapshots for playback. To continue calculating a stopped run, keep the current session open and use Continue.",
+          "image": "save-recording.webp",
+          "alt": "Save recording is highlighted in the three-button file row.",
+          "links": [
+            {
+              "id": "load-recording",
+              "label": "Reopen the recording"
+            },
+            {
+              "id": "still",
+              "label": "Save a single picture"
+            },
+            {
+              "id": "video",
+              "label": "Export a movie"
+            }
+          ]
+        },
+        {
+          "id": "load-recording",
+          "title": "Reopen an existing recording",
+          "requires": "Open [Galaxy Merger](#launch) and locate the **.traj** file you want to view. Save any current recording you want to keep.",
+          "actions": [
+            "Click **Load recording** at the top of the left panel. Select your **.traj** file and click **Open**."
+          ],
+          "check": "Playback becomes available with the recorded time range. To change physical parameters and calculate a different encounter, select a new scene.",
+          "image": "load-recording.webp",
+          "alt": "Load recording in the top-left file row is marked.",
+          "links": [
+            {
+              "id": "playback",
+              "label": "Explore the saved snapshots"
+            },
+            {
+              "id": "scene",
+              "label": "Start a different encounter"
+            },
+            {
+              "id": "video",
+              "label": "Export the recording as a movie"
+            }
+          ]
+        },
+        {
+          "id": "still",
+          "title": "Save the current frame as a PNG",
+          "requires": "[Pause the recording](#playback) on the view you want to keep. Scroll to **Export** and click the section heading. Set **Format** to **PNG sequence** so Browse selects a folder.",
+          "actions": [
+            "Choose a **Preset** (1), such as **1920 x 1080**, for the saved picture size.",
+            "Click **Browse** (2) and choose an output folder. Choose a fresh folder if you want to keep a previous frame.png.",
+            "Click **Save frame** (3)."
+          ],
+          "check": "The status says **Wrote** followed by a path. Open **frame.png** there to see the camera view without the control panel.",
+          "image": "still.webp",
+          "alt": "Export controls with the size Preset, Browse and Save frame outlined in that order.",
+          "links": [
+            {
+              "id": "video",
+              "label": "Save a moving version"
+            },
+            {
+              "id": "sequence",
+              "label": "Save individual animation frames"
+            },
+            {
+              "id": "playback",
+              "label": "Choose a different time"
+            }
+          ]
+        },
+        {
+          "id": "video",
+          "title": "Export a playable MP4 movie",
+          "requires": "Use a [finished or loaded recording](#playback) and your chosen camera angle. Expand **Export**.",
+          "actions": [
+            "Set **Format** (1) to **MP4 (ffmpeg)**. Choose a size under **Preset** and keep **FPS** at 30 for this example.",
+            "Click **Browse** (2). Pick a folder, type **Galaxy preview.mp4** and click **Save**.",
+            "Enter a starting time in **From** (3) and an ending time in **To** (4). For the short preview, use **0** and **2**. These are times on the simulation’s playback slider.",
+            "Click **Export** (5). Wait for the export status to report completion, then open the MP4 in a video player."
+          ],
+          "check": "The frame count and target filename appear below the time range. At 30 frames per simulation time unit, a range from 0 to 2 produces 60 frames.",
+          "image": "video.webp",
+          "alt": "Movie settings with MP4 Format, Browse, From, To and Export outlined.",
+          "links": [
+            {
+              "id": "sequence",
+              "label": "Export numbered PNGs instead"
+            },
+            {
+              "id": "still",
+              "label": "Save one frame"
+            }
+          ]
+        },
+        {
+          "id": "sequence",
+          "title": "Export a numbered PNG sequence",
+          "requires": "A [recording](#playback) is available. Expand **Export**. Choose your image size under **Preset**.",
+          "actions": [
+            "Set **Format** (1) to **PNG sequence**.",
+            "Click **Browse** (2) and select a folder for the images. Set **From** and **To** to the part of the recording you want to keep.",
+            "Click **Export** (3). If you stop a sequence early, leave its settings in place and click **Continue** in the Export section to finish it."
+          ],
+          "check": "The selected folder fills with numbered PNG images, one per exported frame. Each uses the chosen camera and appearance.",
+          "image": "sequence.webp",
+          "alt": "Export panel highlighting PNG sequence format, the output folder chooser, and Export.",
+          "links": [
+            {
+              "id": "video",
+              "label": "Create a single MP4 file"
+            },
+            {
+              "id": "still",
+              "label": "Save only the current view"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Compare AE UMa with nearby stars to see how its brightness changes over one night.">
+<title>Differential photometry | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=full-sequences"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>Differential photometry</span></nav>
+<header class="guide-head"><h1>Differential photometry</h1><div class="guide-files"><div class="sequence-links"><a class="download-file" href="https://www.ogetay.com/citizen-astronomy-cast/datasets/ae-uma-practice.zip" download>Download AE UMa practice set <small>ZIP · 28 MB</small></a><a class="download-file" href="https://www.ogetay.com/citizen-astronomy-cast/datasets/ae-uma-full.zip" download>Download AE UMa full sequence <small>ZIP · 5.53 GB</small></a></div><span>Choose the 24-frame practice set for a quick run or the 158-frame sequence to reproduce the full night. Extract your ZIP and open its folder in CAst. <a href="#choose-folder">See the file step</a>.</span></div></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Open the example</h3><ol><li><a href="#mode">Enter Differential Photometry</a></li><li><a href="#open">Open the workflow window</a></li><li><a href="#folder">Browse for the image sequence</a></li><li><a href="#choose-folder">Select the folder containing the FITS files</a></li></ol></section><section class="step-group"><h3>Generate a light curve</h3><ol><li><a href="#generate">Start the measurement</a></li><li><a href="#recipe">Check how the example was measured</a></li><li><a href="#target">Measure AE UMa only</a></li><li><a href="#other-sources">Measure several objects instead</a></li></ol></section><section class="step-group"><h3>Read and check the result</h3><ol><li><a href="#result">Select the measured star</a></li><li><a href="#axis">Switch to differential magnitude</a></li><li><a href="#references">Compare the star with its references</a></li><li><a href="#frames">Inspect a single frame or blink the sequence</a></li><li><a href="#measurements">Open the measurement table</a></li><li><a href="#load-table">Confirm that the rows should load</a></li><li><a href="#read-table">Read a measurement and its source frame</a></li><li><a href="#point">Trace a plotted point to one exposure</a></li></ol></section><section class="step-group"><h3>Try other comparison stars</h3><ol><li><a href="#scan-comps">Keep or change the comparisons</a></li><li><a href="#limits">Build a pool of comparison candidates</a></li><li><a href="#favourites">Choose which reference stars to test</a></li><li><a href="#combinations">Compare trial curves and apply a set</a></li></ol></section><section class="step-group"><h3>Save the graph or the measurements</h3><ol><li><a href="#plot-export">Save the light-curve graph</a></li><li><a href="#save-plot">Name and save the plot file</a></li><li><a href="#report-menu">Export measurements for AE UMa</a></li><li><a href="#report-review">Review the report before saving</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/differential_photometry.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="mode" aria-labelledby="title-mode">
+
+<p class="overline">Open the example <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-mode">Enter Differential Photometry</h2>
+<p class="before"><strong>Start here</strong> Start Citizen Astronomy (CAst). Download either AE UMa ZIP above and extract it. Keep the <strong>AE UMa practice</strong> or <strong>AE UMa full</strong> folder handy.</p>
+<ol class="actions"><li>Under <strong>Detect &amp; Measure</strong>, click <strong>Differential Photometry</strong>. If a different workspace is already open, choose <strong>Mode → Choose Mode…</strong> to return to this screen.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/mode.webp" aria-label="Enlarge Screenshot for Enter Differential Photometry">
+<img src="images/photometry/mode.webp" loading="lazy" alt="Mode launcher with a numbered outline around the Differential Photometry card.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The workspace opens with an <strong>Open</strong> button in its upper left. The curve on the launcher card is an illustration. Your own graph appears after processing.</p></div>
+<nav class="next" aria-label="Continue from Enter Differential Photometry"><a class="choice" href="#open">Open the workflow <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="open" aria-labelledby="title-open">
+
+<p class="overline">Open the example <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-open">Open the workflow window</h2>
+<p class="before"><strong>Start here</strong> You are in <a href="#mode">Differential Photometry</a>.</p>
+<ol class="actions"><li>Click the large <strong>Open</strong> button at the upper left of the workspace.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/open.webp" aria-label="Enlarge Screenshot for Open the workflow window">
+<img src="images/photometry/open.webp" loading="lazy" alt="Upper-left corner of the workspace with the Open button outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A window named <strong>Differential Photometry Workflow</strong> opens. It contains <strong>1. Folder</strong>, <strong>2. Pipeline</strong>, and <strong>3. Progress</strong>.</p></div>
+<nav class="next" aria-label="Continue from Open the workflow window"><a class="choice" href="#folder">Locate the folder control <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="folder" aria-labelledby="title-folder">
+
+<p class="overline">Open the example <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-folder">Browse for the image sequence</h2>
+<p class="before"><strong>Start here</strong> The <a href="#open">workflow window</a> is open.</p>
+<ol class="actions"><li>In <strong>1. Folder</strong>, click <strong>Folder</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/folder.webp" aria-label="Enlarge Screenshot for Browse for the image sequence">
+<img src="images/photometry/folder.webp" loading="lazy" alt="Folder section of the workflow showing the highlighted Folder button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A folder picker opens. Select one folder for the complete run, whether you use the practice set or the full sequence.</p></div>
+<nav class="next" aria-label="Continue from Browse for the image sequence"><a class="choice" href="#choose-folder">Select the AE UMa folder <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="choose-folder" aria-labelledby="title-choose-folder">
+
+<p class="overline">Open the example <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-choose-folder">Select the folder containing the FITS files</h2>
+<p class="before"><strong>Start here</strong> The <a href="#folder">folder picker</a> is open.</p>
+<ol class="actions"><li>Select <strong>AE UMa practice</strong> for the 24-frame exercise, or <strong>AE UMa full</strong> for all 158 original frames. Choose the folder containing the FITS files.</li><li>Click <strong>Choose</strong>. On Windows, the native picker may label this button <strong>Select Folder</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/choose-folder.webp" aria-label="Enlarge Screenshot for Select the folder containing the FITS files">
+<img src="images/photometry/choose-folder.webp" loading="lazy" alt="Directory field containing (small copy) AE UMa and the Choose button, marked 1 and 2.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Check the count in <strong>Ready</strong>: 24 files for the practice set or 158 for the full night shown in the screenshot. If your count differs, select the extracted folder that directly contains the .fit files.</p></div>
+<nav class="next" aria-label="Continue from Select the folder containing the FITS files"><a class="choice" href="#generate">Set up this reduction <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="generate" aria-labelledby="title-generate">
+
+<p class="overline">Generate a light curve <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-generate">Start the measurement</h2>
+<p class="before"><strong>Start here</strong> The <a href="#choose-folder">folder scan</a> has found 24 practice images or 158 full-sequence images.</p>
+<ol class="actions"><li>For this L-filter practice run, clear <strong>Pull Periods</strong> (1). Leave <strong>Calculate Periods</strong>, <strong>Create Measurements Table</strong>, <strong>Calibration</strong>, and <strong>Star Alignment</strong> unchecked. The folder contains science exposures with embedded sky coordinates and includes no calibration masters.</li><li>Keep <strong>Brightest Variables</strong> at <strong>100%</strong> so you can choose AE UMa yourself. Click <strong>Generate</strong> (2). Allow the catalog lookup to finish. A first run can need internet access.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/generate.webp" aria-label="Enlarge Screenshot for Start the measurement">
+<img src="images/photometry/generate.webp" loading="lazy" alt="Workflow showing 158 loaded images, the cleared Pull Periods checkbox, 100% Brightest Variables, and Generate.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>CAst opens <strong>Select Sources To Process</strong> when the list is ready. If CAst offers an existing result for this folder, opening it takes you directly to the results. The example used a saved field catalog and the images’ embedded coordinates. See the <a href="#recipe">example settings</a> to reproduce this selection.</p></div>
+<nav class="next" aria-label="Continue from Start the measurement"><a class="choice" href="#target">Measure AE UMa only <span aria-hidden="true">→</span></a><a class="choice" href="#recipe">Check the example settings <span aria-hidden="true">→</span></a><a class="choice" href="#other-sources">Measure a group of stars <span aria-hidden="true">→</span></a><a class="choice" href="#result">I opened a saved result <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="recipe" aria-labelledby="title-recipe">
+
+<p class="overline">Generate a light curve <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-recipe">Check how the example was measured</h2>
+<p class="before"><strong>Start here</strong> In the Differential Photometry workspace, choose <strong>Settings → Open Settings</strong> before starting a fresh run.</p>
+<ol class="actions"><li>Click the <strong>Differential Photometry</strong> tab (1). The example requested <strong>5</strong> for <strong>Comparison Stars per Variable</strong> (2). The number that can actually be used depends on the stars in the field.</li><li>To match the brightness selection, check <strong>Use reference-star magnitude range</strong>. Set <strong>Min</strong> to the lowest allowed value (−5) and <strong>Max</strong> (3) to <strong>16</strong>. The adaptive aperture scale was <strong>1.60 × FWHM</strong>, which sizes the measurement circle using the width of the star image.</li><li>Click <strong>Save</strong> if you changed settings, or <strong>Cancel</strong> if you were only looking. This example used the saved catalog for the field and the embedded sky coordinates in each FITS header, without repeating the Gaia cross-check.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/recipe.webp" aria-label="Enlarge Screenshot for Check how the example was measured">
+<img src="images/photometry/recipe.webp" loading="lazy" alt="Differential Photometry settings showing five requested comparisons and a maximum reference-star magnitude of 16.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The resulting Scan Comps window offered four usable measured references. Catalog updates or different quality settings may change the available stars.</p></div>
+<nav class="next" aria-label="Continue from Check how the example was measured"><a class="choice" href="#generate">Continue the example run <span aria-hidden="true">→</span></a><a class="choice" href="#scan-comps">Inspect the measured references <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="target" aria-labelledby="title-target">
+
+<p class="overline">Generate a light curve <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-target">Measure AE UMa only</h2>
+<p class="before"><strong>Start here</strong> The <a href="#generate">source-selection window</a> is open.</p>
+<ol class="actions"><li>In the <strong>Sources</strong> search field (1), type <strong>AE UMa</strong>. Keep <strong>Named variables</strong> checked.</li><li>Click the <strong>AE UMa</strong> row (2). Its catalog is <strong>vsx</strong> and its type is <strong>Variable</strong>. CAst chooses comparison stars for the target automatically.</li><li>Click <strong>Process Selected</strong> (3). Wait for the workflow to finish measuring the images. If its progress window stays open after completion, click <strong>Close</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/target.webp" aria-label="Enlarge Screenshot for Measure AE UMa only">
+<img src="images/photometry/target.webp" loading="lazy" alt="Source dialog filtered to AE UMa, with the search field, selected VSX row, and Process Selected button numbered.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Source Results</strong> table contains AE UMa. A light curve is a sequence of brightness measurements, one for each usable exposure.</p></div>
+<nav class="next" aria-label="Continue from Measure AE UMa only"><a class="choice" href="#result">Find the measured star <span aria-hidden="true">→</span></a><a class="choice" href="#other-sources">What do the other process buttons do? <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="other-sources" aria-labelledby="title-other-sources">
+
+<p class="overline">Generate a light curve <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-other-sources">Measure several objects instead</h2>
+<p class="before"><strong>Start here</strong> Open the <a href="#generate">source-selection window</a> before processing.</p>
+<ol class="actions"><li>To measure the brightest few, set <strong>Default selection</strong> to <strong>Absolute number of brightest stars</strong> and enter a small count, such as <strong>3</strong> (1). Click <strong>Process Default</strong> (2).</li><li>To work by category instead, choose a category from <strong>All types</strong> (3) and narrow the list with <strong>Sources</strong> or <strong>Designation Families</strong>. Click <strong>Process All Visible</strong> (4) to measure every remaining row. A long list takes longer.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/other-sources.webp" aria-label="Enlarge Screenshot for Measure several objects instead">
+<img src="images/photometry/other-sources.webp" loading="lazy" alt="Alternate selection routes showing the default count, Process Default, source-type filter, and Process All Visible.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>After processing, <strong>Source Results</strong> lists the measured targets. Click a row to switch the light curve to that star.</p></div>
+<nav class="next" aria-label="Continue from Measure several objects instead"><a class="choice" href="#target">Return to the one-star example <span aria-hidden="true">→</span></a><a class="choice" href="#result">Inspect a completed run <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="result" aria-labelledby="title-result">
+
+<p class="overline">Read and check the result <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-result">Select the measured star</h2>
+<p class="before"><strong>Start here</strong> The <a href="#target">reduction</a> has finished, or you opened a cached AE UMa result.</p>
+<ol class="actions"><li>Click <strong>Source Results</strong> (1) below the plot.</li><li>Click <strong>AE UMa</strong> (2). The workspace connects the selected source to its light curve and image. Other rows can be comparison stars used to measure the target.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/result.webp" aria-label="Enlarge Screenshot for Select the measured star">
+<img src="images/photometry/result.webp" loading="lazy" alt="Source Results tab and AE UMa row outlined below the light-curve panel.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Look for AE UMa in the plot title or legend. A blank graph in <strong>Standard Magnitude</strong> can mean that this filter has no usable standard magnitude. Choose the relative brightness axis in the next step.</p></div>
+<nav class="next" aria-label="Continue from Select the measured star"><a class="choice" href="#axis">Plot brightness relative to the comparisons <span aria-hidden="true">→</span></a><a class="choice" href="#frames">Inspect the original exposures <span aria-hidden="true">→</span></a><a class="choice" href="#measurements">Open individual measurements <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="axis" aria-labelledby="title-axis">
+
+<p class="overline">Read and check the result <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-axis">Switch to differential magnitude</h2>
+<p class="before"><strong>Start here</strong> You have <a href="#result">selected AE UMa</a>.</p>
+<ol class="actions"><li>Open <strong>Settings</strong> (1) on the top menu bar, then move to <strong>Light Curve</strong> (2).</li><li>Open the <strong>Y</strong> list (3) and choose <strong>Differential Magnitude</strong>. Click outside the menu to return to the graph.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/axis.webp" aria-label="Enlarge Screenshot for Switch to differential magnitude">
+<img src="images/photometry/axis.webp" loading="lazy" alt="Settings menu, Light Curve submenu and Y selector set to Differential Magnitude.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The vertical axis now shows magnitude relative to the comparison stars. A smaller value means a brighter target relative to them. On the plotted axis, 500 × 0.001 means 0.500 magnitude. These L-filter frames can show changes in brightness without establishing a standard Johnson V magnitude.</p></div>
+<nav class="next" aria-label="Continue from Switch to differential magnitude"><a class="choice" href="#references">Compare the target with reference stars <span aria-hidden="true">→</span></a><a class="choice" href="#plot-export">Save the current graph <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="references" aria-labelledby="title-references">
+
+<p class="overline">Read and check the result <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-references">Compare the star with its references</h2>
+<p class="before"><strong>Start here</strong> AE UMa is selected. Use the <a href="#axis">differential magnitude axis</a>.</p>
+<ol class="actions"><li>Open the <strong>Filter</strong> list (1) beside <strong>Open</strong> and choose <strong>L</strong> for this sequence.</li><li>Turn on <strong>Show references</strong> (2) to display the comparison stars. If their traces move together with the target, inspect the images for clouds or tracking problems.</li><li>Turn on <strong>Show check</strong> (3) to include an independent check star when one was measured. For a clearer view of AE UMa alone, clear both switches.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/references.webp" aria-label="Enlarge Screenshot for Compare the star with its references">
+<img src="images/photometry/references.webp" loading="lazy" alt="L filter, Show references and Show check marked above the real AE UMa light curve.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>AE UMa brightens toward the end of the run while the comparison traces remain relatively flat. The practice download provides 24 epochs. The screenshot shows measurements from all 158 original exposures.</p></div>
+<nav class="next" aria-label="Continue from Compare the star with its references"><a class="choice" href="#scan-comps">Try a different set of comparison stars <span aria-hidden="true">→</span></a><a class="choice" href="#frames">Keep the automatic set and inspect the images <span aria-hidden="true">→</span></a><a class="choice" href="#measurements">Trace a point to its exposure <span aria-hidden="true">→</span></a><a class="choice" href="#plot-export">Save a picture of the curve <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="frames" aria-labelledby="title-frames">
+
+<p class="overline">Read and check the result <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-frames">Inspect a single frame or blink the sequence</h2>
+<p class="before"><strong>Start here</strong> A <a href="#result">measured target</a> is selected and its image is visible on the right.</p>
+<ol class="actions"><li>Click <strong>Center</strong> (1) to bring the selected star into view. Use the mouse wheel over the star if you want a closer look. The small circle is its measurement aperture.</li><li>To inspect one exposure, open the <strong>frame selector</strong> (2) and choose a filename. Watch whether the aperture still encloses AE UMa.</li><li>To play the sequence, click <strong>Blink</strong> (3). Click <strong>Blink</strong> again to pause. Look for shifts, passing clouds, or a neighboring star entering an aperture.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/frames.webp" aria-label="Enlarge Screenshot for Inspect a single frame or blink the sequence">
+<img src="images/photometry/frames.webp" loading="lazy" alt="AE UMa image pane with Center, frame selector and Blink numbered above the measured star field.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Changing the frame changes the filename and image. Use the measurement table to identify the exposure time and brightness for an individual observation.</p></div>
+<nav class="next" aria-label="Continue from Inspect a single frame or blink the sequence"><a class="choice" href="#measurements">Open the numerical measurements <span aria-hidden="true">→</span></a><a class="choice" href="#references">Compare plotted stars <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="measurements" aria-labelledby="title-measurements">
+
+<p class="overline">Read and check the result <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-measurements">Open the measurement table</h2>
+<p class="before"><strong>Start here</strong> An <a href="#result">AE UMa reduction</a> is displayed.</p>
+<ol class="actions"><li>Click the <strong>Measurements</strong> tab beside <strong>File Results</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/measurements.webp" aria-label="Enlarge Screenshot for Open the measurement table">
+<img src="images/photometry/measurements.webp" loading="lazy" alt="Results tab strip with Measurements outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>On a fresh run with table creation turned off, a <strong>Load Measurements Table</strong> prompt appears. If rows are already visible, go straight to reading a row.</p></div>
+<nav class="next" aria-label="Continue from Open the measurement table"><a class="choice" href="#load-table">Confirm the table load <span aria-hidden="true">→</span></a><a class="choice" href="#read-table">My table is already populated <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="load-table" aria-labelledby="title-load-table">
+
+<p class="overline">Read and check the result <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-load-table">Confirm that the rows should load</h2>
+<p class="before"><strong>Start here</strong> The <a href="#measurements">Measurements tab</a> shows a <strong>Load Measurements Table</strong> prompt.</p>
+<ol class="actions"><li>Check the number of rows in the message. Each exposure may contribute several rows for different stars.</li><li>Click <strong>Yes</strong> to load those rows. Large tables can take a moment.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/load-table.webp" aria-label="Enlarge Screenshot for Confirm that the rows should load">
+<img src="images/photometry/load-table.webp" loading="lazy" alt="Actual table-load confirmation with Yes highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The prompt closes and the <strong>Measurements</strong> table fills with filenames and values.</p></div>
+<nav class="next" aria-label="Continue from Confirm that the rows should load"><a class="choice" href="#read-table">Read a measurement <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="read-table" aria-labelledby="title-read-table">
+
+<p class="overline">Read and check the result <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-read-table">Read a measurement and its source frame</h2>
+<p class="before"><strong>Start here</strong> The <a href="#load-table">Measurements table</a> is populated.</p>
+<ol class="actions"><li>Click a row for <strong>AE UMa</strong>. Use the <strong>File</strong> column to identify the exposure; read across the selected row for the filter and measured values.</li><li>Scroll horizontally for additional columns. If a point looks unusual, compare its image with adjacent frames before deciding whether to use it.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/read-table.webp" aria-label="Enlarge Screenshot for Read a measurement and its source frame">
+<img src="images/photometry/read-table.webp" loading="lazy" alt="Populated measurement table with an AE UMa measurement row marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The image and details follow the selected row. For the first AE UMa row, <strong>Diff Mag</strong> is <strong>0.4445</strong> and <strong>Error</strong> is <strong>0.0060</strong> magnitude.</p></div>
+<nav class="next" aria-label="Continue from Read a measurement and its source frame"><a class="choice" href="#point">Choose a point directly on the graph <span aria-hidden="true">→</span></a><a class="choice" href="#frames">Check adjacent images <span aria-hidden="true">→</span></a><a class="choice" href="#report-menu">Export the numerical report <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="point" aria-labelledby="title-point">
+
+<p class="overline">Read and check the result <span aria-hidden="true">/</span> Step 16</p>
+<h2 tabindex="-1" id="title-point">Trace a plotted point to one exposure</h2>
+<p class="before"><strong>Start here</strong> The <a href="#load-table">measurement rows</a> are loaded. Select <a href="#result">AE UMa</a>, choose L, and clear <strong>Show references</strong> and <strong>Show check</strong> for a single trace.</p>
+<ol class="actions"><li>Click one plotted dot, such as the point outlined in the screenshot. Each dot represents AE UMa in one exposure.</li><li>Read the selected filename in the frame selector. Open <strong>Measurements</strong> to inspect the matching row.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/point.webp" aria-label="Enlarge Screenshot for Trace a plotted point to one exposure">
+<img src="images/photometry/point.webp" loading="lazy" alt="Measured AE UMa light curve with one actual observation outlined as the click target.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The frame selector moves to the clicked observation. A trend extending over successive exposures can be compared with the reference stars; inspect a lone unusual point on its own image.</p></div>
+<nav class="next" aria-label="Continue from Trace a plotted point to one exposure"><a class="choice" href="#frames">Inspect neighboring frames <span aria-hidden="true">→</span></a><a class="choice" href="#plot-export">Save this curve <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="scan-comps" aria-labelledby="title-scan-comps">
+
+<p class="overline">Try other comparison stars <span aria-hidden="true">/</span> Step 17</p>
+<h2 tabindex="-1" id="title-scan-comps">Keep or change the comparisons</h2>
+<p class="before"><strong>Start here</strong> <a href="#result">Select AE UMa</a> in Source Results and choose <strong>L</strong> in the Filter list.</p>
+<ol class="actions"><li>If the <a href="#references">reference and check traces</a> look steady on the scale of the target’s variation, keep the automatic result and continue to the graph or report.</li><li>To see how a different group changes the same measurements, click <strong>Scan Comps</strong> above the plot.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/scan-comps.webp" aria-label="Enlarge Screenshot for Keep or change the comparisons">
+<img src="images/photometry/scan-comps.webp" loading="lazy" alt="AE UMa workspace with Scan Comps marked beside the filter and analysis controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The comparison window opens for <strong>AE UMa · [L]</strong>. Its header gives the number of measured reference stars available to test.</p></div>
+<nav class="next" aria-label="Continue from Keep or change the comparisons"><a class="choice" href="#limits">Build alternative comparison sets <span aria-hidden="true">→</span></a><a class="choice" href="#plot-export">Keep the automatic result and save the curve <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="limits" aria-labelledby="title-limits">
+
+<p class="overline">Try other comparison stars <span aria-hidden="true">/</span> Step 18</p>
+<h2 tabindex="-1" id="title-limits">Build a pool of comparison candidates</h2>
+<p class="before"><strong>Start here</strong> The <a href="#scan-comps">Scan Comps</a> window is on <strong>1. Limits</strong>.</p>
+<ol class="actions"><li>For this example, leave the brightness, color, and separation limits at <strong>No limit</strong>. Set <strong>Comparisons per set (N)</strong> to <strong>3</strong> (1). Each trial will then use three stars together.</li><li>Click <strong>Build Candidates</strong> (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/limits.webp" aria-label="Enlarge Screenshot for Build a pool of comparison candidates">
+<img src="images/photometry/limits.webp" loading="lazy" alt="Search Limits panel for AE UMa showing three comparisons per set and the Build Candidates button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The window moves to <strong>2. Favourites</strong> and lists measured stars with their names, catalog brightness, and distance from AE UMa.</p></div>
+<nav class="next" aria-label="Continue from Build a pool of comparison candidates"><a class="choice" href="#favourites">Pick the candidate stars <span aria-hidden="true">→</span></a><a class="choice" href="#references">Return to the automatic result <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="favourites" aria-labelledby="title-favourites">
+
+<p class="overline">Try other comparison stars <span aria-hidden="true">/</span> Step 19</p>
+<h2 tabindex="-1" id="title-favourites">Choose which reference stars to test</h2>
+<p class="before"><strong>Start here</strong> You have <a href="#limits">built candidates</a> and <strong>2. Favourites</strong> is visible.</p>
+<ol class="actions"><li>For this small example, click <strong>Select All</strong> (1). If you saw a blended or unstable reference on the images, clear its <strong>Favourite</strong> box. Keep at least three to build a set; four or more give you alternative three-star sets.</li><li>Click <strong>Continue to Combinations</strong> (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/favourites.webp" aria-label="Enlarge Screenshot for Choose which reference stars to test">
+<img src="images/photometry/favourites.webp" loading="lazy" alt="Favourite Candidates table with its selection and Continue to Combinations buttons marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The next page lists the possible three-star sets and calculates a preview for each.</p></div>
+<nav class="next" aria-label="Continue from Choose which reference stars to test"><a class="choice" href="#combinations">Compare the trial curves <span aria-hidden="true">→</span></a><a class="choice" href="#limits">Change the pool size or limits <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="combinations" aria-labelledby="title-combinations">
+
+<p class="overline">Try other comparison stars <span aria-hidden="true">/</span> Step 20</p>
+<h2 tabindex="-1" id="title-combinations">Compare trial curves and apply a set</h2>
+<p class="before"><strong>Start here</strong> The <a href="#favourites">Favourites step</a> has opened <strong>3. Combinations</strong>.</p>
+<ol class="actions"><li>Click a set in <strong>Combination Sets</strong> (1). Inspect the light curve, then click another set to see whether the pattern persists.</li><li>Use the preview list (2) to switch between <strong>Filter [L]</strong> and <strong>Overview (with comps)</strong>. Look for stable comparisons and a target trend that survives a change of reference stars.</li><li>Choose <strong>Use Selected</strong> (3) to apply the displayed set. Choose <strong>Cancel</strong> if you want to keep your previous result.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/combinations.webp" aria-label="Enlarge Screenshot for Compare trial curves and apply a set">
+<img src="images/photometry/combinations.webp" loading="lazy" alt="Comparison sets and a real preview curve, with the set row, preview mode, and Use Selected control marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Applying a set updates the AE UMa curve for the L filter. The Work Log identifies the comparisons used.</p></div>
+<nav class="next" aria-label="Continue from Compare trial curves and apply a set"><a class="choice" href="#references">Inspect the result in the workspace <span aria-hidden="true">→</span></a><a class="choice" href="#plot-export">Save the graph <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="plot-export" aria-labelledby="title-plot-export">
+
+<p class="overline">Save the graph or the measurements <span aria-hidden="true">/</span> Step 21</p>
+<h2 tabindex="-1" id="title-plot-export">Save the light-curve graph</h2>
+<p class="before"><strong>Start here</strong> A <a href="#axis">light curve</a> is visible. Select L and show the series you want in your saved figure.</p>
+<ol class="actions"><li>Click <strong>Export</strong> (1) above the plot.</li><li>For a clean figure, choose <strong>Scientific</strong> (2). For the graph as it looks in the workspace, choose <strong>Theme-based</strong> (3).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/plot-export.webp" aria-label="Enlarge Screenshot for Save the light-curve graph">
+<img src="images/photometry/plot-export.webp" loading="lazy" alt="Export menu above the AE UMa curve with Scientific and Theme-based marked as alternative choices.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Export light curve</strong> file picker opens so you can choose where to save the figure.</p></div>
+<nav class="next" aria-label="Continue from Save the light-curve graph"><a class="choice" href="#save-plot">Name and save the plot <span aria-hidden="true">→</span></a><a class="choice" href="#report-menu">Save numerical measurements too <span aria-hidden="true">→</span></a><a class="choice" href="#references">Change which series appear <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="save-plot" aria-labelledby="title-save-plot">
+
+<p class="overline">Save the graph or the measurements <span aria-hidden="true">/</span> Step 22</p>
+<h2 tabindex="-1" id="title-save-plot">Name and save the plot file</h2>
+<p class="before"><strong>Start here</strong> Choose <strong>Scientific</strong> or <strong>Theme-based</strong> in the <a href="#plot-export">plot Export menu</a>.</p>
+<ol class="actions"><li>Navigate to a folder where you keep your results. With PNG selected as the file type, enter <strong>AE-UMa-L.png</strong> in the filename field (1).</li><li>Click <strong>Save</strong> (2). Open your saved image and check the star name, filter, and axes.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/save-plot.webp" aria-label="Enlarge Screenshot for Name and save the plot file">
+<img src="images/photometry/save-plot.webp" loading="lazy" alt="Export light curve file dialog with AE-UMa-L.png entered and the Save button highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A PNG file now contains the light-curve figure. Compare the shape with the exported example below.</p><a class="sample" href="examples/ae-uma-light-curve.png">View the exported AE UMa light curve ↗</a></div>
+<nav class="next" aria-label="Continue from Name and save the plot file"><a class="choice" href="#report-menu">Save the numerical measurements too <span aria-hidden="true">→</span></a><a class="choice" href="#references">Return to the graph <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="report-menu" aria-labelledby="title-report-menu">
+
+<p class="overline">Save the graph or the measurements <span aria-hidden="true">/</span> Step 23</p>
+<h2 tabindex="-1" id="title-report-menu">Export measurements for AE UMa</h2>
+<p class="before"><strong>Start here</strong> Click the <a href="#result">AE UMa row in Source Results</a> first.</p>
+<ol class="actions"><li>Click <strong>File</strong> (1) in the menu bar.</li><li>Choose <strong>Export Report</strong> (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/report-menu.webp" aria-label="Enlarge Screenshot for Export measurements for AE UMa">
+<img src="images/photometry/report-menu.webp" loading="lazy" alt="File menu displaying the Export Report action.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>AAVSO Preflight Review</strong> opens. It checks which rows can go into the file format used by the American Association of Variable Star Observers and identifies missing information.</p></div>
+<nav class="next" aria-label="Continue from Export measurements for AE UMa"><a class="choice" href="#report-review">Review the export summary <span aria-hidden="true">→</span></a><a class="choice" href="#plot-export">Save only a plot instead <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="report-review" aria-labelledby="title-report-review">
+
+<p class="overline">Save the graph or the measurements <span aria-hidden="true">/</span> Step 24</p>
+<h2 tabindex="-1" id="title-report-review">Review the report before saving</h2>
+<p class="before"><strong>Start here</strong> You have opened <a href="#report-menu">File → Export Report</a> for AE UMa.</p>
+<ol class="actions"><li>Read <strong>Rows ready for AAVSO export</strong>, <strong>Skipped measurements</strong>, and <strong>Warnings</strong>. Here 150 rows are ready for the export file and 8 were skipped. CAst lists an unmapped L filter, missing airmass, and a blank observer code. The <strong>Standard rows</strong> count alone cannot establish a Johnson V magnitude from these L frames.</li><li>Choose <strong>Cancel</strong> (1) if you need to correct the setup or revisit the reduction. To keep a local practice report after reading the warnings, click <strong>Export Anyway</strong> (2).</li><li>After export finishes, open the <strong>science</strong> folder beside the input images, then <strong>AE_UMa</strong>. Open <strong>AE_UMa_measurements.csv</strong> for the numbers. <strong>AE_UMa_accepted_observations.csv</strong>, <strong>AE_UMa_rejected_observations.csv</strong>, and <strong>AE_UMa_aavso_preflight.json</strong> document the export decisions.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/photometry/report-review.webp" aria-label="Enlarge Screenshot for Review the report before saving">
+<img src="images/photometry/report-review.webp" loading="lazy" alt="AAVSO Preflight Review from the actual AE UMa run with Cancel and Export Anyway marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The Work Log records the export paths. Saving this bundle is a local operation. Review the warnings and scientific suitability separately before submitting any observation.</p></div>
+<nav class="next" aria-label="Continue from Review the report before saving"><a class="choice" href="#read-table">Review individual rows <span aria-hidden="true">→</span></a><a class="choice" href="#plot-export">Save a display figure <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

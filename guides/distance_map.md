@@ -1,5 +1,7 @@
 # Distance Map
 
+[Open the illustrated Distance Map tutorial](tutorials/distance-map.html). Build a 3D view of the M46 field, change its distance range, or inspect a candidate group. Each task opens directly.
+
 ## Introduction
 
 A star field in an image is flat. Two stars that sit side by side on the sensor can be ten parsecs or ten thousand parsecs away from each other along the line of sight.

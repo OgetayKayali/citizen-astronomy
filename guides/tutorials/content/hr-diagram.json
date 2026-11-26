@@ -1,0 +1,612 @@
+{
+  "title": "HR Diagram",
+  "intro": "What do the stars in your M46 photograph have in common? Match the star field to Gaia, read its color–magnitude diagram, and click any plotted star to find it again in the image.",
+  "dataset": "One plate-solved image. The example uses M46.xisf from the M 46 (Open Cluster) folder. A linear, color-calibrated RGB image supports both catalog and image measurements. A fresh Gaia query requires internet access.",
+  "outcome": "A diagram of M46 with stars you can identify in the photograph, compare by motion or distance, and export as a figure or table.",
+  "heroAlt": "The observed M46 star field beside its Gaia color–magnitude diagram, with blue stars to the left and orange stars to the right.",
+  "groups": [
+    {
+      "title": "Open the M46 image",
+      "steps": [
+        {
+          "id": "launch",
+          "title": "Enter HR Diagram mode",
+          "requires": "Start Citizen Astronomy (CAst).",
+          "actions": [
+            "Find **HR Diagram** on the mode launcher and click its card (1). From an open workspace you can also choose **Mode → HR Diagram**."
+          ],
+          "check": "A reminder lists the image and catalog requirements. If you previously dismissed it, the workspace opens directly.",
+          "image": "launch.webp",
+          "alt": "CAst launcher with the HR Diagram card outlined between Sky Explorer and Distance Map.",
+          "links": [
+            {
+              "id": "prerequisites",
+              "label": "Check the image requirements"
+            },
+            {
+              "id": "open",
+              "label": "I already see the workspace"
+            }
+          ]
+        },
+        {
+          "id": "prerequisites",
+          "title": "Check what the diagram needs",
+          "requires": "[Open HR Diagram mode](#launch).",
+          "actions": [
+            "Have one image of a star field ready. A plate-solved image already records where its pixels fall on the sky. The example uses a color-calibrated RGB image of M46 with that information embedded.",
+            "Allow internet access for a fresh Gaia catalog lookup. Click **OK** (1) to continue."
+          ],
+          "check": "The left side of the workspace offers Open. The diagram fills after CAst matches stars in the selected image.",
+          "image": "prerequisites.webp",
+          "alt": "HR Diagram prerequisites reminder with the OK button marked.",
+          "links": [
+            {
+              "id": "open",
+              "label": "Choose an image"
+            },
+            {
+              "id": "settings-menu",
+              "label": "Match the example’s source limit"
+            }
+          ]
+        },
+        {
+          "id": "open",
+          "title": "Find the Open button",
+          "requires": "You are in the [HR Diagram workspace](#launch).",
+          "actions": [
+            "Click **Open** (1) at the upper left. The keyboard shortcut is **Ctrl+O**."
+          ],
+          "check": "A file picker titled **Select solved RGB source image** opens. It takes one image at a time.",
+          "image": "open.webp",
+          "alt": "Upper-left HR toolbar with Open highlighted beside Update and the Image and Results controls.",
+          "links": [
+            {
+              "id": "choose-file",
+              "label": "Select M46.xisf"
+            }
+          ]
+        },
+        {
+          "id": "choose-file",
+          "title": "Open M46.xisf and build the diagram",
+          "requires": "The [file picker](#open) is open. Use your copy of the example, or substitute a plate-solved image of your own.",
+          "actions": [
+            "Go to the extracted **M46** folder and select **M46.xisf**. You can also type its full path in the file-name box (1).",
+            "Click **Open** (2). Give CAst time to load the image, find stars, look up Gaia matches and measure them. The preparation button reads **Generating...** while it works."
+          ],
+          "check": "The star field appears on the left and colored points fill the diagram on the right. These screenshots use the saved catalog and 10,000 measured rows for this M46 image. Your source limit and catalog coverage can change the number of points. To match the example’s measurement limit, [set HR Max Sources to 10000](#settings-menu) before opening the file.",
+          "image": "choose-file.webp",
+          "alt": "File picker with the actual M46.xisf path and Open button marked.",
+          "links": [
+            {
+              "id": "diagram",
+              "label": "Read the axes"
+            },
+            {
+              "id": "point",
+              "label": "Inspect a single star"
+            },
+            {
+              "id": "roi",
+              "label": "Choose part of the image"
+            },
+            {
+              "id": "motion",
+              "label": "Find stars moving together"
+            }
+          ]
+        },
+        {
+          "id": "settings-menu",
+          "title": "Open the measurement settings",
+          "requires": "You are in the [HR Diagram workspace](#launch). This optional branch reproduces the image-source limit used for the M46 screenshots.",
+          "actions": [
+            "In the main menu, click **Settings** (1), then **Open Settings** (2)."
+          ],
+          "check": "The application settings window opens with tabs for the different workspaces.",
+          "image": "settings-menu.webp",
+          "alt": "Settings menu with the menu title and Open Settings item marked.",
+          "links": [
+            {
+              "id": "source-limit",
+              "label": "Set the example’s source limit"
+            },
+            {
+              "id": "open",
+              "label": "Use the current settings"
+            }
+          ]
+        },
+        {
+          "id": "source-limit",
+          "title": "Set how many matched stars CAst measures",
+          "requires": "[Open Settings](#settings-menu).",
+          "actions": [
+            "Click the **HR Diagram** tab (1). Click the **HR Max Sources** field (2), select its contents, and enter **10000** for the M46 example. The default of 5000 gives a shorter first run.",
+            "Click **Save** (3), then [open the image](#open). If the image is already on screen, reopen it to run preparation with the new limit."
+          ],
+          "check": "CAst measures up to the chosen number of matched sources, starting with the brightest detections. The field catalog can contain more stars than the working table. The table and plot can also show fewer rows after filtering.",
+          "image": "source-limit.webp",
+          "alt": "Settings window with the HR Diagram tab, HR Max Sources set to 10000, and Save marked.",
+          "links": [
+            {
+              "id": "open",
+              "label": "Open M46 with these settings"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Read the stars",
+      "steps": [
+        {
+          "id": "diagram",
+          "title": "Read the color and brightness scales",
+          "requires": "[Open an image and wait for the diagram](#choose-file). Use the default Gaia axes.",
+          "actions": [
+            "Read the bottom scale (1) from left to right. Stars go from hotter and bluer to cooler and redder. The values in kelvin are estimates from the Gaia color index **BP−RP** shown along the top.",
+            "Read the left scale (2) from bottom to top. Higher points represent brighter stars on this luminosity scale. The right scale gives Gaia absolute G magnitude, the brightness a star would have at a common distance. Smaller magnitudes are brighter."
+          ],
+          "check": "A band of stars runs from the upper left toward the lower right. Each point represents a measured star matched to Gaia. The field includes foreground and background stars along the same line of sight.",
+          "image": "diagram.webp",
+          "alt": "M46 color–magnitude diagram with the bottom color-temperature axis and left luminosity axis marked.",
+          "links": [
+            {
+              "id": "point",
+              "label": "Identify one of these points"
+            },
+            {
+              "id": "guides",
+              "label": "Read the stellar class guides"
+            },
+            {
+              "id": "motion",
+              "label": "Look for candidate cluster members"
+            },
+            {
+              "id": "export",
+              "label": "Save the diagram"
+            }
+          ]
+        },
+        {
+          "id": "point",
+          "title": "Choose a star on the plot",
+          "requires": "The [diagram](#diagram) shows colored points.",
+          "actions": [
+            "Click one colored point. The small box (1) marks an orange point used in this example. You can choose any visible point in your own field."
+          ],
+          "check": "CAst circles the selected point, opens its information card and highlights the corresponding source in the image. The example star is APASS J074114.1-145208.1.",
+          "image": "point.webp",
+          "alt": "An individual orange dot outlined on the M46 diagram.",
+          "links": [
+            {
+              "id": "inspect",
+              "label": "Read the star’s measurements"
+            },
+            {
+              "id": "results",
+              "label": "Locate it in the table"
+            }
+          ]
+        },
+        {
+          "id": "inspect",
+          "title": "Connect the plot point to the photograph",
+          "requires": "[Select a point](#point). If the table is open, click **Image** to see the photograph.",
+          "actions": [
+            "Read the selected star’s name, Gaia G magnitude and BP−RP color in its plot card. The orange example star has G = 11.58 and BP−RP = 1.55. Find the selection circle in the source image to see which star produced that point.",
+            "Click **Results** (1) to inspect its table entry. To try the reverse direction later, switch back to **Image** and double-click a measured star in the photograph."
+          ],
+          "check": "The left panel switches to Source Results and Work Log, while the diagram and its star selection remain on the right.",
+          "image": "inspect.webp",
+          "alt": "Selected M46 star with its plot card and source image visible. The Results view button is marked.",
+          "links": [
+            {
+              "id": "results",
+              "label": "Read the selected table row"
+            },
+            {
+              "id": "roi",
+              "label": "Choose a region on the image"
+            }
+          ]
+        },
+        {
+          "id": "results",
+          "title": "Inspect a measurement in Source Results",
+          "requires": "Click **Results** with an [individual star selected](#point).",
+          "actions": [
+            "Find the highlighted row (1). Click a different row to select another star. Scroll across the table for its Gaia magnitude, color, parallax and measured quantities.",
+            "Read the **Work Log** under the table for the source filename, catalog totals and processing notes. Click **Image** (2) to return to the photograph."
+          ],
+          "check": "The selection follows the row you clicked. The Work Log records the full preparation run even when a filter narrows the visible stars.",
+          "image": "results.webp",
+          "alt": "Source Results table with a selected row and the Image view button marked, above the M46 preparation log.",
+          "links": [
+            {
+              "id": "point",
+              "label": "Select a star in the plot"
+            },
+            {
+              "id": "filter-open",
+              "label": "Limit the plotted population"
+            },
+            {
+              "id": "bundle",
+              "label": "Save the plotted measurements"
+            }
+          ]
+        },
+        {
+          "id": "guides",
+          "title": "Compare stars with the stellar class guides",
+          "requires": "The [M46 diagram](#diagram) is visible.",
+          "actions": [
+            "Find **Class Guides** (1) above the plot. If it is already checked, click it once to hide the dashed lines and again to restore them.",
+            "Follow the line labeled **Main Sequence** through the diagonal band. Look above the band toward **Giants** to find stars that appear bright for their color."
+          ],
+          "check": "The labeled guide curves appear and disappear over the same measured stars. They indicate approximate regions where different kinds of stars tend to sit.",
+          "image": "guides.webp",
+          "alt": "Class Guides checkbox marked above M46 and its labeled main sequence, giant and white-dwarf guides.",
+          "links": [
+            {
+              "id": "age",
+              "label": "Explore the age guide"
+            },
+            {
+              "id": "point",
+              "label": "Inspect a star near a guide"
+            }
+          ]
+        },
+        {
+          "id": "age",
+          "title": "Move the illustrative age guide",
+          "requires": "Open the [diagram](#diagram) with its default axes.",
+          "actions": [
+            "Check **Age Guide** (1). Click the adjacent age field (2), enter **1.0** and press **Enter**. One Gyr is one billion years.",
+            "Try a larger value and watch where the curve bends away from the main sequence. Clear **Age Guide** to hide the curve."
+          ],
+          "check": "Changing the age moves the guide while the measured points stay in place. The displayed age is the value you chose for comparison. Determining M46’s age requires additional analysis.",
+          "image": "age.webp",
+          "alt": "Age Guide checkbox and a 1.0 Gyr field outlined above the comparison curve.",
+          "links": [
+            {
+              "id": "guides",
+              "label": "View stellar class guides"
+            },
+            {
+              "id": "filter-open",
+              "label": "Compare a subset of stars"
+            },
+            {
+              "id": "export",
+              "label": "Export the plot"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Choose which stars to compare",
+      "steps": [
+        {
+          "id": "roi",
+          "title": "Draw and apply a circular region",
+          "requires": "[Load the M46 image](#choose-file) and click **Image**. Use the default Circle ROI tool. ROI means region of interest.",
+          "actions": [
+            "Hold **Shift**. Press the left mouse button near the center of the cluster (1) and drag outward to the desired edge (2). Release the mouse button, then release Shift.",
+            "Check the shaded circle on the photograph. Click **Update** (3) to apply it. To redraw, make a fresh Shift-drag before clicking Update."
+          ],
+          "check": "The diagram and table now use the measured stars inside the circle. Update changes to Reset after the draft has been applied.",
+          "image": "roi.webp",
+          "alt": "Draft circle on the M46 image with its drag origin, outer edge and Update button numbered.",
+          "links": [
+            {
+              "id": "roi-reset",
+              "label": "Bring back the full field"
+            },
+            {
+              "id": "motion",
+              "label": "Search this region for shared motion"
+            },
+            {
+              "id": "export",
+              "label": "Save the regional diagram"
+            }
+          ]
+        },
+        {
+          "id": "roi-reset",
+          "title": "Restore all parts of the image",
+          "requires": "An [applied region](#roi) is visible on the photograph.",
+          "actions": [
+            "Find **Reset** (1) at the upper left, beside **Open**. The region summary at the bottom right (2) tells you which part of the field currently contributes stars.",
+            "Click the upper-left **Reset** (1) to clear your applied region. The separate Reset button above the chart restores the plot view."
+          ],
+          "check": "The circle disappears, the diagram uses the full image again and the upper-left button returns to Update. Other active plot filters still apply.",
+          "image": "roi-reset.webp",
+          "alt": "Applied circle and regional diagram, with the upper-left Reset button and footer summary marked.",
+          "links": [
+            {
+              "id": "roi",
+              "label": "Draw another circle"
+            },
+            {
+              "id": "motion",
+              "label": "Search the entire field"
+            },
+            {
+              "id": "filter-open",
+              "label": "Filter by another property"
+            }
+          ]
+        },
+        {
+          "id": "motion",
+          "title": "Find stars that move together",
+          "requires": "Start with the [measured field](#choose-file) or an [applied region](#roi).",
+          "actions": [
+            "If you want to see arrows on the source image, click **Show Motion** (1). They show the direction of each star’s cataloged motion across the sky.",
+            "Click **Find Cluster** (2). CAst compares Gaia proper motions and, when available and enabled, parallaxes to find a group with similar motion."
+          ],
+          "check": "The group is highlighted, **Find Cluster** changes to **Find All**, and **Only Group** becomes available. If no group is found, try drawing a smaller region around the cluster and repeat.",
+          "image": "motion.webp",
+          "alt": "Toolbar detail showing Show Motion and Find Cluster as separate controls.",
+          "links": [
+            {
+              "id": "members",
+              "label": "Isolate the candidate group"
+            },
+            {
+              "id": "roi",
+              "label": "Narrow the search area"
+            }
+          ]
+        },
+        {
+          "id": "members",
+          "title": "Isolate or clear the candidate group",
+          "requires": "[Find Cluster](#motion) has returned a group.",
+          "actions": [
+            "Check **Only Group** (1) to restrict the diagram, table and arrows to the highlighted candidates. Clear the checkbox to see them in context with the other stars.",
+            "Click **Find All** (2) to clear the group selection. If you turned on motion arrows, click **Hide Motion** when you are finished with them."
+          ],
+          "check": "Only Group narrows the diagram to stars that passed the chosen motion criteria. Similar motion is evidence for membership. Some unrelated field stars can satisfy the same criteria.",
+          "image": "members.webp",
+          "alt": "Candidate group displayed on the image and diagram, with Only Group and Find All marked.",
+          "links": [
+            {
+              "id": "filter-open",
+              "label": "Explore a distance interval"
+            },
+            {
+              "id": "export",
+              "label": "Save the selected population"
+            },
+            {
+              "id": "results",
+              "label": "Inspect candidate rows"
+            },
+            {
+              "guide": "distance-map",
+              "id": "find",
+              "label": "Explore candidate motions in Distance Map"
+            }
+          ]
+        },
+        {
+          "id": "filter-open",
+          "title": "Open the star filter",
+          "requires": "[Generate the diagram](#choose-file). To compare the entire field, clear any [region](#roi-reset) or [group](#members) first.",
+          "actions": [
+            "Click **Filter...** (1) above the diagram. When a filter is active, the button says **Filter On**."
+          ],
+          "check": "The Filter stars dialog offers separate switches for color and temperature, distance, luminosity, and stellar class. A switch expands its controls when turned on.",
+          "image": "filter-open.webp",
+          "alt": "Filter button outlined in the HR toolbar.",
+          "links": [
+            {
+              "id": "distance-filter",
+              "label": "Try a distance interval"
+            },
+            {
+              "id": "filter-reset",
+              "label": "Remove existing limits"
+            }
+          ]
+        },
+        {
+          "id": "distance-filter",
+          "title": "Keep stars in a distance interval",
+          "requires": "Open [Filter stars](#filter-open).",
+          "actions": [
+            "Turn the **Distance** switch on (1). Enter **1000** in the **From** field (2) and **2000** in the **to** field (3). The unit pc means parsecs.",
+            "Click **Apply** (4). These distances are estimated from Gaia parallax, the small shift in a star’s position as Earth orbits the Sun."
+          ],
+          "check": "The diagram and table keep stars with usable parallaxes whose estimated distances fall in the interval. The toolbar says Filter On. Stars at similar distances can also belong to unrelated populations.",
+          "image": "distance-filter.webp",
+          "alt": "Distance section expanded with its switch, 1,000 and 2,000 pc fields, and Apply marked.",
+          "links": [
+            {
+              "id": "filter-reset",
+              "label": "Clear the distance selection"
+            },
+            {
+              "id": "results",
+              "label": "Read the retained measurements"
+            },
+            {
+              "id": "export",
+              "label": "Save the filtered plot"
+            }
+          ]
+        },
+        {
+          "id": "filter-reset",
+          "title": "Clear all star-filter switches",
+          "requires": "Click **Filter On** above the diagram to reopen the [filter dialog](#filter-open).",
+          "actions": [
+            "Click **Turn all off** (1) in the lower left. Click **Apply** (2) to return to the diagram."
+          ],
+          "check": "The toolbar returns to Filter... and the star-filter limits are removed. An applied image region or Only Group selection can still narrow the plot.",
+          "image": "filter-reset.webp",
+          "alt": "Filter dialog with Turn all off and Apply marked.",
+          "links": [
+            {
+              "id": "roi-reset",
+              "label": "Clear an applied region"
+            },
+            {
+              "id": "members",
+              "label": "Clear a motion selection"
+            },
+            {
+              "id": "diagram",
+              "label": "Read the full diagram"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Save a figure or a table",
+      "steps": [
+        {
+          "id": "export",
+          "title": "Export a scientific figure",
+          "requires": "A [measured diagram](#diagram) is on screen. Choose the region and filters you want to include first.",
+          "actions": [
+            "Click **Export** (1) at the upper right of the plot. Choose **Scientific** (2) to save a clean scientific figure.",
+            "For a figure styled like the current chart, choose **Snapshot** from the same menu."
+          ],
+          "check": "A Save dialog opens. The scientific plot export uses the currently selected population.",
+          "image": "export.webp",
+          "alt": "Plot Export menu with its button and Scientific item marked.",
+          "links": [
+            {
+              "id": "save-figure",
+              "label": "Name and save the figure"
+            },
+            {
+              "id": "pair",
+              "label": "Save the image with the plot"
+            },
+            {
+              "id": "bundle",
+              "label": "Save the measurements as well"
+            }
+          ]
+        },
+        {
+          "id": "pair",
+          "title": "Export the image and diagram together",
+          "requires": "[Open M46](#choose-file) and select the image view and plotted population you want to show.",
+          "actions": [
+            "Click plot **Export** (1), then **Image + Plot...** (2) to make a paired PNG. To keep only the annotated photograph, choose **Source Image...** in the same menu."
+          ],
+          "check": "A Save dialog opens for your PNG. The paired figure includes both the current source-image view and the chart.",
+          "image": "pair.webp",
+          "alt": "Plot Export control and Image + Plot menu item marked.",
+          "links": [
+            {
+              "id": "save-figure",
+              "label": "Choose the output file"
+            },
+            {
+              "id": "bundle",
+              "label": "Keep a scientific plot and table too"
+            }
+          ]
+        },
+        {
+          "id": "save-figure",
+          "title": "Name and save the figure",
+          "requires": "A Save dialog is open from [Scientific](#export), Snapshot or [Image + Plot](#pair).",
+          "actions": [
+            "Choose an output folder you can find again. Enter a new filename (1), such as **M46-diagram.png** when the file type is PNG.",
+            "Click **Save** (2). Open the file in the output folder to inspect the figure."
+          ],
+          "check": "The saved figure is available outside CAst. For a table of the plotted measurements, use the File menu export.",
+          "image": "save-figure.webp",
+          "alt": "Save dialog with M46-diagram.png and Save marked.",
+          "links": [
+            {
+              "id": "bundle",
+              "label": "Export the plotted measurements"
+            },
+            {
+              "id": "roi",
+              "label": "Make a figure for another region"
+            }
+          ]
+        },
+        {
+          "id": "bundle",
+          "title": "Export the science table and both figures",
+          "requires": "A [diagram](#diagram) with plotted stars is open. Apply any [region](#roi) or [filters](#filter-open) that you want reflected in the output.",
+          "actions": [
+            "Open **File** (1) in the main menu. Click **Export** (2) in that menu to start the HR science bundle."
+          ],
+          "check": "CAst asks for a folder. The bundle contains an annotated source image, a scientific HR diagram and a CSV with rows for the plotted stars.",
+          "image": "bundle.webp",
+          "alt": "Main File menu with File and its Export action outlined.",
+          "links": [
+            {
+              "id": "bundle-folder",
+              "label": "Choose the destination folder"
+            },
+            {
+              "id": "export",
+              "label": "Save only the diagram"
+            }
+          ]
+        },
+        {
+          "id": "bundle-folder",
+          "title": "Choose a folder for the bundle",
+          "requires": "The folder picker opened from [File → Export](#bundle).",
+          "actions": [
+            "Navigate to your desired parent directory. You can enter its path in the folder field (1).",
+            "Click **Choose** (2). The native Windows folder picker may label this button **Select Folder**."
+          ],
+          "check": "A small Export Name dialog appears. CAst will create a named subfolder within the directory you selected.",
+          "image": "bundle-folder.webp",
+          "alt": "Folder picker with the directory field and Choose button outlined.",
+          "links": [
+            {
+              "id": "bundle-name",
+              "label": "Name the bundle"
+            }
+          ]
+        },
+        {
+          "id": "bundle-name",
+          "title": "Name and inspect the three output files",
+          "requires": "[Choose a destination folder](#bundle-folder).",
+          "actions": [
+            "Type a new name such as **M46-stars** in the export-name field (1). Click **OK** (2).",
+            "Open the new **M46-stars** subfolder. Open the file ending in **_science_table.csv** in a spreadsheet to inspect the plotted stars."
+          ],
+          "check": "For the example PNG settings, the folder contains M46-stars_source_image.png, M46-stars_hr_diagram.png and M46-stars_science_table.csv. With the full image and default plot settings, this M46 export contains 9,704 plotted rows from the 10,000 measured stars. The Work Log records the export.",
+          "image": "bundle-name.webp",
+          "alt": "Export Name dialog showing M46-stars and the OK button.",
+          "links": [
+            {
+              "id": "filter-open",
+              "label": "Export a different selection"
+            },
+            {
+              "id": "point",
+              "label": "Return to an individual star"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

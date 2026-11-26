@@ -39,6 +39,7 @@ class StandardMagnitudeTest(unittest.TestCase):
 
     def test_resolve_band_catalog_magnitude_prefers_vsp_over_apass_over_gaia(self) -> None:
         star = CatalogStar("gaia-dr3", "g1", "G1", 10.0, 20.0, 12.5, False)
+        set_band_magnitude(star, "G", 12.5, source="gaia-g")
         set_band_magnitude(star, "V", 12.9, source="gaia-g")
         set_band_magnitude(star, "V", 12.4, error=0.03, source="apass")
         set_band_magnitude(star, "V", 12.1, error=0.02, source="vsp")
@@ -311,7 +312,7 @@ class StandardMagnitudeTest(unittest.TestCase):
         self.assertEqual(rows[0].source_name, "000-BBX-619")
         self.assertEqual(catalog_star.name, "000-BBX-619")
 
-    def test_apply_differential_photometry_uses_gaia_g_fallback_for_standard_on_bv_filters(self) -> None:
+    def test_apply_differential_photometry_keeps_gaia_only_calibration_out_of_standard_bands(self) -> None:
         root = Path("C:/synthetic")
         file_path = root / "frame_b.fit"
         observation_time = datetime(2026, 3, 16, 1, 0, 0)
@@ -363,9 +364,9 @@ class StandardMagnitudeTest(unittest.TestCase):
         target = next(item for item in updated if item.source_id == "manual-target")
 
         self.assertIsNotNone(target.differential_magnitude)
-        self.assertIsNotNone(target.standard_magnitude)
-        self.assertAlmostEqual(target.standard_magnitude or 0.0, -7.5 + (11.0 - (-8.2)), places=6)
-        self.assertEqual(target.standard_catalog_source, "gaia-g")
+        self.assertIsNone(target.standard_magnitude)
+        self.assertEqual(target.standard_zero_point_source_count, 0)
+        self.assertIsNone(target.standard_catalog_source)
 
     def test_apply_differential_photometry_computes_standard_from_band_mags(self) -> None:
         root = Path("C:/synthetic")

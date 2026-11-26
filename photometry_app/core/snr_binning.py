@@ -207,7 +207,7 @@ def _bin_measurement_series(
     object_type: str,
     settings: SnrBinningSettings,
 ) -> SnrBinningSeriesResult:
-    ordered_rows = sorted(rows, key=lambda item: (item.observation_time or _MIN_UTC_DATETIME, item.file_path.name))
+    ordered_rows = sorted(rows, key=lambda item: (item.midpoint_utc or _MIN_UTC_DATETIME, item.file_path.name))
     usable_rows = [item for item in ordered_rows if measurement_has_usable_value(item)]
     if len(usable_rows) < 2:
         return SnrBinningSeriesResult(
@@ -400,7 +400,7 @@ def _target_frames_per_bin(rows: list[PhotometryMeasurement], target_snr: float)
 
 
 def _median_cadence_seconds(rows: list[PhotometryMeasurement]) -> float | None:
-    timestamps = [item.observation_time for item in rows if item.observation_time is not None]
+    timestamps = [item.midpoint_utc for item in rows if item.midpoint_utc is not None]
     if len(timestamps) < 2:
         return None
     ordered = sorted(timestamps)
@@ -483,6 +483,15 @@ def _aggregate_measurement_bin(
         anchor,
         transformation={"status": "unavailable", "reason": "SNR binning changes the observations; transform matched original B/V exposures instead."} if anchor.transformation else {},
         observation_time=timestamp,
+        # The timestamp is already the exposure-weighted midpoint of the bin.
+        exposure_seconds=0.0,
+        standard_magnitude=None,
+        standard_magnitude_error=None,
+        standard_zero_point_magnitude=None,
+        standard_zero_point_magnitude_error=None,
+        standard_zero_point_source_count=0,
+        standard_catalog_band=None,
+        standard_catalog_source=None,
         flux=flux_result.get("flux"),
         flux_error=flux_result.get("flux_error"),
         instrumental_magnitude=flux_result.get("instrumental_magnitude"),
@@ -744,16 +753,19 @@ def _sigma_clip_measurements(rows: list[PhotometryMeasurement], sigma_threshold:
 
 
 def _average_observation_time(rows: list[PhotometryMeasurement]) -> datetime | None:
-    timestamps = [row.observation_time for row in rows if row.observation_time is not None]
-    if not timestamps:
+    dated = [row for row in rows if row.midpoint_utc is not None]
+    if not dated:
         return None
-    epoch = min(timestamps)
-    offsets = [(timestamp - epoch).total_seconds() for timestamp in timestamps]
-    return epoch + timedelta(seconds=float(np.mean(offsets)))
+    epoch = min(row.midpoint_utc for row in dated)
+    offsets = [(row.midpoint_utc - epoch).total_seconds() for row in dated]
+    weights = [row.duration_seconds for row in dated]
+    if not all(weight is not None and weight > 0 for weight in weights):
+        weights = None
+    return epoch + timedelta(seconds=float(np.average(offsets, weights=weights)))
 
 
 def _bin_duration_seconds(rows: list[PhotometryMeasurement], cadence_seconds: float) -> float:
-    timestamps = [row.observation_time for row in rows if row.observation_time is not None]
+    timestamps = [row.midpoint_utc for row in rows if row.midpoint_utc is not None]
     if len(timestamps) >= 2:
         ordered = sorted(timestamps)
         return max(0.0, (ordered[-1] - ordered[0]).total_seconds())

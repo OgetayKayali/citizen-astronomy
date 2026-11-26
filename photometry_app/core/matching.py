@@ -4,6 +4,8 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 import math
 from statistics import median
+from datetime import timedelta
+from photometry_app.core.standard_magnitude import get_band_magnitudes, normalize_photometric_band
 
 import numpy as np
 from astropy.coordinates import SkyCoord
@@ -41,6 +43,7 @@ def select_reference_stars(
     maximum_magnitude: float | None = None,
     per_target_count: int | None = None,
     target_stars: list[CatalogStar] | None = None,
+    filter_names: tuple[str, ...] = (),
 ) -> list[CatalogStar]:
     """Select Gaia comparison stars for differential photometry.
 
@@ -82,7 +85,11 @@ def select_reference_stars(
     eligible = _exclude_stars_near_variables(magnitude_filtered, variable_coords, exclusion_radius_arcsec)
 
     if use_per_target:
-        return _select_per_target_reference_stars(eligible, pool_targets, int(per_target_count))
+        selected = {}
+        for band in sorted(set(filter_names) or {""}):
+            for star in _select_per_target_reference_stars(eligible, pool_targets, int(per_target_count), band):
+                selected[star.source_id] = star
+        return list(selected.values())
 
     candidates = sorted(
         eligible,
@@ -97,71 +104,84 @@ def apply_differential_photometry(
 ) -> list[PhotometryMeasurement]:
     grouped_references: dict[tuple[str, str | None], list[PhotometryMeasurement]] = defaultdict(list)
 
+    measurements = [_reset_quality(row, reset_ensemble=True) for row in measurements]
+    flux_samples = defaultdict(list)
+    snr_samples = defaultdict(list)
     for measurement in measurements:
+        if (not measurement.excluded_from_analysis and not measurement.is_saturated
+                and not measurement.is_near_saturated and not _has_hard_quality_flag(measurement.flags)
+                and measurement.snr is not None and np.isfinite(measurement.snr) and measurement.snr > 0):
+            snr_samples[_baseline_key(measurement)].append(measurement.snr)
         if (
             measurement.is_reference
             and not measurement.is_check
             and measurement.flux
             and measurement.flux > 0
+            and not measurement.excluded_from_analysis
             and not measurement.is_saturated
             and not measurement.is_near_saturated
             and not _has_hard_quality_flag(measurement.flags)
         ):
             key = (str(measurement.file_path), measurement.filter_name)
             grouped_references[key].append(measurement)
+            flux_samples[_baseline_key(measurement)].append(measurement.flux / (measurement.duration_seconds or 1.0))
+
+    typical_snr = {key: median(values) for key, values in snr_samples.items() if len(values) >= 3}
+    baselines = {key: median(values) for key, values in flux_samples.items() if len(values) >= 3}
+    field_baselines = defaultdict(list)
+    for key, baseline in baselines.items():
+        field_baselines[key[:-1]].append(baseline)
+    field_scale = {key: median(values) for key, values in field_baselines.items()}
 
     from photometry_app.core.standard_magnitude import compute_standard_magnitude_context
 
     updated: list[PhotometryMeasurement] = []
     for measurement in measurements:
-        differential_magnitude = measurement.differential_magnitude
-        differential_magnitude_error = measurement.differential_magnitude_error
-        calibrated_magnitude = measurement.calibrated_magnitude
-        calibrated_magnitude_error = measurement.calibrated_magnitude_error
-        zero_point_magnitude = measurement.zero_point_magnitude
-        zero_point_magnitude_error = measurement.zero_point_magnitude_error
-        zero_point_source_count = measurement.zero_point_source_count
-        standard_magnitude = measurement.standard_magnitude
-        standard_magnitude_error = measurement.standard_magnitude_error
-        standard_zero_point_magnitude = measurement.standard_zero_point_magnitude
-        standard_zero_point_magnitude_error = measurement.standard_zero_point_magnitude_error
-        standard_zero_point_source_count = measurement.standard_zero_point_source_count
-        standard_catalog_band = measurement.standard_catalog_band
-        standard_catalog_source = measurement.standard_catalog_source
+        if measurement.is_reference and not measurement.is_check:
+            updated.append(measurement)
+            continue
+        differential_magnitude = differential_magnitude_error = None
+        calibrated_magnitude = calibrated_magnitude_error = None
+        zero_point_magnitude = zero_point_magnitude_error = None
+        standard_magnitude = standard_magnitude_error = None
+        standard_zero_point_magnitude = standard_zero_point_magnitude_error = None
+        zero_point_source_count = standard_zero_point_source_count = 0
+        standard_catalog_band = standard_catalog_source = None
         flags = list(measurement.flags)
-        comparison_source_ids = list(measurement.comparison_source_ids)
-        comparison_source_names = list(measurement.comparison_source_names)
-        comparison_reference_flux = measurement.comparison_reference_flux
-        comparison_scatter = measurement.comparison_scatter
-        quality_weight = measurement.quality_weight
-        if (not measurement.is_reference or measurement.is_check) and measurement.flux and measurement.flux > 0:
-            calibrated_magnitude = None
-            calibrated_magnitude_error = None
-            zero_point_magnitude = None
-            zero_point_magnitude_error = None
-            zero_point_source_count = 0
-            standard_magnitude = None
-            standard_magnitude_error = None
-            standard_zero_point_magnitude = None
-            standard_zero_point_magnitude_error = None
-            standard_zero_point_source_count = 0
-            standard_catalog_band = None
-            standard_catalog_source = None
+        requested_ids = measurement.requested_comparison_source_ids
+        if requested_ids is None:
+            requested_ids = list(measurement.comparison_source_ids)
+        comparison_source_ids = []
+        comparison_source_names = []
+        comparison_reference_flux = comparison_scatter = quality_weight = None
+        if measurement.flux and measurement.flux > 0:
             key = (str(measurement.file_path), measurement.filter_name)
             reference_rows = grouped_references.get(key, [])
-            if comparison_source_ids:
-                nearby_references = [item for item in reference_rows if item.source_id in comparison_source_ids]
-                nearby_references.sort(key=lambda item: comparison_source_ids.index(item.source_id))
+            if requested_ids:
+                nearby_references = [item for item in reference_rows if item.source_id in requested_ids]
+                nearby_references.sort(key=lambda item: requested_ids.index(item.source_id))
             else:
                 nearby_references = _select_comparison_measurements(
                     reference_rows,
                     measurement,
                     nearby_reference_count,
+                    typical_snr,
                 )
             if nearby_references:
                 comparison_source_ids = [item.source_id for item in nearby_references]
                 comparison_source_names = [item.source_name for item in nearby_references]
-                reference_flux, reference_flux_error, comparison_scatter = _weighted_reference_flux(nearby_references)
+                # Express references in a common flux scale before averaging. This
+                # removes intrinsic luminosity while preserving frame transparency.
+                ensemble = nearby_references
+                keys = [_baseline_key(row) for row in ensemble]
+                ensemble_size = len(requested_ids) if requested_ids else nearby_reference_count
+                if ensemble_size > 1 and all(key in baselines for key in keys):
+                    scales = [field_scale[key[:-1]] / baselines[key] for key in keys]
+                    ensemble = [replace(row, flux=row.flux * scale,
+                                        flux_error=None if row.flux_error is None else row.flux_error * scale)
+                                for row, scale in zip(ensemble, scales)]
+                    comparison_scatter = _fractional_reference_scatter(ensemble)
+                reference_flux, reference_flux_error = _weighted_reference_flux(ensemble)
                 if reference_flux > 0:
                     comparison_reference_flux = reference_flux
                     differential_magnitude = -2.5 * math.log10(measurement.flux / reference_flux)
@@ -207,6 +227,7 @@ def apply_differential_photometry(
                 standard_catalog_band=standard_catalog_band,
                 standard_catalog_source=standard_catalog_source,
                 flags=_deduplicate_strings(flags),
+                requested_comparison_source_ids=list(requested_ids),
                 comparison_source_ids=comparison_source_ids,
                 comparison_source_names=comparison_source_names,
                 comparison_reference_flux=comparison_reference_flux,
@@ -218,6 +239,40 @@ def apply_differential_photometry(
     return updated
 
 
+def _baseline_key(row: PhotometryMeasurement) -> tuple:
+    midpoint = row.midpoint_utc
+    night = (midpoint - timedelta(hours=12)).date() if midpoint else None
+    return row.object_name, row.filter_name, night, row.source_id
+
+
+def _reset_quality(row: PhotometryMeasurement, *, reset_ensemble: bool) -> PhotometryMeasurement:
+    # Retain acquisition defects and user exclusions when the ensemble is edited.
+    flag_prefixes = ("Low SNR (", "Large centroid shift (", "Comparison stars disagree (",
+                     "Global robust outlier (", "Local Hampel outlier (")
+    flags = [flag for flag in row.flags if not flag.startswith(flag_prefixes)]
+    missing = "No nearby reference stars with positive flux."
+    was_missing = missing in flags
+    if reset_ensemble and was_missing:
+        flags.remove(missing)
+    def scored_reason(reason):
+        return (reason in ("Point rejected by global MAD outlier detection.",
+                           "Point rejected by local Hampel outlier detection.",
+                           "Comparison-star agreement is too poor for the cleaned view.",
+                           "Quality score fell below the cleaned-view threshold.")
+                or (reason.startswith("SNR ") and reason.endswith(" is below the analysis threshold."))
+                or (reason.startswith("Centroid shift ") and reason.endswith(" is too large for the cleaned view.")))
+
+    reasons = [reason for reason in row.exclusion_reasons if not scored_reason(reason)]
+    derived_exclusion = was_missing or len(reasons) != len(row.exclusion_reasons)
+    return replace(row, flags=flags, exclusion_reasons=reasons,
+                   excluded_from_analysis=row.excluded_from_analysis and (bool(reasons) or not derived_exclusion))
+
+
+def _time_sort_key(row: PhotometryMeasurement) -> tuple:
+    midpoint = row.midpoint_utc
+    return midpoint is None, midpoint, str(row.file_path)
+
+
 def apply_measurement_quality_analysis(
     measurements: list[PhotometryMeasurement],
     min_snr: float = 5.0,
@@ -225,13 +280,13 @@ def apply_measurement_quality_analysis(
     outlier_sigma: float = 4.5,
     hampel_window: int = 2,
 ) -> list[PhotometryMeasurement]:
-    grouped: dict[tuple[str, str | None], list[PhotometryMeasurement]] = defaultdict(list)
-    for measurement in measurements:
-        grouped[(measurement.source_id, measurement.filter_name)].append(measurement)
+    grouped: dict[tuple, list[PhotometryMeasurement]] = defaultdict(list)
+    for row in measurements:
+        grouped[_baseline_key(row)].append(_reset_quality(row, reset_ensemble=False))
 
     updated_lookup: dict[tuple[str, str | None, str, str], PhotometryMeasurement] = {}
     for group_rows in grouped.values():
-        ordered_rows = sorted(group_rows, key=lambda row: row.observation_time or row.file_path.name)
+        ordered_rows = sorted(group_rows, key=_time_sort_key)
         analysis_values = [_series_analysis_value(row) for row in ordered_rows]
         finite_values = [value for value in analysis_values if value is not None and np.isfinite(value)]
         global_center = float(np.median(finite_values)) if finite_values else None
@@ -241,7 +296,7 @@ def apply_measurement_quality_analysis(
             flags = list(measurement.flags)
             exclusion_reasons = list(measurement.exclusion_reasons)
             quality_score = 1.0
-            excluded = measurement.excluded_from_analysis
+            excluded = measurement.excluded_from_analysis or measurement.is_saturated
 
             snr = measurement.snr
             if snr is not None and np.isfinite(snr):
@@ -274,14 +329,18 @@ def apply_measurement_quality_analysis(
             robust_z = None
             if value is not None and global_center is not None and global_scale is not None and global_scale > 0:
                 robust_z = abs(value - global_center) / global_scale
-                if robust_z > outlier_sigma:
+                if robust_z > outlier_sigma and excluded:
                     flags.append(f"Global robust outlier (z={robust_z:.2f}).")
-                    exclusion_reasons.append("Point rejected by global MAD outlier detection.")
+                    # A coherent variable-star signal can be far from the global median.
                     quality_score -= 0.28
-                    excluded = True
 
             hampel_z = _hampel_score(analysis_values, index, hampel_window)
-            if hampel_z is not None and hampel_z > outlier_sigma:
+            globally_unusual = robust_z is not None and robust_z > outlier_sigma
+            if hampel_z is not None and hampel_z > outlier_sigma and (
+                excluded or (globally_unusual and _isolated_excursion(
+                    ordered_rows, analysis_values, index, outlier_sigma, global_center, global_scale
+                ))
+            ):
                 flags.append(f"Local Hampel outlier (z={hampel_z:.2f}).")
                 exclusion_reasons.append("Point rejected by local Hampel outlier detection.")
                 quality_score -= 0.28
@@ -317,24 +376,42 @@ def _exclude_stars_near_variables(
 ) -> list[CatalogStar]:
     if variable_coords is None or not stars:
         return list(stars)
-    kept: list[CatalogStar] = []
-    for star in stars:
-        coord = SkyCoord(star.ra_deg * u.deg, star.dec_deg * u.deg)
-        if coord.separation(variable_coords).arcsecond.min() < exclusion_radius_arcsec:
-            continue
-        kept.append(star)
-    return kept
+    coords = SkyCoord([star.ra_deg for star in stars] * u.deg, [star.dec_deg for star in stars] * u.deg)
+    _, separation, _ = coords.match_to_catalog_sky(variable_coords)
+    return [star for star, keep in zip(stars, separation.arcsec >= exclusion_radius_arcsec) if keep]
+
+
+def _reference_rank(reference, target, filter_name, fallback_key, low_precision=False):
+    band = normalize_photometric_band(filter_name)
+    entry = get_band_magnitudes(reference).get(band, {})
+    source_rank = {"vsp": 0, "apass": 1}.get(entry.get("source"), 2)
+    if source_rank == 2:
+        return (source_rank, fallback_key)
+    delta_mag, separation, *_ = fallback_key
+    error = _finite_magnitude(entry.get("error"))
+    color_rank = 0
+    if str(filter_name).lower() in {"l", "lum", "luminance", "clear", "unfiltered", "cv", "cr"}:
+        def color(star):
+            return _finite_magnitude(star.metadata.get("bp_rp") if isinstance(star, CatalogStar) else star.gaia_bp_rp)
+        target_color, reference_color = color(target), color(reference)
+        if target_color is not None:
+            color_rank = int(reference_color is None or abs(target_color - reference_color) > 0.5)
+    # Use local, similar-brightness stars with well-measured catalogue magnitudes.
+    # In a broad clear band, also prefer a similar spectral colour when available.
+    return (source_rank, error is None or error > 0.05, delta_mag > 1.5, low_precision, color_rank,
+            separation if delta_mag <= 1.5 else delta_mag, fallback_key)
 
 
 def _select_per_target_reference_stars(
     eligible: list[CatalogStar],
     variable_stars: list[CatalogStar],
     per_target_count: int,
+    band: str | None = None,
 ) -> list[CatalogStar]:
     count = max(1, int(per_target_count))
     selected_by_id: dict[str, CatalogStar] = {}
     for variable in variable_stars:
-        for star in _rank_reference_candidates_for_target(eligible, variable)[:count]:
+        for star in _rank_reference_candidates_for_target(eligible, variable, band)[:count]:
             selected_by_id[star.source_id] = star
     return list(selected_by_id.values())
 
@@ -342,12 +419,13 @@ def _select_per_target_reference_stars(
 def _rank_reference_candidates_for_target(
     eligible: list[CatalogStar],
     target: CatalogStar,
+    band: str | None = None,
 ) -> list[CatalogStar]:
     target_magnitude = _finite_magnitude(target.magnitude)
     candidates = [star for star in eligible if star.source_id != target.source_id]
     return sorted(
         candidates,
-        key=lambda star: _catalog_reference_sort_key(star, target, target_magnitude),
+        key=lambda star: _reference_rank(star, target, band, _catalog_reference_sort_key(star, target, target_magnitude)),
     )
 
 
@@ -370,14 +448,21 @@ def _select_comparison_measurements(
     references: list[PhotometryMeasurement],
     target: PhotometryMeasurement,
     nearby_reference_count: int,
+    typical_snr: dict[tuple, float] | None = None,
 ) -> list[PhotometryMeasurement]:
-    """Pick comparison stars for one target: closest catalog magnitude, then sky distance."""
+    """Select usable comparisons using the same priorities as the catalog pool."""
     usable = [reference for reference in references if not _has_hard_quality_flag(reference.flags)]
     target_magnitude = _finite_magnitude(target.catalog_magnitude)
-    ordered = sorted(
-        usable,
-        key=lambda measurement: _comparison_measurement_sort_key(measurement, target, target_magnitude),
-    )
+    precision = typical_snr or {}
+    # Seek references at least as precise as the target, up to 0.02 mag
+    # instrumental error. Run medians prevent noise-driven ensemble switching.
+    minimum_snr = min(precision.get(_baseline_key(target), 0.0), (2.5 / math.log(10)) / 0.02)
+    def rank(row):
+        snr = precision.get(_baseline_key(row))
+        return _reference_rank(row, target, target.filter_name,
+                               _comparison_measurement_sort_key(row, target, target_magnitude),
+                               low_precision=minimum_snr > 0 and (snr is None or snr < minimum_snr))
+    ordered = sorted(usable, key=rank)
     return ordered[: max(0, int(nearby_reference_count))]
 
 
@@ -431,13 +516,13 @@ def maximum_or_default(value: float, default: float) -> float:
 
 
 def _catalog_sky_distance_squared(first: CatalogStar, second: CatalogStar) -> float:
-    delta_ra = first.ra_deg - second.ra_deg
+    delta_ra = ((first.ra_deg - second.ra_deg + 180) % 360 - 180) * math.cos(math.radians((first.dec_deg + second.dec_deg) / 2))
     delta_dec = first.dec_deg - second.dec_deg
     return (delta_ra * delta_ra) + (delta_dec * delta_dec)
 
 
 def _sky_distance_squared(first: PhotometryMeasurement, second: PhotometryMeasurement) -> float:
-    delta_ra = first.ra_deg - second.ra_deg
+    delta_ra = ((first.ra_deg - second.ra_deg + 180) % 360 - 180) * math.cos(math.radians((first.dec_deg + second.dec_deg) / 2))
     delta_dec = first.dec_deg - second.dec_deg
     return (delta_ra * delta_ra) + (delta_dec * delta_dec)
 
@@ -449,43 +534,33 @@ def _reference_flux_error(references: list[PhotometryMeasurement]) -> float | No
     return math.sqrt(sum(error * error for error in valid_errors)) / len(valid_errors)
 
 
-def _weighted_reference_flux(references: list[PhotometryMeasurement]) -> tuple[float, float | None, float | None]:
+def _weighted_reference_flux(references: list[PhotometryMeasurement]) -> tuple[float, float | None]:
     valid_rows = [item for item in references if item.flux is not None and item.flux > 0]
     if not valid_rows:
-        return 0.0, None, None
+        return 0.0, None
 
     weighted_rows = [item for item in valid_rows if item.flux_error is not None and item.flux_error > 0]
     if not weighted_rows:
         reference_flux = median(item.flux for item in valid_rows if item.flux is not None)
-        return reference_flux, _reference_flux_error(valid_rows), _fractional_reference_scatter(valid_rows)
+        return reference_flux, _reference_flux_error(valid_rows)
 
     weights = np.asarray([1.0 / (item.flux_error * item.flux_error) for item in weighted_rows], dtype=float)
     fluxes = np.asarray([item.flux for item in weighted_rows if item.flux is not None], dtype=float)
     weight_sum = float(np.sum(weights))
     if not np.isfinite(weight_sum) or weight_sum <= 0:
         reference_flux = median(item.flux for item in valid_rows if item.flux is not None)
-        return reference_flux, _reference_flux_error(valid_rows), _fractional_reference_scatter(valid_rows)
+        return reference_flux, _reference_flux_error(valid_rows)
 
     reference_flux = float(np.sum(fluxes * weights) / weight_sum)
     reference_error = math.sqrt(1.0 / weight_sum)
-    return reference_flux, reference_error, _fractional_reference_scatter(weighted_rows, weights=weights)
+    return reference_flux, reference_error
 
 
-def _fractional_reference_scatter(
-    references: list[PhotometryMeasurement],
-    weights: np.ndarray | None = None,
-) -> float | None:
-    fluxes = np.asarray([item.flux for item in references if item.flux is not None and item.flux > 0], dtype=float)
+def _fractional_reference_scatter(references: list[PhotometryMeasurement]) -> float | None:
+    fluxes = np.asarray([row.flux for row in references], dtype=float)
     if fluxes.size < 2:
         return None
-    center = float(np.average(fluxes, weights=weights)) if weights is not None and weights.size == fluxes.size else float(np.median(fluxes))
-    if not np.isfinite(center) or center <= 0:
-        return None
-    if weights is not None and weights.size == fluxes.size:
-        variance = float(np.average((fluxes - center) ** 2, weights=weights))
-    else:
-        variance = float(np.var(fluxes))
-    return math.sqrt(max(0.0, variance)) / center
+    return float(np.std(fluxes) / np.mean(fluxes))
 
 
 def _differential_magnitude_error(
@@ -810,13 +885,13 @@ def _build_light_curve_series_from_rows(
     role: str = "target",
     frame_contexts: dict[tuple[str, str | None], _OverviewFrameContext] | None = None,
 ) -> LightCurveSeries:
-    ordered_rows = sorted(rows, key=lambda row: row.observation_time or row.file_path.name)
+    ordered_rows = sorted(rows, key=_time_sort_key)
     first = ordered_rows[0]
     points = [
         _overview_light_curve_point_from_row(row, role=role, frame_contexts=frame_contexts)
         if role in {"comparison", "check"} and frame_contexts
         else LightCurvePoint(
-            observation_time=row.observation_time,
+            observation_time=row.midpoint_utc,
             file_path=row.file_path,
             differential_magnitude=row.differential_magnitude,
             instrumental_magnitude=row.instrumental_magnitude,
@@ -913,7 +988,7 @@ def _overview_light_curve_point_from_row(
                 else:
                     standard_magnitude_error = float(target_mag_error)
     return LightCurvePoint(
-        observation_time=row.observation_time,
+        observation_time=row.midpoint_utc,
         file_path=row.file_path,
         differential_magnitude=differential_magnitude,
         instrumental_magnitude=row.instrumental_magnitude,
@@ -936,7 +1011,7 @@ def _overview_light_curve_point_from_row(
 
 def _measurement_key(measurement: PhotometryMeasurement) -> tuple[str, str | None, str, str]:
     observation = measurement.observation_time.isoformat(sep=" ") if measurement.observation_time else "-"
-    return (measurement.source_id, measurement.filter_name, measurement.file_path.name, observation)
+    return (measurement.source_id, measurement.filter_name, str(measurement.file_path), observation)
 
 
 def _series_analysis_value(measurement: PhotometryMeasurement) -> float | None:
@@ -960,6 +1035,27 @@ def _robust_scale(values: list[float]) -> float | None:
     return 1.4826 * mad
 
 
+def _isolated_excursion(rows, values, index, sigma, center, scale) -> bool:
+    if index == 0 or index + 1 == len(rows):
+        return False
+    left, value, right = values[index - 1:index + 2]
+    if left is None or value is None or right is None:
+        return False
+    # A resolved eclipse or pulsation can have a sharp, genuine extremum.
+    if all((neighbor - center) * (value - center) > 0 and abs(neighbor - center) > sigma * scale
+           for neighbor in (left, right)):
+        return False
+    t0, t1, t2 = (row.midpoint_utc for row in rows[index - 1:index + 2])
+    if t0 is None or t1 is None or t2 is None:
+        return False
+    before, after = (t1 - t0).total_seconds(), (t2 - t1).total_seconds()
+    if min(before, after) <= 0 or max(before, after) > 3 * min(before, after):
+        return False
+    noise = sigma * (rows[index].differential_magnitude_error or 0.0)
+    return ((value - left) * (value - right) > 0
+            and min(abs(value - left), abs(value - right)) > max(noise, abs(left - right)))
+
+
 def _hampel_score(values: list[float | None], index: int, window: int) -> float | None:
     start = max(0, index - window)
     end = min(len(values), index + window + 1)
@@ -980,6 +1076,9 @@ def _has_hard_quality_flag(flags: list[str]) -> bool:
         "no nearby reference stars with positive flux",
         "non-2d image",
         "saturated",
+        "invalid osc samples",
+        "fallback is disabled",
+        "osc uncertainty unavailable",
     )
     return any(any(marker in flag.lower() for marker in hard_markers) for flag in flags)
 

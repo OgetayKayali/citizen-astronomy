@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Where does gas collect as it flows through a galaxy cluster? Start with the glowing filaments, freeze the flow, and turn the cube to inspect a dense knot. You can also jump straight to the expanding-universe model, record a run for replay, or save an image or movie.">
+<title>Cluster Flow | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=observations-3"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>Cluster Flow</span></nav>
+<header class="guide-head"><h1>Cluster Flow</h1><p class="preset-note">CAst for Windows with OpenGL 3.3 support. The simulation builds its own gas volume. You can start without any telescope images.</p></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Open the lab and look around</h3><ol><li><a href="#launch">Open Cluster Flow</a></li><li><a href="#pause">Freeze the gas to examine a knot</a></li><li><a href="#orbit">Turn the volume and look inside</a></li><li><a href="#rotate">Rotate the camera automatically</a></li></ol></section><section class="step-group"><h3>Choose what the picture shows</h3><ol><li><a href="#field">Switch from density to temperature</a></li><li><a href="#slice">Cut a thin slab through the cube</a></li><li><a href="#image">Save the view as a PNG</a></li></ol></section><section class="step-group"><h3>Experiment with live physics</h3><ol><li><a href="#physics">Change the speed of evolution and cooling</a></li><li><a href="#burst">Trigger one outburst</a></li><li><a href="#solver">Choose how finely the solver steps</a></li></ol></section><section class="step-group"><h3>Build a starting scene</h3><ol><li><a href="#cluster">Set the size and detail of a cluster</a></li><li><a href="#cosmology">Try a cube of the expanding universe</a></li><li><a href="#apply">Apply your settings and start the new scene</a></li><li><a href="#cosmic-clock">Read time and redshift in cosmology mode</a></li></ol></section><section class="step-group"><h3>Record, replay, or export</h3><ol><li><a href="#cache-settings">Set up a short practice recording</a></li><li><a href="#cache-write">Bake the run to a .cflow file</a></li><li><a href="#cache-open">Open a recording you already have</a></li><li><a href="#scrub">Find a frame or play the recording</a></li><li><a href="#movie">Turn a recording into an MP4</a></li><li><a href="#return">Leave replay and edit the simulation</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/cluster_flow.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="launch" aria-labelledby="title-launch">
+
+<p class="overline">Open the lab and look around <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-launch">Open Cluster Flow</h2>
+<p class="before"><strong>Start here</strong> Start Citizen Astronomy (CAst). If another workspace is open, choose <strong>Mode → Choose Mode…</strong> to reach the mode picker.</p>
+<ol class="actions"><li>Scroll down to <strong>Simulations</strong>. Click the <strong>Cluster Flow</strong> card outlined in the screenshot.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/launch.webp" aria-label="Enlarge Screenshot for Open Cluster Flow">
+<img src="images/cluster-flow/launch.webp" loading="lazy" alt="The Simulations row of the CAst launcher with the Cluster Flow card outlined and numbered.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The workspace opens with <strong>CLUSTER FLOW</strong> above the controls. After the filament network is ready, a glowing gas distribution appears and the simulation time begins to advance.</p></div>
+<nav class="next" aria-label="Continue from Open Cluster Flow"><a class="choice" href="#pause">Pause the gas <span aria-hidden="true">→</span></a><a class="choice" href="#orbit">Explore with the mouse <span aria-hidden="true">→</span></a><a class="choice" href="#cosmology">Try the cosmological model <span aria-hidden="true">→</span></a><a class="choice" href="#cache-open">Open an existing recording <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="pause" aria-labelledby="title-pause">
+
+<p class="overline">Open the lab and look around <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-pause">Freeze the gas to examine a knot</h2>
+<p class="before"><strong>Start here</strong> <a href="#launch">Open Cluster Flow</a>. If you are in cache replay, <a href="#return">return to live</a>.</p>
+<ol class="actions"><li>At the top left, click <strong>Pause</strong>. Use one bright knot where several filaments meet as your landmark.</li><li>Read <strong>Time</strong> below the button. When you want gas to move again, click the same button, now labeled <strong>Resume</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/pause.webp" aria-label="Enlarge Screenshot for Freeze the gas to examine a knot">
+<img src="images/cluster-flow/pause.webp" loading="lazy" alt="Live cluster density view with the Pause button marked beside the running gas volume.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Pausing holds the simulated gas and its time at the current state. You can orbit or change the displayed field while it is paused. <strong>Restart</strong> rebuilds the initial gas distribution using the current Scene settings.</p></div>
+<nav class="next" aria-label="Continue from Freeze the gas to examine a knot"><a class="choice" href="#orbit">Explore with the mouse <span aria-hidden="true">→</span></a><a class="choice" href="#field">Compare the gas fields <span aria-hidden="true">→</span></a><a class="choice" href="#physics">Adjust live physics <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="orbit" aria-labelledby="title-orbit">
+
+<p class="overline">Open the lab and look around <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-orbit">Turn the volume and look inside</h2>
+<p class="before"><strong>Start here</strong> A live or recorded volume is visible. <a href="#pause">Pause the gas</a> if you want to follow the same knot as the camera moves.</p>
+<ol class="actions"><li>Place the pointer in the marked area of the picture. Hold the left mouse button, drag sideways, then release to orbit the cube.</li><li>Keep the pointer over the picture and roll the wheel to move closer or farther away. Hold the right mouse button and drag to shift a knot toward the center.</li><li>To get back to the opening view, expand <strong>View</strong> if needed, scroll the left panel, and click <strong>Reset camera</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/orbit.webp" aria-label="Enlarge Screenshot for Turn the volume and look inside">
+<img src="images/cluster-flow/orbit.webp" loading="lazy" alt="An outlined drag area on the live cluster image to the right of the camera controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Foreground and background filaments shift relative to one another as you orbit. Zooming changes how close you are to the existing structures.</p></div>
+<nav class="next" aria-label="Continue from Turn the volume and look inside"><a class="choice" href="#rotate">Set up a camera orbit <span aria-hidden="true">→</span></a><a class="choice" href="#slice">Look through a slice <span aria-hidden="true">→</span></a><a class="choice" href="#image">Save a PNG <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="rotate" aria-labelledby="title-rotate">
+
+<p class="overline">Open the lab and look around <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-rotate">Rotate the camera automatically</h2>
+<p class="before"><strong>Start here</strong> Open <strong>View → Camera motion</strong> in the left panel. Camera controls also work on a <a href="#scrub">replayed recording</a>.</p>
+<ol class="actions"><li>Drag <strong>Horizontal speed (deg/s)</strong> a little to the right of the center for a positive speed. The center is zero.</li><li>Tick <strong>Rotate horizontally</strong> and watch the view turn around its focus. A negative speed turns it the other way.</li><li>Click <strong>Stop camera motion</strong> when a filament is at the angle you want to keep.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/rotate.webp" aria-label="Enlarge Screenshot for Rotate the camera automatically">
+<img src="images/cluster-flow/rotate.webp" loading="lazy" alt="Camera motion controls with Horizontal speed, Rotate horizontally, and Stop camera motion numbered in order.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The camera can circle the cluster even while the gas is paused. Stopping the motion keeps the current angle.</p></div>
+<nav class="next" aria-label="Continue from Rotate the camera automatically"><a class="choice" href="#image">Save a PNG <span aria-hidden="true">→</span></a><a class="choice" href="#field">Compare the gas fields <span aria-hidden="true">→</span></a><a class="choice" href="#movie">Export a movie <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="field" aria-labelledby="title-field">
+
+<p class="overline">Choose what the picture shows <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-field">Switch from density to temperature</h2>
+<p class="before"><strong>Start here</strong> Open <strong>View</strong> in a live or replayed run. Click the <strong>Camera motion</strong> heading to collapse it if you need more room.</p>
+<ol class="actions"><li>Click the arrow beside <strong>Display field</strong> and select <strong>Temperature</strong>. Compare the pattern with <strong>Gas density</strong>, which shows where gas collects.</li><li>If the field is too dim to inspect, move <strong>Exposure</strong> to the right a little. In the same menu, try <strong>Gas speed</strong> to see how fast gas moves or <strong>Compression / shocks</strong> to see where flows converge.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/field.webp" aria-label="Enlarge Screenshot for Switch from density to temperature">
+<img src="images/cluster-flow/field.webp" loading="lazy" alt="Display field set to Temperature and the Exposure slider marked beside the resulting gas image.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The selected field name changes in the dropdown and the picture redraws immediately. The temperature image shown here highlights a different pattern within the same gas volume. Exposure changes the image brightness.</p></div>
+<nav class="next" aria-label="Continue from Switch from density to temperature"><a class="choice" href="#slice">Look through a slice <span aria-hidden="true">→</span></a><a class="choice" href="#burst">Trigger one outburst <span aria-hidden="true">→</span></a><a class="choice" href="#image">Save a PNG <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="slice" aria-labelledby="title-slice">
+
+<p class="overline">Choose what the picture shows <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-slice">Cut a thin slab through the cube</h2>
+<p class="before"><strong>Start here</strong> Open <strong>View</strong> and scroll the left panel until you see <strong>Slice thickness</strong>. Select <strong>Gas density</strong> under <a href="#field">Display field</a> to match the example.</p>
+<ol class="actions"><li>Drag <strong>Slice thickness</strong> left from its full-width setting to about 0.40. The <strong>Slice position</strong> slider appears underneath.</li><li>Drag <strong>Slice position</strong> slowly in either direction to move the slab through the cube. To restore the whole volume, drag <strong>Slice thickness</strong> fully right.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/slice.webp" aria-label="Enlarge Screenshot for Cut a thin slab through the cube">
+<img src="images/cluster-flow/slice.webp" loading="lazy" alt="Gas density rendered as a slab with Slice thickness and Slice position highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Some filaments disappear when they fall outside the slab. As you move the slab, different knots enter the picture.</p></div>
+<nav class="next" aria-label="Continue from Cut a thin slab through the cube"><a class="choice" href="#orbit">Explore with the mouse <span aria-hidden="true">→</span></a><a class="choice" href="#field">Compare the gas fields <span aria-hidden="true">→</span></a><a class="choice" href="#image">Save a PNG <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="image" aria-labelledby="title-image">
+
+<p class="overline">Choose what the picture shows <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-image">Save the view as a PNG</h2>
+<p class="before"><strong>Start here</strong> Frame the picture you want in a live or replayed run. Expand <strong>View</strong>, then scroll the controls below <strong>Ray samples</strong>.</p>
+<ol class="actions"><li>Click <strong>Save image...</strong>. In the file dialog, choose a folder, enter a filename such as <strong>cluster-density.png</strong>, and click <strong>Save</strong>.</li><li>Open the PNG from the folder you chose to inspect the exported view.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/image.webp" aria-label="Enlarge Screenshot for Save the view as a PNG">
+<img src="images/cluster-flow/image.webp" loading="lazy" alt="Save image button marked at the bottom of the View controls beside the density image.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The PNG contains the rendered gas at the viewport’s dimensions. The chosen camera angle, display field, and slice are visible in the image.</p></div>
+<nav class="next" aria-label="Continue from Save the view as a PNG"><a class="choice" href="#field">Compare the gas fields <span aria-hidden="true">→</span></a><a class="choice" href="#cache-settings">Set up a recording <span aria-hidden="true">→</span></a><a class="choice" href="#movie">Export a movie <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="physics" aria-labelledby="title-physics">
+
+<p class="overline">Experiment with live physics <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-physics">Change the speed of evolution and cooling</h2>
+<p class="before"><strong>Start here</strong> Use the live <strong>Cluster flow</strong> model. Click <strong>Resume</strong> if the gas is paused. Collapse <strong>View</strong> and expand <strong>Physics</strong>.</p>
+<ol class="actions"><li>Drag <strong>Evolution pace</strong> left to ask the solver to advance less simulated time per second. Watch the <strong>Time</strong> readout above the panel.</li><li>For a cooling experiment, note the current <strong>Cooling rate</strong>, then drag its slider a little to the right. Use the <a href="#field">Temperature field</a> to watch how the gas changes as time advances.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/physics.webp" aria-label="Enlarge Screenshot for Change the speed of evolution and cooling">
+<img src="images/cluster-flow/physics.webp" loading="lazy" alt="Physics section open with Evolution pace and Cooling rate highlighted beside the cluster.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The slider readouts change immediately. Cooling affects the evolving cluster gas, so give the simulation time to show the difference. Drag a slider back to its earlier value to restore that setting.</p></div>
+<nav class="next" aria-label="Continue from Change the speed of evolution and cooling"><a class="choice" href="#burst">Trigger one outburst <span aria-hidden="true">→</span></a><a class="choice" href="#solver">Choose the timestep <span aria-hidden="true">→</span></a><a class="choice" href="#cluster">Set up a cluster <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="burst" aria-labelledby="title-burst">
+
+<p class="overline">Experiment with live physics <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-burst">Trigger one outburst</h2>
+<p class="before"><strong>Start here</strong> Choose the live <strong>Cluster flow</strong> model and let the run advance. Expand <strong>Physics → Outbursts</strong>. The <a href="#field">Temperature field</a> makes local heating easier to follow.</p>
+<ol class="actions"><li>Clear <strong>Automatic outbursts</strong> to control when the next event happens.</li><li>Check that <strong>Outflow strength</strong> is above zero. Leave the other outburst settings at their defaults for this trial.</li><li>Click <strong>Trigger outburst</strong> once and watch the gas around the two central halos over the next few simulation steps. Tick <strong>Automatic outbursts</strong> again to restore repeated events.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/burst.webp" aria-label="Enlarge Screenshot for Trigger one outburst">
+<img src="images/cluster-flow/burst.webp" loading="lazy" alt="Outbursts controls with Automatic outbursts, Outflow strength, and Trigger outburst marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The model injects heat and motion near the centers. How clearly a change shows up depends on the display field, time elapsed, and outburst strength.</p></div>
+<nav class="next" aria-label="Continue from Trigger one outburst"><a class="choice" href="#field">Compare the gas fields <span aria-hidden="true">→</span></a><a class="choice" href="#physics">Adjust live physics <span aria-hidden="true">→</span></a><a class="choice" href="#cache-settings">Set up a recording <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="solver" aria-labelledby="title-solver">
+
+<p class="overline">Experiment with live physics <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-solver">Choose how finely the solver steps</h2>
+<p class="before"><strong>Start here</strong> In a live run, expand <strong>Physics → Timestep &amp; solver</strong>. Collapse <strong>Outbursts</strong> or scroll the panel to reach it.</p>
+<ol class="actions"><li>Open <strong>Preset</strong> and choose <strong>Fine timesteps</strong> to ask for smaller advances in simulated time. Read <strong>Last step</strong> below the controls while the run is advancing.</li><li>For manual control, drag <strong>Maximum timestep</strong> left. The preset changes to <strong>Custom</strong>. You can select <strong>Balanced</strong> from the preset menu to switch back to a preset.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/solver.webp" aria-label="Enlarge Screenshot for Choose how finely the solver steps">
+<img src="images/cluster-flow/solver.webp" loading="lazy" alt="Timestep and solver controls with Preset and Maximum timestep highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The preset and timestep readouts reflect the new settings. Shorter steps can take more computing time to cover the same span of simulated time.</p></div>
+<nav class="next" aria-label="Continue from Choose how finely the solver steps"><a class="choice" href="#physics">Adjust live physics <span aria-hidden="true">→</span></a><a class="choice" href="#cluster">Set up a cluster <span aria-hidden="true">→</span></a><a class="choice" href="#cache-settings">Set up a recording <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="cluster" aria-labelledby="title-cluster">
+
+<p class="overline">Build a starting scene <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-cluster">Set the size and detail of a cluster</h2>
+<p class="before"><strong>Start here</strong> Use a live run. Collapse <strong>View</strong> and <strong>Physics</strong>, then expand <strong>Scene</strong>. If a recording is open, <a href="#return">return to live</a> first.</p>
+<ol class="actions"><li>Set <strong>Model</strong> to <strong>Cluster flow</strong>. This model draws gas along filaments into fixed dark halos.</li><li>Drag <strong>Cluster cube size (code units)</strong> a little to the right. Read the estimated number of clumps and cell size immediately below the slider.</li><li>Open <strong>Gas grid</strong> to choose the number of cells along each side. A larger grid resolves finer structures and uses more memory. Keep the existing grid for a first run, then <a href="#apply">apply the scene</a>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/cluster.webp" aria-label="Enlarge Screenshot for Set the size and detail of a cluster">
+<img src="images/cluster-flow/cluster.webp" loading="lazy" alt="Scene settings with Cluster flow, Cluster cube size, and Gas grid numbered next to the current live volume.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The scene values update in the panel. As long as the change is pending, the gas in the viewport still belongs to the current run.</p></div>
+<nav class="next" aria-label="Continue from Set the size and detail of a cluster"><a class="choice" href="#apply">Apply the scene settings <span aria-hidden="true">→</span></a><a class="choice" href="#cosmology">Try the cosmological model <span aria-hidden="true">→</span></a><a class="choice" href="#solver">Choose the timestep <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="cosmology" aria-labelledby="title-cosmology">
+
+<p class="overline">Build a starting scene <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-cosmology">Try a cube of the expanding universe</h2>
+<p class="before"><strong>Start here</strong> In live mode, collapse <strong>View</strong> and <strong>Physics</strong> and open <strong>Scene</strong>. You can <a href="#return">return to live</a> from any recording.</p>
+<ol class="actions"><li>Open <strong>Model</strong> and choose <strong>Cosmological volume</strong>. This model follows gas and dark matter as density variations grow in an expanding universe.</li><li>Inspect <strong>Comoving cube size (Mpc)</strong>. Keep the displayed size for a first run, or move the slider to choose the width of the simulated region. Leave the remaining cosmology settings at their defaults.</li><li>Scroll down within <strong>Scene</strong> and <a href="#apply">apply the scene</a>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/cosmology.webp" aria-label="Enlarge Screenshot for Try a cube of the expanding universe">
+<img src="images/cluster-flow/cosmology.webp" loading="lazy" alt="Cosmological volume selected and Comoving cube size marked while the prior cluster is still displayed.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Cosmology settings appear, including the cell size and starting redshift. The cluster can remain in the picture until you apply and restart.</p></div>
+<nav class="next" aria-label="Continue from Try a cube of the expanding universe"><a class="choice" href="#apply">Apply the scene settings <span aria-hidden="true">→</span></a><a class="choice" href="#cosmic-clock">Read the expansion clock <span aria-hidden="true">→</span></a><a class="choice" href="#cluster">Set up a cluster <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="apply" aria-labelledby="title-apply">
+
+<p class="overline">Build a starting scene <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-apply">Apply your settings and start the new scene</h2>
+<p class="before"><strong>Start here</strong> You have changed the <a href="#cluster">cluster settings</a> or selected <a href="#cosmology">Cosmological volume</a>. Applying starts that live model from its beginning.</p>
+<ol class="actions"><li>Scroll to the bottom of <strong>Scene</strong> and click <strong>Apply scene &amp; restart</strong> (marker 1).</li><li>Watch the amber <strong>Scene changes pending</strong> message (marker 2) disappear. Give the new grid time to appear. If <strong>Resume</strong> is showing at the top, click it to advance the new run.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/apply.webp" aria-label="Enlarge Screenshot for Apply your settings and start the new scene">
+<img src="images/cluster-flow/apply.webp" loading="lazy" alt="Apply scene and restart button and its amber pending-change message at the bottom of Scene.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The pending message disappears. The live display uses the new scene. A cluster shows <strong>Time</strong> and <strong>Box side</strong> at the top. The expanding-universe model shows <strong>Elapsed</strong> and <strong>z</strong>.</p></div>
+<nav class="next" aria-label="Continue from Apply your settings and start the new scene"><a class="choice" href="#cosmic-clock">Read the expansion clock <span aria-hidden="true">→</span></a><a class="choice" href="#pause">Pause the gas <span aria-hidden="true">→</span></a><a class="choice" href="#cache-settings">Set up a recording <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="cosmic-clock" aria-labelledby="title-cosmic-clock">
+
+<p class="overline">Build a starting scene <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-cosmic-clock">Read time and redshift in cosmology mode</h2>
+<p class="before"><strong>Start here</strong> <a href="#cosmology">Select Cosmological volume</a> and <a href="#apply">apply the scene</a>, then scroll the control panel to the top.</p>
+<ol class="actions"><li>Find the marked two-line readout under the playback controls. <strong>Elapsed</strong> gives time since the starting redshift in billions of years (Gyr). <strong>z</strong> gives the redshift.</li><li>If <strong>Resume</strong> appears, click it and watch the numbers as the run advances. <strong>a</strong> is the scale factor, a measure of how far the model universe has expanded. <strong>Box</strong> gives the width in comoving megaparsecs.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/cosmic-clock.webp" aria-label="Enlarge Screenshot for Read time and redshift in cosmology mode">
+<img src="images/cluster-flow/cosmic-clock.webp" loading="lazy" alt="The time, redshift, comoving box width, and scale factor marked above a freshly initialized cosmological volume.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>As elapsed time increases, the scale factor increases and redshift falls. The example starts at z = 9 with a scale factor of 0.100.</p></div>
+<nav class="next" aria-label="Continue from Read time and redshift in cosmology mode"><a class="choice" href="#field">Compare the gas fields <span aria-hidden="true">→</span></a><a class="choice" href="#cache-settings">Set up a recording <span aria-hidden="true">→</span></a><a class="choice" href="#cluster">Set up a cluster <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="cache-settings" aria-labelledby="title-cache-settings">
+
+<p class="overline">Record, replay, or export <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-cache-settings">Set up a short practice recording</h2>
+<p class="before"><strong>Start here</strong> In a live run, scroll to <strong>Bake</strong> and click its heading to expand it. A bake computes a run from its starting conditions and stores selected states as frames.</p>
+<ol class="actions"><li>Drag <strong>Evolution duration</strong> left for a short trial. The cluster example uses about 0.35 in simulation units. In the cosmological model the label shows Gyr.</li><li>Drag <strong>Cached frames</strong> near the left end to save roughly 20 states. Set <strong>Cached volume grid</strong> and <strong>Cached tracers</strong> lower for a smaller file. You can use nearby values.</li><li>Read <strong>Estimated cache</strong> before choosing a file. More frames give you more moments to replay. A larger cached grid preserves more detail in each frame.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/cache-settings.webp" aria-label="Enlarge Screenshot for Set up a short practice recording">
+<img src="images/cluster-flow/cache-settings.webp" loading="lazy" alt="Evolution duration, Cached frames, and the estimated cache size numbered in the live Bake section.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The estimate updates as you change the settings. The example stores 20 frames at 32 cubed with 8,000 tracers for about 0.01 GB.</p></div>
+<nav class="next" aria-label="Continue from Set up a short practice recording"><a class="choice" href="#cache-write">Bake to a new file <span aria-hidden="true">→</span></a><a class="choice" href="#cache-open">Open an existing recording <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="cache-write" aria-labelledby="title-cache-write">
+
+<p class="overline">Record, replay, or export <span aria-hidden="true">/</span> Step 16</p>
+<h2 tabindex="-1" id="title-cache-write">Bake the run to a .cflow file</h2>
+<p class="before"><strong>Start here</strong> Open <strong>Bake</strong> and <a href="#cache-settings">choose recording settings</a>. A bake uses the current Scene and Physics settings, including any pending scene changes.</p>
+<ol class="actions"><li>Click <strong>Bake from start...</strong>. Choose a folder, enter a new filename such as <strong>filaments.cflow</strong>, and click <strong>Save</strong>.</li><li>Wait for the cached-frame count to finish. If you need to stop early, click <strong>Cancel bake (keep frames)</strong> to retain the frames already computed.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/cache-write.webp" aria-label="Enlarge Screenshot for Bake the run to a .cflow file">
+<img src="images/cluster-flow/cache-write.webp" loading="lazy" alt="The Bake from start button marked below the estimate for a 20-frame practice run.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>After a completed bake, the cache opens for replay. Its filename and frame count appear in <strong>Bake</strong>, along with a <strong>Cached frame</strong> slider.</p></div>
+<nav class="next" aria-label="Continue from Bake the run to a .cflow file"><a class="choice" href="#scrub">Scrub or play the frames <span aria-hidden="true">→</span></a><a class="choice" href="#movie">Export a movie <span aria-hidden="true">→</span></a><a class="choice" href="#cache-open">Open an existing recording <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="cache-open" aria-labelledby="title-cache-open">
+
+<p class="overline">Record, replay, or export <span aria-hidden="true">/</span> Step 17</p>
+<h2 tabindex="-1" id="title-cache-open">Open a recording you already have</h2>
+<p class="before"><strong>Start here</strong> You have a <strong>.cflow</strong> file from an earlier <a href="#cache-write">bake</a>. Open Cluster Flow and expand <strong>Bake</strong> in the left panel.</p>
+<ol class="actions"><li>Click <strong>Open cache...</strong>. Navigate to the folder containing your recording, select the <strong>.cflow</strong> file, and click <strong>Open</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/cache-open.webp" aria-label="Enlarge Screenshot for Open a recording you already have">
+<img src="images/cluster-flow/cache-open.webp" loading="lazy" alt="The Open cache button marked in the Bake section of the live workspace.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The selected filename and number of cached frames appear. Use the replay controls to visit a frame or play the recording.</p></div>
+<nav class="next" aria-label="Continue from Open a recording you already have"><a class="choice" href="#scrub">Scrub or play the frames <span aria-hidden="true">→</span></a><a class="choice" href="#movie">Export a movie <span aria-hidden="true">→</span></a><a class="choice" href="#return">Return to live physics <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="scrub" aria-labelledby="title-scrub">
+
+<p class="overline">Record, replay, or export <span aria-hidden="true">/</span> Step 18</p>
+<h2 tabindex="-1" id="title-scrub">Find a frame or play the recording</h2>
+<p class="before"><strong>Start here</strong> A recording is open under <strong>Bake</strong>. <a href="#cache-open">Open an existing file</a> or <a href="#cache-write">bake a run</a> to get here.</p>
+<ol class="actions"><li>If the recording is playing, click <strong>Pause replay</strong> above the panel. Drag <strong>Cached frame</strong> (marker 1) to inspect a single saved state.</li><li>Click <strong>Play replay</strong> (marker 2) to advance through the frames. Use <strong>Playback frames / second</strong> in the Bake section to set the preview speed.</li><li>Tick <strong>Loop replay</strong> (marker 3) to play repeatedly. To return to the first frame and pause, click <strong>To start</strong> beside the playback button.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/scrub.webp" aria-label="Enlarge Screenshot for Find a frame or play the recording">
+<img src="images/cluster-flow/scrub.webp" loading="lazy" alt="Recording named filaments.cflow with Cached frame, Play replay, and Loop replay numbered.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The timeline moves through saved frames. You can still orbit the image and switch display fields while inspecting the same recording.</p></div>
+<nav class="next" aria-label="Continue from Find a frame or play the recording"><a class="choice" href="#image">Save a PNG <span aria-hidden="true">→</span></a><a class="choice" href="#movie">Export a movie <span aria-hidden="true">→</span></a><a class="choice" href="#return">Return to live physics <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="movie" aria-labelledby="title-movie">
+
+<p class="overline">Record, replay, or export <span aria-hidden="true">/</span> Step 19</p>
+<h2 tabindex="-1" id="title-movie">Turn a recording into an MP4</h2>
+<p class="before"><strong>Start here</strong> <a href="#cache-write">Bake a run</a> or <a href="#cache-open">open a .cflow file</a>, then expand <strong>Bake</strong> and scroll to the bottom of its replay controls.</p>
+<ol class="actions"><li>Choose <strong>Movie resolution</strong>, such as <strong>1280 x 720</strong>.</li><li>Set <strong>Movie FPS</strong>. Each cached frame becomes one video frame. For example, 20 frames at 10 FPS make a two-second video.</li><li>Click <strong>Export MP4...</strong>. Choose a filename with the <strong>.mp4</strong> extension and click <strong>Save</strong>. Wait for the export progress bar to finish before opening the file.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/movie.webp" aria-label="Enlarge Screenshot for Turn a recording into an MP4">
+<img src="images/cluster-flow/movie.webp" loading="lazy" alt="Movie resolution, Movie FPS, and Export MP4 marked in the recording’s Bake section.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The chosen folder contains a movie of the recording in your current view. Enabled camera rotation follows movie time during export. <strong>Stop export (keep video)</strong> finishes a shorter movie if you stop partway through.</p></div>
+<nav class="next" aria-label="Continue from Turn a recording into an MP4"><a class="choice" href="#scrub">Scrub or play the frames <span aria-hidden="true">→</span></a><a class="choice" href="#rotate">Set up a camera orbit <span aria-hidden="true">→</span></a><a class="choice" href="#return">Return to live physics <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="return" aria-labelledby="title-return">
+
+<p class="overline">Record, replay, or export <span aria-hidden="true">/</span> Step 20</p>
+<h2 tabindex="-1" id="title-return">Leave replay and edit the simulation</h2>
+<p class="before"><strong>Start here</strong> A cache is open and any movie export has finished. Expand <strong>Bake</strong> and scroll below <strong>Loop replay</strong>.</p>
+<ol class="actions"><li>Click <strong>Return to live</strong>. If you want the gas to advance, scroll to the top and click <strong>Resume</strong> if that button is showing.</li><li>Expand <strong>Scene</strong> to edit a new starting model, or <strong>Physics</strong> to change how the current live gas evolves.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/cluster-flow/return.webp" aria-label="Enlarge Screenshot for Leave replay and edit the simulation">
+<img src="images/cluster-flow/return.webp" loading="lazy" alt="Return to live button outlined between the replay and movie controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The cached timeline and movie controls disappear, and the live physics and scene controls are available again. Your saved .cflow file can be reopened later.</p></div>
+<nav class="next" aria-label="Continue from Leave replay and edit the simulation"><a class="choice" href="#cluster">Set up a cluster <span aria-hidden="true">→</span></a><a class="choice" href="#physics">Adjust live physics <span aria-hidden="true">→</span></a><a class="choice" href="#cache-open">Open an existing recording <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

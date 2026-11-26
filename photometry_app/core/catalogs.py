@@ -15,9 +15,10 @@ from typing import Callable, Sequence
 
 
 
+from astroquery.exceptions import TableParseError
 from astroquery.simbad import Simbad
 
-from astroquery.vizier import Vizier
+from astroquery.vizier import Vizier, conf as vizier_conf
 
 from astroquery.ipac.nexsci.nasa_exoplanet_archive import NasaExoplanetArchive
 
@@ -33,6 +34,9 @@ from photometry_app.core.image_io import read_header
 from photometry_app.core.models import CatalogStar, FieldCatalog, SolvedField
 from photometry_app.core.wcs import _raise_if_wcs_solve_cancelled, celestial_wcs, validate_wcs
 
+
+_VIZIER_MIRRORS = ("vizier.cfa.harvard.edu", "vizier.idia.ac.za")
+_VIZIER_FAILOVER_HTTP_STATUSES = {404, 429, 500, 502, 503, 504}
 
 _GAIA_DR3_VIZIER_COLUMNS = (
     "Source",
@@ -503,7 +507,7 @@ class CatalogService:
 
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
-        self._vizier = Vizier(columns=["*"], row_limit=-1)
+        self._preferred_vizier_server = vizier_conf.server
 
 
 
@@ -553,6 +557,7 @@ class CatalogService:
             variable_star_max_magnitude=variable_star_max_magnitude,
             exoplanet_max_magnitude=exoplanet_max_magnitude,
             gaia_tile_options=gaia_tile_options,
+            aavso_chart_id=aavso_chart_id,
         )
 
         if cache_path.exists():
@@ -616,7 +621,7 @@ class CatalogService:
                 tile_options=gaia_tile_options,
             )
             if progress_callback is not None:
-                progress_callback(f"Gaia DR3 lookup complete: {len(gaia_stars)} star(s) returned.")
+                progress_callback(f"Gaia DR3 lookup complete: {len(gaia_stars)} star(s) returned via {self._preferred_vizier_server}.")
             enrich_notes = enrich_gaia_stars_with_standard_catalogs(
                 gaia_stars,
                 solved_field,
@@ -651,7 +656,7 @@ class CatalogService:
                 progress_callback=progress_callback,
             )
             if progress_callback is not None:
-                progress_callback(f"VSX lookup complete: {len(variable_stars)} variable star(s) returned.")
+                progress_callback(f"VSX lookup complete: {len(variable_stars)} variable star(s) returned via {self._preferred_vizier_server}.")
 
         exoplanets: list[CatalogStar] = []
         if include_exoplanets:
@@ -1803,25 +1808,54 @@ class CatalogService:
 
             column_filters["Gmag"] = f"<{float(maximum_magnitude):.3f}"
 
-        vizier = Vizier(
-            columns=list(_GAIA_DR3_VIZIER_COLUMNS),
-            row_limit=-1 if row_limit is None else max(1, int(row_limit)),
-            column_filters=column_filters,
-        )
-
-        last_error: Exception | None = None
         for attempt in range(2):
             try:
-                tables = vizier.query_region(center, radius=radius, catalog="I/355/gaiadr3")
+                tables = self._query_vizier_region(
+                    center,
+                    radius,
+                    "I/355/gaiadr3",
+                    columns=list(_GAIA_DR3_VIZIER_COLUMNS),
+                    row_limit=-1 if row_limit is None else max(1, int(row_limit)),
+                    column_filters=column_filters,
+                )
                 return self._gaia_stars_from_tables(tables)
             except Exception as exc:
-                last_error = exc
-                if attempt == 0 and _is_vizier_empty_parse_error(exc):
-                    continue
-                raise
-        if last_error is not None:
-            raise last_error
-        return []
+                if attempt == 1 or not _is_vizier_empty_parse_error(exc):
+                    raise
+
+    def _query_vizier_region(
+        self,
+        center: SkyCoord,
+        radius: u.Quantity,
+        catalog: str,
+        *,
+        columns: list[str],
+        row_limit: int = -1,
+        column_filters: dict[str, str] | None = None,
+    ) -> object:
+        servers = tuple(dict.fromkeys((self._preferred_vizier_server, vizier_conf.server, *_VIZIER_MIRRORS)))
+        for server in servers:
+            vizier = Vizier(
+                vizier_server=server,
+                columns=columns,
+                row_limit=row_limit,
+                column_filters=column_filters or {},
+            )
+            try:
+                tables = vizier.query_region(center, radius=radius, catalog=catalog)
+                # Astroquery returns None for HTML (e.g. an outage notice) and an empty TableList for no matches.
+                if tables is None:
+                    raise TableParseError(f"{server} returned no VizieR table response for {catalog}.")
+            except (requests.ConnectionError, requests.Timeout, requests.HTTPError, TableParseError) as exc:
+                if server == servers[-1]:
+                    raise
+                if isinstance(exc, requests.HTTPError) and (
+                    exc.response is None or exc.response.status_code not in _VIZIER_FAILOVER_HTTP_STATUSES
+                ):
+                    raise
+                continue
+            self._preferred_vizier_server = server
+            return tables
 
 
 
@@ -1889,16 +1923,20 @@ class CatalogService:
 
     def _query_vsx(self, center: SkyCoord, radius: u.Quantity) -> list[CatalogStar]:
 
-        tables = self._vizier.query_region(center, radius=radius, catalog="B/vsx/vsx")
+        tables = self._query_vizier_region(center, radius, "B/vsx/vsx", columns=["*"])
 
         return self._vsx_stars_from_tables(tables)
 
 
     def _query_vsx_filtered(self, center: SkyCoord, radius: u.Quantity, maximum_magnitude: float) -> list[CatalogStar]:
 
-        vizier = Vizier(columns=["*", "+max"], row_limit=-1, column_filters={"max": f"<{float(maximum_magnitude):.3f}"})
-
-        tables = vizier.query_region(center, radius=radius, catalog="B/vsx/vsx")
+        tables = self._query_vizier_region(
+            center,
+            radius,
+            "B/vsx/vsx",
+            columns=["*", "+max"],
+            column_filters={"max": f"<{float(maximum_magnitude):.3f}"},
+        )
 
         return self._vsx_stars_from_tables(tables)
 
@@ -2077,10 +2115,16 @@ class CatalogService:
         gaia_row_cap: int | None,
         variable_star_max_magnitude: float | None,
         exoplanet_max_magnitude: float | None,
+        aavso_chart_id: str | None = None,
         gaia_tile_options: GaiaTileOptions | None = None,
     ) -> str:
 
+        from hashlib import sha256
         base_key = self._cache_key(solved_field)
+        if include_gaia:
+            chart = str(aavso_chart_id or "").strip().upper()
+            tag = sha256(chart.encode("utf-8")).hexdigest()[:12] if chart else "auto"
+            base_key = base_key.removesuffix(".json") + f"_bands-v3-{tag}.json"
 
         if (
             include_gaia

@@ -1,5 +1,7 @@
 # Sky Explorer
 
+[Open the illustrated Sky Explorer tutorial](tutorials/sky-explorer.html). Open a sky image, identify catalog objects in the field, and save an annotated copy. Each task opens directly.
+
 ## Introduction
 
 Every deep image is denser than it looks. Behind the obvious bright star or the familiar nebula sits a field full of named objects, anonymous Gaia stars, cataloged variables, exoplanet hosts, and sometimes a solar-system interloper that happened to cross your frame on that night.

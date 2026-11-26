@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -194,6 +195,7 @@ class PhotometryMeasurement:
     standard_catalog_source: str | None = None
     band_magnitudes: dict[str, dict[str, object]] = field(default_factory=dict)
     transformation: dict[str, Any] = field(default_factory=dict)
+    auid: str | None = None
     is_check: bool = False
     flags: list[str] = field(default_factory=list)
     comparison_source_ids: list[str] = field(default_factory=list)
@@ -216,6 +218,27 @@ class PhotometryMeasurement:
     quality_weight: float | None = None
     excluded_from_analysis: bool = False
     exclusion_reasons: list[str] = field(default_factory=list)
+
+    exposure_seconds: float | None = None
+    requested_comparison_source_ids: list[str] | None = None
+    gaia_bp_rp: float | None = None
+
+    @property
+    def duration_seconds(self) -> float | None:
+        if self.exposure_seconds is not None:
+            return self.exposure_seconds if isfinite(self.exposure_seconds) and self.exposure_seconds >= 0 else None
+        # Restore timing on older rows saved before duration was serialized.
+        from photometry_app.core.image_io import header_exposure_seconds
+        return header_exposure_seconds(self.file_path)
+
+    @property
+    def midpoint_utc(self) -> datetime | None:
+        if self.observation_time is None:
+            return None
+        start = self.observation_time
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        return start.astimezone(timezone.utc) + timedelta(seconds=(self.duration_seconds or 0.0) / 2)
 
     @property
     def saturation_fraction(self) -> float | None:

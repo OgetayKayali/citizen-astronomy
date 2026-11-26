@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Find the Orion Nebula, read its height above your horizon, or see where your own image fits on the sky.">
+<title>Sky Atlas | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=observations-3"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>Sky Atlas</span></nav>
+<header class="guide-head"><h1>Sky Atlas</h1><div class="guide-files"><a class="download-file" href="https://www.ogetay.com/citizen-astronomy-cast/datasets/lagoon-overlay.zip" download>Download Lagoon sky overlay <small>ZIP · 2.7 MB</small></a><span>Start with the built-in atlas. For the optional photo overlay, extract the ZIP, keep Lagoon.png and Lagoon.fits together, and select Lagoon.png. <a href="#choose-image">See the file step</a>.</span></div></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Find your way around</h3><ol><li><a href="#launch">Open Sky Atlas</a></li><li><a href="#dock">Reveal the bottom controls</a></li><li><a href="#pan">Pan across the sky and zoom</a></li></ol></section><section class="step-group"><h3>Find a target and read its details</h3><ol><li><a href="#search-open">Open the sky search</a></li><li><a href="#search">Find the Orion Nebula (M42)</a></li><li><a href="#pin">Read where the object is</a></li><li><a href="#references">Open a catalog entry or research papers</a></li><li><a href="#moon-search">Search for the Moon</a></li><li><a href="#moon">Inspect the lunar disk</a></li></ol></section><section class="step-group"><h3>Plan for a place and time</h3><ol><li><a href="#site-open">Open Observer Location</a></li><li><a href="#site">Set your observing site</a></li><li><a href="#time-open">Freeze the sky and open the clock</a></li><li><a href="#time">Choose a UTC date or step one hour</a></li></ol></section><section class="step-group"><h3>Choose map layers and catalogs</h3><ol><li><a href="#grids">Choose the kind of grid</a></li><li><a href="#compare-grids">Compare the two grids on one field</a></li><li><a href="#outlines">Trace the constellations</a></li><li><a href="#horizon">See which objects are above the ground</a></li><li><a href="#settings-open">Open the catalog settings</a></li><li><a href="#stars">Set the faintest stars to draw</a></li><li><a href="#catalogs">Choose which deep-sky objects and names appear</a></li><li><a href="#options-open">Open the display options</a></li><li><a href="#milky-way">Change the Milky Way background</a></li><li><a href="#reset">Return to the opening view</a></li></ol></section><section class="step-group"><h3>Place your own image on the sky</h3><ol><li><a href="#overlay-open">Open the custom image overlays</a></li><li><a href="#edit-survey">Open the survey editor</a></li><li><a href="#new-survey">Create a survey for one field or filter</a></li><li><a href="#add-image">Name the survey and add an image</a></li><li><a href="#choose-image">Select the registered image</a></li><li><a href="#save-survey">Check the imported image and save</a></li><li><a href="#show-survey">Show an existing survey and set its opacity</a></li><li><a href="#field">Compare the overlay with the atlas alone</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/sky_atlas.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="launch" aria-labelledby="title-launch">
+
+<p class="overline">Find your way around <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-launch">Open Sky Atlas</h2>
+<p class="before"><strong>Start here</strong> Start CAst. If you are in another workspace, use <strong>Mode → Choose Mode…</strong> to return to the launcher.</p>
+<ol class="actions"><li>Under <strong>Explore, Visualize &amp; Process</strong>, click the <strong>Sky Atlas</strong> card (1).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/launch.webp" aria-label="Enlarge Screenshot for Open Sky Atlas">
+<img src="images/sky-atlas/launch.webp" loading="lazy" alt="Sky Atlas outlined in the launcher row alongside Sky Explorer and HR Diagram.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The sky replaces the launcher. Stars are drawn as points, while circles mark cataloged objects. You can explore immediately, without opening an image folder.</p></div>
+<nav class="next" aria-label="Continue from Open Sky Atlas"><a class="choice" href="#dock">Find the hidden controls <span aria-hidden="true">→</span></a><a class="choice" href="#search-open">Find an object <span aria-hidden="true">→</span></a><a class="choice" href="#overlay-open">Show my own image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="dock" aria-labelledby="title-dock">
+
+<p class="overline">Find your way around <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-dock">Reveal the bottom controls</h2>
+<p class="before"><strong>Start here</strong> <a href="#launch">Open Sky Atlas</a>.</p>
+<ol class="actions"><li>Move the pointer to the bottom center of the sky and leave it there for a moment. A row of square buttons slides up in the outlined area (1).</li><li>Hold the pointer over an icon to read its tooltip. Move back into the sky to let the controls slide away.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/dock.webp" aria-label="Enlarge Screenshot for Reveal the bottom controls">
+<img src="images/sky-atlas/dock.webp" loading="lazy" alt="Full chart with the bottom-center dock outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The first button is a magnifying glass. The bar also contains the clock, observing site, sky layers and settings. If it disappears, move the pointer back to the bottom center of the atlas.</p></div>
+<nav class="next" aria-label="Continue from Reveal the bottom controls"><a class="choice" href="#pan">Move around the sky <span aria-hidden="true">→</span></a><a class="choice" href="#search-open">Look up a target <span aria-hidden="true">→</span></a><a class="choice" href="#site-open">Set my observing site <span aria-hidden="true">→</span></a><a class="choice" href="#grids">Choose a coordinate grid <span aria-hidden="true">→</span></a><a class="choice" href="#settings-open">Control the catalogs <span aria-hidden="true">→</span></a><a class="choice" href="#overlay-open">Use an image overlay <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="pan" aria-labelledby="title-pan">
+
+<p class="overline">Find your way around <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-pan">Pan across the sky and zoom</h2>
+<p class="before"><strong>Start here</strong> <a href="#launch">Open the atlas</a>. Use this whenever you want to explore by eye.</p>
+<ol class="actions"><li>Place the pointer in the marked part of the sky (1). Hold the left mouse button, drag a short distance and release.</li><li>Roll the mouse wheel forward to zoom in, or backward to see a wider area. Look at <strong>FOV</strong> along the bottom edge of the map. FOV means field of view.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/pan.webp" aria-label="Enlarge Screenshot for Pan across the sky and zoom">
+<img src="images/sky-atlas/pan.webp" loading="lazy" alt="Sky chart with a small rectangle in the central star field showing where to start the drag.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Dragging brings different stars into the frame. A smaller FOV spans fewer degrees of sky and lets you distinguish objects that previously appeared close together.</p></div>
+<nav class="next" aria-label="Continue from Pan across the sky and zoom"><a class="choice" href="#search-open">Center on a named object <span aria-hidden="true">→</span></a><a class="choice" href="#reset">Recover the opening view <span aria-hidden="true">→</span></a><a class="choice" href="#outlines">Identify constellations <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="search-open" aria-labelledby="title-search-open">
+
+<p class="overline">Find a target and read its details <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-search-open">Open the sky search</h2>
+<p class="before"><strong>Start here</strong> <a href="#dock">Reveal the bottom controls</a>.</p>
+<ol class="actions"><li>Click the magnifying glass at the left end of the bar (1). Its tooltip says <strong>Search the sky</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/search-open.webp" aria-label="Enlarge Screenshot for Open the sky search">
+<img src="images/sky-atlas/search-open.webp" loading="lazy" alt="Bottom bar with its leftmost magnifying glass marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A search window opens with a box for a name, catalog ID or alias. It can find entries in downloaded catalogs even when their map layers are hidden.</p></div>
+<nav class="next" aria-label="Continue from Open the sky search"><a class="choice" href="#search">Find the Orion Nebula <span aria-hidden="true">→</span></a><a class="choice" href="#moon-search">Find the Moon <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="search" aria-labelledby="title-search">
+
+<p class="overline">Find a target and read its details <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-search">Find the Orion Nebula (M42)</h2>
+<p class="before"><strong>Start here</strong> The <a href="#search-open">search window</a> is open.</p>
+<ol class="actions"><li>Click the search box (1) and type <strong>M42</strong>. Wait for the results to appear.</li><li>Click the <strong>Nebula  Orion Nebula</strong> row (2), or press <strong>Enter</strong> while that row is highlighted. Check that its catalog line says <strong>Messier</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/search.webp" aria-label="Enlarge Screenshot for Find the Orion Nebula (M42)">
+<img src="images/sky-atlas/search.webp" loading="lazy" alt="Search box containing M42 and the Orion Nebula result in the Messier catalog.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The search closes, the chart centers on the Orion Nebula and an information panel appears at upper left. The number of other matches depends on which catalogs are installed.</p></div>
+<nav class="next" aria-label="Continue from Find the Orion Nebula (M42)"><a class="choice" href="#pin">Read the coordinates <span aria-hidden="true">→</span></a><a class="choice" href="#site-open">Check visibility from my site <span aria-hidden="true">→</span></a><a class="choice" href="#grids">Identify the coordinate lines <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="pin" aria-labelledby="title-pin">
+
+<p class="overline">Find a target and read its details <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-pin">Read where the object is</h2>
+<p class="before"><strong>Start here</strong> <a href="#search">Find M42</a>, or locate a labeled star or object in the atlas.</p>
+<ol class="actions"><li>Click the object’s marker in the sky (1) to pin it. Double-click a visible marker if you also want to center it.</li><li>Read the panel at upper left (2). <strong>RA</strong> and <strong>Dec</strong> locate the object on the celestial sphere. <strong>Alt</strong> tells you how far above or below the local horizon it is. <strong>Az</strong> gives its compass direction.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/pin.webp" aria-label="Enlarge Screenshot for Read where the object is">
+<img src="images/sky-atlas/pin.webp" loading="lazy" alt="Marker centered on the Orion Nebula and a pinned panel showing its name, magnitude and coordinates.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>At Greenwich on 6 January 2026 at 23:00 UTC, this example places M42 about <strong>33°</strong> above the horizon toward the south. Your Alt and Az depend on your own site and time.</p></div>
+<nav class="next" aria-label="Continue from Read where the object is"><a class="choice" href="#references">Open an object reference <span aria-hidden="true">→</span></a><a class="choice" href="#site-open">Change the observing site <span aria-hidden="true">→</span></a><a class="choice" href="#time-open">Try another hour <span aria-hidden="true">→</span></a><a class="choice" href="#moon-search">Inspect the Moon <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="references" aria-labelledby="title-references">
+
+<p class="overline">Find a target and read its details <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-references">Open a catalog entry or research papers</h2>
+<p class="before"><strong>Start here</strong> <a href="#pin">Pin a named object</a>.</p>
+<ol class="actions"><li>In the marked row below the object type (1), click <strong>SIMBAD</strong> for an object record, <strong>ADS</strong> for papers, or <strong>VizieR</strong> for catalog data.</li><li>Return to CAst when you want to continue exploring the map.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/references.webp" aria-label="Enlarge Screenshot for Open a catalog entry or research papers">
+<img src="images/sky-atlas/references.webp" loading="lazy" alt="Pinned Orion Nebula panel with the SIMBAD, ADS and VizieR links outlined together.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Your browser opens the chosen service with the object identifier. The services need an internet connection. The links available depend on the selected object.</p></div>
+<nav class="next" aria-label="Continue from Open a catalog entry or research papers"><a class="choice" href="#search-open">Look up another target <span aria-hidden="true">→</span></a><a class="choice" href="#catalogs">Choose deep-sky catalogs <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="moon-search" aria-labelledby="title-moon-search">
+
+<p class="overline">Find a target and read its details <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-moon-search">Search for the Moon</h2>
+<p class="before"><strong>Start here</strong> <a href="#search-open">Open sky search</a>. Set the <a href="#site">site</a> and <a href="#time">UTC time</a> first if you want a view for a particular night.</p>
+<ol class="actions"><li>Type <strong>Moon</strong> in the search box (1).</li><li>Select <strong>Natural Satellite  Moon</strong> under <strong>Solar System</strong> (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/moon-search.webp" aria-label="Enlarge Screenshot for Search for the Moon">
+<img src="images/sky-atlas/moon-search.webp" loading="lazy" alt="Moon in the search field with the Solar System result highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The atlas centers on the Moon’s position for the selected site and time and pins its details. At a wide field of view it may appear only as a small disk.</p></div>
+<nav class="next" aria-label="Continue from Search for the Moon"><a class="choice" href="#moon">Zoom in on the lunar disk <span aria-hidden="true">→</span></a><a class="choice" href="#time-open">Change the observing date <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="moon" aria-labelledby="title-moon">
+
+<p class="overline">Find a target and read its details <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-moon">Inspect the lunar disk</h2>
+<p class="before"><strong>Start here</strong> <a href="#moon-search">Select the Moon</a>. If the Moon is below your horizon, turn off the <a href="#horizon">ground layer</a> to inspect it anyway.</p>
+<ol class="actions"><li>Place the pointer over the lunar disk (1) and roll the wheel forward a few notches at a time. If the disk slips toward an edge, drag to bring it back toward the middle.</li><li>Roll backward when you want to see the surrounding field again.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/moon.webp" aria-label="Enlarge Screenshot for Inspect the lunar disk">
+<img src="images/sky-atlas/moon.webp" loading="lazy" alt="Close-up of the rendered Moon, with its bright terrain and dark limb enclosed by a numbered outline.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The lit part of the Moon fills more of the view. Its shape and orientation follow the selected observing time and site.</p></div>
+<nav class="next" aria-label="Continue from Inspect the lunar disk"><a class="choice" href="#time-open">Look on a different date <span aria-hidden="true">→</span></a><a class="choice" href="#reset">Return to the wide sky <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="site-open" aria-labelledby="title-site-open">
+
+<p class="overline">Plan for a place and time <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-site-open">Open Observer Location</h2>
+<p class="before"><strong>Start here</strong> <a href="#dock">Reveal the dock</a>.</p>
+<ol class="actions"><li>Click the map-pin icon (1). Its tooltip says <strong>Observer location</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/site-open.webp" aria-label="Enlarge Screenshot for Open Observer Location">
+<img src="images/sky-atlas/site-open.webp" loading="lazy" alt="Bottom-center controls with the location pin outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The Observer Location window opens with a map and a <strong>Saved Site</strong> panel. Its coordinates set the observer position used by CAst.</p></div>
+<nav class="next" aria-label="Continue from Open Observer Location"><a class="choice" href="#site">Enter a site or reuse one <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="site" aria-labelledby="title-site">
+
+<p class="overline">Plan for a place and time <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-site">Set your observing site</h2>
+<p class="before"><strong>Start here</strong> <a href="#site-open">Open Observer Location</a>. Use your own coordinates or the Greenwich example shown.</p>
+<ol class="actions"><li>In <strong>Name</strong> (1), enter a label. In <strong>Latitude</strong> (2) and <strong>Longitude</strong> (3), enter degrees. South and west use negative values. For this example enter <strong>Greenwich</strong>, <strong>51.48</strong>, and <strong>0.00</strong>.</li><li>Enter <strong>Elevation</strong> in metres (4), for example <strong>46</strong>. Leave <strong>Keep this site in quick-switch presets</strong> checked if you want to use it again. For a previously saved site, pick it under <strong>Saved Sites</strong> and click <strong>Load</strong> instead.</li><li>Click <strong>Save Location</strong> (5).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/site.webp" aria-label="Enlarge Screenshot for Set your observing site">
+<img src="images/sky-atlas/site.webp" loading="lazy" alt="Saved Site controls showing Greenwich, latitude, longitude, elevation, and Save Location.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The window closes and the atlas footer shows the active site. Altitude, azimuth and the horizon now refer to that location.</p></div>
+<nav class="next" aria-label="Continue from Set your observing site"><a class="choice" href="#time-open">Set the observing time <span aria-hidden="true">→</span></a><a class="choice" href="#horizon">See the local horizon <span aria-hidden="true">→</span></a><a class="choice" href="#pin">Read the target’s altitude <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="time-open" aria-labelledby="title-time-open">
+
+<p class="overline">Plan for a place and time <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-time-open">Freeze the sky and open the clock</h2>
+<p class="before"><strong>Start here</strong> <a href="#dock">Reveal the dock</a>.</p>
+<ol class="actions"><li>Look at the third button from the left (1). If its tooltip says <strong>Pause time</strong>, click it. When the clock is paused, the button shows a play triangle, as in the screenshot.</li><li>Click the <strong>Date and time</strong> button immediately to its left (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/time-open.webp" aria-label="Enlarge Screenshot for Freeze the sky and open the clock">
+<img src="images/sky-atlas/time-open.webp" loading="lazy" alt="Clock pause/play control and the adjacent date-time control numbered in click order.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A UTC date and time editor appears above the dock. Pausing makes it easier to compare two moments while holding the sky still.</p></div>
+<nav class="next" aria-label="Continue from Freeze the sky and open the clock"><a class="choice" href="#time">Enter a time or advance one hour <span aria-hidden="true">→</span></a><a class="choice" href="#pin">Inspect the frozen chart <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="time" aria-labelledby="title-time">
+
+<p class="overline">Plan for a place and time <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-time">Choose a UTC date or step one hour</h2>
+<p class="before"><strong>Start here</strong> <a href="#time-open">Open the date and time popup</a>.</p>
+<ol class="actions"><li>Click the date and time field (1). Select and edit each part, or open the calendar to pick the date. For the Orion example, set <strong>6 January 2026, 23:00 UTC</strong>.</li><li>Click <strong>+1 h</strong> (2) to jump one hour forward. Use <strong>-1 h</strong> to undo that jump. <strong>+1 d</strong> and <strong>-1 d</strong> change the day.</li><li>For the Orion example, click outside the popup to keep the selected time. If you want to return to the present, click <strong>Now</strong> (3) before closing the popup. Click the play triangle on the dock when you want time to advance again.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/time.webp" aria-label="Enlarge Screenshot for Choose a UTC date or step one hour">
+<img src="images/sky-atlas/time.webp" loading="lazy" alt="UTC date editor, +1 h and Now buttons marked separately.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The UTC field changes to the selected moment. With a target pinned, compare <strong>Alt</strong> and <strong>Az</strong> before and after the hour jump.</p></div>
+<nav class="next" aria-label="Continue from Choose a UTC date or step one hour"><a class="choice" href="#pin">Read the altitude at this time <span aria-hidden="true">→</span></a><a class="choice" href="#moon-search">Find the Moon at this time <span aria-hidden="true">→</span></a><a class="choice" href="#horizon">Look at the horizon <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="grids" aria-labelledby="title-grids">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-grids">Choose the kind of grid</h2>
+<p class="before"><strong>Start here</strong> <a href="#dock">Reveal the dock</a>.</p>
+<ol class="actions"><li>Click <strong>Toggle equatorial grid</strong> (1) for right ascension and declination lines. Click it again to hide them.</li><li>Click <strong>Toggle alt-az grid</strong> (2) for the altitude and azimuth lines at your observing site. For an easy comparison, show one grid at a time.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/grids.webp" aria-label="Enlarge Screenshot for Choose the kind of grid">
+<img src="images/sky-atlas/grids.webp" loading="lazy" alt="Two adjacent grid buttons numbered on the dock.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Each button switches its own grid. Use equatorial coordinates to match a catalog position and local coordinates to decide where to look from the ground.</p></div>
+<nav class="next" aria-label="Continue from Choose the kind of grid"><a class="choice" href="#compare-grids">Compare both grids on Orion <span aria-hidden="true">→</span></a><a class="choice" href="#horizon">Show the ground <span aria-hidden="true">→</span></a><a class="choice" href="#outlines">Show constellation lines <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="compare-grids" aria-labelledby="title-compare-grids">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-compare-grids">Compare the two grids on one field</h2>
+<p class="before"><strong>Start here</strong> <a href="#search">Find M42</a> and zoom out enough to see several stars. For the same sky orientation, use the example <a href="#site">site</a> and <a href="#time">time</a>.</p>
+<ol class="actions"><li>In the atlas, use the marked grid button (1) for the view you want. If the other grid is still visible, click its button to turn it off.</li><li>Use <strong>Equatorial</strong> and <strong>Local horizon</strong> above the tutorial screenshot to compare the same frozen sky. Follow a bright star as you switch diagrams.</li></ol>
+<figure class="capture"><div class="frame-switch" role="group" aria-label="Compare screenshots" hidden><button type="button">Equatorial</button><button type="button">Local horizon</button></div><a class="enlarge" href="images/sky-atlas/equatorial.webp" aria-label="Enlarge Equatorial for Compare the two grids on one field">
+<img src="images/sky-atlas/equatorial.webp" loading="lazy" alt="Equatorial grid drawn across Orion, with the responsible button marked.">
+<span class="zoom-label">Equatorial · Enlarge screenshot <span aria-hidden="true">↗</span></span></a><a class="enlarge" href="images/sky-atlas/horizontal.webp" aria-label="Enlarge Local horizon for Compare the two grids on one field">
+<img src="images/sky-atlas/horizontal.webp" loading="lazy" alt="The same chart with altitude and azimuth lines and the corresponding dock button marked.">
+<span class="zoom-label">Local horizon · Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The stars keep their positions in this comparison. The two grids run in different directions because one follows Earth’s rotation axis and the other follows the observer’s horizon.</p></div>
+<nav class="next" aria-label="Continue from Compare the two grids on one field"><a class="choice" href="#horizon">Show the ground <span aria-hidden="true">→</span></a><a class="choice" href="#outlines">Trace constellations <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="outlines" aria-labelledby="title-outlines">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 16</p>
+<h2 tabindex="-1" id="title-outlines">Trace the constellations</h2>
+<p class="before"><strong>Start here</strong> <a href="#dock">Reveal the dock</a>.</p>
+<ol class="actions"><li>Click <strong>Toggle constellations</strong> (1), the connected-points icon immediately to the right of the grid buttons.</li><li>Look for lines joining the brighter stars. Click the same button again to hide the outlines and names.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/outlines.webp" aria-label="Enlarge Screenshot for Trace the constellations">
+<img src="images/sky-atlas/outlines.webp" loading="lazy" alt="A wide chart with constellation outlines and the connected-points dock button highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>In the Orion field, the lines help you trace the pattern around the nebula even when other catalogs are crowded.</p></div>
+<nav class="next" aria-label="Continue from Trace the constellations"><a class="choice" href="#search">Locate M42 in Orion <span aria-hidden="true">→</span></a><a class="choice" href="#options-open">Change how the chart looks <span aria-hidden="true">→</span></a><a class="choice" href="#settings-open">Adjust star and object density <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="horizon" aria-labelledby="title-horizon">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 17</p>
+<h2 tabindex="-1" id="title-horizon">See which objects are above the ground</h2>
+<p class="before"><strong>Start here</strong> <a href="#site">Set your site</a> and <a href="#time">UTC time</a>. Reveal the bottom dock.</p>
+<ol class="actions"><li>Click <strong>Toggle ground and horizon</strong> (1). Drag the map or zoom out until the horizon crosses the frame.</li><li>Look above the horizon line for visible sky. If a selected object falls below the line, switch the ground off to inspect it, or try another observing time.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/horizon.webp" aria-label="Enlarge Screenshot for See which objects are above the ground">
+<img src="images/sky-atlas/horizon.webp" loading="lazy" alt="An all-sky view with the ground across its lower portion and the horizon control outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The ground covers the part of the celestial sphere below your local horizon. An object above the line has positive altitude.</p></div>
+<nav class="next" aria-label="Continue from See which objects are above the ground"><a class="choice" href="#time">Check one hour later <span aria-hidden="true">→</span></a><a class="choice" href="#pin">Read a target’s exact altitude <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="settings-open" aria-labelledby="title-settings-open">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 18</p>
+<h2 tabindex="-1" id="title-settings-open">Open the catalog settings</h2>
+<p class="before"><strong>Start here</strong> <a href="#dock">Reveal the dock</a>.</p>
+<ol class="actions"><li>Click the gear labeled <strong>Sky Atlas settings</strong> (1), next to the custom overlay button.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/settings-open.webp" aria-label="Enlarge Screenshot for Open the catalog settings">
+<img src="images/sky-atlas/settings-open.webp" loading="lazy" alt="Dock with the settings gear outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p><strong>Sky Atlas Settings</strong> opens with two pages, <strong>Stars</strong> and <strong>Deep-Sky Objects</strong>.</p></div>
+<nav class="next" aria-label="Continue from Open the catalog settings"><a class="choice" href="#stars">Set the faintest stars <span aria-hidden="true">→</span></a><a class="choice" href="#catalogs">Choose deep-sky catalogs <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="stars" aria-labelledby="title-stars">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 19</p>
+<h2 tabindex="-1" id="title-stars">Set the faintest stars to draw</h2>
+<p class="before"><strong>Start here</strong> <a href="#settings-open">Open Sky Atlas Settings</a> and click <strong>Stars</strong> in the left column.</p>
+<ol class="actions"><li>Drag <strong>Limiting magnitude</strong> (1). Move right to include fainter stars, left to keep the brighter ones. Read the estimated star count and download size under <strong>Star catalog download</strong> before confirming.</li><li>Click <strong>OK</strong> at the bottom of the dialog to apply. If a download starts, keep using the map while it runs. Zoom in to see the fainter stars as they become available.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/stars.webp" aria-label="Enlarge Screenshot for Set the faintest stars to draw">
+<img src="images/sky-atlas/stars.webp" loading="lazy" alt="Stars page with the limiting-magnitude slider and Hipparcos download estimate visible.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>At a modest limit the estimate names Hipparcos. Deeper limits may require larger Tycho-2 or Gaia data downloads. <strong>Cancel</strong> in the settings dialog restores your saved values.</p></div>
+<nav class="next" aria-label="Continue from Set the faintest stars to draw"><a class="choice" href="#catalogs">Set which deep-sky objects appear <span aria-hidden="true">→</span></a><a class="choice" href="#pan">Zoom in to inspect the field <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="catalogs" aria-labelledby="title-catalogs">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 20</p>
+<h2 tabindex="-1" id="title-catalogs">Choose which deep-sky objects and names appear</h2>
+<p class="before"><strong>Start here</strong> <a href="#settings-open">Open Sky Atlas Settings</a>.</p>
+<ol class="actions"><li>Click <strong>Deep-Sky Objects</strong> (1). Under <strong>Catalogs to show</strong>, check <strong>Messier</strong> (2) for the Orion Nebula example. Select any additional catalogs you need.</li><li>Drag <strong>Label limiting magnitude</strong> (3) to the right to label fainter objects. The separate <strong>Object limiting magnitude</strong> controls which markers appear.</li><li>Click <strong>OK</strong> (4) to apply. Enabling a catalog for the first time may start a download.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/catalogs.webp" aria-label="Enlarge Screenshot for Choose which deep-sky objects and names appear">
+<img src="images/sky-atlas/catalogs.webp" loading="lazy" alt="Deep-Sky Objects page with its navigation row, Messier checkbox, label limit slider and OK button outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The map displays the enabled objects within the chosen brightness limits. Zoom in to bring out labels in crowded fields.</p></div>
+<nav class="next" aria-label="Continue from Choose which deep-sky objects and names appear"><a class="choice" href="#search-open">Look up a catalog object <span aria-hidden="true">→</span></a><a class="choice" href="#stars">Set the star limit <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="options-open" aria-labelledby="title-options-open">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 21</p>
+<h2 tabindex="-1" id="title-options-open">Open the display options</h2>
+<p class="before"><strong>Start here</strong> <a href="#dock">Reveal the dock</a>.</p>
+<ol class="actions"><li>Click <strong>Sky View options</strong> (1), the sliders icon between the settings gear and the full-screen button.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/options-open.webp" aria-label="Enlarge Screenshot for Open the display options">
+<img src="images/sky-atlas/options-open.webp" loading="lazy" alt="Bottom toolbar with the sliders icon highlighted.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A popup opens with Milky Way and constellation controls and a <strong>Reset View</strong> button at the bottom.</p></div>
+<nav class="next" aria-label="Continue from Open the display options"><a class="choice" href="#milky-way">Adjust the Milky Way background <span aria-hidden="true">→</span></a><a class="choice" href="#reset">Return to the opening field <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="milky-way" aria-labelledby="title-milky-way">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 22</p>
+<h2 tabindex="-1" id="title-milky-way">Change the Milky Way background</h2>
+<p class="before"><strong>Start here</strong> <a href="#options-open">Open Sky View options</a>.</p>
+<ol class="actions"><li>Check <strong>Milky Way</strong> (1) to show the background.</li><li>Open <strong>Preset</strong> (2) and try <strong>Dark sky</strong> or <strong>Atlas</strong>. Drag <strong>Opacity</strong> (3) left to make the backdrop less prominent, or right to bring it forward.</li><li>Click in the sky to close the popup.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/milky-way.webp" aria-label="Enlarge Screenshot for Change the Milky Way background">
+<img src="images/sky-atlas/milky-way.webp" loading="lazy" alt="Milky Way group with its on/off checkbox, preset list and opacity slider outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The haze and dark lanes behind the stars change in strength. Object positions stay fixed while you adjust the background.</p></div>
+<nav class="next" aria-label="Continue from Change the Milky Way background"><a class="choice" href="#outlines">Add constellation lines <span aria-hidden="true">→</span></a><a class="choice" href="#reset">Find the opening view <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="reset" aria-labelledby="title-reset">
+
+<p class="overline">Choose map layers and catalogs <span aria-hidden="true">/</span> Step 23</p>
+<h2 tabindex="-1" id="title-reset">Return to the opening view</h2>
+<p class="before"><strong>Start here</strong> <a href="#options-open">Open Sky View options</a> when you have panned or zoomed away from your starting point.</p>
+<ol class="actions"><li>At the bottom of the popup, click <strong>Reset View</strong> (1).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/reset.webp" aria-label="Enlarge Screenshot for Return to the opening view">
+<img src="images/sky-atlas/reset.webp" loading="lazy" alt="Reset View button marked below the constellation style controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The camera moves back toward the opening wide field near Orion. You can search for a target again from here.</p></div>
+<nav class="next" aria-label="Continue from Return to the opening view"><a class="choice" href="#search-open">Find a target <span aria-hidden="true">→</span></a><a class="choice" href="#overlay-open">Add a registered image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="overlay-open" aria-labelledby="title-overlay-open">
+
+<p class="overline">Place your own image on the sky <span aria-hidden="true">/</span> Step 24</p>
+<h2 tabindex="-1" id="title-overlay-open">Open the custom image overlays</h2>
+<p class="before"><strong>Start here</strong> <a href="#dock">Reveal the dock</a>. Use this branch to display an image of a field you photographed.</p>
+<ol class="actions"><li>Click <strong>Custom sky map overlays</strong> (1), the four-square icon between the horizon button and the settings gear.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/overlay-open.webp" aria-label="Enlarge Screenshot for Open the custom image overlays">
+<img src="images/sky-atlas/overlay-open.webp" loading="lazy" alt="Dock with the custom sky map overlay button outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Custom Sky Map</strong> popup opens. A survey is a named collection of your registered images.</p></div>
+<nav class="next" aria-label="Continue from Open the custom image overlays"><a class="choice" href="#edit-survey">Create or edit a survey <span aria-hidden="true">→</span></a><a class="choice" href="#show-survey">Display a survey I already have <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="edit-survey" aria-labelledby="title-edit-survey">
+
+<p class="overline">Place your own image on the sky <span aria-hidden="true">/</span> Step 25</p>
+<h2 tabindex="-1" id="title-edit-survey">Open the survey editor</h2>
+<p class="before"><strong>Start here</strong> <a href="#overlay-open">Open Custom Sky Map</a>.</p>
+<ol class="actions"><li>Click <strong>Edit Surveys</strong> (1).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/edit-survey.webp" aria-label="Enlarge Screenshot for Open the survey editor">
+<img src="images/sky-atlas/edit-survey.webp" loading="lazy" alt="Custom Sky Map popup with Edit Surveys marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A <strong>Custom Sky Map Surveys</strong> window opens. The left side lists your surveys and the right side lists the images in the selected survey.</p></div>
+<nav class="next" aria-label="Continue from Open the survey editor"><a class="choice" href="#new-survey">Begin a new survey <span aria-hidden="true">→</span></a><a class="choice" href="#add-image">Add to an existing survey <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="new-survey" aria-labelledby="title-new-survey">
+
+<p class="overline">Place your own image on the sky <span aria-hidden="true">/</span> Step 26</p>
+<h2 tabindex="-1" id="title-new-survey">Create a survey for one field or filter</h2>
+<p class="before"><strong>Start here</strong> <a href="#edit-survey">Open the survey editor</a>.</p>
+<ol class="actions"><li>Click <strong>New Survey</strong> (1) below the list on the left.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/new-survey.webp" aria-label="Enlarge Screenshot for Create a survey for one field or filter">
+<img src="images/sky-atlas/new-survey.webp" loading="lazy" alt="Survey editor with New Survey highlighted below the list.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A new entry appears and its Name, Filter and image controls become available.</p></div>
+<nav class="next" aria-label="Continue from Create a survey for one field or filter"><a class="choice" href="#add-image">Name it and add an image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="add-image" aria-labelledby="title-add-image">
+
+<p class="overline">Place your own image on the sky <span aria-hidden="true">/</span> Step 27</p>
+<h2 tabindex="-1" id="title-add-image">Name the survey and add an image</h2>
+<p class="before"><strong>Start here</strong> <a href="#new-survey">Create a new survey</a>, or click a survey that you already have. Keep a registered image handy. Registration means the file contains the sky position for its pixels.</p>
+<ol class="actions"><li>Click <strong>Name</strong> (1) and give the collection a recognizable name. The example uses <strong>Lagoon field</strong>. Optionally choose a <strong>Filter</strong> (2), such as <strong>Ha</strong> for a hydrogen-alpha image.</li><li>Click <strong>Add Image…</strong> (3).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/add-image.webp" aria-label="Enlarge Screenshot for Name the survey and add an image">
+<img src="images/sky-atlas/add-image.webp" loading="lazy" alt="Name, Filter and Add Image button marked on the survey’s detail panel.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A file picker opens. CAst accepts FITS, XISF, PNG and TIFF overlays.</p></div>
+<nav class="next" aria-label="Continue from Name the survey and add an image"><a class="choice" href="#choose-image">Select the image file <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="choose-image" aria-labelledby="title-choose-image">
+
+<p class="overline">Place your own image on the sky <span aria-hidden="true">/</span> Step 28</p>
+<h2 tabindex="-1" id="title-choose-image">Select the registered image</h2>
+<p class="before"><strong>Start here</strong> The file picker opened from <a href="#add-image">Add Image</a>. Use a plate-solved file. For a PNG or TIFF, a matching FITS sidecar can supply the sky coordinates.</p>
+<ol class="actions"><li>Browse to the image or enter its name (1). The illustrated example selects <strong>Lagoon.png</strong> and keeps its matching <strong>Lagoon.fits</strong> coordinate file in the same folder.</li><li>Click <strong>Open</strong> (2) and wait for the import. If the image lacks a usable coordinate solution, the app attempts a plate solve. A solved FITS or XISF image is the simplest starting point.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/choose-image.webp" aria-label="Enlarge Screenshot for Select the registered image">
+<img src="images/sky-atlas/choose-image.webp" loading="lazy" alt="The file name field containing Lagoon.png and the Open button marked in order.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The file name appears in the survey’s Images list after import succeeds.</p></div>
+<nav class="next" aria-label="Continue from Select the registered image"><a class="choice" href="#save-survey">Save the completed survey <span aria-hidden="true">→</span></a><a class="choice" href="#add-image">Choose another image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="save-survey" aria-labelledby="title-save-survey">
+
+<p class="overline">Place your own image on the sky <span aria-hidden="true">/</span> Step 29</p>
+<h2 tabindex="-1" id="title-save-survey">Check the imported image and save</h2>
+<p class="before"><strong>Start here</strong> <a href="#choose-image">Import an image</a> and wait for its name to appear.</p>
+<ol class="actions"><li>Check the <strong>Images</strong> list (1) under the correct survey name. To add another exposure or tile, repeat <strong>Add Image…</strong>.</li><li>Click <strong>OK</strong> (2) to save the collection and return to the atlas.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/save-survey.webp" aria-label="Enlarge Screenshot for Check the imported image and save">
+<img src="images/sky-atlas/save-survey.webp" loading="lazy" alt="Survey editor with Lagoon.png in the images list and OK outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Your named collection is available in the Survey list. Its images are drawn at the coordinates supplied by each image’s sky solution.</p></div>
+<nav class="next" aria-label="Continue from Check the imported image and save"><a class="choice" href="#show-survey">Display and blend the survey <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="show-survey" aria-labelledby="title-show-survey">
+
+<p class="overline">Place your own image on the sky <span aria-hidden="true">/</span> Step 30</p>
+<h2 tabindex="-1" id="title-show-survey">Show an existing survey and set its opacity</h2>
+<p class="before"><strong>Start here</strong> <a href="#overlay-open">Open Custom Sky Map</a>. At least one survey must contain an <a href="#choose-image">imported image</a>.</p>
+<ol class="actions"><li>Open <strong>Survey</strong> (1) and choose your collection. The example uses <strong>Lagoon field (Ha)</strong>. Check <strong>Show custom sky overlays</strong> (2) to display it.</li><li>Drag <strong>Opacity</strong> (3) left to blend the image into the atlas, or right to make it stronger. Click away from the popup when you have finished.</li><li><a href="#search-open">Search</a> for the target in your image and zoom in. Choosing a survey keeps your current view, so you may need to travel to its field.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-atlas/show-survey.webp" aria-label="Enlarge Screenshot for Show an existing survey and set its opacity">
+<img src="images/sky-atlas/show-survey.webp" loading="lazy" alt="Survey dropdown, Show custom sky overlays checkbox and opacity slider numbered on the popup.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The image appears in its sky footprint. If you cannot see a difference, confirm the right survey is selected, its checkbox is on, and the map is centered on its target.</p></div>
+<nav class="next" aria-label="Continue from Show an existing survey and set its opacity"><a class="choice" href="#field">Compare the registered image with the atlas <span aria-hidden="true">→</span></a><a class="choice" href="#add-image">Add another field <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="field" aria-labelledby="title-field">
+
+<p class="overline">Place your own image on the sky <span aria-hidden="true">/</span> Step 31</p>
+<h2 tabindex="-1" id="title-field">Compare the overlay with the atlas alone</h2>
+<p class="before"><strong>Start here</strong> <a href="#show-survey">Display your survey</a> and zoom toward its target. The example uses the Lagoon Nebula, <strong>M8</strong>.</p>
+<ol class="actions"><li>Find the marked field (1). Use <strong>Atlas only</strong> and <strong>With image</strong> above the tutorial screenshot to inspect the change at fixed scale.</li><li>To repeat it in CAst, toggle <strong>Show custom sky overlays</strong> in <a href="#show-survey">Custom Sky Map</a> while keeping the view on the same sky position.</li></ol>
+<figure class="capture"><div class="frame-switch" role="group" aria-label="Compare screenshots" hidden><button type="button">Atlas only</button><button type="button">With image</button></div><a class="enlarge" href="images/sky-atlas/field-off.webp" aria-label="Enlarge Atlas only for Compare the overlay with the atlas alone">
+<img src="images/sky-atlas/field-off.webp" loading="lazy" alt="Atlas view centered on the Lagoon Nebula with the target area marked before the image is shown.">
+<span class="zoom-label">Atlas only · Enlarge screenshot <span aria-hidden="true">↗</span></span></a><a class="enlarge" href="images/sky-atlas/field-on.webp" aria-label="Enlarge With image for Compare the overlay with the atlas alone">
+<img src="images/sky-atlas/field-on.webp" loading="lazy" alt="Same position and scale with Lagoon.png visible over the marked area.">
+<span class="zoom-label">With image · Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The Lagoon Nebula and nearby catalog markers stay in the same positions. The registered image adds fine structure and many faint stars inside the footprint.</p></div>
+<nav class="next" aria-label="Continue from Compare the overlay with the atlas alone"><a class="choice" href="#show-survey">Adjust the blend <span aria-hidden="true">→</span></a><a class="choice" href="#search-open">Find another field <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

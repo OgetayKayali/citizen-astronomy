@@ -1,5 +1,7 @@
 # Binary Light Lab
 
+Use the [illustrated Binary Light Lab tutorial](tutorials/binary-lab.html) to watch an eclipse and measure how the combined starlight changes. You can open any task directly.
+
 Open **Simulations → Binary Light Lab** on CAst's launcher, or **Mode → Binary Light Lab**. No image files or network connection are needed. This mode embeds the PhysicsEngine Binary Light Lab's original C++ solver and stellar surface shading, with Qt controls styled for CAst and a smooth HDR stellar glow.
 
 ## First experiment

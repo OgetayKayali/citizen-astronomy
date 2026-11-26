@@ -31,7 +31,7 @@ from astropy.io.fits import Header
 
 
 
-from photometry_app.core.catalogs import CatalogService, gaia_field_needs_tiles
+from photometry_app.core.catalogs import CatalogService, gaia_field_needs_tiles, summarize_catalog_service_error
 
 from photometry_app.core.catalog_filters import filter_variable_stars, format_designation_family_labels
 
@@ -119,6 +119,7 @@ _DEFAULT_ASTROMETRY_PARALLEL_SUBMISSIONS = 3
 _DEFAULT_PHOTOMETRY_AUTO_MAX_WORKERS = 8
 
 _PROCESSING_REPORT_CACHE_MISS_REASON = "Cache miss: workflow files or settings changed since the cached light-curve results were written."
+_CATALOG_LOOKUP_FAILURE_PREFIX = "Catalog lookup failed:"
 
 _AAVSO_ANALYZE_BEST_MIN_PEAK_ABOVE_SKY_ADU = 1000.0
 
@@ -428,6 +429,9 @@ class PhotometryPipeline:
         if not isinstance(report, ProcessingReport):
 
             return None, "Ignored corrupt cached light-curve results."
+
+        if report.field_catalog is None and any(note.startswith(_CATALOG_LOOKUP_FAILURE_PREFIX) for note in report.notes):
+            return None, "Ignored cached light-curve results from a failed catalog lookup."
 
         requested_manual_mode = _manual_config_ready_for_processing(manual_config)
 
@@ -946,11 +950,14 @@ class PhotometryPipeline:
                 gaia_max_magnitude=settings.reference_star_max_magnitude,
             )
 
+        except PipelineCancelled:
+            raise
         except Exception as exc:
 
-            notes.append(f"Catalog lookup failed: {exc}")
+            failure_note = f"{_CATALOG_LOOKUP_FAILURE_PREFIX} {exc}"
+            notes.append(failure_note)
 
-            _emit_progress(progress_callback, f"Catalog lookup failed: {exc}")
+            _emit_progress(progress_callback, failure_note)
 
             processing_report = ProcessingReport(
 
@@ -978,7 +985,7 @@ class PhotometryPipeline:
 
             self._append_run_log(run_log_path, processing_report)
 
-            return processing_report
+            raise RuntimeError(f"{_CATALOG_LOOKUP_FAILURE_PREFIX} {summarize_catalog_service_error(exc)}") from exc
 
 
 
@@ -1289,19 +1296,23 @@ class PhotometryPipeline:
 
         else:
 
-            automatic_reference_stars = select_reference_stars(
-
-                field_catalog.gaia_stars,
-
-                automatic_variable_stars,
-
-                minimum_magnitude=settings.reference_star_min_magnitude,
-
-                maximum_magnitude=settings.reference_star_max_magnitude,
-
-                per_target_count=settings.nearby_reference_count,
-
-            )
+            _match_target_gaia_colors(automatic_variable_stars, field_catalog.gaia_stars)
+            comparison_pool = {}
+            fields = [result.solved_field for _, result in solved_results if result.solved_field]
+            filters = tuple(sorted({scan.metadata.filter_name for scan, _ in solved_results if scan.metadata.filter_name}))
+            # Sample both orientations and the middle of a dithered sequence.
+            # Pool reserves let the per-frame selector substitute a valid comparison.
+            for index in sorted({0, len(fields) // 2, len(fields) - 1}):
+                eligible = _references_on_detector(field_catalog.gaia_stars, fields[index], settings)
+                for star in select_reference_stars(
+                    eligible, field_catalog.variable_stars + automatic_variable_stars,
+                    minimum_magnitude=settings.reference_star_min_magnitude,
+                    maximum_magnitude=settings.reference_star_max_magnitude,
+                    per_target_count=max(1, settings.nearby_reference_count) + 2,
+                    target_stars=automatic_variable_stars, filter_names=filters,
+                ):
+                    comparison_pool[star.source_id] = star
+            automatic_reference_stars = list(comparison_pool.values())
 
             if manual_reference_entries:
 
@@ -2895,6 +2906,11 @@ def _aligned_frame_reuse_key(
 
 ) -> tuple[str, int, int, str, float | None, float | None] | None:
 
+    if file_result.path.exists() and _read_header(file_result.path)[0].get("OSCCHAN"):
+        # Blue and summed-green centers differ. Each channel/exposure must keep
+        # its own solution even when the user previously enabled aligned mode.
+        return None
+
     width = file_result.metadata.width
 
     height = file_result.metadata.height
@@ -3545,7 +3561,7 @@ def _catalog_source_key(entry: CatalogStar) -> str:
 
 
 
-_PHOTOMETRY_APERTURE_ALGORITHM_VERSION = "aperture-v7-local-fwhm"
+_PHOTOMETRY_APERTURE_ALGORITHM_VERSION = "aperture-v9-gain-fwhm-midpoint-sequence"
 
 
 def _measurement_cache_key(
@@ -3863,6 +3879,8 @@ def _processing_report_cache_inputs(
             "telescope": settings.telescope, "camera": settings.camera,
             "max_pair_seconds": settings.transformation_max_pair_seconds,
         },
+        "aavso_chart_id": settings.aavso_chart_id,
+        "ensemble_version": 2,
         "photometry_settings_signature": _photometry_settings_signature(settings, manual_config),
     }
 
@@ -3937,6 +3955,9 @@ def _measurement_to_payload(measurement: PhotometryMeasurement) -> dict[str, obj
 
         "file_path": str(measurement.file_path),
 
+        "gaia_bp_rp": measurement.gaia_bp_rp,
+        "exposure_seconds": measurement.exposure_seconds,
+        "requested_comparison_source_ids": measurement.requested_comparison_source_ids,
         "observation_time": measurement.observation_time.isoformat() if measurement.observation_time else None,
 
         "filter_name": measurement.filter_name,
@@ -3973,6 +3994,7 @@ def _measurement_to_payload(measurement: PhotometryMeasurement) -> dict[str, obj
 
         "standard_magnitude": measurement.standard_magnitude,
         "transformation": measurement.transformation,
+        "auid": measurement.auid,
 
         "standard_magnitude_error": measurement.standard_magnitude_error,
 
@@ -4057,6 +4079,9 @@ def _measurement_from_payload(payload: dict[str, object]) -> PhotometryMeasureme
         file_path=Path(str(payload["file_path"])),
 
         observation_time=datetime.fromisoformat(str(observation_time)) if observation_time else None,
+        gaia_bp_rp=payload.get("gaia_bp_rp"),
+        exposure_seconds=payload.get("exposure_seconds"),
+        requested_comparison_source_ids=payload.get("requested_comparison_source_ids"),
 
         filter_name=str(payload["filter_name"]) if payload.get("filter_name") is not None else None,
 
@@ -4092,6 +4117,7 @@ def _measurement_from_payload(payload: dict[str, object]) -> PhotometryMeasureme
 
         standard_magnitude=float(payload["standard_magnitude"]) if payload.get("standard_magnitude") is not None else None,
         transformation=dict(payload.get("transformation") or {}),
+        auid=str(payload["auid"]) if payload.get("auid") else None,
 
         standard_magnitude_error=float(payload["standard_magnitude_error"]) if payload.get("standard_magnitude_error") is not None else None,
 
@@ -4161,6 +4187,34 @@ def _measurement_from_payload(payload: dict[str, object]) -> PhotometryMeasureme
 
 
 
+
+
+def _match_target_gaia_colors(targets: list[CatalogStar], gaia: list[CatalogStar]) -> None:
+    from astropy.coordinates import SkyCoord
+    if not targets or not gaia:
+        return
+    coordinates = SkyCoord([s.ra_deg for s in targets], [s.dec_deg for s in targets], unit="deg")
+    catalog = SkyCoord([s.ra_deg for s in gaia], [s.dec_deg for s in gaia], unit="deg")
+    indices, separations, _ = coordinates.match_to_catalog_sky(catalog)
+    for target, index, distance in zip(targets, indices, separations.arcsec):
+        color = gaia[index].metadata.get("bp_rp")
+        if distance <= 2 and color is not None:
+            target.metadata["bp_rp"] = color
+
+
+def _references_on_detector(stars: list[CatalogStar], field: SolvedField, settings: AppSettings) -> list[CatalogStar]:
+    from astropy.wcs import WCS
+    from photometry_app.core.image_io import read_header
+    from photometry_app.core.photometry import _usable_image_margin
+
+    if not stars:
+        return []
+    wcs = WCS(read_header(field.wcs_path)).celestial
+    x, y = wcs.world_to_pixel_values([star.ra_deg for star in stars], [star.dec_deg for star in stars])
+    dx, dy = _usable_image_margin((field.height, field.width), settings.annulus_outer_radius_pixels,
+                                  settings.frame_edge_margin_percent)
+    inside = (x >= dx) & (x < field.width - dx) & (y >= dy) & (y < field.height - dy)
+    return [star for star, keep in zip(stars, inside) if keep]
 
 
 def _refresh_manual_config_sky_coordinates(
@@ -4384,14 +4438,18 @@ def _stamp_catalog_bands_onto_measurements(
             float(catalog_star.magnitude) if catalog_star.magnitude is not None else measurement.catalog_magnitude
         )
         source_name = measurement.source_name
+        auid = catalog_star.metadata.get("auid") or measurement.auid
         if measurement_may_use_comparison_catalog_name(measurement) and catalog_star.name:
             source_name = catalog_star.name
-        if not band_magnitudes and catalog_magnitude is None and source_name == measurement.source_name:
+        color = catalog_star.metadata.get("bp_rp", measurement.gaia_bp_rp)
+        if not band_magnitudes and catalog_magnitude is None and source_name == measurement.source_name and auid == measurement.auid and color == measurement.gaia_bp_rp:
             continue
         if (
             measurement.band_magnitudes == band_magnitudes
             and measurement.catalog_magnitude == catalog_magnitude
             and measurement.source_name == source_name
+            and measurement.auid == auid
+            and measurement.gaia_bp_rp == color
         ):
             continue
         measurements[index] = replace(
@@ -4399,6 +4457,8 @@ def _stamp_catalog_bands_onto_measurements(
             source_name=source_name,
             catalog_magnitude=catalog_magnitude,
             band_magnitudes=band_magnitudes or dict(measurement.band_magnitudes or {}),
+            auid=auid,
+            gaia_bp_rp=color,
         )
         stamped += 1
     return stamped

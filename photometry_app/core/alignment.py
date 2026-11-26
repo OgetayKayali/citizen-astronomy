@@ -150,6 +150,12 @@ def align_wcs_image_sequence(
 
         raise ValueError("The selected reference frame is not part of the loaded sequence.")
 
+    from photometry_app.core.osc import has_cfa
+    for frame in frame_paths:
+        frame_header = read_header_and_shape(frame)[0]
+        if frame_header.get("OSCCHAN") or has_cfa(frame_header):
+            raise ValueError("OSC science frames must be measured in their native channel pixels. Use individual plate solutions instead of resampling alignment.")
+
 
 
     unique_parents = {path.parent.resolve() for path in frame_paths}

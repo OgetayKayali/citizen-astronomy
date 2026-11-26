@@ -153,7 +153,7 @@ class CatalogServiceTest(unittest.TestCase):
             captured: dict[str, object] = {}
 
             class FakeVizier:
-                def __init__(self, *, columns, row_limit, column_filters) -> None:
+                def __init__(self, *, columns, row_limit, column_filters, vizier_server) -> None:
                     captured["columns"] = columns
                     captured["row_limit"] = row_limit
                     captured["column_filters"] = column_filters
@@ -172,6 +172,88 @@ class CatalogServiceTest(unittest.TestCase):
             self.assertEqual(stars, [])
             self.assertEqual(captured["columns"], list(_GAIA_DR3_VIZIER_COLUMNS))
             self.assertNotIn("*", captured["columns"])
+
+    def test_vizier_uses_working_mirror_for_subsequent_gaia_tiles_and_vsx(self) -> None:
+        primary = "vizier.cds.unistra.fr"
+        mirror = "vizier.cfa.harvard.edu"
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch("photometry_app.core.catalogs.vizier_conf", SimpleNamespace(server=primary)),
+            patch("photometry_app.core.catalogs.Vizier") as vizier,
+        ):
+            service = CatalogService(Path(temp_dir))
+            center = SkyCoord(149.29680 * u.deg, 54.36634 * u.deg)
+            radius = 0.4544 * u.deg
+            calls = []
+
+            def make_client(*, vizier_server, columns, row_limit, column_filters):
+                def query_region(center, *, radius, catalog):
+                    calls.append((vizier_server, center, radius, catalog, row_limit, column_filters))
+                    if vizier_server == primary:
+                        response = requests.Response()
+                        response.status_code = 404
+                        raise requests.HTTPError(response=response)
+                    return []
+
+                return SimpleNamespace(query_region=query_region)
+
+            vizier.side_effect = make_client
+            service._query_gaia_filtered(center, radius, maximum_magnitude=16.0, row_limit=5000)
+            service._query_gaia_filtered(center, radius, maximum_magnitude=16.0, row_limit=5000)
+            service._query_vsx(center, radius)
+
+            gaia_query = (center, radius, "I/355/gaiadr3", 5000, {"Gmag": "<16.000"})
+            self.assertEqual(
+                calls,
+                [
+                    (primary, *gaia_query),
+                    (mirror, *gaia_query),
+                    (mirror, *gaia_query),
+                    (mirror, center, radius, "B/vsx/vsx", -1, {}),
+                ],
+            )
+
+    def test_vizier_uses_idia_after_dns_failure_and_harvard_timeout(self) -> None:
+        primary = "vizier.cds.unistra.fr"
+        harvard = "vizier.cfa.harvard.edu"
+        idia = "vizier.idia.ac.za"
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch("photometry_app.core.catalogs.vizier_conf", SimpleNamespace(server=primary)),
+            patch("photometry_app.core.catalogs.Vizier") as vizier,
+        ):
+            service = CatalogService(Path(temp_dir))
+            center = SkyCoord(145.939 * u.deg, 55.953 * u.deg)
+            radius = 0.08 * u.deg
+            vizier.return_value.query_region.side_effect = [
+                requests.ConnectionError("Failed to resolve vizier.cds.unistra.fr"),
+                requests.Timeout("Harvard timed out"),
+                [],
+                [],
+            ]
+
+            service._query_gaia_filtered(center, radius)
+            service._query_vsx(center, radius)
+
+            self.assertEqual(
+                [call.kwargs["vizier_server"] for call in vizier.call_args_list],
+                [primary, harvard, idia, idia],
+            )
+
+    def test_vizier_retries_unrecognized_response_and_accepts_empty_table_list(self) -> None:
+        primary = "vizier.cds.unistra.fr"
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch("photometry_app.core.catalogs.vizier_conf", SimpleNamespace(server=primary)),
+            patch("photometry_app.core.catalogs.Vizier") as vizier,
+        ):
+            service = CatalogService(Path(temp_dir))
+            vizier.return_value.query_region.side_effect = [None, []]
+            self.assertEqual(service._query_vsx(SkyCoord(10 * u.deg, 20 * u.deg), 0.1 * u.deg), [])
+            self.assertEqual(
+                [call.kwargs["vizier_server"] for call in vizier.call_args_list],
+                [primary, "vizier.cfa.harvard.edu"],
+            )
 
     def test_query_field_catalog_applies_variable_and_exoplanet_magnitude_limits(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

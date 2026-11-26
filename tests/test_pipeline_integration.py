@@ -226,6 +226,17 @@ class SlowAstrometryClient(RecordingAstrometryClient):
 
 
 class PipelineIntegrationTest(unittest.TestCase):
+    def setUp(self):
+        config_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(config_dir.cleanup)
+        self.config_root = Path(config_dir.name)
+        environment = patch.dict(os.environ, {
+            "CITIZEN_PHOTOMETRY_CONFIG_PATH": str(self.config_root / "settings.json"),
+            "CITIZEN_PHOTOMETRY_STATE_PATH": str(self.config_root / "state.json"),
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+
 
     def test_science_export_metadata_from_settings_maps_submission_fields(self) -> None:
 
@@ -476,6 +487,7 @@ class PipelineIntegrationTest(unittest.TestCase):
                 light_curves=light_curves,
 
                 export_suffix="filtered",
+                export_name_stem=None,
 
                 plot_y_axis_mode="flux",
 
@@ -785,7 +797,7 @@ class PipelineIntegrationTest(unittest.TestCase):
 
 
 
-    def test_process_object_skips_saturated_selected_variable_star_when_filter_enabled(self) -> None:
+    def test_process_object_retains_saturated_selected_variable_star_for_inspection(self) -> None:
 
         with tempfile.TemporaryDirectory() as temp_dir:
 
@@ -905,14 +917,9 @@ class PipelineIntegrationTest(unittest.TestCase):
 
 
 
-            self.assertEqual(len(report.light_curves), 0)
-
-            self.assertEqual(len(report.measurements), 0)
-
-            self.assertTrue(any("skipped 1 selected variable star" in note.lower() for note in report.notes))
-
-            self.assertTrue(any("saturated" in note.lower() for note in report.file_notes.get("frame_001.fits", [])))
-
+            self.assertEqual(len(report.measurements), 1)
+            self.assertTrue(report.measurements[0].is_saturated)
+            self.assertTrue(report.measurements[0].excluded_from_analysis)
 
 
     def test_process_object_keeps_near_saturated_selected_variable_star(self) -> None:
@@ -2944,7 +2951,7 @@ class PipelineIntegrationTest(unittest.TestCase):
 
 
 
-            run_log_path = root / ".photometry-cache" / "runs" / "M42.jsonl"
+            run_log_path = AppSettings.from_root(root).cache_dir / "runs" / "M42.jsonl"
 
             self.assertTrue(run_log_path.exists())
 
@@ -3500,6 +3507,43 @@ class PipelineIntegrationTest(unittest.TestCase):
             )
 
 
+
+    def test_process_object_reports_catalog_failure_and_ignores_legacy_failed_cache(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch.dict(os.environ, {
+                "CITIZEN_PHOTOMETRY_CONFIG_PATH": str(Path(temp_dir) / "settings.json"),
+                "CITIZEN_PHOTOMETRY_STATE_PATH": str(Path(temp_dir) / "state.json"),
+            }),
+        ):
+            root = Path(temp_dir)
+            object_dir = root / "Files" / "W UMa"
+            object_dir.mkdir(parents=True)
+            self._write_solved_fits(object_dir / "solved.fits")
+            pipeline = PhotometryPipeline()
+            summary_files = pipeline.scan_workspace(root).object_summaries[0].files
+            service_error = RuntimeError("404 Client Error: https://vizier.cds.unistra.fr/viz-bin/votable")
+            pipeline.save_cached_processing_report(
+                root,
+                ProcessingReport(
+                    object_name="W UMa",
+                    files_processed=1,
+                    solved_files=1,
+                    field_catalog=None,
+                    notes=[f"Catalog lookup failed: {service_error}"],
+                ),
+                summary_files=summary_files,
+            )
+            report, cache_note = pipeline.load_cached_processing_report(root, "W UMa", summary_files=summary_files)
+            self.assertIsNone(report)
+            self.assertEqual(cache_note, "Ignored cached light-curve results from a failed catalog lookup.")
+
+            with patch.object(CatalogService, "query_field_catalog", side_effect=service_error):
+                with self.assertRaisesRegex(RuntimeError, "Catalog lookup failed: Could not reach the VizieR"):
+                    pipeline.process_object(root, "W UMa", skip_wcs_sanity_diagnosis=True)
+
+            history = pipeline.load_run_history(root, "W UMa")
+            self.assertIn(f"Catalog lookup failed: {service_error}", history[0].notes)
 
     def test_process_object_handles_empty_variable_catalog(self) -> None:
 
@@ -4690,13 +4734,16 @@ class PipelineIntegrationTest(unittest.TestCase):
 
             )
 
-            cache_path = cache_dir / service._cache_key(solved_field)
+            cache_path = cache_dir / service._field_catalog_cache_key(
+                solved_field, include_gaia=True, include_variable_stars=True, include_exoplanets=True,
+                gaia_max_magnitude=None, gaia_row_cap=None, variable_star_max_magnitude=None,
+                exoplanet_max_magnitude=None)
 
             cache_path.write_text("{broken json", encoding="utf-8")
 
 
 
-            with patch.object(CatalogService, "_query_gaia", return_value=[CatalogStar("gaia-dr3", "gaia-ref", "gaia-ref", 83.8, -5.39, 11.0, False)]), patch.object(
+            with patch("photometry_app.core.standard_magnitude.enrich_gaia_stars_with_standard_catalogs", return_value={}), patch.object(CatalogService, "_query_gaia_field", return_value=[CatalogStar("gaia-dr3", "gaia-ref", "gaia-ref", 83.8, -5.39, 11.0, False)]), patch.object(
 
                 CatalogService,
 
@@ -4752,11 +4799,14 @@ class PipelineIntegrationTest(unittest.TestCase):
 
             )
 
-            cache_path = cache_dir / service._cache_key(solved_field)
+            cache_path = cache_dir / service._field_catalog_cache_key(
+                solved_field, include_gaia=True, include_variable_stars=True, include_exoplanets=True,
+                gaia_max_magnitude=None, gaia_row_cap=None, variable_star_max_magnitude=None,
+                exoplanet_max_magnitude=None)
 
 
 
-            with patch.object(CatalogService, "_query_gaia", return_value=[]), patch.object(
+            with patch("photometry_app.core.standard_magnitude.enrich_gaia_stars_with_standard_catalogs", return_value={}), patch.object(CatalogService, "_query_gaia_field", return_value=[]), patch.object(
 
                 CatalogService,
 
@@ -4840,7 +4890,7 @@ class PipelineIntegrationTest(unittest.TestCase):
 
 
 
-            with patch.object(CatalogService, "_query_gaia", return_value=[CatalogStar("gaia-dr3", "gaia-ref", "gaia-ref", 83.8, -5.39, 11.0, False)]), patch.object(
+            with patch("photometry_app.core.standard_magnitude.enrich_gaia_stars_with_standard_catalogs", return_value={}), patch.object(CatalogService, "_query_gaia_field", return_value=[CatalogStar("gaia-dr3", "gaia-ref", "gaia-ref", 83.8, -5.39, 11.0, False)]), patch.object(
 
                 CatalogService,
 
@@ -4866,7 +4916,7 @@ class PipelineIntegrationTest(unittest.TestCase):
 
 
 
-            with patch.object(CatalogService, "_query_gaia", return_value=[CatalogStar("gaia-dr3", "gaia-ref", "gaia-ref", 83.8, -5.39, 11.0, False)]), patch.object(
+            with patch("photometry_app.core.standard_magnitude.enrich_gaia_stars_with_standard_catalogs", return_value={}), patch.object(CatalogService, "_query_gaia_field", return_value=[CatalogStar("gaia-dr3", "gaia-ref", "gaia-ref", 83.8, -5.39, 11.0, False)]), patch.object(
 
                 CatalogService,
 
@@ -4900,7 +4950,7 @@ class PipelineIntegrationTest(unittest.TestCase):
 
             root = Path(temp_dir)
 
-            catalog_dir = root / ".photometry-cache" / "catalogs"
+            catalog_dir = AppSettings.from_root(root).cache_dir / "catalogs"
 
             catalog_dir.mkdir(parents=True)
 

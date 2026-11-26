@@ -1,0 +1,455 @@
+{
+  "title": "Aurora & Magnetosphere Lab",
+  "intro": "How far does Earth’s magnetic boundary move when a solar storm arrives? Pause the model at the same minute in three scenarios, compare the readings, then follow the storm from its arrival to the recovery of Earth’s magnetic tail.",
+  "dataset": "Citizen Astronomy with an OpenGL 3.3-capable graphics driver. The lab includes Earth and the three solar-wind scenarios and runs offline.",
+  "outcome": "Read the magnetopause distance, compare northward and southward storms at the same pressure, and see why the magnetic tail can stay disturbed after the wind subsides.",
+  "groups": [
+    {
+      "title": "Open the lab and control time",
+      "steps": [
+        {
+          "id": "launch",
+          "title": "Open Aurora & Magnetosphere Lab",
+          "requires": "Start Citizen Astronomy (CAst). If you are already in another workspace, **Mode → Choose Mode…** takes you back to the launcher.",
+          "actions": [
+            "Scroll down to **Simulations**. Click **Aurora & Magnetosphere Lab** (1), the card showing Earth’s magnetic field."
+          ],
+          "check": "A moving view of Earth appears. The controls run down the right side. The time slider and a graph sit below Earth.",
+          "image": "launch.webp",
+          "alt": "The launcher’s Simulations row with the Aurora & Magnetosphere Lab card outlined and numbered 1.",
+          "links": [
+            {
+              "id": "first-view",
+              "label": "Pause for a first look"
+            },
+            {
+              "id": "quiet",
+              "label": "Compare solar-wind scenarios"
+            },
+            {
+              "id": "aurora",
+              "label": "Find the connection to aurora"
+            }
+          ]
+        },
+        {
+          "id": "first-view",
+          "title": "Pause and find Earth’s magnetic boundary",
+          "requires": "[Open the lab](#launch). It starts playing the southward storm scenario.",
+          "actions": [
+            "Click **Pause** (1) below the scene. If the button already says **Play**, the clock is paused.",
+            "Find Earth near the middle of the scene. The cyan boundary facing the **+X · SUN** direction is the **magnetopause**, where the solar wind meets the region dominated by Earth’s magnetic field."
+          ],
+          "check": "The button now reads **Play**. The upper-left readout shows **Paused** next to the time in model minutes. You can examine the scene while the clock holds still.",
+          "image": "first-view.webp",
+          "alt": "The newly opened lab shows Earth and its field, with the Pause button outlined below the scene.",
+          "links": [
+            {
+              "id": "time",
+              "label": "Set up the 45-minute experiment"
+            },
+            {
+              "id": "playback",
+              "label": "Control playback speed and restart"
+            },
+            {
+              "id": "orbit",
+              "label": "Look around Earth"
+            }
+          ]
+        },
+        {
+          "id": "playback",
+          "title": "Play, change speed, or return to the start",
+          "requires": "The [lab](#launch) is open. These controls are beneath the scene.",
+          "actions": [
+            "Click **Play** (1) to advance the model. The same button changes to **Pause**. Click it again to hold the current time.",
+            "To replay the event from its beginning, click **Reset** (2). The clock returns to zero and pauses.",
+            "To watch faster, open the speed menu on the far right (3), choose **2×** or **4×**, then click **Play**. Choose **1×** for the original pace."
+          ],
+          "check": "At **1×**, one second of playback advances one model minute. The vertical line on the graph follows the clock.",
+          "image": "playback.webp",
+          "alt": "Close-up of the time controls with Play marked 1, Reset marked 2 and the playback-speed menu marked 3.",
+          "links": [
+            {
+              "id": "time",
+              "label": "Go straight to a chosen minute"
+            },
+            {
+              "id": "arrivals",
+              "label": "Find when the storm arrives"
+            }
+          ]
+        },
+        {
+          "id": "time",
+          "title": "Set the clock to 45 model minutes",
+          "requires": "The [lab](#launch) is open. For this comparison use the time slider directly beneath the scene.",
+          "actions": [
+            "Drag the slider handle (1) to just over a quarter of the way across the default 160-minute timeline. Dragging the handle pauses playback.",
+            "Watch the last line of the upper-left readout (2) as you drag. Stop close to **045.0 model min**. A few tenths of a minute either way will give nearly the same readings here."
+          ],
+          "check": "The readout shows roughly **045.0 model min · Paused**. Leave the slider there as you change scenarios so each picture shows the same stage of the storm.",
+          "image": "time.webp",
+          "alt": "The time slider is marked 1 and the upper-left clock readout marked 2 at 45.0 model minutes.",
+          "links": [
+            {
+              "id": "camera",
+              "label": "Frame the comparison"
+            },
+            {
+              "id": "quiet",
+              "label": "Read the quiet reference"
+            },
+            {
+              "id": "south",
+              "label": "Inspect the southward storm"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Compare three solar-wind scenarios",
+      "steps": [
+        {
+          "id": "camera",
+          "title": "Choose the pressure-comparison camera",
+          "requires": "[Open the lab](#launch). For the three-scenario experiment, [pause near 45 minutes](#time).",
+          "actions": [
+            "Scroll inside the right-hand panel to **Field & scene**. Click its heading if its controls are folded.",
+            "Near the bottom of the section, open **Camera preset** (1) and choose **Pressure comparison**."
+          ],
+          "check": "Earth and the Sun-facing boundaries share one side view. Changing the scenario will preserve this viewpoint and the current time.",
+          "image": "camera.webp",
+          "alt": "The pressure-comparison view with the Camera preset menu outlined in the right-hand panel.",
+          "links": [
+            {
+              "id": "quiet",
+              "label": "Start with quiet solar wind"
+            },
+            {
+              "id": "north",
+              "label": "Try the northward storm"
+            },
+            {
+              "id": "topology",
+              "label": "See how the field lines connect"
+            }
+          ]
+        },
+        {
+          "id": "quiet",
+          "title": "Measure the boundary in quiet solar wind",
+          "requires": "[Pause near 45 model minutes](#time). The [Pressure comparison camera](#camera) matches the example image.",
+          "actions": [
+            "Scroll to the top of the right panel. Open **SCENARIO** (1) and choose **Quiet Solar Wind**. Wait for **Scenario ready**.",
+            "In the readout (2), find **Pressure** and the line beginning **MP**. MP is the distance to the Sun-facing tip of the magnetopause. **BS** is the distance to the bow shock farther upstream. Both are in Earth radii, written **R_E**."
+          ],
+          "check": "The near-Earth pressure is about **1.34 nPa**. The magnetopause lies **10.97 Earth radii** from Earth’s center and the bow shock lies about **14.37 Earth radii** out. These are the quiet reference distances.",
+          "image": "quiet.webp",
+          "alt": "Quiet Solar Wind selected at marker 1 and the pressure and boundary readouts marked 2 at 45 minutes.",
+          "links": [
+            {
+              "id": "north",
+              "label": "Compare the northward storm"
+            },
+            {
+              "id": "south",
+              "label": "Compare the southward storm"
+            },
+            {
+              "id": "arrivals",
+              "label": "Read the history graph"
+            }
+          ]
+        },
+        {
+          "id": "north",
+          "title": "Compress the boundary with a northward storm",
+          "requires": "With the lab open, [pause near 45 minutes](#time). Choose the [Pressure comparison camera](#camera) for the same framing as the screenshot.",
+          "actions": [
+            "At the top right, open **SCENARIO** (1) and choose **CME — Northward IMF**. A CME is a coronal mass ejection, an outflow of plasma from the Sun. IMF is the magnetic field carried by the solar wind.",
+            "Read the **+24 R_E** and **MP** lines (2). The wind at the near-Earth input travels at **800 km/s** and its northward field component, **Bz**, is **+15 nT**."
+          ],
+          "check": "The pressure rises to about **19.27 nPa** and the magnetopause moves inward to **7.35 Earth radii**, compared with **10.97** in quiet wind. The bow-shock estimate here extends beyond the pressure range recommended for that model, as the amber note explains.",
+          "image": "north.webp",
+          "alt": "The northward CME selector is marked 1, and marker 2 identifies the measured model pressure and boundary positions at 45 minutes.",
+          "links": [
+            {
+              "id": "south",
+              "label": "Reverse the magnetic field at the same pressure"
+            },
+            {
+              "id": "quiet",
+              "label": "Recheck the quiet reference"
+            },
+            {
+              "id": "inputs",
+              "label": "Change the wind density yourself"
+            }
+          ]
+        },
+        {
+          "id": "south",
+          "title": "Reverse the field at the same pressure",
+          "requires": "[Pause around 45 minutes](#time). Use the [Pressure comparison camera](#camera) to match the screenshots.",
+          "actions": [
+            "Open **SCENARIO** (1) and choose **CME — Southward IMF**. Wait for **Scenario ready**. The wind speed and density match the northward storm.",
+            "Read **Bz**, **Pressure**, and **MP** in the readout (2). Use the two buttons above the tutorial image to compare the captured southward and northward cases without moving the camera."
+          ],
+          "check": "Bz has changed from **+15 to −15 nT**. Pressure stays near **19.27 nPa** in both storms. The modeled magnetopause moves from **7.35 to 5.83 Earth radii**. The bow-shock estimate stays near **9.56** because this model uses wind pressure to place it.",
+          "image": "south.webp",
+          "alt": "Southward CME selected at 45 minutes, with the scenario control and readout marked 1 and 2. The magnetopause reads 5.83 Earth radii.",
+          "links": [
+            {
+              "id": "recovery",
+              "label": "See what persists after the storm"
+            },
+            {
+              "id": "topology",
+              "label": "Examine the magnetic field lines"
+            },
+            {
+              "id": "inputs",
+              "label": "Try a different density"
+            }
+          ],
+          "imageLabel": "Southward IMF",
+          "comparison": {
+            "label": "Northward IMF",
+            "image": "north.webp",
+            "alt": "Northward CME at the same time and camera angle. The readout shows the same pressure and a magnetopause at 7.35 Earth radii."
+          }
+        }
+      ]
+    },
+    {
+      "title": "Trace a storm and change its inputs",
+      "steps": [
+        {
+          "id": "arrivals",
+          "title": "Find the delay between the two pressure readings",
+          "requires": "[Open the lab](#launch). At the top of the right panel choose **CME — Southward IMF** under **SCENARIO**. If you have edited this scenario, select **Quiet Solar Wind**, then reselect the southward storm to restore its defaults.",
+          "actions": [
+            "Drag the timeline handle (1) until the readout (2) is close to **013.0 model min**. Read the two numbers on the **Pressure** line from left to right.",
+            "Find the white vertical cursor on the history graph (3). The **dashed gold** curve is pressure at the upstream monitor. The **solid gold** curve is pressure at the input closer to Earth. Read both against the left scale in nPa.",
+            "Follow the **cyan** magnetopause and **violet** bow-shock curves using the right-hand scale in Earth radii. Drag the handle a little farther right to watch when these distances begin to fall."
+          ],
+          "check": "Near minute 13, the upstream monitor already feels the storm. In the screenshot its pressure is **8.28 nPa**, while the near-Earth input is still at **1.34 nPa**. The rise in the dashed gold curve comes first.",
+          "image": "arrivals.webp",
+          "alt": "The timeline handle is marked 1, the two pressure readings marked 2, and the history graph with separate pressure and distance scales marked 3.",
+          "links": [
+            {
+              "id": "south",
+              "label": "Jump to the storm plateau"
+            },
+            {
+              "id": "recovery",
+              "label": "Follow the later recovery"
+            },
+            {
+              "id": "playback",
+              "label": "Replay the arrival slowly"
+            }
+          ]
+        },
+        {
+          "id": "recovery",
+          "title": "Read the tail’s memory after the wind recovers",
+          "requires": "Use the default [southward CME](#south). If you edited its wind settings, switch to **Quiet Solar Wind**, then back to **CME — Southward IMF**.",
+          "actions": [
+            "Drag the time handle (1) until the clock shows about **100 model min**.",
+            "Scroll the right panel to **Coupling & tail memory** and expand that section if needed. Read **Dayside driver C** and **Stored-flux proxy F** together (2). C represents how strongly the wind is driving the model now. F tracks how much of the earlier disturbance the model still retains."
+          ],
+          "check": "At minute 100 the driver reads **0.00**, but F is still about **0.220** and release is positive. The model’s tail takes time to relax after the wind has recovered.",
+          "image": "recovery.webp",
+          "alt": "Timeline near 100 minutes and the Coupling & tail memory readout showing C 0.00, F 0.220, and release 0.011 per minute.",
+          "links": [
+            {
+              "id": "arrivals",
+              "label": "Go back to the arrival"
+            },
+            {
+              "id": "aurora",
+              "label": "Connect this result to aurora"
+            }
+          ]
+        },
+        {
+          "id": "inputs",
+          "title": "Change wind density and read the pressure",
+          "requires": "Select the default [southward CME](#south) and pause around 45 minutes. At the top of the right panel, expand **Solar wind · event plateau**.",
+          "actions": [
+            "Leave **Speed (km/s)** at **800**. Double-click the value in **Proton density (cm⁻³)** (1), type **10**, and press **Enter**.",
+            "Read **Calculated plateau pressure** (2). Wait for **Scenario ready** while CAst recalculates the history for the whole event.",
+            "To recover the original storm settings, choose **Quiet Solar Wind** and then **CME — Southward IMF** from the scenario menu."
+          ],
+          "check": "At 800 km/s, lowering density from **18** to **10** lowers the calculated plateau pressure from about **19.27** to **10.70 nPa**. The screenshot shows the edited value before restoring the preset.",
+          "image": "inputs.webp",
+          "alt": "The proton density field set to 10 is marked 1, and the calculated plateau pressure of 10.70 nPa is marked 2.",
+          "links": [
+            {
+              "id": "north",
+              "label": "Compare direction at fixed density"
+            },
+            {
+              "id": "arrivals",
+              "label": "Inspect the recalculated history"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Explore the scene and the aurora connection",
+      "steps": [
+        {
+          "id": "orbit",
+          "title": "Orbit, pan, or zoom around Earth",
+          "requires": "[Open the lab](#launch). To match this close view, scroll to **Field & scene → Camera preset** and choose **Earth**.",
+          "actions": [
+            "Press and hold the left mouse button inside the outlined scene area (1). Move the pointer sideways, then release to orbit Earth.",
+            "To move the picture sideways or vertically, hold the right mouse button and drag. Roll the mouse wheel over the scene to move closer or farther away.",
+            "To recover a familiar view, select **Dayside** or **Pressure comparison** from [Camera preset](#camera)."
+          ],
+          "check": "The viewpoint moves around Earth while the clock and wind settings stay at their selected values if playback is paused.",
+          "image": "orbit.webp",
+          "alt": "The Earth camera shows a close view, with an outlined region of the 3D scene where mouse drags and wheel gestures work.",
+          "links": [
+            {
+              "id": "camera",
+              "label": "Choose a repeatable camera angle"
+            },
+            {
+              "id": "layers",
+              "label": "Hide or restore individual layers"
+            },
+            {
+              "id": "topology",
+              "label": "Trace the field-line types"
+            }
+          ]
+        },
+        {
+          "id": "topology",
+          "title": "Trace closed, open, and interplanetary field lines",
+          "requires": "[Open the lab](#launch). The field lines are easiest to follow with the [southward CME paused](#south).",
+          "actions": [
+            "Scroll down the right-hand controls to **Field & scene**. Open **Camera preset** (1) and select **Topology · schematic**.",
+            "Follow a **cyan** curve back to Earth at both ends. Then look for a **pink** curve with one end on Earth and a **gold** interplanetary line passing by Earth."
+          ],
+          "check": "The preset enables all three line types. Their colors distinguish how they connect. The pink curves illustrate possible open connections, so counting them cannot tell you how much magnetic flux has opened.",
+          "image": "topology.webp",
+          "alt": "The topology camera is outlined beneath the layer controls. The scene shows cyan closed lines, pink open-line examples and gold interplanetary lines.",
+          "links": [
+            {
+              "id": "layers",
+              "label": "Isolate the line types"
+            },
+            {
+              "id": "quality",
+              "label": "Adjust how many lines are drawn"
+            },
+            {
+              "id": "aurora",
+              "label": "Find the connection to aurora"
+            }
+          ]
+        },
+        {
+          "id": "layers",
+          "title": "Hide particles and isolate the magnetic lines",
+          "requires": "[Open the lab](#launch). Choose the [topology view](#topology) for the example. Scroll the right panel to the checkboxes under **Field & scene**.",
+          "actions": [
+            "Clear **Solar-wind plasma · gold** (1) to remove the moving particles. The gold interplanetary field curves are controlled separately.",
+            "Clear **IMF curves & Bz arrows · gold** (2) to leave the cyan and pink field lines easier to follow. Click either checkbox again to restore that layer."
+          ],
+          "check": "Each checkbox hides or restores its own layer. The modeled pressure and boundary distances remain the same at a fixed time. Both controls are checked in the screenshot so you can find them before starting.",
+          "image": "layers.webp",
+          "alt": "Field & scene controls with Solar-wind plasma marked 1 and IMF curves & Bz arrows marked 2.",
+          "links": [
+            {
+              "id": "topology",
+              "label": "Read the remaining lines"
+            },
+            {
+              "id": "quality",
+              "label": "Change the scene detail"
+            }
+          ]
+        },
+        {
+          "id": "quality",
+          "title": "Change the number of field lines and particles",
+          "requires": "[Open the lab](#launch) and expand **Field & scene** in the right panel. Scroll just past the layer checkboxes.",
+          "actions": [
+            "Open the field-line menu (1), shown as **48 field lines**, and select **24 field lines** to draw fewer geomagnetic lines.",
+            "Open the plasma-seed menu (2), shown as **Balanced · 1600 plasma seeds**, and select **Low · 500 plasma seeds** to draw fewer particles. Restore either setting from the same menu."
+          ],
+          "check": "The view has fewer drawn elements. While paused, the pressure, boundary distances, and model time keep their values.",
+          "image": "quality.webp",
+          "alt": "Close-up of the field-line count and plasma-seed menus, marked 1 and 2.",
+          "links": [
+            {
+              "id": "layers",
+              "label": "Hide an entire layer"
+            },
+            {
+              "id": "orbit",
+              "label": "Change your viewpoint"
+            }
+          ]
+        },
+        {
+          "id": "model",
+          "title": "Find what the model calculates",
+          "requires": "The [lab](#launch) is open. Scroll near the bottom of the right-hand controls.",
+          "actions": [
+            "Click **Model & interpretation** (1) to expand it. Scroll inside the panel to read the notes.",
+            "Find **Empirical equilibria**. The lab calculates target boundary positions from formulas fitted to observations. The displayed boundaries take time to move toward those targets."
+          ],
+          "check": "The panel explains the calculated pressure, the fitted boundaries, and the schematic field lines. It also explains why extreme wind settings can extend the bow-shock estimate beyond the range used to fit it.",
+          "image": "model.webp",
+          "alt": "Close-up of the expanded Model & interpretation section, with its heading marked and its pressure and boundary notes visible.",
+          "links": [
+            {
+              "id": "quiet",
+              "label": "Read boundary distances in a scenario"
+            },
+            {
+              "id": "aurora",
+              "label": "Check what the lab can say about aurora"
+            }
+          ]
+        },
+        {
+          "id": "aurora",
+          "title": "Find the connection to visible aurora",
+          "requires": "[Open the lab](#launch). If you want to see the model’s tail response first, open [the recovery example](#recovery).",
+          "actions": [
+            "Scroll to the bottom of the right-hand controls. Click **Connection to future aurora** (1) to expand its note.",
+            "Read the note beneath the heading. The field and tail readouts show part of the chain of events that can lead to aurora. Predicting an oval or its brightness also requires a model for the energy and location of particles entering the atmosphere."
+          ],
+          "check": "The current lab displays Earth’s magnetic response. Aurora brightness and location are outside its calculations, so the lesson ends with the field and tail readouts.",
+          "image": "aurora.webp",
+          "alt": "Connection to future aurora is outlined and expanded at the bottom of the controls, revealing the explanation of the missing precipitation calculation.",
+          "links": [
+            {
+              "id": "recovery",
+              "label": "Inspect the model’s tail response"
+            },
+            {
+              "id": "model",
+              "label": "Read the model assumptions"
+            },
+            {
+              "id": "south",
+              "label": "Revisit the southward storm"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

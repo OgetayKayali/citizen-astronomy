@@ -1,5 +1,7 @@
 # Aurora & Magnetosphere Lab
 
+Use the [illustrated Aurora & Magnetosphere Lab tutorial](tutorials/aurora-lab.html) to compare the effects of quiet solar wind and a storm on Earth’s magnetic boundary. You can open any task directly.
+
 ## Open and compare
 
 Choose **Simulations → Aurora & Magnetosphere Lab**, or its Mode-menu entry. No input files or network access are needed. The bundled Earth texture and OpenGL 3.3 renderer use CAst's existing Qt/NumPy/PyOpenGL stack. For development: `python -m photometry_app.ui.magnetosphere_view`.

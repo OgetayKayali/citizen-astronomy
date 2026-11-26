@@ -463,6 +463,36 @@ class LightCurvePlotPayloadTest(unittest.TestCase):
         self.assertEqual([point.y for point in payload.points], [12.55, 12.70])
         self.assertEqual([point.y_error for point in payload.points], [0.025, 0.035])
 
+    def test_standard_axis_fallback_keeps_target_and_comparison_in_the_same_units(self) -> None:
+        start = datetime(2025, 1, 1)
+        first = LightCurvePoint(start, Path("1.fits"), 0.15, -9, 5200, 15)
+        second = LightCurvePoint(start + timedelta(hours=1), Path("2.fits"), 0.20, -9, 5100, 15)
+        comparison = LightCurvePoint(start, Path("1.fits"), 0.03, -8, 8000, 20, standard_magnitude=12)
+        target = LightCurveSeries("Demo", "target", "Target", "R", [first, second])
+        reference = LightCurveSeries("Demo", "ref", "Reference", "R", [comparison])
+        layers = [OverviewLightCurveLayer("target", "Target", target),
+                  OverviewLightCurveLayer("comparison", "Reference", reference)]
+        def plots():
+            return (
+                build_overview_light_curve_plot_payload(layers, "Empty", y_axis_mode="standard_magnitude"),
+                build_light_curve_plot_payload(target, "Empty", reference_layers=layers[1:], y_axis_mode="standard_magnitude"),
+            )
+
+        for payload in plots():
+            self.assertEqual([p.y for p in payload.points], [0.15, 0.20, 0.03])
+            self.assertIn("Showing Differential Magnitude", payload.axis_warning)
+        first.standard_magnitude = float("nan")
+        first.differential_magnitude = second.differential_magnitude = None
+        for payload in plots():
+            self.assertEqual([p.y for p in payload.points], [5200, 5100, 8000])
+            self.assertIn("Showing Flux (counts)", payload.axis_warning)
+            self.assertFalse(payload.invert_y)
+        first.standard_magnitude = 11.2
+        for payload in plots():
+            self.assertEqual(payload.y_axis_label, "Standard Magnitude")
+            self.assertEqual([p.y for p in payload.layers[0].points], [11.2])
+            self.assertIsNone(payload.axis_warning)
+
     def test_phase_payload_can_anchor_to_primary_minimum(self) -> None:
         start = datetime(2025, 1, 1, 0, 0, 0)
         series = LightCurveSeries(

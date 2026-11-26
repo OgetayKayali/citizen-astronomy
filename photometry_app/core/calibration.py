@@ -61,6 +61,12 @@ def calibrate_image_sequence(
     output_directory.mkdir(parents=True, exist_ok=True)
 
     science_frames = _collect_image_paths(science_path, exclude_roots=(output_directory,))
+    from photometry_app.core.osc import has_cfa
+    from photometry_app.core.image_io import is_raw_camera_image_path
+    for frame in science_frames:
+        header = read_header(frame)
+        if header.get("OSCCHAN") or has_cfa(header) or is_raw_camera_image_path(frame):
+            raise ValueError("Use Prepare OSC / Bayer for native color calibration. Prepared OSC channels are already calibrated and must not be calibrated again.")
     if not science_frames:
         raise ValueError("Choose a science image folder or file containing supported images.")
 

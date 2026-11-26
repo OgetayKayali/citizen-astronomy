@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Which stars in a photograph already have catalog measurements? Open the M46 field, mark its bright Gaia stars, and follow a point back to its catalog entry. You can also compare two views of the field or save your own annotated image.">
+<title>Sky Explorer | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=observations-3"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>Sky Explorer</span></nav>
+<header class="guide-head"><h1>Sky Explorer</h1><div class="guide-files"><a class="download-file" href="https://www.ogetay.com/citizen-astronomy-cast/datasets/m46.zip" download>Download M46 <small>ZIP · 75 MB</small></a><span>Extract the ZIP and open M46.xisf, or start with a public survey in CAst. <a href="#open-file">See the file step</a>. <a href="#survey">Start with a public survey</a>.</span></div></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Open a photograph or a survey</h3><ol><li><a href="#launch">Enter Sky Explorer</a></li><li><a href="#image">Open the image picker</a></li><li><a href="#open-file">Load the M46 photograph</a></li><li><a href="#survey">Start without a local image</a></li><li><a href="#survey-select">Choose a public sky survey</a></li></ol></section><section class="step-group"><h3>Mark the bright Gaia stars</h3><ol><li><a href="#open-settings">Open the catalog settings</a></li><li><a href="#limits">Set a bright-star limit</a></li><li><a href="#catalogs">Choose the Gaia catalog</a></li><li><a href="#mode">Show the Advanced object list</a></li><li><a href="#clear">Clear the previous selection</a></li><li><a href="#star">Select stars as the search target</a></li><li><a href="#explore">Run the catalog search</a></li></ol></section><section class="step-group"><h3>Inspect a result and the photograph</h3><ol><li><a href="#log">Read the search summary</a></li><li><a href="#select">Select a star in the results</a></li><li><a href="#inspect">Read the selected star’s measurements</a></li><li><a href="#center">Center the image on your selection</a></li><li><a href="#display">Open the display controls</a></li><li><a href="#display-menu">Choose an image stretch</a></li></ol></section><section class="step-group"><h3>Work in one region or compare images</h3><ol><li><a href="#roi">Search only a region of the image</a></li><li><a href="#ruler">Measure the separation between two positions</a></li><li><a href="#compare-prompt">Add a second image for comparison</a></li><li><a href="#wipe">Move the divider across the same stars</a></li></ol></section><section class="step-group"><h3>Save the annotated field</h3><ol><li><a href="#export">Choose the annotated image export</a></li><li><a href="#save-file">Name the file and save it</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/sky_explorer.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="launch" aria-labelledby="title-launch">
+
+<p class="overline">Open a photograph or a survey <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-launch">Enter Sky Explorer</h2>
+<p class="before"><strong>Start here</strong> Start Citizen Astronomy (CAst).</p>
+<ol class="actions"><li>On the mode launcher, find <strong>Explore, Visualize &amp; Process</strong> and click <strong>Sky Explorer</strong> (1). From another workspace, you can also use <strong>Mode → Sky Explorer</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/launch.webp" aria-label="Enlarge Screenshot for Enter Sky Explorer">
+<img src="images/sky-explorer/launch.webp" loading="lazy" alt="Sky Explorer card outlined among the exploration modes on the CAst launcher.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The toolbar offers <strong>Image</strong> for a picture on your computer and <strong>Survey</strong> for a field downloaded from a public sky survey.</p></div>
+<nav class="next" aria-label="Continue from Enter Sky Explorer"><a class="choice" href="#image">Use a photograph <span aria-hidden="true">→</span></a><a class="choice" href="#survey">Start with a public survey <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="image" aria-labelledby="title-image">
+
+<p class="overline">Open a photograph or a survey <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-image">Open the image picker</h2>
+<p class="before"><strong>Start here</strong> <a href="#launch">Enter Sky Explorer</a>. Have one image ready.</p>
+<ol class="actions"><li>Click <strong>Image</strong> (1) at the upper left. For this example, use the single file <strong>M46.xisf</strong>.</li><li>If you already have an image open, click <strong>Replace</strong> to start a new field. Choose <a href="#compare-prompt">Comparison</a> if you want to keep the first image on screen.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/image.webp" aria-label="Enlarge Screenshot for Open the image picker">
+<img src="images/sky-explorer/image.webp" loading="lazy" alt="Image button marked at the left end of the toolbar, beside Survey.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A file picker opens. A plate-solved image already contains the map between its pixels and coordinates on the sky.</p></div>
+<nav class="next" aria-label="Continue from Open the image picker"><a class="choice" href="#open-file">Select the M46 file <span aria-hidden="true">→</span></a><a class="choice" href="#survey">Use a public survey instead <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="open-file" aria-labelledby="title-open-file">
+
+<p class="overline">Open a photograph or a survey <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-open-file">Load the M46 photograph</h2>
+<p class="before"><strong>Start here</strong> The <a href="#image">image picker</a> is open.</p>
+<ol class="actions"><li>Navigate to the folder containing <strong>M46.xisf</strong> and select that file. You can also type its full path in <strong>File name</strong> (1).</li><li>Click <strong>Open</strong> (2) and wait for the stars to appear in the image pane. If you are using your own exposure, select its filename instead.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/open-file.webp" aria-label="Enlarge Screenshot for Load the M46 photograph">
+<img src="images/sky-explorer/open-file.webp" loading="lazy" alt="File name contains M46.xisf, with the field and Open button numbered.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The field fills the right side of the workspace. For M46 you should see a crowded patch of stars near the middle. The <strong>Explore</strong> button is now available.</p></div>
+<nav class="next" aria-label="Continue from Load the M46 photograph"><a class="choice" href="#open-settings">Set up the bright-star example <span aria-hidden="true">→</span></a><a class="choice" href="#display">Adjust the image display <span aria-hidden="true">→</span></a><a class="choice" href="#roi">Search part of the photograph <span aria-hidden="true">→</span></a><a class="choice" href="#compare-prompt">Add a second image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="survey" aria-labelledby="title-survey">
+
+<p class="overline">Open a photograph or a survey <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-survey">Start without a local image</h2>
+<p class="before"><strong>Start here</strong> <a href="#launch">Enter Sky Explorer</a> with an empty workspace and an internet connection.</p>
+<ol class="actions"><li>Click <strong>Survey</strong> (1), next to <strong>Image</strong>. If a local image is already open, this button adds a survey as a comparison over that image.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/survey.webp" aria-label="Enlarge Screenshot for Start without a local image">
+<img src="images/sky-explorer/survey.webp" loading="lazy" alt="Survey button outlined beside Image on the top toolbar.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A survey picker opens. With an empty workspace, the downloaded sky field becomes your primary image.</p></div>
+<nav class="next" aria-label="Continue from Start without a local image"><a class="choice" href="#survey-select">Choose the survey <span aria-hidden="true">→</span></a><a class="choice" href="#image">Switch to a local image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="survey-select" aria-labelledby="title-survey-select">
+
+<p class="overline">Open a photograph or a survey <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-survey-select">Choose a public sky survey</h2>
+<p class="before"><strong>Start here</strong> The <a href="#survey">survey picker</a> is open.</p>
+<ol class="actions"><li>Click the survey list (1). Choose <strong>DSS2 Blue</strong> to follow the selection pictured, or choose another survey with coverage of your field.</li><li>Read the starting coordinates and field size below the list. Click <strong>OK</strong> (2). Wait for the center preview, then the sharper tiles.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/survey-select.webp" aria-label="Enlarge Screenshot for Choose a public sky survey">
+<img src="images/sky-explorer/survey-select.webp" loading="lazy" alt="Survey picker showing DSS2 Blue, the starting sky coordinates, and the OK button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>At the default coordinates the field is centered near the Trifid Nebula. After the tiles appear, you can run a catalog search on this field. Its objects and counts will differ from the M46 example.</p></div>
+<nav class="next" aria-label="Continue from Choose a public sky survey"><a class="choice" href="#open-settings">Choose catalog sources <span aria-hidden="true">→</span></a><a class="choice" href="#display">Adjust the survey display <span aria-hidden="true">→</span></a><a class="choice" href="#image">Load M46 instead <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="open-settings" aria-labelledby="title-open-settings">
+
+<p class="overline">Mark the bright Gaia stars <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-open-settings">Open the catalog settings</h2>
+<p class="before"><strong>Start here</strong> <a href="#open-file">Load M46</a> or <a href="#survey-select">open a survey field</a>. To reproduce the count shown in this guide, use M46 and the entire image.</p>
+<ol class="actions"><li>Click <strong>Settings</strong> (1) in the main menu bar, then <strong>Open Settings</strong> (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/open-settings.webp" aria-label="Enlarge Screenshot for Open the catalog settings">
+<img src="images/sky-explorer/open-settings.webp" loading="lazy" alt="Settings menu open with Open Settings marked as the second target.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The settings window opens with tabs for the different workspaces. The next two steps set a bright-star limit and choose Gaia as the catalog for this example.</p></div>
+<nav class="next" aria-label="Continue from Open the catalog settings"><a class="choice" href="#limits">Set the brightness limit <span aria-hidden="true">→</span></a><a class="choice" href="#catalogs">Choose the catalog sources <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="limits" aria-labelledby="title-limits">
+
+<p class="overline">Mark the bright Gaia stars <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-limits">Set a bright-star limit</h2>
+<p class="before"><strong>Start here</strong> <a href="#open-settings">Open Settings</a>.</p>
+<ol class="actions"><li>Select the <strong>Sky Explorer</strong> tab (1), then its <strong>General</strong> tab (2).</li><li>In <strong>Gaia Max Mag</strong> (3), enter <strong>9.5</strong>. Leave <strong>Gaia Hard Cap</strong> unchecked for this example.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/limits.webp" aria-label="Enlarge Screenshot for Set a bright-star limit">
+<img src="images/sky-explorer/limits.webp" loading="lazy" alt="Settings showing the Sky Explorer and General tabs, with Gaia Max Mag set to 9.5.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The field reads <strong>9.5 mag</strong>. Smaller Gaia magnitudes mean brighter stars, so this limit keeps the first set of labels manageable.</p></div>
+<nav class="next" aria-label="Continue from Set a bright-star limit"><a class="choice" href="#catalogs">Enable Gaia and save the settings <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="catalogs" aria-labelledby="title-catalogs">
+
+<p class="overline">Mark the bright Gaia stars <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-catalogs">Choose the Gaia catalog</h2>
+<p class="before"><strong>Start here</strong> Open <strong>Settings → Open Settings → Sky Explorer → General</strong>. For the pictured run, <a href="#limits">set Gaia Max Mag to 9.5</a>.</p>
+<ol class="actions"><li>Scroll to <strong>Catalog Sources</strong> (1). To reproduce this search, tick <strong>Gaia DR3 Stars</strong> and clear the other five sources. If you want to return to a previous setup, note its checked boxes first.</li><li>Click <strong>Save</strong> (2). When exploring another class later, return here to enable its matching source.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/catalogs.webp" aria-label="Enlarge Screenshot for Choose the Gaia catalog">
+<img src="images/sky-explorer/catalogs.webp" loading="lazy" alt="Catalog Sources group with only Gaia DR3 Stars checked, and the Save button marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The settings window closes. Gaia Data Release 3 is the available source for this run. You will next select which kind of object to draw.</p></div>
+<nav class="next" aria-label="Continue from Choose the Gaia catalog"><a class="choice" href="#mode">Choose the object-type list <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="mode" aria-labelledby="title-mode">
+
+<p class="overline">Mark the bright Gaia stars <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-mode">Show the Advanced object list</h2>
+<p class="before"><strong>Start here</strong> An image or survey is loaded. For the example, use the <a href="#catalogs">Gaia catalog settings</a>.</p>
+<ol class="actions"><li>Find the mode button immediately right of <strong>Explore</strong> (1). Click it until its label reads <strong>Advanced</strong>. From the initial <strong>Simple</strong> list, one click is enough.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/mode.webp" aria-label="Enlarge Screenshot for Show the Advanced object list">
+<img src="images/sky-explorer/mode.webp" loading="lazy" alt="The Simple mode button marked beside Explore, before switching to Advanced.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The table now contains human-readable classes including <strong>Star</strong>. <strong>Simple</strong> lists common deep-sky classes. Continuing to cycle the same button opens <strong>Scientific</strong> for detailed classifications and <strong>Catalog</strong> for catalog names.</p></div>
+<nav class="next" aria-label="Continue from Show the Advanced object list"><a class="choice" href="#clear">Start with an empty selection <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="clear" aria-labelledby="title-clear">
+
+<p class="overline">Mark the bright Gaia stars <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-clear">Clear the previous selection</h2>
+<p class="before"><strong>Start here</strong> The <a href="#mode">Advanced object list</a> is visible.</p>
+<ol class="actions"><li>If <strong>Unselect All</strong> (1) is showing, click it once. If the button reads <strong>Select All</strong> and any rows are checked, click it to select every row and then click <strong>Unselect All</strong>.</li><li>If all rows are already empty, leave them empty and proceed to <strong>Star</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/clear.webp" aria-label="Enlarge Screenshot for Clear the previous selection">
+<img src="images/sky-explorer/clear.webp" loading="lazy" alt="Unselect All outlined immediately to the right of the Advanced mode button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The object checkboxes are empty and the button reads <strong>Select All</strong>.</p></div>
+<nav class="next" aria-label="Continue from Clear the previous selection"><a class="choice" href="#star">Select the Star row <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="star" aria-labelledby="title-star">
+
+<p class="overline">Mark the bright Gaia stars <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-star">Select stars as the search target</h2>
+<p class="before"><strong>Start here</strong> The <a href="#clear">Advanced selection</a> is empty.</p>
+<ol class="actions"><li>Scroll within the object-type table to the <strong>Stars</strong> group. Under <strong>Object Type</strong>, tick <strong>Star</strong> (1).</li><li>Leave the other rows unchecked. The group heading can switch several types together.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/star.webp" aria-label="Enlarge Screenshot for Select stars as the search target">
+<img src="images/sky-explorer/star.webp" loading="lazy" alt="Checked Star row outlined between Emission-Line Star and Young Stellar Object.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A check appears beside the <strong>Star</strong> row. Combined with the Gaia catalog setting, this asks for Gaia field stars.</p></div>
+<nav class="next" aria-label="Continue from Select stars as the search target"><a class="choice" href="#explore">Search the entire field <span aria-hidden="true">→</span></a><a class="choice" href="#roi">Restrict the search area <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="explore" aria-labelledby="title-explore">
+
+<p class="overline">Mark the bright Gaia stars <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-explore">Run the catalog search</h2>
+<p class="before"><strong>Start here</strong> A field is loaded and at least one compatible catalog source and object type are enabled. For the M46 count, use <a href="#star">Star</a> with no region selected.</p>
+<ol class="actions"><li>Click <strong>Explore</strong> (1). Leave the field open while CAst checks its coordinates and looks up the selected sources.</li><li>The button reads <strong>Terminate</strong> while the search runs. Click it only if you want to stop the search.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/explore.webp" aria-label="Enlarge Screenshot for Run the catalog search">
+<img src="images/sky-explorer/explore.webp" loading="lazy" alt="Explore button outlined on the toolbar with the Advanced list active.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The results table fills and small markers appear on the image. With the saved M46 Gaia catalog and the 9.5 limit, 22 stars landed inside the image. A different field, limit, or selected region gives a different count.</p></div>
+<nav class="next" aria-label="Continue from Run the catalog search"><a class="choice" href="#log">Check how many stars were found <span aria-hidden="true">→</span></a><a class="choice" href="#select">Inspect one of the stars <span aria-hidden="true">→</span></a><a class="choice" href="#roi">Repeat the search in one region <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="log" aria-labelledby="title-log">
+
+<p class="overline">Inspect a result and the photograph <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-log">Read the search summary</h2>
+<p class="before"><strong>Start here</strong> Run <a href="#explore">Explore</a>.</p>
+<ol class="actions"><li>Click <strong>Work Log</strong> (1) below the results table. Read the last entry for the field size and the number prepared for display.</li><li>In this run the cached search area contained <strong>34</strong> stars at G ≤ 9.5. The last line reports <strong>22</strong> in the rectangular M46 image.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/log.webp" aria-label="Enlarge Screenshot for Read the search summary">
+<img src="images/sky-explorer/log.webp" loading="lazy" alt="Work Log tab outlined above the actual M46 messages reporting 34 cached stars and 22 plotted stars.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The log shows the source filename, selected object type, catalog and final count. A first online lookup can show download messages in place of the cached-catalog line.</p></div>
+<nav class="next" aria-label="Continue from Read the search summary"><a class="choice" href="#select">Select a Gaia star <span aria-hidden="true">→</span></a><a class="choice" href="#limits">Change the brightness limit <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="select" aria-labelledby="title-select">
+
+<p class="overline">Inspect a result and the photograph <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-select">Select a star in the results</h2>
+<p class="before"><strong>Start here</strong> A <a href="#explore">completed search</a> has returned at least one star.</p>
+<ol class="actions"><li>In the results table below the object-type list, click once on a numeric name under <strong>Stars</strong> (1). Click the group header first if its rows are collapsed.</li><li>The example follows Gaia source <strong>3029166186781118336</strong>. Select any returned star in your own image.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/select.webp" aria-label="Enlarge Screenshot for Select a star in the results">
+<img src="images/sky-explorer/select.webp" loading="lazy" alt="Highlighted row for Gaia source 3029166186781118336 in the results table.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The selected row turns amber and the corresponding position is highlighted in the photograph.</p></div>
+<nav class="next" aria-label="Continue from Select a star in the results"><a class="choice" href="#inspect">Read its coordinates and brightness <span aria-hidden="true">→</span></a><a class="choice" href="#center">Center the photograph on it <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="inspect" aria-labelledby="title-inspect">
+
+<p class="overline">Inspect a result and the photograph <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-inspect">Read the selected star’s measurements</h2>
+<p class="before"><strong>Start here</strong> <a href="#select">Select a result row</a>.</p>
+<ol class="actions"><li>Click <strong>Inspector</strong> (1), beside Work Log. Match <strong>Name</strong> to the selected row.</li><li>Read <strong>RA</strong> and <strong>Dec</strong> for its sky position, then <strong>Magnitude</strong> for its catalog brightness. Scroll down to see additional catalog measurements.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/inspect.webp" aria-label="Enlarge Screenshot for Read the selected star’s measurements">
+<img src="images/sky-explorer/inspect.webp" loading="lazy" alt="Inspector tab and readout for the selected M46 Gaia source, including coordinates, pixel location, and magnitude.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The example star is at RA <strong>115.096700°</strong>, Dec <strong>−15.264043°</strong>, with Gaia magnitude <strong>4.39</strong>. The pixel position identifies where the catalog coordinates fall in this image.</p></div>
+<nav class="next" aria-label="Continue from Read the selected star’s measurements"><a class="choice" href="#center">Center this star <span aria-hidden="true">→</span></a><a class="choice" href="#ruler">Measure a separation <span aria-hidden="true">→</span></a><a class="choice" href="#select">Inspect a different star <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="center" aria-labelledby="title-center">
+
+<p class="overline">Inspect a result and the photograph <span aria-hidden="true">/</span> Step 16</p>
+<h2 tabindex="-1" id="title-center">Center the image on your selection</h2>
+<p class="before"><strong>Start here</strong> A star is <a href="#select">selected in the results table</a>.</p>
+<ol class="actions"><li>Click <strong>Center Object</strong> (1) near the right end of the toolbar.</li><li>Look in the middle of the image pane for the highlighted catalog marker.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/center.webp" aria-label="Enlarge Screenshot for Center the image on your selection">
+<img src="images/sky-explorer/center.webp" loading="lazy" alt="Center Object button above the M46 image, with the selected bright star visible below.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The view pans to the selected position. Its Gaia name and catalog measurements stay attached to the same star.</p></div>
+<nav class="next" aria-label="Continue from Center the image on your selection"><a class="choice" href="#inspect">Read the centered star’s details <span aria-hidden="true">→</span></a><a class="choice" href="#display">Change the display stretch <span aria-hidden="true">→</span></a><a class="choice" href="#export">Save an annotated image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="display" aria-labelledby="title-display">
+
+<p class="overline">Inspect a result and the photograph <span aria-hidden="true">/</span> Step 17</p>
+<h2 tabindex="-1" id="title-display">Open the display controls</h2>
+<p class="before"><strong>Start here</strong> <a href="#open-file">Load a local image</a> to follow the M46 example, or <a href="#survey-select">open a survey field</a>.</p>
+<ol class="actions"><li>Click <strong>Display</strong> (1) on the top toolbar, just beyond the annotation tools.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/display.webp" aria-label="Enlarge Screenshot for Open the display controls">
+<img src="images/sky-explorer/display.webp" loading="lazy" alt="Display control marked in the image toolbar.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The menu contains separate controls for the primary image and a comparison layer when one is loaded.</p></div>
+<nav class="next" aria-label="Continue from Open the display controls"><a class="choice" href="#display-menu">Choose an image stretch <span aria-hidden="true">→</span></a><a class="choice" href="#compare-prompt">Compare two local images <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="display-menu" aria-labelledby="title-display-menu">
+
+<p class="overline">Inspect a result and the photograph <span aria-hidden="true">/</span> Step 18</p>
+<h2 tabindex="-1" id="title-display-menu">Choose an image stretch</h2>
+<p class="before"><strong>Start here</strong> Open the <a href="#display">Display menu</a>. A stretch maps the image’s brightness values to your screen.</p>
+<ol class="actions"><li>Under <strong>Image</strong>, open <strong>Stretch</strong> (1). Try <strong>STF Bright</strong> to bring up faint structure. Return to <strong>STF</strong> to reproduce the example view.</li><li>To return the image display controls to their defaults, click <strong>Reset</strong> (2). Click outside the menu to close it.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/display-menu.webp" aria-label="Enlarge Screenshot for Choose an image stretch">
+<img src="images/sky-explorer/display-menu.webp" loading="lazy" alt="Image Stretch selector and Reset button outlined above the separate Comparison controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The appearance of the field changes. The stars in the catalog table keep their original magnitudes and coordinates.</p></div>
+<nav class="next" aria-label="Continue from Choose an image stretch"><a class="choice" href="#roi">Choose a region <span aria-hidden="true">→</span></a><a class="choice" href="#ruler">Measure between two points <span aria-hidden="true">→</span></a><a class="choice" href="#export">Save the result <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="roi" aria-labelledby="title-roi">
+
+<p class="overline">Work in one region or compare images <span aria-hidden="true">/</span> Step 19</p>
+<h2 tabindex="-1" id="title-roi">Search only a region of the image</h2>
+<p class="before"><strong>Start here</strong> A source is loaded and a <a href="#star">search target</a> is selected.</p>
+<ol class="actions"><li>Click the dashed <strong>ROI</strong> rectangle (1), immediately after the text tool. ROI means region of interest.</li><li>Press and hold the left mouse button on the image, drag to the opposite corner of the area you want to search (2), then release. Click <strong>Explore</strong> to search that area.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/roi.webp" aria-label="Enlarge Screenshot for Search only a region of the image">
+<img src="images/sky-explorer/roi.webp" loading="lazy" alt="ROI tool and an example rectangle around a dense part of the M46 star field, with its angular width and height.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Inspect the results inside the dashed green rectangle. On a solved image its angular width and height appear near the top-left corner when that readout is enabled. When you want to search the full field again, click <strong>ROI</strong> to remove the rectangle and click <strong>Explore</strong>.</p></div>
+<nav class="next" aria-label="Continue from Search only a region of the image"><a class="choice" href="#explore">Run the selected search <span aria-hidden="true">→</span></a><a class="choice" href="#ruler">Measure a separation instead <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="ruler" aria-labelledby="title-ruler">
+
+<p class="overline">Work in one region or compare images <span aria-hidden="true">/</span> Step 20</p>
+<h2 tabindex="-1" id="title-ruler">Measure the separation between two positions</h2>
+<p class="before"><strong>Start here</strong> A <a href="#open-file">source image</a> is visible. Clear an active ROI first if you want a clear view.</p>
+<ol class="actions"><li>Click the diagonal <strong>Ruler</strong> tool (1) in the drawing toolbar.</li><li>Press the left mouse button on the first position, drag to the second, then release (2). Read the label beside the line.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/ruler.webp" aria-label="Enlarge Screenshot for Measure the separation between two positions">
+<img src="images/sky-explorer/ruler.webp" loading="lazy" alt="Ruler button and the drawn blue line with its angular separation outlined on the M46 image.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The ruler links your two positions. On this solved image the label gives an angular separation in arcminutes, marked with a prime (′). Your result depends on the points you chose.</p></div>
+<nav class="next" aria-label="Continue from Measure the separation between two positions"><a class="choice" href="#export">Save the image with the ruler <span aria-hidden="true">→</span></a><a class="choice" href="#roi">Draw a search region <span aria-hidden="true">→</span></a><a class="choice" href="#compare-prompt">Compare a second image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="compare-prompt" aria-labelledby="title-compare-prompt">
+
+<p class="overline">Work in one region or compare images <span aria-hidden="true">/</span> Step 21</p>
+<h2 tabindex="-1" id="title-compare-prompt">Add a second image for comparison</h2>
+<p class="before"><strong>Start here</strong> <a href="#open-file">Open a primary image</a>. Have a second view of the same field ready. The example compares the M46 color frame with its red channel saved as a monochrome FITS file.</p>
+<ol class="actions"><li>Click <strong>Image</strong> again. In <strong>Image already loaded</strong>, click <strong>Comparison</strong> (1) to keep the original in the viewer.</li><li>Select your second file in the picker and click <strong>Open</strong>. For a pixel-by-pixel comparison, use two images registered to the same field.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/compare-prompt.webp" aria-label="Enlarge Screenshot for Add a second image for comparison">
+<img src="images/sky-explorer/compare-prompt.webp" loading="lazy" alt="Image already loaded prompt with Comparison outlined beside Replace.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A vertical divider appears over the two images. <strong>Replace</strong> in the source prompt starts over with a different primary field.</p></div>
+<nav class="next" aria-label="Continue from Add a second image for comparison"><a class="choice" href="#wipe">Drag the comparison divider <span aria-hidden="true">→</span></a><a class="choice" href="#image">Start with another primary image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="wipe" aria-labelledby="title-wipe">
+
+<p class="overline">Work in one region or compare images <span aria-hidden="true">/</span> Step 22</p>
+<h2 tabindex="-1" id="title-wipe">Move the divider across the same stars</h2>
+<p class="before"><strong>Start here</strong> A <a href="#compare-prompt">comparison image</a> is visible.</p>
+<ol class="actions"><li>Place the pointer on the small white handle in the middle of the vertical divider (1). Hold the left mouse button and drag it horizontally.</li><li>In this example, drag right to reveal more of the original color field. Drag left to show more of the monochrome red-channel view. Compare the same bright star on both sides.</li></ol>
+<figure class="capture"><div class="frame-switch" role="group" aria-label="Compare screenshots" hidden><button type="button">Divider at left</button><button type="button">Divider at right</button></div><a class="enlarge" href="images/sky-explorer/wipe-left.webp" aria-label="Enlarge Divider at left for Move the divider across the same stars">
+<img src="images/sky-explorer/wipe-left.webp" loading="lazy" alt="Divider handle marked near the left side with most of the M46 field shown in monochrome.">
+<span class="zoom-label">Divider at left · Enlarge screenshot <span aria-hidden="true">↗</span></span></a><a class="enlarge" href="images/sky-explorer/wipe-right.webp" aria-label="Enlarge Divider at right for Move the divider across the same stars">
+<img src="images/sky-explorer/wipe-right.webp" loading="lazy" alt="The same M46 stars with the marked divider on the right and more of the original color photograph exposed.">
+<span class="zoom-label">Divider at right · Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The same stars stay in place while the color boundary moves. Switch between the two screenshots below the instructions to see both handle positions.</p></div>
+<nav class="next" aria-label="Continue from Move the divider across the same stars"><a class="choice" href="#display">Adjust the display <span aria-hidden="true">→</span></a><a class="choice" href="#export">Save the annotated primary image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="export" aria-labelledby="title-export">
+
+<p class="overline">Save the annotated field <span aria-hidden="true">/</span> Step 23</p>
+<h2 tabindex="-1" id="title-export">Choose the annotated image export</h2>
+<p class="before"><strong>Start here</strong> Open a local image and leave the <a href="#explore">catalog markers</a> or <a href="#ruler">ruler</a> you want to include on screen.</p>
+<ol class="actions"><li>Click <strong>Export</strong> (1) at the right end of the toolbar, then <strong>Image…</strong> (2).</li><li>If you are working with a survey and want that layer instead, choose <strong>Survey…</strong> when it is available.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/export.webp" aria-label="Enlarge Screenshot for Choose the annotated image export">
+<img src="images/sky-explorer/export.webp" loading="lazy" alt="Export menu open with the Export button and Image action numbered; Survey and Animation also appear.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A save dialog opens for the annotated image. The exported image uses the original image resolution.</p></div>
+<nav class="next" aria-label="Continue from Choose the annotated image export"><a class="choice" href="#save-file">Choose the filename <span aria-hidden="true">→</span></a><a class="choice" href="#ruler">Add a measurement first <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="save-file" aria-labelledby="title-save-file">
+
+<p class="overline">Save the annotated field <span aria-hidden="true">/</span> Step 24</p>
+<h2 tabindex="-1" id="title-save-file">Name the file and save it</h2>
+<p class="before"><strong>Start here</strong> Choose <a href="#export">Export → Image…</a>.</p>
+<ol class="actions"><li>Choose the destination folder in the file picker. Enter a new filename such as <strong>M46-study.png</strong> in <strong>File name</strong> (1).</li><li>Keep <strong>PNG Files</strong> selected and click <strong>Save</strong> (2). Open the saved PNG from that folder to inspect the markers at full resolution.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/sky-explorer/save-file.webp" aria-label="Enlarge Screenshot for Name the file and save it">
+<img src="images/sky-explorer/save-file.webp" loading="lazy" alt="Save dialog showing M46-study.png, the PNG file type, and the marked Save button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The saved PNG contains the photographed field and its visible annotations. The M46 example exports at <strong>2742 × 2460</strong> pixels.</p></div>
+<nav class="next" aria-label="Continue from Name the file and save it"><a class="choice" href="#select">Inspect another star <span aria-hidden="true">→</span></a><a class="choice" href="#compare-prompt">Compare two exposures <span aria-hidden="true">→</span></a><a class="choice" href="#survey">Explore a public survey <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

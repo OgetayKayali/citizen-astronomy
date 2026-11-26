@@ -1,0 +1,583 @@
+{
+  "title": "Sky Explorer",
+  "intro": "Which stars in a photograph already have catalog measurements? Open the M46 field, mark its bright Gaia stars, and follow a point back to its catalog entry. You can also compare two views of the field or save your own annotated image.",
+  "dataset": "The example uses M46.xisf, a color image with sky coordinates in its header. You can follow along with another plate-solved FITS or XISF image. For a first catalog search or a public survey, connect to the internet.",
+  "outcome": "Identify a catalog star in a photograph, read its coordinates and brightness, measure an angular separation, and save an annotated image.",
+  "heroAlt": "The M46 star field in Sky Explorer, with a dense concentration of stars near the center and a bright orange star toward the upper right.",
+  "groups": [
+    {
+      "title": "Open a photograph or a survey",
+      "steps": [
+        {
+          "id": "launch",
+          "title": "Enter Sky Explorer",
+          "requires": "Start Citizen Astronomy (CAst).",
+          "actions": [
+            "On the mode launcher, find **Explore, Visualize & Process** and click **Sky Explorer** (1). From another workspace, you can also use **Mode → Sky Explorer**."
+          ],
+          "check": "The toolbar offers **Image** for a picture on your computer and **Survey** for a field downloaded from a public sky survey.",
+          "image": "launch.webp",
+          "alt": "Sky Explorer card outlined among the exploration modes on the CAst launcher.",
+          "links": [
+            {
+              "id": "image",
+              "label": "Use a photograph"
+            },
+            {
+              "id": "survey",
+              "label": "Start with a public survey"
+            }
+          ]
+        },
+        {
+          "id": "image",
+          "title": "Open the image picker",
+          "requires": "[Enter Sky Explorer](#launch). Have one image ready.",
+          "actions": [
+            "Click **Image** (1) at the upper left. For this example, use the single file **M46.xisf**.",
+            "If you already have an image open, click **Replace** to start a new field. Choose [Comparison](#compare-prompt) if you want to keep the first image on screen."
+          ],
+          "check": "A file picker opens. A plate-solved image already contains the map between its pixels and coordinates on the sky.",
+          "image": "image.webp",
+          "alt": "Image button marked at the left end of the toolbar, beside Survey.",
+          "links": [
+            {
+              "id": "open-file",
+              "label": "Select the M46 file"
+            },
+            {
+              "id": "survey",
+              "label": "Use a public survey instead"
+            }
+          ]
+        },
+        {
+          "id": "open-file",
+          "title": "Load the M46 photograph",
+          "requires": "The [image picker](#image) is open.",
+          "actions": [
+            "Navigate to the folder containing **M46.xisf** and select that file. You can also type its full path in **File name** (1).",
+            "Click **Open** (2) and wait for the stars to appear in the image pane. If you are using your own exposure, select its filename instead."
+          ],
+          "check": "The field fills the right side of the workspace. For M46 you should see a crowded patch of stars near the middle. The **Explore** button is now available.",
+          "image": "open-file.webp",
+          "alt": "File name contains M46.xisf, with the field and Open button numbered.",
+          "links": [
+            {
+              "id": "open-settings",
+              "label": "Set up the bright-star example"
+            },
+            {
+              "id": "display",
+              "label": "Adjust the image display"
+            },
+            {
+              "id": "roi",
+              "label": "Search part of the photograph"
+            },
+            {
+              "id": "compare-prompt",
+              "label": "Add a second image"
+            }
+          ]
+        },
+        {
+          "id": "survey",
+          "title": "Start without a local image",
+          "requires": "[Enter Sky Explorer](#launch) with an empty workspace and an internet connection.",
+          "actions": [
+            "Click **Survey** (1), next to **Image**. If a local image is already open, this button adds a survey as a comparison over that image."
+          ],
+          "check": "A survey picker opens. With an empty workspace, the downloaded sky field becomes your primary image.",
+          "image": "survey.webp",
+          "alt": "Survey button outlined beside Image on the top toolbar.",
+          "links": [
+            {
+              "id": "survey-select",
+              "label": "Choose the survey"
+            },
+            {
+              "id": "image",
+              "label": "Switch to a local image"
+            }
+          ]
+        },
+        {
+          "id": "survey-select",
+          "title": "Choose a public sky survey",
+          "requires": "The [survey picker](#survey) is open.",
+          "actions": [
+            "Click the survey list (1). Choose **DSS2 Blue** to follow the selection pictured, or choose another survey with coverage of your field.",
+            "Read the starting coordinates and field size below the list. Click **OK** (2). Wait for the center preview, then the sharper tiles."
+          ],
+          "check": "At the default coordinates the field is centered near the Trifid Nebula. After the tiles appear, you can run a catalog search on this field. Its objects and counts will differ from the M46 example.",
+          "image": "survey-select.webp",
+          "alt": "Survey picker showing DSS2 Blue, the starting sky coordinates, and the OK button.",
+          "links": [
+            {
+              "id": "open-settings",
+              "label": "Choose catalog sources"
+            },
+            {
+              "id": "display",
+              "label": "Adjust the survey display"
+            },
+            {
+              "id": "image",
+              "label": "Load M46 instead"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Mark the bright Gaia stars",
+      "steps": [
+        {
+          "id": "open-settings",
+          "title": "Open the catalog settings",
+          "requires": "[Load M46](#open-file) or [open a survey field](#survey-select). To reproduce the count shown in this guide, use M46 and the entire image.",
+          "actions": [
+            "Click **Settings** (1) in the main menu bar, then **Open Settings** (2)."
+          ],
+          "check": "The settings window opens with tabs for the different workspaces. The next two steps set a bright-star limit and choose Gaia as the catalog for this example.",
+          "image": "open-settings.webp",
+          "alt": "Settings menu open with Open Settings marked as the second target.",
+          "links": [
+            {
+              "id": "limits",
+              "label": "Set the brightness limit"
+            },
+            {
+              "id": "catalogs",
+              "label": "Choose the catalog sources"
+            }
+          ]
+        },
+        {
+          "id": "limits",
+          "title": "Set a bright-star limit",
+          "requires": "[Open Settings](#open-settings).",
+          "actions": [
+            "Select the **Sky Explorer** tab (1), then its **General** tab (2).",
+            "In **Gaia Max Mag** (3), enter **9.5**. Leave **Gaia Hard Cap** unchecked for this example."
+          ],
+          "check": "The field reads **9.5 mag**. Smaller Gaia magnitudes mean brighter stars, so this limit keeps the first set of labels manageable.",
+          "image": "limits.webp",
+          "alt": "Settings showing the Sky Explorer and General tabs, with Gaia Max Mag set to 9.5.",
+          "links": [
+            {
+              "id": "catalogs",
+              "label": "Enable Gaia and save the settings"
+            }
+          ]
+        },
+        {
+          "id": "catalogs",
+          "title": "Choose the Gaia catalog",
+          "requires": "Open **Settings → Open Settings → Sky Explorer → General**. For the pictured run, [set Gaia Max Mag to 9.5](#limits).",
+          "actions": [
+            "Scroll to **Catalog Sources** (1). To reproduce this search, tick **Gaia DR3 Stars** and clear the other five sources. If you want to return to a previous setup, note its checked boxes first.",
+            "Click **Save** (2). When exploring another class later, return here to enable its matching source."
+          ],
+          "check": "The settings window closes. Gaia Data Release 3 is the available source for this run. You will next select which kind of object to draw.",
+          "image": "catalogs.webp",
+          "alt": "Catalog Sources group with only Gaia DR3 Stars checked, and the Save button marked.",
+          "links": [
+            {
+              "id": "mode",
+              "label": "Choose the object-type list"
+            }
+          ]
+        },
+        {
+          "id": "mode",
+          "title": "Show the Advanced object list",
+          "requires": "An image or survey is loaded. For the example, use the [Gaia catalog settings](#catalogs).",
+          "actions": [
+            "Find the mode button immediately right of **Explore** (1). Click it until its label reads **Advanced**. From the initial **Simple** list, one click is enough."
+          ],
+          "check": "The table now contains human-readable classes including **Star**. **Simple** lists common deep-sky classes. Continuing to cycle the same button opens **Scientific** for detailed classifications and **Catalog** for catalog names.",
+          "image": "mode.webp",
+          "alt": "The Simple mode button marked beside Explore, before switching to Advanced.",
+          "links": [
+            {
+              "id": "clear",
+              "label": "Start with an empty selection"
+            }
+          ]
+        },
+        {
+          "id": "clear",
+          "title": "Clear the previous selection",
+          "requires": "The [Advanced object list](#mode) is visible.",
+          "actions": [
+            "If **Unselect All** (1) is showing, click it once. If the button reads **Select All** and any rows are checked, click it to select every row and then click **Unselect All**.",
+            "If all rows are already empty, leave them empty and proceed to **Star**."
+          ],
+          "check": "The object checkboxes are empty and the button reads **Select All**.",
+          "image": "clear.webp",
+          "alt": "Unselect All outlined immediately to the right of the Advanced mode button.",
+          "links": [
+            {
+              "id": "star",
+              "label": "Select the Star row"
+            }
+          ]
+        },
+        {
+          "id": "star",
+          "title": "Select stars as the search target",
+          "requires": "The [Advanced selection](#clear) is empty.",
+          "actions": [
+            "Scroll within the object-type table to the **Stars** group. Under **Object Type**, tick **Star** (1).",
+            "Leave the other rows unchecked. The group heading can switch several types together."
+          ],
+          "check": "A check appears beside the **Star** row. Combined with the Gaia catalog setting, this asks for Gaia field stars.",
+          "image": "star.webp",
+          "alt": "Checked Star row outlined between Emission-Line Star and Young Stellar Object.",
+          "links": [
+            {
+              "id": "explore",
+              "label": "Search the entire field"
+            },
+            {
+              "id": "roi",
+              "label": "Restrict the search area"
+            }
+          ]
+        },
+        {
+          "id": "explore",
+          "title": "Run the catalog search",
+          "requires": "A field is loaded and at least one compatible catalog source and object type are enabled. For the M46 count, use [Star](#star) with no region selected.",
+          "actions": [
+            "Click **Explore** (1). Leave the field open while CAst checks its coordinates and looks up the selected sources.",
+            "The button reads **Terminate** while the search runs. Click it only if you want to stop the search."
+          ],
+          "check": "The results table fills and small markers appear on the image. With the saved M46 Gaia catalog and the 9.5 limit, 22 stars landed inside the image. A different field, limit, or selected region gives a different count.",
+          "image": "explore.webp",
+          "alt": "Explore button outlined on the toolbar with the Advanced list active.",
+          "links": [
+            {
+              "id": "log",
+              "label": "Check how many stars were found"
+            },
+            {
+              "id": "select",
+              "label": "Inspect one of the stars"
+            },
+            {
+              "id": "roi",
+              "label": "Repeat the search in one region"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Inspect a result and the photograph",
+      "steps": [
+        {
+          "id": "log",
+          "title": "Read the search summary",
+          "requires": "Run [Explore](#explore).",
+          "actions": [
+            "Click **Work Log** (1) below the results table. Read the last entry for the field size and the number prepared for display.",
+            "In this run the cached search area contained **34** stars at G ≤ 9.5. The last line reports **22** in the rectangular M46 image."
+          ],
+          "check": "The log shows the source filename, selected object type, catalog and final count. A first online lookup can show download messages in place of the cached-catalog line.",
+          "image": "log.webp",
+          "alt": "Work Log tab outlined above the actual M46 messages reporting 34 cached stars and 22 plotted stars.",
+          "links": [
+            {
+              "id": "select",
+              "label": "Select a Gaia star"
+            },
+            {
+              "id": "limits",
+              "label": "Change the brightness limit"
+            }
+          ]
+        },
+        {
+          "id": "select",
+          "title": "Select a star in the results",
+          "requires": "A [completed search](#explore) has returned at least one star.",
+          "actions": [
+            "In the results table below the object-type list, click once on a numeric name under **Stars** (1). Click the group header first if its rows are collapsed.",
+            "The example follows Gaia source **3029166186781118336**. Select any returned star in your own image."
+          ],
+          "check": "The selected row turns amber and the corresponding position is highlighted in the photograph.",
+          "image": "select.webp",
+          "alt": "Highlighted row for Gaia source 3029166186781118336 in the results table.",
+          "links": [
+            {
+              "id": "inspect",
+              "label": "Read its coordinates and brightness"
+            },
+            {
+              "id": "center",
+              "label": "Center the photograph on it"
+            }
+          ]
+        },
+        {
+          "id": "inspect",
+          "title": "Read the selected star’s measurements",
+          "requires": "[Select a result row](#select).",
+          "actions": [
+            "Click **Inspector** (1), beside Work Log. Match **Name** to the selected row.",
+            "Read **RA** and **Dec** for its sky position, then **Magnitude** for its catalog brightness. Scroll down to see additional catalog measurements."
+          ],
+          "check": "The example star is at RA **115.096700°**, Dec **−15.264043°**, with Gaia magnitude **4.39**. The pixel position identifies where the catalog coordinates fall in this image.",
+          "image": "inspect.webp",
+          "alt": "Inspector tab and readout for the selected M46 Gaia source, including coordinates, pixel location, and magnitude.",
+          "links": [
+            {
+              "id": "center",
+              "label": "Center this star"
+            },
+            {
+              "id": "ruler",
+              "label": "Measure a separation"
+            },
+            {
+              "id": "select",
+              "label": "Inspect a different star"
+            }
+          ]
+        },
+        {
+          "id": "center",
+          "title": "Center the image on your selection",
+          "requires": "A star is [selected in the results table](#select).",
+          "actions": [
+            "Click **Center Object** (1) near the right end of the toolbar.",
+            "Look in the middle of the image pane for the highlighted catalog marker."
+          ],
+          "check": "The view pans to the selected position. Its Gaia name and catalog measurements stay attached to the same star.",
+          "image": "center.webp",
+          "alt": "Center Object button above the M46 image, with the selected bright star visible below.",
+          "links": [
+            {
+              "id": "inspect",
+              "label": "Read the centered star’s details"
+            },
+            {
+              "id": "display",
+              "label": "Change the display stretch"
+            },
+            {
+              "id": "export",
+              "label": "Save an annotated image"
+            }
+          ]
+        },
+        {
+          "id": "display",
+          "title": "Open the display controls",
+          "requires": "[Load a local image](#open-file) to follow the M46 example, or [open a survey field](#survey-select).",
+          "actions": [
+            "Click **Display** (1) on the top toolbar, just beyond the annotation tools."
+          ],
+          "check": "The menu contains separate controls for the primary image and a comparison layer when one is loaded.",
+          "image": "display.webp",
+          "alt": "Display control marked in the image toolbar.",
+          "links": [
+            {
+              "id": "display-menu",
+              "label": "Choose an image stretch"
+            },
+            {
+              "id": "compare-prompt",
+              "label": "Compare two local images"
+            }
+          ]
+        },
+        {
+          "id": "display-menu",
+          "title": "Choose an image stretch",
+          "requires": "Open the [Display menu](#display). A stretch maps the image’s brightness values to your screen.",
+          "actions": [
+            "Under **Image**, open **Stretch** (1). Try **STF Bright** to bring up faint structure. Return to **STF** to reproduce the example view.",
+            "To return the image display controls to their defaults, click **Reset** (2). Click outside the menu to close it."
+          ],
+          "check": "The appearance of the field changes. The stars in the catalog table keep their original magnitudes and coordinates.",
+          "image": "display-menu.webp",
+          "alt": "Image Stretch selector and Reset button outlined above the separate Comparison controls.",
+          "links": [
+            {
+              "id": "roi",
+              "label": "Choose a region"
+            },
+            {
+              "id": "ruler",
+              "label": "Measure between two points"
+            },
+            {
+              "id": "export",
+              "label": "Save the result"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Work in one region or compare images",
+      "steps": [
+        {
+          "id": "roi",
+          "title": "Search only a region of the image",
+          "requires": "A source is loaded and a [search target](#star) is selected.",
+          "actions": [
+            "Click the dashed **ROI** rectangle (1), immediately after the text tool. ROI means region of interest.",
+            "Press and hold the left mouse button on the image, drag to the opposite corner of the area you want to search (2), then release. Click **Explore** to search that area."
+          ],
+          "check": "Inspect the results inside the dashed green rectangle. On a solved image its angular width and height appear near the top-left corner when that readout is enabled. When you want to search the full field again, click **ROI** to remove the rectangle and click **Explore**.",
+          "image": "roi.webp",
+          "alt": "ROI tool and an example rectangle around a dense part of the M46 star field, with its angular width and height.",
+          "links": [
+            {
+              "id": "explore",
+              "label": "Run the selected search"
+            },
+            {
+              "id": "ruler",
+              "label": "Measure a separation instead"
+            }
+          ]
+        },
+        {
+          "id": "ruler",
+          "title": "Measure the separation between two positions",
+          "requires": "A [source image](#open-file) is visible. Clear an active ROI first if you want a clear view.",
+          "actions": [
+            "Click the diagonal **Ruler** tool (1) in the drawing toolbar.",
+            "Press the left mouse button on the first position, drag to the second, then release (2). Read the label beside the line."
+          ],
+          "check": "The ruler links your two positions. On this solved image the label gives an angular separation in arcminutes, marked with a prime (′). Your result depends on the points you chose.",
+          "image": "ruler.webp",
+          "alt": "Ruler button and the drawn blue line with its angular separation outlined on the M46 image.",
+          "links": [
+            {
+              "id": "export",
+              "label": "Save the image with the ruler"
+            },
+            {
+              "id": "roi",
+              "label": "Draw a search region"
+            },
+            {
+              "id": "compare-prompt",
+              "label": "Compare a second image"
+            }
+          ]
+        },
+        {
+          "id": "compare-prompt",
+          "title": "Add a second image for comparison",
+          "requires": "[Open a primary image](#open-file). Have a second view of the same field ready. The example compares the M46 color frame with its red channel saved as a monochrome FITS file.",
+          "actions": [
+            "Click **Image** again. In **Image already loaded**, click **Comparison** (1) to keep the original in the viewer.",
+            "Select your second file in the picker and click **Open**. For a pixel-by-pixel comparison, use two images registered to the same field."
+          ],
+          "check": "A vertical divider appears over the two images. **Replace** in the source prompt starts over with a different primary field.",
+          "image": "compare-prompt.webp",
+          "alt": "Image already loaded prompt with Comparison outlined beside Replace.",
+          "links": [
+            {
+              "id": "wipe",
+              "label": "Drag the comparison divider"
+            },
+            {
+              "id": "image",
+              "label": "Start with another primary image"
+            }
+          ]
+        },
+        {
+          "id": "wipe",
+          "title": "Move the divider across the same stars",
+          "requires": "A [comparison image](#compare-prompt) is visible.",
+          "actions": [
+            "Place the pointer on the small white handle in the middle of the vertical divider (1). Hold the left mouse button and drag it horizontally.",
+            "In this example, drag right to reveal more of the original color field. Drag left to show more of the monochrome red-channel view. Compare the same bright star on both sides."
+          ],
+          "check": "The same stars stay in place while the color boundary moves. Switch between the two screenshots below the instructions to see both handle positions.",
+          "image": "wipe-left.webp",
+          "alt": "Divider handle marked near the left side with most of the M46 field shown in monochrome.",
+          "links": [
+            {
+              "id": "display",
+              "label": "Adjust the display"
+            },
+            {
+              "id": "export",
+              "label": "Save the annotated primary image"
+            }
+          ],
+          "imageLabel": "Divider at left",
+          "comparison": {
+            "image": "wipe-right.webp",
+            "label": "Divider at right",
+            "alt": "The same M46 stars with the marked divider on the right and more of the original color photograph exposed."
+          }
+        }
+      ]
+    },
+    {
+      "title": "Save the annotated field",
+      "steps": [
+        {
+          "id": "export",
+          "title": "Choose the annotated image export",
+          "requires": "Open a local image and leave the [catalog markers](#explore) or [ruler](#ruler) you want to include on screen.",
+          "actions": [
+            "Click **Export** (1) at the right end of the toolbar, then **Image…** (2).",
+            "If you are working with a survey and want that layer instead, choose **Survey…** when it is available."
+          ],
+          "check": "A save dialog opens for the annotated image. The exported image uses the original image resolution.",
+          "image": "export.webp",
+          "alt": "Export menu open with the Export button and Image action numbered; Survey and Animation also appear.",
+          "links": [
+            {
+              "id": "save-file",
+              "label": "Choose the filename"
+            },
+            {
+              "id": "ruler",
+              "label": "Add a measurement first"
+            }
+          ]
+        },
+        {
+          "id": "save-file",
+          "title": "Name the file and save it",
+          "requires": "Choose [Export → Image…](#export).",
+          "actions": [
+            "Choose the destination folder in the file picker. Enter a new filename such as **M46-study.png** in **File name** (1).",
+            "Keep **PNG Files** selected and click **Save** (2). Open the saved PNG from that folder to inspect the markers at full resolution."
+          ],
+          "check": "The saved PNG contains the photographed field and its visible annotations. The M46 example exports at **2742 × 2460** pixels.",
+          "image": "save-file.webp",
+          "alt": "Save dialog showing M46-study.png, the PNG file type, and the marked Save button.",
+          "links": [
+            {
+              "id": "select",
+              "label": "Inspect another star"
+            },
+            {
+              "id": "compare-prompt",
+              "label": "Compare two exposures"
+            },
+            {
+              "id": "survey",
+              "label": "Explore a public survey"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

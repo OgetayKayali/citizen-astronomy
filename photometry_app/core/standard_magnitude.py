@@ -5,6 +5,7 @@ from typing import Any
 import math
 import re
 import time
+from urllib.parse import quote
 
 import numpy as np
 import requests
@@ -112,7 +113,7 @@ _VSP_BAND_ALIASES = {
 }
 
 _MATCH_SEPARATION_ARCSEC = 2.0
-_VSP_API_URL = "https://app.aavso.org/vsp/api/chart/"
+_VSP_API_URL = "https://apps.aavso.org/vsp/api/chart/"
 _VSP_RETRY_STATUS = {429, 500, 502, 503, 504}
 _VSP_ATTEMPTS = 3
 
@@ -167,6 +168,8 @@ def set_band_magnitude(
 
 
 def seed_gaia_g_band_magnitude(star: CatalogStar) -> None:
+    if not star.catalog.lower().startswith("gaia") or get_band_magnitudes(star):
+        return
     if star.magnitude is None or not np.isfinite(float(star.magnitude)):
         return
     set_band_magnitude(star, "G", float(star.magnitude), source="gaia-g")
@@ -189,18 +192,15 @@ def resolve_band_catalog_magnitude(
                 error = _as_optional_float(entry.get("error"))
                 return mag, error, str(entry.get("source") or "unknown")
 
-    # Gaia G fallback
-    if isinstance(source, CatalogStar) and source.magnitude is not None and np.isfinite(float(source.magnitude)):
-        return float(source.magnitude), None, "gaia-g"
-    if isinstance(source, PhotometryMeasurement):
-        g_entry = bands.get("G")
-        if isinstance(g_entry, dict) and g_entry.get("mag") is not None:
-            try:
-                return float(g_entry["mag"]), _as_optional_float(g_entry.get("error")), str(g_entry.get("source") or "gaia-g")
-            except (TypeError, ValueError):
-                pass
-        if source.catalog_magnitude is not None and np.isfinite(float(source.catalog_magnitude)):
-            return float(source.catalog_magnitude), None, "gaia-g"
+    g_entry = bands.get("G", {})
+    g_mag = _as_optional_float(g_entry.get("mag"))
+    if g_mag is not None:
+        return g_mag, _as_optional_float(g_entry.get("error")), str(g_entry.get("source") or "gaia-g")
+    # Only un-enriched Gaia entries have a display magnitude known to be G.
+    if not bands and source.catalog.lower().startswith("gaia"):
+        value = source.magnitude if isinstance(source, CatalogStar) else source.catalog_magnitude
+        if (mag := _as_optional_float(value)) is not None:
+            return mag, None, "gaia-g"
     return None, None, None
 
 
@@ -357,16 +357,20 @@ def enrich_gaia_stars_with_standard_catalogs(
     )
 
 
-def query_apass_field(solved_field: SolvedField, *, mag_limit: float | None = None) -> list[CatalogStar]:
+def query_apass_field(solved_field: SolvedField, *, mag_limit: float | None = None,
+                      vizier_server: str | None = None) -> list[CatalogStar]:
     center = SkyCoord(solved_field.center_ra_deg * u.deg, solved_field.center_dec_deg * u.deg)
     radius = max(0.02, float(solved_field.radius_deg)) * u.deg
     columns = ["RAJ2000", "DEJ2000", "Bmag", "e_Bmag", "Vmag", "e_Vmag", "g'mag", "e_g'mag", "r'mag", "e_r'mag", "i'mag", "e_i'mag"]
-    vizier = Vizier(columns=columns, row_limit=-1)
+    vizier = Vizier(columns=columns, row_limit=-1,
+                    **({"vizier_server": vizier_server, "timeout": 25} if vizier_server else {}))
     if mag_limit is not None and np.isfinite(mag_limit):
         vizier.COLUMN_FILTERS = {"Vmag": f"<{float(mag_limit):.3f}"}
     try:
         tables = vizier.query_region(center, radius=radius, catalog=_APASS_CATALOG)
     except Exception:
+        if vizier_server is None:
+            return query_apass_field(solved_field, mag_limit=mag_limit, vizier_server="vizier.cfa.harvard.edu")
         return []
     if not tables:
         return []
@@ -425,8 +429,11 @@ def query_vsp_field(
     else:
         params["ra"] = f"{solved_field.center_ra_deg:.6f}"
         params["dec"] = f"{solved_field.center_dec_deg:.6f}"
-        # VSP FOV is arcminutes.
-        params["fov"] = f"{max(5.0, float(solved_field.radius_deg) * 2.0 * 60.0):.1f}"
+        # VSP restricts charts wider than 180 arcmin to magnitude 12.
+        width = max(5.0, float(solved_field.radius_deg) * 120.0)
+        if mag_limit is None or not np.isfinite(mag_limit) or mag_limit > 12:
+            width = min(width, 180.0)
+        params["fov"] = f"{min(width, 1200.0):.1f}"
         params["maglimit"] = f"{float(mag_limit):.1f}" if mag_limit is not None and np.isfinite(mag_limit) else "16.5"
 
     try:
@@ -491,10 +498,13 @@ def query_vsp_field(
 
 
 def _request_vsp_payload(params: dict[str, object], timeout_seconds: float) -> object:
+    params = dict(params)
+    chart_id = params.pop("chartid", None)
+    url = _VSP_API_URL + (quote(str(chart_id), safe="") + "/" if chart_id else "")
     last_error = "AAVSO VSP did not respond."
     for attempt in range(_VSP_ATTEMPTS):
         try:
-            response = requests.get(_VSP_API_URL, params=params, timeout=timeout_seconds)
+            response = requests.get(url, params=params, timeout=timeout_seconds)
         except requests.RequestException as exc:
             last_error = f"AAVSO VSP could not be reached ({exc.__class__.__name__})."
         else:
@@ -537,9 +547,15 @@ def merge_band_magnitudes_by_sky_match(
     idx, separation, _ = target_coords.match_to_catalog_sky(donor_coords)
     matched = 0
     max_sep = separation_arcsec * u.arcsec
-    for target_index, donor_index in enumerate(idx):
-        if separation[target_index] > max_sep:
-            continue
+    # A lower-resolution sequence entry can overlap two Gaia detections.
+    # Assign it once, to the closest positional match.
+    closest = {}
+    for target_index in np.flatnonzero(separation <= max_sep):
+        donor_index = int(idx[target_index])
+        previous = closest.get(donor_index)
+        if previous is None or separation[target_index] < separation[previous]:
+            closest[donor_index] = target_index
+    for donor_index, target_index in closest.items():
         donor = donors[int(donor_index)]
         donor_bands = get_band_magnitudes(donor)
         if not donor_bands:
@@ -571,11 +587,14 @@ def compute_standard_magnitude_context(
         return None, None, None, None, 0, None, None
 
     band = normalize_photometric_band(target.filter_name)
+
     zero_points: list[float] = []
     reference_errors: list[float] = []
     sources: list[str] = []
     for reference in references:
         catalog_mag, catalog_error, catalog_source = resolve_band_catalog_magnitude(reference, band)
+        if band not in get_band_magnitudes(reference) or catalog_source not in {"vsp", "apass"}:
+            continue
         if catalog_mag is None or reference.instrumental_magnitude is None:
             continue
         zero_point = float(catalog_mag - reference.instrumental_magnitude)
@@ -621,7 +640,7 @@ def compute_standard_magnitude_context(
 
     dominant_source = None
     if sources:
-        dominant_source = max(set(sources), key=sources.count)
+        dominant_source = max(set(sources), key=lambda name: (sources.count(name), _BAND_PRIORITY.get(name, 0), name))
     return (
         standard_magnitude,
         standard_magnitude_error,
@@ -715,7 +734,7 @@ def _instrumental_magnitude_error(measurement: PhotometryMeasurement) -> float |
 
 
 def _as_optional_float(value: object) -> float | None:
-    if value is None:
+    if value is None or np.ma.is_masked(value):
         return None
     try:
         resolved = float(value)

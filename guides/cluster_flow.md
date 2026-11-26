@@ -1,5 +1,7 @@
 # Cluster Flow
 
+Use the [illustrated Cluster Flow tutorial](tutorials/cluster-flow.html) to follow the gas and compare density with compression. You can open any task directly.
+
 ## Introduction
 
 **Cluster Flow** is the PhysicsEngine Cosmic Flow lab running inside CAst. It simulates gas in a cube of space and shows it as a glowing volume. It has two models:

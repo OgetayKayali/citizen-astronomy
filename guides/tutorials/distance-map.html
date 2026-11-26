@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Two stars can look like neighbors in M46 and still lie far apart. Open the cluster image, give the map enough depth to include its distant stars, then look for a group that moves together.">
+<title>Distance Map | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=observations-3"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>Distance Map</span></nav>
+<header class="guide-head"><h1>Distance Map</h1><div class="guide-files"><a class="download-file" href="https://www.ogetay.com/citizen-astronomy-cast/datasets/m46.zip" download>Download M46 <small>ZIP · 75 MB</small></a><span>Extract the ZIP and open M46.xisf. CAst uses Gaia distances to build the map. <a href="#choose">See the file step</a>.</span></div></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Open M46 and build the map</h3><ol><li><a href="#launch">Enter Distance Map</a></li><li><a href="#open">Open the image picker</a></li><li><a href="#choose">Choose the M46 image</a></li><li><a href="#build">Check that Gaia stars were drawn</a></li><li><a href="#limits">Include the cluster in the depth range</a></li><li><a href="#query">Change which catalog stars enter the map</a></li></ol></section><section class="step-group"><h3>Read and navigate the 3D field</h3><ol><li><a href="#depth">Switch between measured and modeled depth</a></li><li><a href="#camera">Choose a view and declutter it</a></li><li><a href="#orbit">Rotate and zoom the point cloud</a></li><li><a href="#table">Read the distance to one star</a></li><li><a href="#ruler">Add a scale along the line of sight</a></li><li><a href="#uncertainty">Show uncertainty in stellar depth</a></li></ol></section><section class="step-group"><h3>Find and inspect a moving group</h3><ol><li><a href="#find">Find stars that move together</a></li><li><a href="#group">Isolate the candidate stars</a></li><li><a href="#members">Read a highlighted member row</a></li><li><a href="#field">Locate candidates in the original M46 photograph</a></li><li><a href="#advanced">Choose a tighter or looser search</a></li><li><a href="#expert">Adjust individual cluster settings</a></li><li><a href="#sphere">Check for a cataloged globular cluster</a></li></ol></section><section class="step-group"><h3>Move the photograph through the map</h3><ol><li><a href="#slice">Place the M46 photograph inside the 3D map</a></li><li><a href="#slice-depth">Move the image plane nearer or farther</a></li></ol></section><section class="step-group"><h3>Save a figure</h3><ol><li><a href="#save">Export the 3D view</a></li><li><a href="#filename">Choose the filename and format</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/distance_map.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="launch" aria-labelledby="title-launch">
+
+<p class="overline">Open M46 and build the map <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-launch">Enter Distance Map</h2>
+<p class="before"><strong>Start here</strong> Start Citizen Astronomy (CAst). Have your M46.xisf file available.</p>
+<ol class="actions"><li>In the launcher, scroll to <strong>Explore, Visualize &amp; Process</strong>. Click <strong>Distance Map</strong> (1). If a different mode is open, you can choose <strong>Mode → Distance Map</strong> from the top menu.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/launch.webp" aria-label="Enlarge Screenshot for Enter Distance Map">
+<img src="images/distance-map/launch.webp" loading="lazy" alt="The Distance Map card is outlined in the launcher row containing Sky Atlas, Sky Explorer, HR Diagram and Deep Stack.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The workspace opens with <strong>Open</strong> at the left end of its toolbar. The empty panels are labeled <strong>Field Image</strong>, <strong>3D Distance Map</strong>, <strong>Catalog Stars</strong>, and <strong>Work Log</strong>.</p></div>
+<nav class="next" aria-label="Continue from Enter Distance Map"><a class="choice" href="#open">Open the image picker <span aria-hidden="true">→</span></a><a class="choice" href="#build">I already opened my image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="open" aria-labelledby="title-open">
+
+<p class="overline">Open M46 and build the map <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-open">Open the image picker</h2>
+<p class="before"><strong>Start here</strong> The <a href="#launch">Distance Map workspace</a> is visible.</p>
+<ol class="actions"><li>Click <strong>Open</strong> (1) at the left end of the mode toolbar. You can also use <strong>File → Open File</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/open.webp" aria-label="Enlarge Screenshot for Open the image picker">
+<img src="images/distance-map/open.webp" loading="lazy" alt="The Open button is outlined above the empty Field Image panel.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A file picker titled <strong>Select source image for Distance Map</strong> opens. You will choose a single image.</p></div>
+<nav class="next" aria-label="Continue from Open the image picker"><a class="choice" href="#choose">Choose M46.xisf <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="choose" aria-labelledby="title-choose">
+
+<p class="overline">Open M46 and build the map <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-choose">Choose the M46 image</h2>
+<p class="before"><strong>Start here</strong> The <a href="#open">image picker</a> is open.</p>
+<ol class="actions"><li>Open the extracted <strong>M46</strong> folder and select <strong>M46.xisf</strong>, or type its path in <strong>File name</strong> (1).</li><li>Click <strong>Open</strong> (2). Leave the app running while it reads the image coordinates and looks for Gaia stars in that part of the sky.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/choose.webp" aria-label="Enlarge Screenshot for Choose the M46 image">
+<img src="images/distance-map/choose.webp" loading="lazy" alt="The image picker shows M46.xisf in its File name field. File name and Open are numbered.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The M46 photograph appears in <strong>Field Image</strong>. The toolbar may briefly show <strong>Building...</strong>. A previously cached catalog can make this step finish quickly.</p></div>
+<nav class="next" aria-label="Continue from Choose the M46 image"><a class="choice" href="#build">Check the build <span aria-hidden="true">→</span></a><a class="choice" href="#limits">Set the depth for M46 <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="build" aria-labelledby="title-build">
+
+<p class="overline">Open M46 and build the map <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-build">Check that Gaia stars were drawn</h2>
+<p class="before"><strong>Start here</strong> You have <a href="#choose">chosen M46.xisf</a>.</p>
+<ol class="actions"><li>Find <strong>Work Log</strong> under the catalog table on the right (1). Scroll inside it to the lines beginning <strong>Distance Map built from M46.xisf</strong> and <strong>Stars drawn in the 3D map</strong>.</li><li>Look at the <strong>Distance Limit</strong> value in the toolbar. The 500 pc starting limit shows nearby foreground stars. Increase this limit to explore the cluster in depth.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/build.webp" aria-label="Enlarge Screenshot for Check that Gaia stars were drawn">
+<img src="images/distance-map/build.webp" loading="lazy" alt="The marked Work Log reports how many Gaia sources were queried and how many stars were drawn for M46.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>This example drew 107 stars at 500 pc using the saved Gaia DR3 field catalog for this exact image. A parsec (pc) is about 3.26 light-years. Your count can vary with saved settings, catalog coverage and query limits.</p></div>
+<nav class="next" aria-label="Continue from Check that Gaia stars were drawn"><a class="choice" href="#limits">Include more distant stars <span aria-hidden="true">→</span></a><a class="choice" href="#camera">Explore the current map <span aria-hidden="true">→</span></a><a class="choice" href="#query">Understand the other catalog limits <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="limits" aria-labelledby="title-limits">
+
+<p class="overline">Open M46 and build the map <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-limits">Include the cluster in the depth range</h2>
+<p class="before"><strong>Start here</strong> A <a href="#build">build has finished</a>. Use the M46 image for this example.</p>
+<ol class="actions"><li>In <strong>Distance Limit</strong> (1), select the number, enter <strong>3000</strong>, and press Enter. For this example leave <strong>Mag Limit</strong> at <strong>17.0</strong>, <strong>Max Stars</strong> at <strong>500</strong>, and <strong>Min SNR</strong> at <strong>5.0</strong>.</li><li>Click <strong>Apply</strong> (2). Wait until the controls become available again and the <strong>Work Log</strong> reports the new number drawn.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/limits.webp" aria-label="Enlarge Screenshot for Include the cluster in the depth range">
+<img src="images/distance-map/limits.webp" loading="lazy" alt="The toolbar shows a Distance Limit of 3000 pc and the Apply button outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The new range includes stars out to 3,000 pc. In the example, 1,351 catalog stars passed the footprint, distance and quality filters, and CAst drew the brightest 500 of them. Those 500 include foreground and background stars as well as cluster candidates.</p></div>
+<nav class="next" aria-label="Continue from Include the cluster in the depth range"><a class="choice" href="#depth">See distances derived from parallax <span aria-hidden="true">→</span></a><a class="choice" href="#find">Search for stars moving together <span aria-hidden="true">→</span></a><a class="choice" href="#slice">Place the photograph in the map <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="query" aria-labelledby="title-query">
+
+<p class="overline">Open M46 and build the map <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-query">Change which catalog stars enter the map</h2>
+<p class="before"><strong>Start here</strong> An <a href="#build">image is loaded</a>. These settings change the sample for every later task.</p>
+<ol class="actions"><li>Change <strong>Mag Limit</strong> (1) if you want a different brightness cutoff. A smaller number keeps brighter stars. <strong>Max Stars</strong> (2) caps the number drawn after filtering.</li><li>Use <strong>Min SNR</strong> (3) to set the minimum ratio of measured parallax to its error. Increasing it asks for more precise parallaxes. Keep <strong>17.0</strong>, <strong>500</strong>, and <strong>5.0</strong> to match this tutorial.</li><li>Click <strong>Apply</strong> (4). Read the new counts in <strong>Work Log</strong> before running another cluster search.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/query.webp" aria-label="Enlarge Screenshot for Change which catalog stars enter the map">
+<img src="images/distance-map/query.webp" loading="lazy" alt="Mag Limit, Max Stars, Min SNR and Apply are marked across the catalog controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The star map and table update to the new selection. If too few stars remain, undo the last change and click <strong>Apply</strong> again.</p></div>
+<nav class="next" aria-label="Continue from Change which catalog stars enter the map"><a class="choice" href="#limits">Choose the depth range <span aria-hidden="true">→</span></a><a class="choice" href="#table">Read the catalog measurements <span aria-hidden="true">→</span></a><a class="choice" href="#find">Find a group in this sample <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="depth" aria-labelledby="title-depth">
+
+<p class="overline">Read and navigate the 3D field <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-depth">Switch between measured and modeled depth</h2>
+<p class="before"><strong>Start here</strong> A <a href="#limits">map is drawn</a>. The example starts with <strong>Model Cluster Depth</strong> checked.</p>
+<ol class="actions"><li>If <strong>Model Cluster Depth</strong> (1) is checked, click it once to clear the check. Leave it clear when comparing distances derived directly from parallax.</li><li>To try the display model later, turn it back on. CAst redistributes likely members within a compact model around the group distance.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/depth.webp" aria-label="Enlarge Screenshot for Switch between measured and modeled depth">
+<img src="images/distance-map/depth.webp" loading="lazy" alt="The checked Model Cluster Depth box is highlighted. Clearing this box shows the parallax-derived distances.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>With the box clear, the <strong>Distance (pc)</strong> column uses 1,000 divided by parallax in milliarcseconds. When the model is enabled, candidate positions and their displayed distances can change. Their Gaia parallaxes stay the same.</p></div>
+<nav class="next" aria-label="Continue from Switch between measured and modeled depth"><a class="choice" href="#table">Read one catalog row <span aria-hidden="true">→</span></a><a class="choice" href="#camera">Choose a camera angle <span aria-hidden="true">→</span></a><a class="choice" href="#find">Search for a moving group <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="camera" aria-labelledby="title-camera">
+
+<p class="overline">Read and navigate the 3D field <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-camera">Choose a view and declutter it</h2>
+<p class="before"><strong>Start here</strong> <a href="#build">Build a map</a>. These controls are on its toolbar.</p>
+<ol class="actions"><li>Open <strong>View</strong> (1) and choose <strong>Side View</strong>. Try <strong>Top-Down</strong> for a different direction or <strong>Field Center</strong> for a closer preset.</li><li>Clear <strong>Labels</strong> (2) if the star names cover the points. Leave labels off for the example screenshots.</li><li>After moving the camera, click <strong>Reset View</strong> (3) to return to the selected preset.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/camera.webp" aria-label="Enlarge Screenshot for Choose a view and declutter it">
+<img src="images/distance-map/camera.webp" loading="lazy" alt="The View list shows Side View. Labels and Reset View are also marked on the toolbar.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Seen from the side, this narrow patch of sky looks like a long, thin group of points. Stars close together in the photograph can be widely separated along this line.</p></div>
+<nav class="next" aria-label="Continue from Choose a view and declutter it"><a class="choice" href="#orbit">Rotate or zoom with the mouse <span aria-hidden="true">→</span></a><a class="choice" href="#ruler">Add a depth scale <span aria-hidden="true">→</span></a><a class="choice" href="#table">Read a numerical distance <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="orbit" aria-labelledby="title-orbit">
+
+<p class="overline">Read and navigate the 3D field <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-orbit">Rotate and zoom the point cloud</h2>
+<p class="before"><strong>Start here</strong> A <a href="#camera">3D view</a> is on screen. Use the middle panel titled <strong>3D Distance Map</strong>.</p>
+<ol class="actions"><li>Place the mouse over the marked patch in the 3D panel (1). Hold the left mouse button and drag sideways to orbit, then release.</li><li>Roll the wheel up to zoom in or down to zoom out. To shift the view without rotating it, hold the middle mouse button and drag.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/orbit.webp" aria-label="Enlarge Screenshot for Rotate and zoom the point cloud">
+<img src="images/distance-map/orbit.webp" loading="lazy" alt="An outlined drag region lies over the thin M46 line of sight in the 3D map.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The point cloud changes orientation or size while the photograph and table keep their positions. If the cloud leaves the screen, <strong>Reset View</strong> restores your selected camera preset.</p></div>
+<nav class="next" aria-label="Continue from Rotate and zoom the point cloud"><a class="choice" href="#ruler">Add a scale in parsecs <span aria-hidden="true">→</span></a><a class="choice" href="#slice">Insert the actual image <span aria-hidden="true">→</span></a><a class="choice" href="#save">Save this camera view <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="table" aria-labelledby="title-table">
+
+<p class="overline">Read and navigate the 3D field <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-table">Read the distance to one star</h2>
+<p class="before"><strong>Start here</strong> A <a href="#build">map is drawn</a>. For a distance derived directly from parallax, <a href="#depth">clear Model Cluster Depth</a>.</p>
+<ol class="actions"><li>In <strong>Catalog Stars</strong> at the right, click a row to keep your place. Read the entries under <strong>Parallax</strong> and <strong>Distance (pc)</strong> in that same row (1).</li><li>Read <strong>Name</strong> to identify the catalog source and <strong>G mag</strong> for its Gaia brightness. Smaller magnitude numbers indicate brighter stars.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/table.webp" aria-label="Enlarge Screenshot for Read the distance to one star">
+<img src="images/distance-map/table.webp" loading="lazy" alt="The first catalog row is selected, with its parallax and distance cells outlined together.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The row stays selected while you read across it. A parallax of 1 milliarcsecond corresponds to 1,000 pc on this scale. Selecting a row leaves the 3D camera in place.</p></div>
+<nav class="next" aria-label="Continue from Read the distance to one star"><a class="choice" href="#uncertainty">Show how uncertain a distance is <span aria-hidden="true">→</span></a><a class="choice" href="#find">Identify candidate group members <span aria-hidden="true">→</span></a><a class="choice" href="#query">Adjust the catalog quality cut <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="ruler" aria-labelledby="title-ruler">
+
+<p class="overline">Read and navigate the 3D field <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-ruler">Add a scale along the line of sight</h2>
+<p class="before"><strong>Start here</strong> The <a href="#camera">3D field</a> is visible. Use <strong>Side View</strong> to see depth spread across the screen.</p>
+<ol class="actions"><li>Click <strong>Distance Ruler</strong> (1) to check it. Follow the scale along the direction from the observer through the star field.</li><li>Zoom toward the points with the mouse wheel if the tick marks are crowded. Click the box again to remove the scale.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/ruler.webp" aria-label="Enlarge Screenshot for Add a scale along the line of sight">
+<img src="images/distance-map/ruler.webp" loading="lazy" alt="The checked Distance Ruler control is outlined above the 3D map.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The 3D panel gains tick marks and distances in parsecs along the viewing direction. The same stars remain in the table.</p></div>
+<nav class="next" aria-label="Continue from Add a scale along the line of sight"><a class="choice" href="#uncertainty">Add parallax uncertainty <span aria-hidden="true">→</span></a><a class="choice" href="#slice">Compare the scale with the image plane <span aria-hidden="true">→</span></a><a class="choice" href="#save">Save the scaled view <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="uncertainty" aria-labelledby="title-uncertainty">
+
+<p class="overline">Read and navigate the 3D field <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-uncertainty">Show uncertainty in stellar depth</h2>
+<p class="before"><strong>Start here</strong> A <a href="#build">map is drawn</a>. Choose <strong>Side View</strong> to see differences along the line of sight.</p>
+<ol class="actions"><li>Check <strong>Parallax Uncertainty</strong> (1). Look along the points in the 3D map for the line segments marking their distance intervals.</li><li>If the stars crowd together, zoom in. Clear <strong>Parallax Uncertainty</strong> when you want to see only the points again.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/uncertainty.webp" aria-label="Enlarge Screenshot for Show uncertainty in stellar depth">
+<img src="images/distance-map/uncertainty.webp" loading="lazy" alt="The checked Parallax Uncertainty control sits above the side-on field and its depth intervals.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Longer segments indicate a wider range of plausible depth from parallax error. The <strong>Work Log</strong> reports how many intervals CAst drew. Increasing <strong>Min SNR</strong> gives a way to examine only more precisely measured stars.</p></div>
+<nav class="next" aria-label="Continue from Show uncertainty in stellar depth"><a class="choice" href="#query">Set the minimum parallax quality <span aria-hidden="true">→</span></a><a class="choice" href="#table">Inspect a catalog row <span aria-hidden="true">→</span></a><a class="choice" href="#ruler">Add the scale <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="find" aria-labelledby="title-find">
+
+<p class="overline">Find and inspect a moving group <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-find">Find stars that move together</h2>
+<p class="before"><strong>Start here</strong> <a href="#limits">Build the M46 map out to 3,000 pc</a>. For this example, <a href="#depth">clear Model Cluster Depth</a> and use the default cluster search preset.</p>
+<ol class="actions"><li>Click <strong>Find Cluster</strong> (1). CAst searches the drawn stars for a group with similar proper motions and, when available, similar parallaxes.</li><li>Read the <strong>Highlighted … likely cluster member(s)</strong> line in <strong>Work Log</strong>. If you want to change the search first, click <strong>Advanced...</strong> (2) and use the preset branch below.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/find.webp" aria-label="Enlarge Screenshot for Find stars that move together">
+<img src="images/distance-map/find.webp" loading="lazy" alt="The Find Cluster and Advanced buttons are highlighted next to Open.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>With the example settings and cached catalog, the default search highlighted 145 candidates. The button changes to <strong>Find All</strong>, and matching catalog rows turn gold. The shared motion makes these stars candidates for membership in the cluster.</p></div>
+<nav class="next" aria-label="Continue from Find stars that move together"><a class="choice" href="#group">Show only those candidates <span aria-hidden="true">→</span></a><a class="choice" href="#advanced">Choose a detection preset <span aria-hidden="true">→</span></a><a class="choice" href="#field">Locate the candidates in the photograph <span aria-hidden="true">→</span></a><a class="choice" href="#sphere">Check the globular-cluster overlay <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="group" aria-labelledby="title-group">
+
+<p class="overline">Find and inspect a moving group <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-group">Isolate the candidate stars</h2>
+<p class="before"><strong>Start here</strong> Complete a <a href="#find">Find Cluster search</a> so the button reads <strong>Find All</strong>.</p>
+<ol class="actions"><li>Check <strong>Only Group</strong> (1). To inspect a candidate row or locate it in the photograph, leave this box checked and choose one of those tasks below.</li><li>To see the surrounding stars while keeping the candidates highlighted, clear <strong>Only Group</strong>. When you want to clear the highlights too, click <strong>Find All</strong> (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/group.webp" aria-label="Enlarge Screenshot for Isolate the candidate stars">
+<img src="images/distance-map/group.webp" loading="lazy" alt="Only Group and Find All are numbered in the toolbar after a successful search.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>With <strong>Only Group</strong> checked, the example table contains the 145 highlighted stars. After <strong>Find All</strong>, the map returns to the full sample and the search button reads <strong>Find Cluster</strong> again.</p></div>
+<nav class="next" aria-label="Continue from Isolate the candidate stars"><a class="choice" href="#members">Read a highlighted member row <span aria-hidden="true">→</span></a><a class="choice" href="#field">Inspect the circles on the photograph <span aria-hidden="true">→</span></a><a class="choice" href="#advanced">Change the search <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="members" aria-labelledby="title-members">
+
+<p class="overline">Find and inspect a moving group <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-members">Read a highlighted member row</h2>
+<p class="before"><strong>Start here</strong> <a href="#find">Find a group</a>, then check <a href="#group">Only Group</a>.</p>
+<ol class="actions"><li>Scroll through <strong>Catalog Stars</strong> and click a highlighted row (1). Read across for the candidate’s name, brightness, parallax and distance.</li><li>To see its parallax-derived distance, check that <strong>Model Cluster Depth</strong> is clear.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/members.webp" aria-label="Enlarge Screenshot for Read a highlighted member row">
+<img src="images/distance-map/members.webp" loading="lazy" alt="The highlighted members table shows a numbered marker at one candidate’s name.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Only candidate rows appear while the group filter is active. Their distances still span a range because parallax measurements have uncertainties.</p></div>
+<nav class="next" aria-label="Continue from Read a highlighted member row"><a class="choice" href="#uncertainty">Inspect the depth intervals <span aria-hidden="true">→</span></a><a class="choice" href="#field">View the candidate markers <span aria-hidden="true">→</span></a><a class="choice" href="#depth">Compare measured and modeled depth <span aria-hidden="true">→</span></a><a class="choice" href="hr-diagram.html#motion">Explore candidate motions in HR Diagram <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="field" aria-labelledby="title-field">
+
+<p class="overline">Find and inspect a moving group <span aria-hidden="true">/</span> Step 16</p>
+<h2 tabindex="-1" id="title-field">Locate candidates in the original M46 photograph</h2>
+<p class="before"><strong>Start here</strong> Complete <a href="#find">Find Cluster</a>. Keep the group selected.</p>
+<ol class="actions"><li>Move the pointer over the left <strong>Field Image</strong> panel (1). Scroll up to magnify the photograph and left-drag to bring a region of interest into view.</li><li>Look for the colored circles around candidate stars. Use the central 3D panel when you want to rotate the depth map.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/field.webp" aria-label="Enlarge Screenshot for Locate candidates in the original M46 photograph">
+<img src="images/distance-map/field.webp" loading="lazy" alt="The central part of the actual M46 field image is outlined as the place to zoom or drag.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The source photograph keeps its sky orientation as you pan and zoom. Circles identify the stars highlighted by the group search.</p></div>
+<nav class="next" aria-label="Continue from Locate candidates in the original M46 photograph"><a class="choice" href="#members">Read the candidate table <span aria-hidden="true">→</span></a><a class="choice" href="#slice">Place this photograph in 3D <span aria-hidden="true">→</span></a><a class="choice" href="#group">Return to the full sample <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="advanced" aria-labelledby="title-advanced">
+
+<p class="overline">Find and inspect a moving group <span aria-hidden="true">/</span> Step 17</p>
+<h2 tabindex="-1" id="title-advanced">Choose a tighter or looser search</h2>
+<p class="before"><strong>Start here</strong> A <a href="#limits">map is drawn</a>. If <strong>Find All</strong> is showing, click it to clear the previous search. Then click <strong>Advanced...</strong> beside <strong>Find Cluster</strong>.</p>
+<ol class="actions"><li>Open <strong>Preset</strong> (1). Choose <strong>Tight</strong> for a more concentrated group, <strong>Loose</strong> for a broader proper-motion search, or <strong>Default</strong> to reproduce the example.</li><li>Check <strong>Turn on Only Group automatically after detection</strong> (2) if you want the map to isolate candidates immediately. Click <strong>OK</strong> (3), then <strong>Find Cluster</strong> on the toolbar.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/advanced.webp" aria-label="Enlarge Screenshot for Choose a tighter or looser search">
+<img src="images/distance-map/advanced.webp" loading="lazy" alt="The cluster detection dialog shows the preset list, automatic Only Group checkbox, and OK button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Work Log</strong> names the chosen preset. A different preset can select a different candidate set. If nothing is identified, try <strong>Default</strong> or <strong>Loose</strong> and make sure the distance range includes the cluster.</p></div>
+<nav class="next" aria-label="Continue from Choose a tighter or looser search"><a class="choice" href="#find">Run the chosen search <span aria-hidden="true">→</span></a><a class="choice" href="#expert">Adjust individual search settings <span aria-hidden="true">→</span></a><a class="choice" href="#limits">Check the distance cutoff <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="expert" aria-labelledby="title-expert">
+
+<p class="overline">Find and inspect a moving group <span aria-hidden="true">/</span> Step 18</p>
+<h2 tabindex="-1" id="title-expert">Adjust individual cluster settings</h2>
+<p class="before"><strong>Start here</strong> Open <a href="#advanced">Advanced...</a>. Click <strong>Show Expert Controls</strong> if the extra fields are folded.</p>
+<ol class="actions"><li>Use <strong>Strictness</strong> (1) to adjust how closely the stars must group in the search. A lower value tightens the selection.</li><li>Open <strong>Parallax</strong> (2) to choose <strong>Auto</strong>, <strong>Require parallax</strong>, or <strong>Proper motion only</strong>. Changing an expert setting switches <strong>Preset</strong> to <strong>Custom</strong>.</li><li>Click <strong>OK</strong> (3) to keep the settings and run <strong>Find Cluster</strong> again. To return to the original settings, reopen the dialog and choose <strong>Default</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/expert.webp" aria-label="Enlarge Screenshot for Adjust individual cluster settings">
+<img src="images/distance-map/expert.webp" loading="lazy" alt="The expert controls show Strictness and the Parallax selector, followed by OK.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The dialog records a Custom preset for your changes. Each new search uses the same stars until you change a catalog limit and click <strong>Apply</strong>.</p></div>
+<nav class="next" aria-label="Continue from Adjust individual cluster settings"><a class="choice" href="#find">Run the custom search <span aria-hidden="true">→</span></a><a class="choice" href="#advanced">Restore a built-in preset <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="sphere" aria-labelledby="title-sphere">
+
+<p class="overline">Find and inspect a moving group <span aria-hidden="true">/</span> Step 19</p>
+<h2 tabindex="-1" id="title-sphere">Check for a cataloged globular cluster</h2>
+<p class="before"><strong>Start here</strong> A <a href="#build">map is drawn</a>. This optional overlay is useful when exploring a globular-cluster field.</p>
+<ol class="actions"><li>Click <strong>Catalog Sphere</strong> (1). Read <strong>Work Log</strong> to see whether CAst matched the image to a globular cluster in its bundled list.</li><li>Clear <strong>Catalog Sphere</strong> to turn the overlay off. For M46, use <strong>Find Cluster</strong> to search the actual stars for a moving group.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/sphere.webp" aria-label="Enlarge Screenshot for Check for a cataloged globular cluster">
+<img src="images/distance-map/sphere.webp" loading="lazy" alt="The Catalog Sphere checkbox is marked on the Distance Map toolbar.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>M46 is an open cluster. For this image the log reports that no named globular cluster matched, so there is no sphere to draw. A matched globular field can show a wireframe sphere at the catalog distance.</p></div>
+<nav class="next" aria-label="Continue from Check for a cataloged globular cluster"><a class="choice" href="#find">Search the open-cluster field <span aria-hidden="true">→</span></a><a class="choice" href="#depth">Inspect the depth model <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="slice" aria-labelledby="title-slice">
+
+<p class="overline">Move the photograph through the map <span aria-hidden="true">/</span> Step 20</p>
+<h2 tabindex="-1" id="title-slice">Place the M46 photograph inside the 3D map</h2>
+<p class="before"><strong>Start here</strong> <a href="#limits">Build the map</a>. If the group filter is active, use <a href="#group">Find All</a> to return to the full map.</p>
+<ol class="actions"><li>Click <strong>Tomography</strong> (1). The <strong>View</strong> selector changes to <strong>Tomography Face-On</strong>.</li><li>Move the pointer over the middle of the 3D panel and scroll up until the image plane is easy to see. A wide depth range can make the plane look very small at first. Use the two screenshot buttons here to compare the starting and enlarged views.</li></ol>
+<figure class="capture"><div class="frame-switch" role="group" aria-label="Compare screenshots" hidden><button type="button">Starting zoom</button><button type="button">After zooming in</button></div><a class="enlarge" href="images/distance-map/slice-start.webp" aria-label="Enlarge Starting zoom for Place the M46 photograph inside the 3D map">
+<img src="images/distance-map/slice-start.webp" loading="lazy" alt="Tomography is marked in the toolbar. At the initial face-on zoom the M46 image plane looks like a small patch near the center.">
+<span class="zoom-label">Starting zoom · Enlarge screenshot <span aria-hidden="true">↗</span></span></a><a class="enlarge" href="images/distance-map/slice.webp" aria-label="Enlarge After zooming in for Place the M46 photograph inside the 3D map">
+<img src="images/distance-map/slice.webp" loading="lazy" alt="Tomography stays selected as the enlarged M46 photograph fills the middle of the 3D panel.">
+<span class="zoom-label">After zooming in · Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Your M46 image appears as a translucent plane perpendicular to the line of sight. It starts partway through the stars’ depth range. The <strong>Work Log</strong> gives its starting distance in parsecs.</p></div>
+<nav class="next" aria-label="Continue from Place the M46 photograph inside the 3D map"><a class="choice" href="#slice-depth">Slide the plane in depth <span aria-hidden="true">→</span></a><a class="choice" href="#save">Save the current slice <span aria-hidden="true">→</span></a><a class="choice" href="#camera">Choose a different viewpoint <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="slice-depth" aria-labelledby="title-slice-depth">
+
+<p class="overline">Move the photograph through the map <span aria-hidden="true">/</span> Step 21</p>
+<h2 tabindex="-1" id="title-slice-depth">Move the image plane nearer or farther</h2>
+<p class="before"><strong>Start here</strong> <a href="#slice">Turn on Tomography</a>. Choose <strong>Orbit Overview</strong> from <strong>View</strong> so you can see the direction of depth.</p>
+<ol class="actions"><li>Place the pointer over the marked region of the 3D panel (1). Hold <strong>Ctrl</strong> and the left mouse button, then drag up to move the slice farther away or down to bring it closer.</li><li>Release the mouse and Ctrl. To inspect the plane head-on again, choose <strong>Tomography Face-On</strong> from <strong>View</strong>. Click <strong>Tomography</strong> again to remove it.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/slice-depth.webp" aria-label="Enlarge Screenshot for Move the image plane nearer or farther">
+<img src="images/distance-map/slice-depth.webp" loading="lazy" alt="A marked drag region in the orbit view shows where to move the image slice with Ctrl and the left mouse button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The photograph changes depth within the same star map. The slice is a movable reference plane. Its position does not assign a common distance to all the stars in the image.</p></div>
+<nav class="next" aria-label="Continue from Move the image plane nearer or farther"><a class="choice" href="#save">Save this view <span aria-hidden="true">→</span></a><a class="choice" href="#ruler">Read the scale along the slice <span aria-hidden="true">→</span></a><a class="choice" href="#slice">Return to the face-on image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="save" aria-labelledby="title-save">
+
+<p class="overline">Save a figure <span aria-hidden="true">/</span> Step 22</p>
+<h2 tabindex="-1" id="title-save">Export the 3D view</h2>
+<p class="before"><strong>Start here</strong> A <a href="#build">map is drawn</a>. Arrange the camera, group highlights, ruler or slice as you want them to appear.</p>
+<ol class="actions"><li>Click <strong>Save</strong> (1) on the Distance Map toolbar. This captures the current 3D panel.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/save.webp" aria-label="Enlarge Screenshot for Export the 3D view">
+<img src="images/distance-map/save.webp" loading="lazy" alt="The Save button is highlighted between the camera controls and the query limits.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The <strong>Save Distance Map Image</strong> picker opens with a proposed filename based on the source image.</p></div>
+<nav class="next" aria-label="Continue from Export the 3D view"><a class="choice" href="#filename">Name and save the figure <span aria-hidden="true">→</span></a><a class="choice" href="#camera">Adjust the camera first <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="filename" aria-labelledby="title-filename">
+
+<p class="overline">Save a figure <span aria-hidden="true">/</span> Step 23</p>
+<h2 tabindex="-1" id="title-filename">Choose the filename and format</h2>
+<p class="before"><strong>Start here</strong> The <a href="#save">Save Distance Map Image picker</a> is open.</p>
+<ol class="actions"><li>Choose a folder you can write to. In <strong>File name</strong> (1), enter <strong>M46_3D_example.png</strong> or another new name. Leave <strong>PNG Files</strong> selected for this example.</li><li>Click <strong>Save</strong> (2). Locate that file in your chosen folder and open it to inspect the result.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/distance-map/filename.webp" aria-label="Enlarge Screenshot for Choose the filename and format">
+<img src="images/distance-map/filename.webp" loading="lazy" alt="File name and Save are marked in the PNG save dialog.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The saved image contains the 3D scene from your selected camera. The <strong>Work Log</strong> reports the saved path. You can return to CAst, change the view and save a second figure with a different name.</p></div>
+<nav class="next" aria-label="Continue from Choose the filename and format"><a class="choice" href="#slice">Make a tomography view <span aria-hidden="true">→</span></a><a class="choice" href="#group">Make a candidate-only view <span aria-hidden="true">→</span></a><a class="choice" href="#camera">Choose another angle <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

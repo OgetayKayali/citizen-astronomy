@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="What do the stars in your M46 photograph have in common? Match the star field to Gaia, read its color–magnitude diagram, and click any plotted star to find it again in the image.">
+<title>HR Diagram | Citizen Astronomy</title>
+<link rel="stylesheet" href="tutorial.css?v=observations-3"><script defer src="tutorial.js?v=observations-3"></script></head>
+<body><a class="skip" href="#main">Skip to tutorial</a>
+<header class="masthead"><div class="wrap mast-inner">
+<a class="brand" href="https://www.ogetay.com/citizen-astronomy-cast/"><b>CAst</b><span>Citizen Astronomy</span></a>
+<a class="home-link" href="index.html">All tutorials</a>
+</div></header>
+
+<main id="main" class="wrap guide" tabindex="-1">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Tutorials</a><span>/</span><span>HR Diagram</span></nav>
+<header class="guide-head"><h1>HR Diagram</h1><div class="guide-files"><a class="download-file" href="https://www.ogetay.com/citizen-astronomy-cast/datasets/m46.zip" download>Download M46 <small>ZIP · 75 MB</small></a><span>Extract the ZIP and open M46.xisf. Connect to the internet for the first Gaia catalog lookup. <a href="#choose-file">See the file step</a>.</span></div></header>
+<div class="reader"><aside class="rail"><details class="step-menu" open><summary id="tasks">All steps in this guide</summary>
+<nav aria-label="Step index"><section class="step-group"><h3>Open the M46 image</h3><ol><li><a href="#launch">Enter HR Diagram mode</a></li><li><a href="#prerequisites">Check what the diagram needs</a></li><li><a href="#open">Find the Open button</a></li><li><a href="#choose-file">Open M46.xisf and build the diagram</a></li><li><a href="#settings-menu">Open the measurement settings</a></li><li><a href="#source-limit">Set how many matched stars CAst measures</a></li></ol></section><section class="step-group"><h3>Read the stars</h3><ol><li><a href="#diagram">Read the color and brightness scales</a></li><li><a href="#point">Choose a star on the plot</a></li><li><a href="#inspect">Connect the plot point to the photograph</a></li><li><a href="#results">Inspect a measurement in Source Results</a></li><li><a href="#guides">Compare stars with the stellar class guides</a></li><li><a href="#age">Move the illustrative age guide</a></li></ol></section><section class="step-group"><h3>Choose which stars to compare</h3><ol><li><a href="#roi">Draw and apply a circular region</a></li><li><a href="#roi-reset">Restore all parts of the image</a></li><li><a href="#motion">Find stars that move together</a></li><li><a href="#members">Isolate or clear the candidate group</a></li><li><a href="#filter-open">Open the star filter</a></li><li><a href="#distance-filter">Keep stars in a distance interval</a></li><li><a href="#filter-reset">Clear all star-filter switches</a></li></ol></section><section class="step-group"><h3>Save a figure or a table</h3><ol><li><a href="#export">Export a scientific figure</a></li><li><a href="#pair">Export the image and diagram together</a></li><li><a href="#save-figure">Name and save the figure</a></li><li><a href="#bundle">Export the science table and both figures</a></li><li><a href="#bundle-folder">Choose a folder for the bundle</a></li><li><a href="#bundle-name">Name and inspect the three output files</a></li></ol></section><a class="reference" href="https://github.com/OgetayKayali/citizen-astronomy/blob/master/guides/hr_diagram.md">Full mode reference ↗</a></nav></details></aside>
+<div class="lessons"><article class="lesson" id="launch" aria-labelledby="title-launch">
+
+<p class="overline">Open the M46 image <span aria-hidden="true">/</span> Step 01</p>
+<h2 tabindex="-1" id="title-launch">Enter HR Diagram mode</h2>
+<p class="before"><strong>Start here</strong> Start Citizen Astronomy (CAst).</p>
+<ol class="actions"><li>Find <strong>HR Diagram</strong> on the mode launcher and click its card (1). From an open workspace you can also choose <strong>Mode → HR Diagram</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/launch.webp" aria-label="Enlarge Screenshot for Enter HR Diagram mode">
+<img src="images/hr-diagram/launch.webp" loading="lazy" alt="CAst launcher with the HR Diagram card outlined between Sky Explorer and Distance Map.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A reminder lists the image and catalog requirements. If you previously dismissed it, the workspace opens directly.</p></div>
+<nav class="next" aria-label="Continue from Enter HR Diagram mode"><a class="choice" href="#prerequisites">Check the image requirements <span aria-hidden="true">→</span></a><a class="choice" href="#open">I already see the workspace <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="prerequisites" aria-labelledby="title-prerequisites">
+
+<p class="overline">Open the M46 image <span aria-hidden="true">/</span> Step 02</p>
+<h2 tabindex="-1" id="title-prerequisites">Check what the diagram needs</h2>
+<p class="before"><strong>Start here</strong> <a href="#launch">Open HR Diagram mode</a>.</p>
+<ol class="actions"><li>Have one image of a star field ready. A plate-solved image already records where its pixels fall on the sky. The example uses a color-calibrated RGB image of M46 with that information embedded.</li><li>Allow internet access for a fresh Gaia catalog lookup. Click <strong>OK</strong> (1) to continue.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/prerequisites.webp" aria-label="Enlarge Screenshot for Check what the diagram needs">
+<img src="images/hr-diagram/prerequisites.webp" loading="lazy" alt="HR Diagram prerequisites reminder with the OK button marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The left side of the workspace offers Open. The diagram fills after CAst matches stars in the selected image.</p></div>
+<nav class="next" aria-label="Continue from Check what the diagram needs"><a class="choice" href="#open">Choose an image <span aria-hidden="true">→</span></a><a class="choice" href="#settings-menu">Match the example’s source limit <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="open" aria-labelledby="title-open">
+
+<p class="overline">Open the M46 image <span aria-hidden="true">/</span> Step 03</p>
+<h2 tabindex="-1" id="title-open">Find the Open button</h2>
+<p class="before"><strong>Start here</strong> You are in the <a href="#launch">HR Diagram workspace</a>.</p>
+<ol class="actions"><li>Click <strong>Open</strong> (1) at the upper left. The keyboard shortcut is <strong>Ctrl+O</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/open.webp" aria-label="Enlarge Screenshot for Find the Open button">
+<img src="images/hr-diagram/open.webp" loading="lazy" alt="Upper-left HR toolbar with Open highlighted beside Update and the Image and Results controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A file picker titled <strong>Select solved RGB source image</strong> opens. It takes one image at a time.</p></div>
+<nav class="next" aria-label="Continue from Find the Open button"><a class="choice" href="#choose-file">Select M46.xisf <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="choose-file" aria-labelledby="title-choose-file">
+
+<p class="overline">Open the M46 image <span aria-hidden="true">/</span> Step 04</p>
+<h2 tabindex="-1" id="title-choose-file">Open M46.xisf and build the diagram</h2>
+<p class="before"><strong>Start here</strong> The <a href="#open">file picker</a> is open. Use your copy of the example, or substitute a plate-solved image of your own.</p>
+<ol class="actions"><li>Go to the extracted <strong>M46</strong> folder and select <strong>M46.xisf</strong>. You can also type its full path in the file-name box (1).</li><li>Click <strong>Open</strong> (2). Give CAst time to load the image, find stars, look up Gaia matches and measure them. The preparation button reads <strong>Generating...</strong> while it works.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/choose-file.webp" aria-label="Enlarge Screenshot for Open M46.xisf and build the diagram">
+<img src="images/hr-diagram/choose-file.webp" loading="lazy" alt="File picker with the actual M46.xisf path and Open button marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The star field appears on the left and colored points fill the diagram on the right. These screenshots use the saved catalog and 10,000 measured rows for this M46 image. Your source limit and catalog coverage can change the number of points. To match the example’s measurement limit, <a href="#settings-menu">set HR Max Sources to 10000</a> before opening the file.</p></div>
+<nav class="next" aria-label="Continue from Open M46.xisf and build the diagram"><a class="choice" href="#diagram">Read the axes <span aria-hidden="true">→</span></a><a class="choice" href="#point">Inspect a single star <span aria-hidden="true">→</span></a><a class="choice" href="#roi">Choose part of the image <span aria-hidden="true">→</span></a><a class="choice" href="#motion">Find stars moving together <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="settings-menu" aria-labelledby="title-settings-menu">
+
+<p class="overline">Open the M46 image <span aria-hidden="true">/</span> Step 05</p>
+<h2 tabindex="-1" id="title-settings-menu">Open the measurement settings</h2>
+<p class="before"><strong>Start here</strong> You are in the <a href="#launch">HR Diagram workspace</a>. This optional branch reproduces the image-source limit used for the M46 screenshots.</p>
+<ol class="actions"><li>In the main menu, click <strong>Settings</strong> (1), then <strong>Open Settings</strong> (2).</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/settings-menu.webp" aria-label="Enlarge Screenshot for Open the measurement settings">
+<img src="images/hr-diagram/settings-menu.webp" loading="lazy" alt="Settings menu with the menu title and Open Settings item marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The application settings window opens with tabs for the different workspaces.</p></div>
+<nav class="next" aria-label="Continue from Open the measurement settings"><a class="choice" href="#source-limit">Set the example’s source limit <span aria-hidden="true">→</span></a><a class="choice" href="#open">Use the current settings <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="source-limit" aria-labelledby="title-source-limit">
+
+<p class="overline">Open the M46 image <span aria-hidden="true">/</span> Step 06</p>
+<h2 tabindex="-1" id="title-source-limit">Set how many matched stars CAst measures</h2>
+<p class="before"><strong>Start here</strong> <a href="#settings-menu">Open Settings</a>.</p>
+<ol class="actions"><li>Click the <strong>HR Diagram</strong> tab (1). Click the <strong>HR Max Sources</strong> field (2), select its contents, and enter <strong>10000</strong> for the M46 example. The default of 5000 gives a shorter first run.</li><li>Click <strong>Save</strong> (3), then <a href="#open">open the image</a>. If the image is already on screen, reopen it to run preparation with the new limit.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/source-limit.webp" aria-label="Enlarge Screenshot for Set how many matched stars CAst measures">
+<img src="images/hr-diagram/source-limit.webp" loading="lazy" alt="Settings window with the HR Diagram tab, HR Max Sources set to 10000, and Save marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>CAst measures up to the chosen number of matched sources, starting with the brightest detections. The field catalog can contain more stars than the working table. The table and plot can also show fewer rows after filtering.</p></div>
+<nav class="next" aria-label="Continue from Set how many matched stars CAst measures"><a class="choice" href="#open">Open M46 with these settings <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="diagram" aria-labelledby="title-diagram">
+
+<p class="overline">Read the stars <span aria-hidden="true">/</span> Step 07</p>
+<h2 tabindex="-1" id="title-diagram">Read the color and brightness scales</h2>
+<p class="before"><strong>Start here</strong> <a href="#choose-file">Open an image and wait for the diagram</a>. Use the default Gaia axes.</p>
+<ol class="actions"><li>Read the bottom scale (1) from left to right. Stars go from hotter and bluer to cooler and redder. The values in kelvin are estimates from the Gaia color index <strong>BP−RP</strong> shown along the top.</li><li>Read the left scale (2) from bottom to top. Higher points represent brighter stars on this luminosity scale. The right scale gives Gaia absolute G magnitude, the brightness a star would have at a common distance. Smaller magnitudes are brighter.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/diagram.webp" aria-label="Enlarge Screenshot for Read the color and brightness scales">
+<img src="images/hr-diagram/diagram.webp" loading="lazy" alt="M46 color–magnitude diagram with the bottom color-temperature axis and left luminosity axis marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A band of stars runs from the upper left toward the lower right. Each point represents a measured star matched to Gaia. The field includes foreground and background stars along the same line of sight.</p></div>
+<nav class="next" aria-label="Continue from Read the color and brightness scales"><a class="choice" href="#point">Identify one of these points <span aria-hidden="true">→</span></a><a class="choice" href="#guides">Read the stellar class guides <span aria-hidden="true">→</span></a><a class="choice" href="#motion">Look for candidate cluster members <span aria-hidden="true">→</span></a><a class="choice" href="#export">Save the diagram <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="point" aria-labelledby="title-point">
+
+<p class="overline">Read the stars <span aria-hidden="true">/</span> Step 08</p>
+<h2 tabindex="-1" id="title-point">Choose a star on the plot</h2>
+<p class="before"><strong>Start here</strong> The <a href="#diagram">diagram</a> shows colored points.</p>
+<ol class="actions"><li>Click one colored point. The small box (1) marks an orange point used in this example. You can choose any visible point in your own field.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/point.webp" aria-label="Enlarge Screenshot for Choose a star on the plot">
+<img src="images/hr-diagram/point.webp" loading="lazy" alt="An individual orange dot outlined on the M46 diagram.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>CAst circles the selected point, opens its information card and highlights the corresponding source in the image. The example star is APASS J074114.1-145208.1.</p></div>
+<nav class="next" aria-label="Continue from Choose a star on the plot"><a class="choice" href="#inspect">Read the star’s measurements <span aria-hidden="true">→</span></a><a class="choice" href="#results">Locate it in the table <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="inspect" aria-labelledby="title-inspect">
+
+<p class="overline">Read the stars <span aria-hidden="true">/</span> Step 09</p>
+<h2 tabindex="-1" id="title-inspect">Connect the plot point to the photograph</h2>
+<p class="before"><strong>Start here</strong> <a href="#point">Select a point</a>. If the table is open, click <strong>Image</strong> to see the photograph.</p>
+<ol class="actions"><li>Read the selected star’s name, Gaia G magnitude and BP−RP color in its plot card. The orange example star has G = 11.58 and BP−RP = 1.55. Find the selection circle in the source image to see which star produced that point.</li><li>Click <strong>Results</strong> (1) to inspect its table entry. To try the reverse direction later, switch back to <strong>Image</strong> and double-click a measured star in the photograph.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/inspect.webp" aria-label="Enlarge Screenshot for Connect the plot point to the photograph">
+<img src="images/hr-diagram/inspect.webp" loading="lazy" alt="Selected M46 star with its plot card and source image visible. The Results view button is marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The left panel switches to Source Results and Work Log, while the diagram and its star selection remain on the right.</p></div>
+<nav class="next" aria-label="Continue from Connect the plot point to the photograph"><a class="choice" href="#results">Read the selected table row <span aria-hidden="true">→</span></a><a class="choice" href="#roi">Choose a region on the image <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="results" aria-labelledby="title-results">
+
+<p class="overline">Read the stars <span aria-hidden="true">/</span> Step 10</p>
+<h2 tabindex="-1" id="title-results">Inspect a measurement in Source Results</h2>
+<p class="before"><strong>Start here</strong> Click <strong>Results</strong> with an <a href="#point">individual star selected</a>.</p>
+<ol class="actions"><li>Find the highlighted row (1). Click a different row to select another star. Scroll across the table for its Gaia magnitude, color, parallax and measured quantities.</li><li>Read the <strong>Work Log</strong> under the table for the source filename, catalog totals and processing notes. Click <strong>Image</strong> (2) to return to the photograph.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/results.webp" aria-label="Enlarge Screenshot for Inspect a measurement in Source Results">
+<img src="images/hr-diagram/results.webp" loading="lazy" alt="Source Results table with a selected row and the Image view button marked, above the M46 preparation log.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The selection follows the row you clicked. The Work Log records the full preparation run even when a filter narrows the visible stars.</p></div>
+<nav class="next" aria-label="Continue from Inspect a measurement in Source Results"><a class="choice" href="#point">Select a star in the plot <span aria-hidden="true">→</span></a><a class="choice" href="#filter-open">Limit the plotted population <span aria-hidden="true">→</span></a><a class="choice" href="#bundle">Save the plotted measurements <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="guides" aria-labelledby="title-guides">
+
+<p class="overline">Read the stars <span aria-hidden="true">/</span> Step 11</p>
+<h2 tabindex="-1" id="title-guides">Compare stars with the stellar class guides</h2>
+<p class="before"><strong>Start here</strong> The <a href="#diagram">M46 diagram</a> is visible.</p>
+<ol class="actions"><li>Find <strong>Class Guides</strong> (1) above the plot. If it is already checked, click it once to hide the dashed lines and again to restore them.</li><li>Follow the line labeled <strong>Main Sequence</strong> through the diagonal band. Look above the band toward <strong>Giants</strong> to find stars that appear bright for their color.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/guides.webp" aria-label="Enlarge Screenshot for Compare stars with the stellar class guides">
+<img src="images/hr-diagram/guides.webp" loading="lazy" alt="Class Guides checkbox marked above M46 and its labeled main sequence, giant and white-dwarf guides.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The labeled guide curves appear and disappear over the same measured stars. They indicate approximate regions where different kinds of stars tend to sit.</p></div>
+<nav class="next" aria-label="Continue from Compare stars with the stellar class guides"><a class="choice" href="#age">Explore the age guide <span aria-hidden="true">→</span></a><a class="choice" href="#point">Inspect a star near a guide <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="age" aria-labelledby="title-age">
+
+<p class="overline">Read the stars <span aria-hidden="true">/</span> Step 12</p>
+<h2 tabindex="-1" id="title-age">Move the illustrative age guide</h2>
+<p class="before"><strong>Start here</strong> Open the <a href="#diagram">diagram</a> with its default axes.</p>
+<ol class="actions"><li>Check <strong>Age Guide</strong> (1). Click the adjacent age field (2), enter <strong>1.0</strong> and press <strong>Enter</strong>. One Gyr is one billion years.</li><li>Try a larger value and watch where the curve bends away from the main sequence. Clear <strong>Age Guide</strong> to hide the curve.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/age.webp" aria-label="Enlarge Screenshot for Move the illustrative age guide">
+<img src="images/hr-diagram/age.webp" loading="lazy" alt="Age Guide checkbox and a 1.0 Gyr field outlined above the comparison curve.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Changing the age moves the guide while the measured points stay in place. The displayed age is the value you chose for comparison. Determining M46’s age requires additional analysis.</p></div>
+<nav class="next" aria-label="Continue from Move the illustrative age guide"><a class="choice" href="#guides">View stellar class guides <span aria-hidden="true">→</span></a><a class="choice" href="#filter-open">Compare a subset of stars <span aria-hidden="true">→</span></a><a class="choice" href="#export">Export the plot <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="roi" aria-labelledby="title-roi">
+
+<p class="overline">Choose which stars to compare <span aria-hidden="true">/</span> Step 13</p>
+<h2 tabindex="-1" id="title-roi">Draw and apply a circular region</h2>
+<p class="before"><strong>Start here</strong> <a href="#choose-file">Load the M46 image</a> and click <strong>Image</strong>. Use the default Circle ROI tool. ROI means region of interest.</p>
+<ol class="actions"><li>Hold <strong>Shift</strong>. Press the left mouse button near the center of the cluster (1) and drag outward to the desired edge (2). Release the mouse button, then release Shift.</li><li>Check the shaded circle on the photograph. Click <strong>Update</strong> (3) to apply it. To redraw, make a fresh Shift-drag before clicking Update.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/roi.webp" aria-label="Enlarge Screenshot for Draw and apply a circular region">
+<img src="images/hr-diagram/roi.webp" loading="lazy" alt="Draft circle on the M46 image with its drag origin, outer edge and Update button numbered.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The diagram and table now use the measured stars inside the circle. Update changes to Reset after the draft has been applied.</p></div>
+<nav class="next" aria-label="Continue from Draw and apply a circular region"><a class="choice" href="#roi-reset">Bring back the full field <span aria-hidden="true">→</span></a><a class="choice" href="#motion">Search this region for shared motion <span aria-hidden="true">→</span></a><a class="choice" href="#export">Save the regional diagram <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="roi-reset" aria-labelledby="title-roi-reset">
+
+<p class="overline">Choose which stars to compare <span aria-hidden="true">/</span> Step 14</p>
+<h2 tabindex="-1" id="title-roi-reset">Restore all parts of the image</h2>
+<p class="before"><strong>Start here</strong> An <a href="#roi">applied region</a> is visible on the photograph.</p>
+<ol class="actions"><li>Find <strong>Reset</strong> (1) at the upper left, beside <strong>Open</strong>. The region summary at the bottom right (2) tells you which part of the field currently contributes stars.</li><li>Click the upper-left <strong>Reset</strong> (1) to clear your applied region. The separate Reset button above the chart restores the plot view.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/roi-reset.webp" aria-label="Enlarge Screenshot for Restore all parts of the image">
+<img src="images/hr-diagram/roi-reset.webp" loading="lazy" alt="Applied circle and regional diagram, with the upper-left Reset button and footer summary marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The circle disappears, the diagram uses the full image again and the upper-left button returns to Update. Other active plot filters still apply.</p></div>
+<nav class="next" aria-label="Continue from Restore all parts of the image"><a class="choice" href="#roi">Draw another circle <span aria-hidden="true">→</span></a><a class="choice" href="#motion">Search the entire field <span aria-hidden="true">→</span></a><a class="choice" href="#filter-open">Filter by another property <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="motion" aria-labelledby="title-motion">
+
+<p class="overline">Choose which stars to compare <span aria-hidden="true">/</span> Step 15</p>
+<h2 tabindex="-1" id="title-motion">Find stars that move together</h2>
+<p class="before"><strong>Start here</strong> Start with the <a href="#choose-file">measured field</a> or an <a href="#roi">applied region</a>.</p>
+<ol class="actions"><li>If you want to see arrows on the source image, click <strong>Show Motion</strong> (1). They show the direction of each star’s cataloged motion across the sky.</li><li>Click <strong>Find Cluster</strong> (2). CAst compares Gaia proper motions and, when available and enabled, parallaxes to find a group with similar motion.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/motion.webp" aria-label="Enlarge Screenshot for Find stars that move together">
+<img src="images/hr-diagram/motion.webp" loading="lazy" alt="Toolbar detail showing Show Motion and Find Cluster as separate controls.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The group is highlighted, <strong>Find Cluster</strong> changes to <strong>Find All</strong>, and <strong>Only Group</strong> becomes available. If no group is found, try drawing a smaller region around the cluster and repeat.</p></div>
+<nav class="next" aria-label="Continue from Find stars that move together"><a class="choice" href="#members">Isolate the candidate group <span aria-hidden="true">→</span></a><a class="choice" href="#roi">Narrow the search area <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="members" aria-labelledby="title-members">
+
+<p class="overline">Choose which stars to compare <span aria-hidden="true">/</span> Step 16</p>
+<h2 tabindex="-1" id="title-members">Isolate or clear the candidate group</h2>
+<p class="before"><strong>Start here</strong> <a href="#motion">Find Cluster</a> has returned a group.</p>
+<ol class="actions"><li>Check <strong>Only Group</strong> (1) to restrict the diagram, table and arrows to the highlighted candidates. Clear the checkbox to see them in context with the other stars.</li><li>Click <strong>Find All</strong> (2) to clear the group selection. If you turned on motion arrows, click <strong>Hide Motion</strong> when you are finished with them.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/members.webp" aria-label="Enlarge Screenshot for Isolate or clear the candidate group">
+<img src="images/hr-diagram/members.webp" loading="lazy" alt="Candidate group displayed on the image and diagram, with Only Group and Find All marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>Only Group narrows the diagram to stars that passed the chosen motion criteria. Similar motion is evidence for membership. Some unrelated field stars can satisfy the same criteria.</p></div>
+<nav class="next" aria-label="Continue from Isolate or clear the candidate group"><a class="choice" href="#filter-open">Explore a distance interval <span aria-hidden="true">→</span></a><a class="choice" href="#export">Save the selected population <span aria-hidden="true">→</span></a><a class="choice" href="#results">Inspect candidate rows <span aria-hidden="true">→</span></a><a class="choice" href="distance-map.html#find">Explore candidate motions in Distance Map <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="filter-open" aria-labelledby="title-filter-open">
+
+<p class="overline">Choose which stars to compare <span aria-hidden="true">/</span> Step 17</p>
+<h2 tabindex="-1" id="title-filter-open">Open the star filter</h2>
+<p class="before"><strong>Start here</strong> <a href="#choose-file">Generate the diagram</a>. To compare the entire field, clear any <a href="#roi-reset">region</a> or <a href="#members">group</a> first.</p>
+<ol class="actions"><li>Click <strong>Filter...</strong> (1) above the diagram. When a filter is active, the button says <strong>Filter On</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/filter-open.webp" aria-label="Enlarge Screenshot for Open the star filter">
+<img src="images/hr-diagram/filter-open.webp" loading="lazy" alt="Filter button outlined in the HR toolbar.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The Filter stars dialog offers separate switches for color and temperature, distance, luminosity, and stellar class. A switch expands its controls when turned on.</p></div>
+<nav class="next" aria-label="Continue from Open the star filter"><a class="choice" href="#distance-filter">Try a distance interval <span aria-hidden="true">→</span></a><a class="choice" href="#filter-reset">Remove existing limits <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="distance-filter" aria-labelledby="title-distance-filter">
+
+<p class="overline">Choose which stars to compare <span aria-hidden="true">/</span> Step 18</p>
+<h2 tabindex="-1" id="title-distance-filter">Keep stars in a distance interval</h2>
+<p class="before"><strong>Start here</strong> Open <a href="#filter-open">Filter stars</a>.</p>
+<ol class="actions"><li>Turn the <strong>Distance</strong> switch on (1). Enter <strong>1000</strong> in the <strong>From</strong> field (2) and <strong>2000</strong> in the <strong>to</strong> field (3). The unit pc means parsecs.</li><li>Click <strong>Apply</strong> (4). These distances are estimated from Gaia parallax, the small shift in a star’s position as Earth orbits the Sun.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/distance-filter.webp" aria-label="Enlarge Screenshot for Keep stars in a distance interval">
+<img src="images/hr-diagram/distance-filter.webp" loading="lazy" alt="Distance section expanded with its switch, 1,000 and 2,000 pc fields, and Apply marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The diagram and table keep stars with usable parallaxes whose estimated distances fall in the interval. The toolbar says Filter On. Stars at similar distances can also belong to unrelated populations.</p></div>
+<nav class="next" aria-label="Continue from Keep stars in a distance interval"><a class="choice" href="#filter-reset">Clear the distance selection <span aria-hidden="true">→</span></a><a class="choice" href="#results">Read the retained measurements <span aria-hidden="true">→</span></a><a class="choice" href="#export">Save the filtered plot <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="filter-reset" aria-labelledby="title-filter-reset">
+
+<p class="overline">Choose which stars to compare <span aria-hidden="true">/</span> Step 19</p>
+<h2 tabindex="-1" id="title-filter-reset">Clear all star-filter switches</h2>
+<p class="before"><strong>Start here</strong> Click <strong>Filter On</strong> above the diagram to reopen the <a href="#filter-open">filter dialog</a>.</p>
+<ol class="actions"><li>Click <strong>Turn all off</strong> (1) in the lower left. Click <strong>Apply</strong> (2) to return to the diagram.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/filter-reset.webp" aria-label="Enlarge Screenshot for Clear all star-filter switches">
+<img src="images/hr-diagram/filter-reset.webp" loading="lazy" alt="Filter dialog with Turn all off and Apply marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The toolbar returns to Filter... and the star-filter limits are removed. An applied image region or Only Group selection can still narrow the plot.</p></div>
+<nav class="next" aria-label="Continue from Clear all star-filter switches"><a class="choice" href="#roi-reset">Clear an applied region <span aria-hidden="true">→</span></a><a class="choice" href="#members">Clear a motion selection <span aria-hidden="true">→</span></a><a class="choice" href="#diagram">Read the full diagram <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="export" aria-labelledby="title-export">
+
+<p class="overline">Save a figure or a table <span aria-hidden="true">/</span> Step 20</p>
+<h2 tabindex="-1" id="title-export">Export a scientific figure</h2>
+<p class="before"><strong>Start here</strong> A <a href="#diagram">measured diagram</a> is on screen. Choose the region and filters you want to include first.</p>
+<ol class="actions"><li>Click <strong>Export</strong> (1) at the upper right of the plot. Choose <strong>Scientific</strong> (2) to save a clean scientific figure.</li><li>For a figure styled like the current chart, choose <strong>Snapshot</strong> from the same menu.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/export.webp" aria-label="Enlarge Screenshot for Export a scientific figure">
+<img src="images/hr-diagram/export.webp" loading="lazy" alt="Plot Export menu with its button and Scientific item marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A Save dialog opens. The scientific plot export uses the currently selected population.</p></div>
+<nav class="next" aria-label="Continue from Export a scientific figure"><a class="choice" href="#save-figure">Name and save the figure <span aria-hidden="true">→</span></a><a class="choice" href="#pair">Save the image with the plot <span aria-hidden="true">→</span></a><a class="choice" href="#bundle">Save the measurements as well <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="pair" aria-labelledby="title-pair">
+
+<p class="overline">Save a figure or a table <span aria-hidden="true">/</span> Step 21</p>
+<h2 tabindex="-1" id="title-pair">Export the image and diagram together</h2>
+<p class="before"><strong>Start here</strong> <a href="#choose-file">Open M46</a> and select the image view and plotted population you want to show.</p>
+<ol class="actions"><li>Click plot <strong>Export</strong> (1), then <strong>Image + Plot...</strong> (2) to make a paired PNG. To keep only the annotated photograph, choose <strong>Source Image...</strong> in the same menu.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/pair.webp" aria-label="Enlarge Screenshot for Export the image and diagram together">
+<img src="images/hr-diagram/pair.webp" loading="lazy" alt="Plot Export control and Image + Plot menu item marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A Save dialog opens for your PNG. The paired figure includes both the current source-image view and the chart.</p></div>
+<nav class="next" aria-label="Continue from Export the image and diagram together"><a class="choice" href="#save-figure">Choose the output file <span aria-hidden="true">→</span></a><a class="choice" href="#bundle">Keep a scientific plot and table too <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="save-figure" aria-labelledby="title-save-figure">
+
+<p class="overline">Save a figure or a table <span aria-hidden="true">/</span> Step 22</p>
+<h2 tabindex="-1" id="title-save-figure">Name and save the figure</h2>
+<p class="before"><strong>Start here</strong> A Save dialog is open from <a href="#export">Scientific</a>, Snapshot or <a href="#pair">Image + Plot</a>.</p>
+<ol class="actions"><li>Choose an output folder you can find again. Enter a new filename (1), such as <strong>M46-diagram.png</strong> when the file type is PNG.</li><li>Click <strong>Save</strong> (2). Open the file in the output folder to inspect the figure.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/save-figure.webp" aria-label="Enlarge Screenshot for Name and save the figure">
+<img src="images/hr-diagram/save-figure.webp" loading="lazy" alt="Save dialog with M46-diagram.png and Save marked.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>The saved figure is available outside CAst. For a table of the plotted measurements, use the File menu export.</p></div>
+<nav class="next" aria-label="Continue from Name and save the figure"><a class="choice" href="#bundle">Export the plotted measurements <span aria-hidden="true">→</span></a><a class="choice" href="#roi">Make a figure for another region <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="bundle" aria-labelledby="title-bundle">
+
+<p class="overline">Save a figure or a table <span aria-hidden="true">/</span> Step 23</p>
+<h2 tabindex="-1" id="title-bundle">Export the science table and both figures</h2>
+<p class="before"><strong>Start here</strong> A <a href="#diagram">diagram</a> with plotted stars is open. Apply any <a href="#roi">region</a> or <a href="#filter-open">filters</a> that you want reflected in the output.</p>
+<ol class="actions"><li>Open <strong>File</strong> (1) in the main menu. Click <strong>Export</strong> (2) in that menu to start the HR science bundle.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/bundle.webp" aria-label="Enlarge Screenshot for Export the science table and both figures">
+<img src="images/hr-diagram/bundle.webp" loading="lazy" alt="Main File menu with File and its Export action outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>CAst asks for a folder. The bundle contains an annotated source image, a scientific HR diagram and a CSV with rows for the plotted stars.</p></div>
+<nav class="next" aria-label="Continue from Export the science table and both figures"><a class="choice" href="#bundle-folder">Choose the destination folder <span aria-hidden="true">→</span></a><a class="choice" href="#export">Save only the diagram <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="bundle-folder" aria-labelledby="title-bundle-folder">
+
+<p class="overline">Save a figure or a table <span aria-hidden="true">/</span> Step 24</p>
+<h2 tabindex="-1" id="title-bundle-folder">Choose a folder for the bundle</h2>
+<p class="before"><strong>Start here</strong> The folder picker opened from <a href="#bundle">File → Export</a>.</p>
+<ol class="actions"><li>Navigate to your desired parent directory. You can enter its path in the folder field (1).</li><li>Click <strong>Choose</strong> (2). The native Windows folder picker may label this button <strong>Select Folder</strong>.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/bundle-folder.webp" aria-label="Enlarge Screenshot for Choose a folder for the bundle">
+<img src="images/hr-diagram/bundle-folder.webp" loading="lazy" alt="Folder picker with the directory field and Choose button outlined.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>A small Export Name dialog appears. CAst will create a named subfolder within the directory you selected.</p></div>
+<nav class="next" aria-label="Continue from Choose a folder for the bundle"><a class="choice" href="#bundle-name">Name the bundle <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article><article class="lesson" id="bundle-name" aria-labelledby="title-bundle-name">
+
+<p class="overline">Save a figure or a table <span aria-hidden="true">/</span> Step 25</p>
+<h2 tabindex="-1" id="title-bundle-name">Name and inspect the three output files</h2>
+<p class="before"><strong>Start here</strong> <a href="#bundle-folder">Choose a destination folder</a>.</p>
+<ol class="actions"><li>Type a new name such as <strong>M46-stars</strong> in the export-name field (1). Click <strong>OK</strong> (2).</li><li>Open the new <strong>M46-stars</strong> subfolder. Open the file ending in <strong>_science_table.csv</strong> in a spreadsheet to inspect the plotted stars.</li></ol>
+<figure class="capture"><a class="enlarge" href="images/hr-diagram/bundle-name.webp" aria-label="Enlarge Screenshot for Name and inspect the three output files">
+<img src="images/hr-diagram/bundle-name.webp" loading="lazy" alt="Export Name dialog showing M46-stars and the OK button.">
+<span class="zoom-label">Enlarge screenshot <span aria-hidden="true">↗</span></span></a></figure>
+<div class="checkpoint"><strong>What you should see</strong><p>For the example PNG settings, the folder contains M46-stars_source_image.png, M46-stars_hr_diagram.png and M46-stars_science_table.csv. With the full image and default plot settings, this M46 export contains 9,704 plotted rows from the 10,000 measured stars. The Work Log records the export.</p></div>
+<nav class="next" aria-label="Continue from Name and inspect the three output files"><a class="choice" href="#filter-open">Export a different selection <span aria-hidden="true">→</span></a><a class="choice" href="#point">Return to an individual star <span aria-hidden="true">→</span></a>
+<a class="back-topics" href="#tasks">Browse all steps</a></nav>
+</article></div></div>
+</main><dialog aria-labelledby="viewer-title"><div class="viewer-head"><strong id="viewer-title">Screenshot</strong>
+<div><button class="scale" type="button" aria-pressed="false">Actual size</button>
+<button class="close-viewer" type="button" autofocus>Close</button></div></div>
+<div class="viewer-image"><img alt=""></div></dialog>
+<footer><div class="wrap foot-inner"><a href="index.html">All tutorials</a><a href="https://www.ogetay.com/citizen-astronomy-cast/">Citizen Astronomy on ogetay.com ↗</a></div></footer>
+</body></html>

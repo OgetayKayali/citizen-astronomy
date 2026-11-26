@@ -1,0 +1,406 @@
+{
+  "title": "Black Hole",
+  "intro": "Why does a single disk of gas look like a band across the black hole and an arc above it? Pause the gas, orbit the scene, and switch to a grid to see where the light bends. You can also jump straight to saving a picture or making a movie.",
+  "dataset": "The Windows build of CAst with OpenGL 3.3 graphics support. The lab opens with its own scene.",
+  "outcome": "A view of the same gas disk from different angles, a comparison of spinning and nonspinning black holes, and a saved image or camera orbit.",
+  "groups": [
+    {
+      "title": "Open the light lab",
+      "steps": [
+        {
+          "id": "open",
+          "title": "Open Black Hole",
+          "requires": "Start the Windows version of Citizen Astronomy (CAst). The simulation supplies the gas and sky.",
+          "actions": [
+            "Scroll down the mode picker to **Simulations**. Click the **Black Hole** card (1).",
+            "If you already have a workspace open, choose **Mode → Black Hole** from the top menu."
+          ],
+          "check": "Controls appear on the left and the simulated sky appears on the right. A **Preparing fluid history…** percentage may appear while CAst calculates the gas disk’s earlier motion.",
+          "image": "open.webp",
+          "alt": "The Simulations row in the real CAst launcher, with the Black Hole card outlined and numbered.",
+          "links": [
+            {
+              "id": "pause",
+              "label": "Find the disk and pause it"
+            },
+            {
+              "id": "metric",
+              "label": "Choose a spinning or nonspinning hole"
+            },
+            {
+              "id": "still",
+              "label": "Save a picture"
+            }
+          ]
+        },
+        {
+          "id": "pause",
+          "title": "Find the disk and pause the gas",
+          "requires": "[Open Black Hole](#open). If the left controls are hidden, click in the view and press **F1**.",
+          "actions": [
+            "Wait for the preparation percentage to disappear. Look for the thin band of bright gas across the center and the arc above it. Light from the far side of the same disk bends around the hole to reach you.",
+            "At the top of the left panel, click **Pause** (1). Click **Play** in the same spot when you want the gas to move again."
+          ],
+          "check": "The button changes to **Play** when paused. You can still move the camera and inspect the same moment from another angle.",
+          "image": "pause.webp",
+          "alt": "The simulated disk seen almost edge-on, with Pause marked in the left control panel.",
+          "links": [
+            {
+              "id": "orbit",
+              "label": "Move around the paused disk"
+            },
+            {
+              "id": "disk",
+              "label": "See where the gas is concentrated"
+            },
+            {
+              "id": "grid",
+              "label": "See how light bends"
+            },
+            {
+              "id": "still",
+              "label": "Save this view"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Choose your viewpoint",
+      "steps": [
+        {
+          "id": "orbit",
+          "title": "Orbit with the mouse",
+          "requires": "[Open the lab](#open). For a steady comparison, [pause the gas](#pause). If a movie preview is on, clear **Preview shot** under **Video export**.",
+          "actions": [
+            "Place the pointer in the marked area of the simulation (1). Hold the **left mouse button**, drag up or down a short distance, and release. Drag left or right to orbit around the other way.",
+            "Roll the mouse wheel over the simulation one notch at a time to move closer or farther away."
+          ],
+          "check": "The band opens into a broader disk as you approach a face-on view. The wheel changes how much of the window the disk fills.",
+          "image": "orbit.webp",
+          "alt": "A numbered outline on the simulated gas disk marks a place to start a drag.",
+          "links": [
+            {
+              "id": "angle",
+              "label": "Set the angle with a slider"
+            },
+            {
+              "id": "sky",
+              "label": "Change the background sky"
+            },
+            {
+              "id": "still",
+              "label": "Save this angle"
+            }
+          ]
+        },
+        {
+          "id": "angle",
+          "title": "Set a camera angle you can repeat",
+          "requires": "[Open the lab](#open). If **Preview shot** is checked under **Video export**, clear it to control the camera.",
+          "actions": [
+            "Click **Camera** (1) in the left panel to expand it. Drag **Inclination** (2) toward the left for a view from above the disk. Try the middle of the slider (90°) to look along its edge.",
+            "Drag **Distance** (3) a little to the right to see more of the surrounding sky. The value beside each slider records your setting."
+          ],
+          "check": "The disk’s apparent tilt follows the inclination setting. Distance is measured in gravitational radii (rg), the length scale set by the black hole’s mass.",
+          "image": "angle.webp",
+          "alt": "Expanded Camera section showing Inclination and Distance next to the live rendering.",
+          "links": [
+            {
+              "id": "grid",
+              "label": "Reveal the bending of background light"
+            },
+            {
+              "id": "preview",
+              "label": "Plan a camera move"
+            },
+            {
+              "id": "still",
+              "label": "Save the current angle"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Experiment with the black hole and its light",
+      "steps": [
+        {
+          "id": "metric",
+          "title": "Switch to a nonspinning black hole",
+          "requires": "[Open the lab](#open). Scroll to the top of the left panel.",
+          "actions": [
+            "Click **Spacetime** (1) and choose **Schwarzschild**. This selects a black hole with zero spin.",
+            "Read the **Horizon** and **ISCO** values (2). The horizon marks the boundary beyond which light cannot escape. ISCO is the radius of the innermost stable circular orbit."
+          ],
+          "check": "The Spin slider disappears. The readout gives a horizon of 2.000 rg and an ISCO of 6.000 rg. Wait for gas preparation to finish if the percentage reappears.",
+          "image": "metric.webp",
+          "alt": "Schwarzschild selected with the Horizon and ISCO readout outlined beneath it.",
+          "links": [
+            {
+              "id": "spin",
+              "label": "Compare with a rotating hole"
+            },
+            {
+              "id": "grid",
+              "label": "Examine the warped grid"
+            }
+          ]
+        },
+        {
+          "id": "spin",
+          "title": "Change a rotating black hole’s spin",
+          "requires": "At the top of the [Black Hole panel](#open), set **Spacetime** to **Kerr (rotating)**.",
+          "actions": [
+            "Drag **Spin** (1) a little to the right and read the new spin value. Watch the **Horizon** and **ISCO** line below the slider as you change it.",
+            "Click **Cinematic 0.6** (2) to return to a spin of 0.60 with cinematic colors. Let the gas preparation finish."
+          ],
+          "check": "For this disk, gas orbits in the same direction as the black hole spins. Increasing spin moves the innermost stable circular orbit inward. At 0.60 the readout is about 3.829 rg for the ISCO.",
+          "image": "spin.webp",
+          "alt": "Kerr selected with the Spin slider and Cinematic 0.6 button marked.",
+          "links": [
+            {
+              "id": "metric",
+              "label": "Check the zero-spin reference"
+            },
+            {
+              "id": "physical",
+              "label": "Explore brightness and color"
+            },
+            {
+              "id": "disk",
+              "label": "Inspect the gas"
+            }
+          ]
+        },
+        {
+          "id": "physical",
+          "title": "Compare the two brightness treatments",
+          "requires": "[Open the lab](#open). Use the default disk, or set [Disk view](#disk) to **Emission**. [Pause](#pause) to hold the gas still.",
+          "actions": [
+            "Look at the two sides of the disk. At the top of the panel, check **Physical appearance** (1). Compare the brightness on each side while you keep the same viewpoint.",
+            "Clear **Physical appearance** to return to the cinematic colors. You can repeat the switch while the gas stays paused."
+          ],
+          "check": "In this angled view one side becomes much brighter. Motion of the emitting gas and gravitational shifts affect the brightness in the physical rendering. The display colors are illustrative.",
+          "image": "physical.webp",
+          "alt": "Physical appearance is checked, with a bright pale side and a dimmer side of the simulated gas disk.",
+          "links": [
+            {
+              "id": "angle",
+              "label": "Try the comparison at another angle"
+            },
+            {
+              "id": "disk",
+              "label": "Inspect different gas properties"
+            },
+            {
+              "id": "still",
+              "label": "Save this appearance"
+            }
+          ]
+        },
+        {
+          "id": "disk",
+          "title": "See where the gas is concentrated",
+          "requires": "[Open the lab](#open). Scroll inside the left panel to **Disk & time**. Click the **Visual effects** header to collapse it if needed.",
+          "actions": [
+            "Expand **Disk & time** (1). Check **Show disk** and **Evolving fluid** (2). If a preparation percentage appears, wait for the disk to be ready.",
+            "Click **Disk view** (3) and choose **Surface density**. Compare the pattern in the disk’s band and in its lensed arc. Try **Temperature** for the gas temperature or **Flow tracers** to follow patterns as the gas moves.",
+            "Choose **Emission** in the same menu to return to the luminous disk."
+          ],
+          "check": "Each selection displays a different property of the same gas. Surface density describes how much gas lies in a patch of disk, measured through its thickness.",
+          "image": "disk.webp",
+          "alt": "Disk & time is expanded with Evolving fluid and Surface density marked. A color pattern replaces the golden emission view.",
+          "links": [
+            {
+              "id": "physical",
+              "label": "Compare emission brightness"
+            },
+            {
+              "id": "grid",
+              "label": "Trace background light"
+            },
+            {
+              "id": "still",
+              "label": "Save a disk map"
+            }
+          ]
+        },
+        {
+          "id": "grid",
+          "title": "See gravitational lensing with a grid",
+          "requires": "[Open the lab](#open). Scroll inside the left panel to **Appearance & quality**. Collapse longer sections by clicking their headers if needed.",
+          "actions": [
+            "Expand **Appearance & quality** (1). Click **Background** (2) and choose **Lensing grid**.",
+            "Follow a grid line from the outer part of the view toward the dark center. To restore the sky, choose **Stars** in the same menu."
+          ],
+          "check": "Lines that are nearly straight at the edge curve sharply near the hole. The grid reveals how the black hole bends light arriving from behind it.",
+          "image": "grid.webp",
+          "alt": "The Lensing grid selection is outlined beside a live view of grid lines bent around the disk.",
+          "links": [
+            {
+              "id": "orbit",
+              "label": "Follow the grid from another angle"
+            },
+            {
+              "id": "sky",
+              "label": "Adjust the Milky Way"
+            },
+            {
+              "id": "still",
+              "label": "Save the warped grid"
+            }
+          ]
+        },
+        {
+          "id": "sky",
+          "title": "Change the Milky Way behind the disk",
+          "requires": "[Open the lab](#open). If you see a grid or black background, set [Background](#grid) to **Stars** first.",
+          "actions": [
+            "Expand **Visual effects** (1) if its controls are hidden. Check **Milky Way background** (2).",
+            "Move **Sky brightness** (3) to the right to make the background easier to see. Watch a dark patch away from the bright disk as you adjust. Clear **Milky Way background** to try the generated star field."
+          ],
+          "check": "The brightness slider changes the panorama behind the disk. Its controls disappear when you switch the panorama off.",
+          "image": "sky.webp",
+          "alt": "Visual effects expanded with the Milky Way background checkbox and Sky brightness slider marked.",
+          "links": [
+            {
+              "id": "grid",
+              "label": "Switch to the lensing grid"
+            },
+            {
+              "id": "still",
+              "label": "Save the sky and disk"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Save a still or make a movie",
+      "steps": [
+        {
+          "id": "still",
+          "title": "Save the current view as a picture",
+          "requires": "[Open the lab](#open) and frame a view you want to keep. [Pause](#pause) if you want to hold a particular moment.",
+          "actions": [
+            "Scroll down the **left control panel** to the **Save PNG...** button (1), just above **Video export**. Clicking an expanded section heading collapses its controls and shortens the scroll.",
+            "Click **Save PNG...**."
+          ],
+          "check": "A Save PNG file picker opens. The saved picture contains the simulation viewport. When the Milky Way panorama is visible, its credit appears in the corner.",
+          "image": "still.webp",
+          "alt": "Save PNG marked just above Video export, with the disk visible on the right.",
+          "links": [
+            {
+              "id": "filename",
+              "label": "Choose the filename and save"
+            },
+            {
+              "id": "preview",
+              "label": "Plan an animated shot"
+            }
+          ]
+        },
+        {
+          "id": "filename",
+          "title": "Name and check your PNG",
+          "requires": "Click [Save PNG...](#still) so the file picker is open.",
+          "actions": [
+            "Choose a folder you can find again. Click **File name** (1) and enter **my-black-hole.png**.",
+            "Click **Save** (2). Open that folder in File Explorer and double-click the PNG to view the picture."
+          ],
+          "check": "The folder contains **my-black-hole.png** and **my-black-hole.png.txt**. Open the text file to read the scene settings that went with your picture.",
+          "image": "filename.webp",
+          "alt": "File picker footer with my-black-hole.png entered and the Save button marked.",
+          "links": [
+            {
+              "id": "angle",
+              "label": "Save another camera angle"
+            },
+            {
+              "id": "preview",
+              "label": "Animate the camera instead"
+            }
+          ]
+        },
+        {
+          "id": "preview",
+          "title": "Preview an orbit before exporting",
+          "requires": "[Open the lab](#open) and frame the disk. Scroll inside the left panel to **Video export**.",
+          "actions": [
+            "Expand **Video export** (1) if its options are hidden. Click **Camera preset** (2) and choose **Orbit**. **Sweep** sets the angle the camera travels around the hole.",
+            "Check **Preview shot** (3). Leave **Play preview** clear and drag **Shot position** (4) from left to right to inspect the path, or check **Play preview** to watch it run.",
+            "Clear **Preview shot** when you want to position the camera manually again."
+          ],
+          "check": "The camera moves through the orbit while you drag the slider. The chosen camera preset remains selected for export.",
+          "image": "preview.webp",
+          "alt": "Orbit, Preview shot and Shot position marked in the expanded Video export panel with the initial orbit view on the right.",
+          "links": [
+            {
+              "id": "movie",
+              "label": "Export a playable MP4"
+            },
+            {
+              "id": "export",
+              "label": "Export individual PNG frames"
+            },
+            {
+              "id": "still",
+              "label": "Save a single picture"
+            }
+          ]
+        },
+        {
+          "id": "movie",
+          "title": "Export a playable MP4",
+          "requires": "[Open the lab](#open). Scroll to **Video export** and expand it. Choose **Current view** to keep the camera still or [preview an orbit](#preview).",
+          "actions": [
+            "For a short first test, set **Resolution** to **720p**, **Frame rate** to **24 fps**, and drag **Duration** to its left end for one second.",
+            "Open **Format** (1) and choose **MP4 (H.264)**. Click **Browse output...** (2), choose a folder, enter **black-hole-orbit.mp4**, and confirm. Leaving the output path blank instead uses the **CAst Black Hole** folder inside Pictures.",
+            "Click **Export video / frames** (3). Wait for the progress bar to finish and open the saved MP4 in a video player."
+          ],
+          "check": "The export status reports the saved file. Choosing Orbit moves the camera during the clip. Current view keeps the same framing while the gas evolves unless **Freeze disk animation** is checked.",
+          "image": "movie.webp",
+          "alt": "MP4 selected, with Browse output and Export video / frames marked.",
+          "links": [
+            {
+              "id": "export",
+              "label": "Save the frames separately"
+            },
+            {
+              "id": "preview",
+              "label": "Try a different camera path"
+            }
+          ]
+        },
+        {
+          "id": "export",
+          "title": "Export numbered PNG frames",
+          "requires": "[Open the lab](#open). Expand **Video export** and choose a camera preset. The [orbit preview](#preview) lets you inspect the path first.",
+          "actions": [
+            "Set **Resolution** (1) to **720p** and the **Frame rate** beneath it to **24 fps**. Drag **Duration** (2) all the way left for one second.",
+            "Set **Format** (3) to **PNG sequence**. Leave **Output path** blank to use Pictures → CAst Black Hole, or click **Browse output...** and choose a parent folder. CAst creates a new folder inside it.",
+            "Click **Export video / frames** (4). Wait for the saved status, then open the output folder to step through the individual images."
+          ],
+          "check": "At 24 frames per second, a one-second sequence contains 24 PNG images. The export also records the camera and scene settings.",
+          "image": "export.webp",
+          "alt": "The 720p, one-second PNG sequence settings and the Export video / frames button marked in the live panel.",
+          "links": [
+            {
+              "id": "movie",
+              "label": "Make a single video file"
+            },
+            {
+              "id": "preview",
+              "label": "Adjust the shot"
+            },
+            {
+              "id": "still",
+              "label": "Save just the current view"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

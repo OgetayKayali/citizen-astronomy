@@ -36,8 +36,22 @@ class LightCurvePlotWidgetTest(unittest.TestCase):
             for index in range(layout.count())
             if isinstance(layout.itemAt(index).widget(), QLabel)
         ]
-        self.assertEqual(label_widgets, [])
+        self.assertNotIn(self.widget._status_label, label_widgets)
+        self.assertTrue(all(label.isHidden() for label in label_widgets))
         self.assertFalse(self.widget._status_label.isVisible())
+
+    def test_missing_standard_magnitude_shows_visible_warning_until_standard_data_returns(self) -> None:
+        point = LightCurvePoint(datetime(2025, 1, 1), Path("r.fits"), 0.2, -10, 1500, 15)
+        series = LightCurveSeries("test", "1", "VV UMa", "R", [point])
+        self.widget.show()
+        self.widget.plot_series(series, "No data", y_axis_mode="standard_magnitude")
+        self.assertTrue(self.widget._axis_warning_label.isVisible())
+        self.assertIn("Showing Differential Magnitude", self.widget._axis_warning_label.text())
+        self.assertEqual(self.widget.current_payload().y_axis_label, "Differential Magnitude")
+        point.standard_magnitude = 10.5
+        self.widget.plot_series(series, "No data", y_axis_mode="standard_magnitude")
+        self.assertFalse(self.widget._axis_warning_label.isVisible())
+        self.assertEqual(self.widget.current_payload().y_axis_label, "Standard Magnitude")
 
     def test_segment_reset_button_emits_clear_selection_signal(self) -> None:
         selections: list[object] = []

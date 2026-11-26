@@ -463,6 +463,7 @@ def apply_transformations(measurements: list[PhotometryMeasurement], settings, *
     by_target = defaultdict(lambda: defaultdict(list))
     frame_reasons = {}
     frame_offsets = {}
+    osc_frames = {}
     from photometry_app.core.image_io import is_raw_camera_image_path, read_header_and_shape
     from photometry_app.core.wcs import extract_solved_field
     for path in {r.file_path for r in rows}:
@@ -470,10 +471,16 @@ def apply_transformations(measurements: list[PhotometryMeasurement], settings, *
                   if (field_radii or {}).get(path, 0) > 0.5 else "")
         frame_offsets[path] = 0.0
         if is_raw_camera_image_path(path):
-            reason = "RAW synthetic luminance cannot be transformed as an extracted color channel."
+            reason = "Prepare native RAW with Prepare OSC / Bayer before transforming extracted channels."
         elif path.exists():
             try:
                 header, width, height = read_header_and_shape(path)
+                if header.get("OSCFRAME"):
+                    osc_frames[path] = str(header["OSCFRAME"])
+                from photometry_app.core.osc import has_cfa
+                if has_cfa(header):
+                    frame_reasons[path] = "Native Bayer mosaic must be extracted with Prepare OSC / Bayer."
+                    continue
                 exposure = float(header.get("EXPTIME", 0) or 0)
                 if math.isfinite(exposure) and exposure > 0:
                     frame_offsets[path] = exposure/2
@@ -519,6 +526,8 @@ def apply_transformations(measurements: list[PhotometryMeasurement], settings, *
         for blue in bands["B"]:
             timestamp = midpoint(blue).timestamp()
             for visual in visuals[bisect_left(visual_times, timestamp-max_seconds):bisect_right(visual_times, timestamp+max_seconds)]:
+                if (blue.file_path in osc_frames or visual.file_path in osc_frames) and osc_frames.get(blue.file_path) != osc_frames.get(visual.file_path):
+                    continue  # Simultaneous sensor channels must come from the same exposure.
                 bt, vt = midpoint(blue), midpoint(visual)
                 gap = abs((bt-vt).total_seconds())
                 if bt.date() == vt.date() and gap <= max_seconds:

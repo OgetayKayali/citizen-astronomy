@@ -1,0 +1,575 @@
+{
+  "title": "Differential photometry",
+  "intro": "Compare AE UMa with nearby stars to see how its brightness changes over one night.",
+  "dataset": "AE UMa practice · 24 FITS cutouts sampled across the original 158-exposure night · 30 seconds per exposure · luminance filter.",
+  "outcome": "A light curve for AE UMa, the original image behind a measurement, and a choice of a saved plot or a numerical report.",
+  "groups": [
+    {
+      "title": "Open the example",
+      "steps": [
+        {
+          "id": "mode",
+          "title": "Enter Differential Photometry",
+          "requires": "Start Citizen Astronomy (CAst). Download either AE UMa ZIP above and extract it. Keep the **AE UMa practice** or **AE UMa full** folder handy.",
+          "actions": [
+            "Under **Detect & Measure**, click **Differential Photometry**. If a different workspace is already open, choose **Mode → Choose Mode…** to return to this screen."
+          ],
+          "check": "The workspace opens with an **Open** button in its upper left. The curve on the launcher card is an illustration. Your own graph appears after processing.",
+          "image": "mode.webp",
+          "alt": "Mode launcher with a numbered outline around the Differential Photometry card.",
+          "links": [
+            {
+              "id": "open",
+              "label": "Open the workflow"
+            }
+          ]
+        },
+        {
+          "id": "open",
+          "title": "Open the workflow window",
+          "requires": "You are in [Differential Photometry](#mode).",
+          "actions": [
+            "Click the large **Open** button at the upper left of the workspace."
+          ],
+          "check": "A window named **Differential Photometry Workflow** opens. It contains **1. Folder**, **2. Pipeline**, and **3. Progress**.",
+          "image": "open.webp",
+          "alt": "Upper-left corner of the workspace with the Open button outlined.",
+          "links": [
+            {
+              "id": "folder",
+              "label": "Locate the folder control"
+            }
+          ]
+        },
+        {
+          "id": "folder",
+          "title": "Browse for the image sequence",
+          "requires": "The [workflow window](#open) is open.",
+          "actions": [
+            "In **1. Folder**, click **Folder**."
+          ],
+          "check": "A folder picker opens. Select one folder for the complete run, whether you use the practice set or the full sequence.",
+          "image": "folder.webp",
+          "alt": "Folder section of the workflow showing the highlighted Folder button.",
+          "links": [
+            {
+              "id": "choose-folder",
+              "label": "Select the AE UMa folder"
+            }
+          ]
+        },
+        {
+          "id": "choose-folder",
+          "title": "Select the folder containing the FITS files",
+          "requires": "The [folder picker](#folder) is open.",
+          "actions": [
+            "Select **AE UMa practice** for the 24-frame exercise, or **AE UMa full** for all 158 original frames. Choose the folder containing the FITS files.",
+            "Click **Choose**. On Windows, the native picker may label this button **Select Folder**."
+          ],
+          "check": "Check the count in **Ready**: 24 files for the practice set or 158 for the full night shown in the screenshot. If your count differs, select the extracted folder that directly contains the .fit files.",
+          "image": "choose-folder.webp",
+          "alt": "Directory field containing (small copy) AE UMa and the Choose button, marked 1 and 2.",
+          "links": [
+            {
+              "id": "generate",
+              "label": "Set up this reduction"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Generate a light curve",
+      "steps": [
+        {
+          "id": "generate",
+          "title": "Start the measurement",
+          "requires": "The [folder scan](#choose-folder) has found 24 practice images or 158 full-sequence images.",
+          "actions": [
+            "For this L-filter practice run, clear **Pull Periods** (1). Leave **Calculate Periods**, **Create Measurements Table**, **Calibration**, and **Star Alignment** unchecked. The folder contains science exposures with embedded sky coordinates and includes no calibration masters.",
+            "Keep **Brightest Variables** at **100%** so you can choose AE UMa yourself. Click **Generate** (2). Allow the catalog lookup to finish. A first run can need internet access."
+          ],
+          "check": "CAst opens **Select Sources To Process** when the list is ready. If CAst offers an existing result for this folder, opening it takes you directly to the results. The example used a saved field catalog and the images’ embedded coordinates. See the [example settings](#recipe) to reproduce this selection.",
+          "image": "generate.webp",
+          "alt": "Workflow showing 158 loaded images, the cleared Pull Periods checkbox, 100% Brightest Variables, and Generate.",
+          "links": [
+            {
+              "id": "target",
+              "label": "Measure AE UMa only"
+            },
+            {
+              "id": "recipe",
+              "label": "Check the example settings"
+            },
+            {
+              "id": "other-sources",
+              "label": "Measure a group of stars"
+            },
+            {
+              "id": "result",
+              "label": "I opened a saved result"
+            }
+          ]
+        },
+        {
+          "id": "recipe",
+          "title": "Check how the example was measured",
+          "requires": "In the Differential Photometry workspace, choose **Settings → Open Settings** before starting a fresh run.",
+          "actions": [
+            "Click the **Differential Photometry** tab (1). The example requested **5** for **Comparison Stars per Variable** (2). The number that can actually be used depends on the stars in the field.",
+            "To match the brightness selection, check **Use reference-star magnitude range**. Set **Min** to the lowest allowed value (−5) and **Max** (3) to **16**. The adaptive aperture scale was **1.60 × FWHM**, which sizes the measurement circle using the width of the star image.",
+            "Click **Save** if you changed settings, or **Cancel** if you were only looking. This example used the saved catalog for the field and the embedded sky coordinates in each FITS header, without repeating the Gaia cross-check."
+          ],
+          "check": "The resulting Scan Comps window offered four usable measured references. Catalog updates or different quality settings may change the available stars.",
+          "image": "recipe.webp",
+          "alt": "Differential Photometry settings showing five requested comparisons and a maximum reference-star magnitude of 16.",
+          "links": [
+            {
+              "id": "generate",
+              "label": "Continue the example run"
+            },
+            {
+              "id": "scan-comps",
+              "label": "Inspect the measured references"
+            }
+          ]
+        },
+        {
+          "id": "target",
+          "title": "Measure AE UMa only",
+          "requires": "The [source-selection window](#generate) is open.",
+          "actions": [
+            "In the **Sources** search field (1), type **AE UMa**. Keep **Named variables** checked.",
+            "Click the **AE UMa** row (2). Its catalog is **vsx** and its type is **Variable**. CAst chooses comparison stars for the target automatically.",
+            "Click **Process Selected** (3). Wait for the workflow to finish measuring the images. If its progress window stays open after completion, click **Close**."
+          ],
+          "check": "The **Source Results** table contains AE UMa. A light curve is a sequence of brightness measurements, one for each usable exposure.",
+          "image": "target.webp",
+          "alt": "Source dialog filtered to AE UMa, with the search field, selected VSX row, and Process Selected button numbered.",
+          "links": [
+            {
+              "id": "result",
+              "label": "Find the measured star"
+            },
+            {
+              "id": "other-sources",
+              "label": "What do the other process buttons do?"
+            }
+          ]
+        },
+        {
+          "id": "other-sources",
+          "title": "Measure several objects instead",
+          "requires": "Open the [source-selection window](#generate) before processing.",
+          "actions": [
+            "To measure the brightest few, set **Default selection** to **Absolute number of brightest stars** and enter a small count, such as **3** (1). Click **Process Default** (2).",
+            "To work by category instead, choose a category from **All types** (3) and narrow the list with **Sources** or **Designation Families**. Click **Process All Visible** (4) to measure every remaining row. A long list takes longer."
+          ],
+          "check": "After processing, **Source Results** lists the measured targets. Click a row to switch the light curve to that star.",
+          "image": "other-sources.webp",
+          "alt": "Alternate selection routes showing the default count, Process Default, source-type filter, and Process All Visible.",
+          "links": [
+            {
+              "id": "target",
+              "label": "Return to the one-star example"
+            },
+            {
+              "id": "result",
+              "label": "Inspect a completed run"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Read and check the result",
+      "steps": [
+        {
+          "id": "result",
+          "title": "Select the measured star",
+          "requires": "The [reduction](#target) has finished, or you opened a cached AE UMa result.",
+          "actions": [
+            "Click **Source Results** (1) below the plot.",
+            "Click **AE UMa** (2). The workspace connects the selected source to its light curve and image. Other rows can be comparison stars used to measure the target."
+          ],
+          "check": "Look for AE UMa in the plot title or legend. A blank graph in **Standard Magnitude** can mean that this filter has no usable standard magnitude. Choose the relative brightness axis in the next step.",
+          "image": "result.webp",
+          "alt": "Source Results tab and AE UMa row outlined below the light-curve panel.",
+          "links": [
+            {
+              "id": "axis",
+              "label": "Plot brightness relative to the comparisons"
+            },
+            {
+              "id": "frames",
+              "label": "Inspect the original exposures"
+            },
+            {
+              "id": "measurements",
+              "label": "Open individual measurements"
+            }
+          ]
+        },
+        {
+          "id": "axis",
+          "title": "Switch to differential magnitude",
+          "requires": "You have [selected AE UMa](#result).",
+          "actions": [
+            "Open **Settings** (1) on the top menu bar, then move to **Light Curve** (2).",
+            "Open the **Y** list (3) and choose **Differential Magnitude**. Click outside the menu to return to the graph."
+          ],
+          "check": "The vertical axis now shows magnitude relative to the comparison stars. A smaller value means a brighter target relative to them. On the plotted axis, 500 × 0.001 means 0.500 magnitude. These L-filter frames can show changes in brightness without establishing a standard Johnson V magnitude.",
+          "image": "axis.webp",
+          "alt": "Settings menu, Light Curve submenu and Y selector set to Differential Magnitude.",
+          "links": [
+            {
+              "id": "references",
+              "label": "Compare the target with reference stars"
+            },
+            {
+              "id": "plot-export",
+              "label": "Save the current graph"
+            }
+          ]
+        },
+        {
+          "id": "references",
+          "title": "Compare the star with its references",
+          "requires": "AE UMa is selected. Use the [differential magnitude axis](#axis).",
+          "actions": [
+            "Open the **Filter** list (1) beside **Open** and choose **L** for this sequence.",
+            "Turn on **Show references** (2) to display the comparison stars. If their traces move together with the target, inspect the images for clouds or tracking problems.",
+            "Turn on **Show check** (3) to include an independent check star when one was measured. For a clearer view of AE UMa alone, clear both switches."
+          ],
+          "check": "AE UMa brightens toward the end of the run while the comparison traces remain relatively flat. The practice download provides 24 epochs. The screenshot shows measurements from all 158 original exposures.",
+          "image": "references.webp",
+          "alt": "L filter, Show references and Show check marked above the real AE UMa light curve.",
+          "links": [
+            {
+              "id": "scan-comps",
+              "label": "Try a different set of comparison stars"
+            },
+            {
+              "id": "frames",
+              "label": "Keep the automatic set and inspect the images"
+            },
+            {
+              "id": "measurements",
+              "label": "Trace a point to its exposure"
+            },
+            {
+              "id": "plot-export",
+              "label": "Save a picture of the curve"
+            }
+          ]
+        },
+        {
+          "id": "frames",
+          "title": "Inspect a single frame or blink the sequence",
+          "requires": "A [measured target](#result) is selected and its image is visible on the right.",
+          "actions": [
+            "Click **Center** (1) to bring the selected star into view. Use the mouse wheel over the star if you want a closer look. The small circle is its measurement aperture.",
+            "To inspect one exposure, open the **frame selector** (2) and choose a filename. Watch whether the aperture still encloses AE UMa.",
+            "To play the sequence, click **Blink** (3). Click **Blink** again to pause. Look for shifts, passing clouds, or a neighboring star entering an aperture."
+          ],
+          "check": "Changing the frame changes the filename and image. Use the measurement table to identify the exposure time and brightness for an individual observation.",
+          "image": "frames.webp",
+          "alt": "AE UMa image pane with Center, frame selector and Blink numbered above the measured star field.",
+          "links": [
+            {
+              "id": "measurements",
+              "label": "Open the numerical measurements"
+            },
+            {
+              "id": "references",
+              "label": "Compare plotted stars"
+            }
+          ]
+        },
+        {
+          "id": "measurements",
+          "title": "Open the measurement table",
+          "requires": "An [AE UMa reduction](#result) is displayed.",
+          "actions": [
+            "Click the **Measurements** tab beside **File Results**."
+          ],
+          "check": "On a fresh run with table creation turned off, a **Load Measurements Table** prompt appears. If rows are already visible, go straight to reading a row.",
+          "image": "measurements.webp",
+          "alt": "Results tab strip with Measurements outlined.",
+          "links": [
+            {
+              "id": "load-table",
+              "label": "Confirm the table load"
+            },
+            {
+              "id": "read-table",
+              "label": "My table is already populated"
+            }
+          ]
+        },
+        {
+          "id": "load-table",
+          "title": "Confirm that the rows should load",
+          "requires": "The [Measurements tab](#measurements) shows a **Load Measurements Table** prompt.",
+          "actions": [
+            "Check the number of rows in the message. Each exposure may contribute several rows for different stars.",
+            "Click **Yes** to load those rows. Large tables can take a moment."
+          ],
+          "check": "The prompt closes and the **Measurements** table fills with filenames and values.",
+          "image": "load-table.webp",
+          "alt": "Actual table-load confirmation with Yes highlighted.",
+          "links": [
+            {
+              "id": "read-table",
+              "label": "Read a measurement"
+            }
+          ]
+        },
+        {
+          "id": "read-table",
+          "title": "Read a measurement and its source frame",
+          "requires": "The [Measurements table](#load-table) is populated.",
+          "actions": [
+            "Click a row for **AE UMa**. Use the **File** column to identify the exposure; read across the selected row for the filter and measured values.",
+            "Scroll horizontally for additional columns. If a point looks unusual, compare its image with adjacent frames before deciding whether to use it."
+          ],
+          "check": "The image and details follow the selected row. For the first AE UMa row, **Diff Mag** is **0.4445** and **Error** is **0.0060** magnitude.",
+          "image": "read-table.webp",
+          "alt": "Populated measurement table with an AE UMa measurement row marked.",
+          "links": [
+            {
+              "id": "point",
+              "label": "Choose a point directly on the graph"
+            },
+            {
+              "id": "frames",
+              "label": "Check adjacent images"
+            },
+            {
+              "id": "report-menu",
+              "label": "Export the numerical report"
+            }
+          ]
+        },
+        {
+          "id": "point",
+          "title": "Trace a plotted point to one exposure",
+          "requires": "The [measurement rows](#load-table) are loaded. Select [AE UMa](#result), choose L, and clear **Show references** and **Show check** for a single trace.",
+          "actions": [
+            "Click one plotted dot, such as the point outlined in the screenshot. Each dot represents AE UMa in one exposure.",
+            "Read the selected filename in the frame selector. Open **Measurements** to inspect the matching row."
+          ],
+          "check": "The frame selector moves to the clicked observation. A trend extending over successive exposures can be compared with the reference stars; inspect a lone unusual point on its own image.",
+          "image": "point.webp",
+          "alt": "Measured AE UMa light curve with one actual observation outlined as the click target.",
+          "links": [
+            {
+              "id": "frames",
+              "label": "Inspect neighboring frames"
+            },
+            {
+              "id": "plot-export",
+              "label": "Save this curve"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Try other comparison stars",
+      "steps": [
+        {
+          "id": "scan-comps",
+          "title": "Keep or change the comparisons",
+          "requires": "[Select AE UMa](#result) in Source Results and choose **L** in the Filter list.",
+          "actions": [
+            "If the [reference and check traces](#references) look steady on the scale of the target’s variation, keep the automatic result and continue to the graph or report.",
+            "To see how a different group changes the same measurements, click **Scan Comps** above the plot."
+          ],
+          "check": "The comparison window opens for **AE UMa · [L]**. Its header gives the number of measured reference stars available to test.",
+          "image": "scan-comps.webp",
+          "alt": "AE UMa workspace with Scan Comps marked beside the filter and analysis controls.",
+          "links": [
+            {
+              "id": "limits",
+              "label": "Build alternative comparison sets"
+            },
+            {
+              "id": "plot-export",
+              "label": "Keep the automatic result and save the curve"
+            }
+          ]
+        },
+        {
+          "id": "limits",
+          "title": "Build a pool of comparison candidates",
+          "requires": "The [Scan Comps](#scan-comps) window is on **1. Limits**.",
+          "actions": [
+            "For this example, leave the brightness, color, and separation limits at **No limit**. Set **Comparisons per set (N)** to **3** (1). Each trial will then use three stars together.",
+            "Click **Build Candidates** (2)."
+          ],
+          "check": "The window moves to **2. Favourites** and lists measured stars with their names, catalog brightness, and distance from AE UMa.",
+          "image": "limits.webp",
+          "alt": "Search Limits panel for AE UMa showing three comparisons per set and the Build Candidates button.",
+          "links": [
+            {
+              "id": "favourites",
+              "label": "Pick the candidate stars"
+            },
+            {
+              "id": "references",
+              "label": "Return to the automatic result"
+            }
+          ]
+        },
+        {
+          "id": "favourites",
+          "title": "Choose which reference stars to test",
+          "requires": "You have [built candidates](#limits) and **2. Favourites** is visible.",
+          "actions": [
+            "For this small example, click **Select All** (1). If you saw a blended or unstable reference on the images, clear its **Favourite** box. Keep at least three to build a set; four or more give you alternative three-star sets.",
+            "Click **Continue to Combinations** (2)."
+          ],
+          "check": "The next page lists the possible three-star sets and calculates a preview for each.",
+          "image": "favourites.webp",
+          "alt": "Favourite Candidates table with its selection and Continue to Combinations buttons marked.",
+          "links": [
+            {
+              "id": "combinations",
+              "label": "Compare the trial curves"
+            },
+            {
+              "id": "limits",
+              "label": "Change the pool size or limits"
+            }
+          ]
+        },
+        {
+          "id": "combinations",
+          "title": "Compare trial curves and apply a set",
+          "requires": "The [Favourites step](#favourites) has opened **3. Combinations**.",
+          "actions": [
+            "Click a set in **Combination Sets** (1). Inspect the light curve, then click another set to see whether the pattern persists.",
+            "Use the preview list (2) to switch between **Filter [L]** and **Overview (with comps)**. Look for stable comparisons and a target trend that survives a change of reference stars.",
+            "Choose **Use Selected** (3) to apply the displayed set. Choose **Cancel** if you want to keep your previous result."
+          ],
+          "check": "Applying a set updates the AE UMa curve for the L filter. The Work Log identifies the comparisons used.",
+          "image": "combinations.webp",
+          "alt": "Comparison sets and a real preview curve, with the set row, preview mode, and Use Selected control marked.",
+          "links": [
+            {
+              "id": "references",
+              "label": "Inspect the result in the workspace"
+            },
+            {
+              "id": "plot-export",
+              "label": "Save the graph"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Save the graph or the measurements",
+      "steps": [
+        {
+          "id": "plot-export",
+          "title": "Save the light-curve graph",
+          "requires": "A [light curve](#axis) is visible. Select L and show the series you want in your saved figure.",
+          "actions": [
+            "Click **Export** (1) above the plot.",
+            "For a clean figure, choose **Scientific** (2). For the graph as it looks in the workspace, choose **Theme-based** (3)."
+          ],
+          "check": "The **Export light curve** file picker opens so you can choose where to save the figure.",
+          "image": "plot-export.webp",
+          "alt": "Export menu above the AE UMa curve with Scientific and Theme-based marked as alternative choices.",
+          "links": [
+            {
+              "id": "save-plot",
+              "label": "Name and save the plot"
+            },
+            {
+              "id": "report-menu",
+              "label": "Save numerical measurements too"
+            },
+            {
+              "id": "references",
+              "label": "Change which series appear"
+            }
+          ]
+        },
+        {
+          "id": "save-plot",
+          "title": "Name and save the plot file",
+          "requires": "Choose **Scientific** or **Theme-based** in the [plot Export menu](#plot-export).",
+          "actions": [
+            "Navigate to a folder where you keep your results. With PNG selected as the file type, enter **AE-UMa-L.png** in the filename field (1).",
+            "Click **Save** (2). Open your saved image and check the star name, filter, and axes."
+          ],
+          "check": "A PNG file now contains the light-curve figure. Compare the shape with the exported example below.",
+          "image": "save-plot.webp",
+          "alt": "Export light curve file dialog with AE-UMa-L.png entered and the Save button highlighted.",
+          "links": [
+            {
+              "id": "report-menu",
+              "label": "Save the numerical measurements too"
+            },
+            {
+              "id": "references",
+              "label": "Return to the graph"
+            }
+          ],
+          "example": {
+            "file": "ae-uma-light-curve.png",
+            "label": "View the exported AE UMa light curve"
+          }
+        },
+        {
+          "id": "report-menu",
+          "title": "Export measurements for AE UMa",
+          "requires": "Click the [AE UMa row in Source Results](#result) first.",
+          "actions": [
+            "Click **File** (1) in the menu bar.",
+            "Choose **Export Report** (2)."
+          ],
+          "check": "The **AAVSO Preflight Review** opens. It checks which rows can go into the file format used by the American Association of Variable Star Observers and identifies missing information.",
+          "image": "report-menu.webp",
+          "alt": "File menu displaying the Export Report action.",
+          "links": [
+            {
+              "id": "report-review",
+              "label": "Review the export summary"
+            },
+            {
+              "id": "plot-export",
+              "label": "Save only a plot instead"
+            }
+          ]
+        },
+        {
+          "id": "report-review",
+          "title": "Review the report before saving",
+          "requires": "You have opened [File → Export Report](#report-menu) for AE UMa.",
+          "actions": [
+            "Read **Rows ready for AAVSO export**, **Skipped measurements**, and **Warnings**. Here 150 rows are ready for the export file and 8 were skipped. CAst lists an unmapped L filter, missing airmass, and a blank observer code. The **Standard rows** count alone cannot establish a Johnson V magnitude from these L frames.",
+            "Choose **Cancel** (1) if you need to correct the setup or revisit the reduction. To keep a local practice report after reading the warnings, click **Export Anyway** (2).",
+            "After export finishes, open the **science** folder beside the input images, then **AE_UMa**. Open **AE_UMa_measurements.csv** for the numbers. **AE_UMa_accepted_observations.csv**, **AE_UMa_rejected_observations.csv**, and **AE_UMa_aavso_preflight.json** document the export decisions."
+          ],
+          "check": "The Work Log records the export paths. Saving this bundle is a local operation. Review the warnings and scientific suitability separately before submitting any observation.",
+          "image": "report-review.webp",
+          "alt": "AAVSO Preflight Review from the actual AE UMa run with Cancel and Export Anyway marked.",
+          "links": [
+            {
+              "id": "read-table",
+              "label": "Review individual rows"
+            },
+            {
+              "id": "plot-export",
+              "label": "Save a display figure"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

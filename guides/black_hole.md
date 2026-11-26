@@ -1,5 +1,7 @@
 # Black Hole
 
+Use the [illustrated Black Hole tutorial](tutorials/black-hole.html) to orbit the disk, compare spin, or save a camera shot. You can open any task directly.
+
 ## Introduction
 
 **Black Hole** is the PhysicsEngine black hole light lab running inside CAst. It traces light around a nonspinning Schwarzschild or spinning Kerr black hole, evolves a gas disk around it, and draws what the bent light does to the disk and to the sky behind it.

@@ -276,6 +276,11 @@ def measure_targets(
 
         ] if variable_stars else []
 
+    osc_variance, osc_saturation = _osc_science_planes(source_path, source_header, data.shape)
+    osc_sky_mask = (~np.isfinite(data) | (osc_saturation >= .95)) if osc_saturation is not None else None
+    if osc_saturation is not None:
+        saturation_threshold = 1.0
+
 
 
     fixed_aperture_radius = max(1.0, float(aperture_radius))
@@ -320,7 +325,7 @@ def measure_targets(
 
             source_fwhm = _estimate_star_fwhm(data, x, y)
 
-            if source_fwhm is None:
+            if source_fwhm is None or (frame_fwhm is not None and not 0.67 * frame_fwhm <= source_fwhm <= 1.5 * frame_fwhm):
 
                 source_fwhm = frame_fwhm
 
@@ -386,7 +391,8 @@ def measure_targets(
 
         annulus = CircularAnnulus(positions, r_in=source_annulus_inner_radius, r_out=source_annulus_outer_radius)
 
-        annulus_stats = ApertureStats(data, annulus, sigma_clip=sigma_clip)
+        annulus_stats = ApertureStats(data, annulus, sigma_clip=sigma_clip,
+                                     mask=osc_sky_mask)
 
         local_background = float(annulus_stats.median[0]) if np.isfinite(annulus_stats.median[0]) else float(background_median)
 
@@ -394,7 +400,7 @@ def measure_targets(
 
         peak_pixel_value, saturated_pixel_count, is_saturated = _measure_source_saturation(
 
-            data,
+            osc_saturation if osc_saturation is not None else data,
 
             x,
 
@@ -405,6 +411,9 @@ def measure_targets(
             saturation_threshold,
 
         )
+
+        if osc_saturation is not None:
+            peak_pixel_value, saturated_pixel_count, is_saturated = _osc_saturation_stats(osc_saturation, aperture)
 
         if _is_near_saturated(peak_pixel_value, saturation_threshold, is_saturated):
 
@@ -417,6 +426,8 @@ def measure_targets(
 
 
         phot_table = aperture_photometry(data, aperture)
+        if osc_variance is not None and _osc_invalid_aperture(data, osc_variance, aperture):
+            flags.append("Invalid OSC samples in aperture; measurement excluded.")
 
         aperture_sum = float(phot_table["aperture_sum"][0])
 
@@ -432,7 +443,11 @@ def measure_targets(
 
         if background_corrected_flux > 0:
 
-            flux_error = _estimate_flux_error(background_corrected_flux, aperture.area, annulus.area, annulus_stats.std[0], background_std)
+            flux_error = _estimate_flux_error(background_corrected_flux, aperture.area, annulus.area, annulus_stats.std[0], background_std, source_header.get("EGAIN"))
+            if osc_variance is not None:
+                flux_error = _osc_flux_error(osc_variance, data, aperture, annulus, osc_saturation)
+                if flux_error is None:
+                    flags.append("OSC uncertainty unavailable: invalid aperture or insufficient clean sky samples.")
 
             instrumental_magnitude = -2.5 * math.log10(background_corrected_flux)
 
@@ -596,6 +611,11 @@ def measure_manual_sources(
 
     saturation_threshold = _resolve_saturation_threshold(source_header, data, source_path)
 
+    osc_variance, osc_saturation = _osc_science_planes(source_path, source_header, data.shape)
+    osc_sky_mask = (~np.isfinite(data) | (osc_saturation >= .95)) if osc_saturation is not None else None
+    if osc_saturation is not None:
+        saturation_threshold = 1.0
+
     comparison_ids = [item.source_id for item in manual_config.comparison_sources]
 
     comparison_names = [item.name for item in manual_config.comparison_sources]
@@ -620,9 +640,10 @@ def measure_manual_sources(
 
         usable_margin = _usable_image_margin(data.shape, source.annulus_outer_radius, frame_edge_margin_percent)
 
-        if not _inside_image(measured_x, measured_y, data.shape, usable_margin):
-
-            flags.append(_usable_area_flag(frame_edge_margin_percent))
+        outside = not _inside_image(measured_x, measured_y, data.shape, usable_margin)
+        if outside or any("fallback is disabled" in flag for flag in flags):
+            if outside:
+                flags.append(_usable_area_flag(frame_edge_margin_percent))
 
             measurements.append(
 
@@ -668,7 +689,8 @@ def measure_manual_sources(
 
         annulus = CircularAnnulus([(measured_x, measured_y)], r_in=source.annulus_inner_radius, r_out=source.annulus_outer_radius)
 
-        annulus_stats = ApertureStats(data, annulus, sigma_clip=sigma_clip)
+        annulus_stats = ApertureStats(data, annulus, sigma_clip=sigma_clip,
+                                     mask=osc_sky_mask)
 
         local_background = float(annulus_stats.median[0]) if np.isfinite(annulus_stats.median[0]) else float(background_median)
 
@@ -676,7 +698,7 @@ def measure_manual_sources(
 
         peak_pixel_value, saturated_pixel_count, is_saturated = _measure_source_saturation(
 
-            data,
+            osc_saturation if osc_saturation is not None else data,
 
             measured_x,
 
@@ -687,6 +709,9 @@ def measure_manual_sources(
             saturation_threshold,
 
         )
+
+        if osc_saturation is not None:
+            peak_pixel_value, saturated_pixel_count, is_saturated = _osc_saturation_stats(osc_saturation, aperture)
 
         if _is_near_saturated(peak_pixel_value, saturation_threshold, is_saturated):
 
@@ -699,6 +724,8 @@ def measure_manual_sources(
 
 
         phot_table = aperture_photometry(data, aperture)
+        if osc_variance is not None and _osc_invalid_aperture(data, osc_variance, aperture):
+            flags.append("Invalid OSC samples in aperture; measurement excluded.")
 
         aperture_sum = float(phot_table["aperture_sum"][0])
 
@@ -714,7 +741,11 @@ def measure_manual_sources(
 
         if background_corrected_flux > 0:
 
-            flux_error = _estimate_flux_error(background_corrected_flux, aperture.area, annulus.area, annulus_stats.std[0], background_std)
+            flux_error = _estimate_flux_error(background_corrected_flux, aperture.area, annulus.area, annulus_stats.std[0], background_std, source_header.get("EGAIN"))
+            if osc_variance is not None:
+                flux_error = _osc_flux_error(osc_variance, data, aperture, annulus, osc_saturation)
+                if flux_error is None:
+                    flags.append("OSC uncertainty unavailable: invalid aperture or insufficient clean sky samples.")
 
             instrumental_magnitude = -2.5 * math.log10(background_corrected_flux)
 
@@ -994,6 +1025,63 @@ def _coerce_pixel_coordinates(x: object, y: object) -> tuple[float, float]:
 
 
 
+def _osc_science_planes(path, header, shape):
+    if not header.get("OSCCHAN"):
+        return None, None
+    from photometry_app.core.osc import read_plane_extensions
+    variance, saturation = read_plane_extensions(path, shape)
+    if variance is None or saturation is None:
+        raise ValueError("Prepared OSC image is missing VARIANCE or SATFRAC; regenerate it from the native mosaic.")
+    return variance, saturation
+
+
+def _osc_pixels(aperture, array, method="exact"):
+    masks = aperture.to_mask(method=method)
+    mask = masks[0] if isinstance(masks, list) else masks
+    large, small = mask.get_overlap_slices(array.shape)
+    if large is None:
+        return np.array([]), np.array([])
+    return mask.data[small], array[large]
+
+
+def _osc_invalid_aperture(data, variance, aperture):
+    weights, pixels = _osc_pixels(aperture, data)
+    _, pixel_variance = _osc_pixels(aperture, variance)
+    return bool(np.any((weights > 0) & (~np.isfinite(pixels) | ~np.isfinite(pixel_variance))))
+
+
+def _osc_flux_error(variance, data, aperture, annulus, saturation):
+    weights, pixel_variance = _osc_pixels(aperture, variance)
+    used = weights > 0
+    if not np.any(used) or np.any(~np.isfinite(pixel_variance[used])):
+        return None
+    sky_weights, sky_data = _osc_pixels(annulus, data, "center")
+    _, sky_var = _osc_pixels(annulus, variance, "center")
+    _, sky_sat = _osc_pixels(annulus, saturation, "center")
+    sky = (sky_weights > 0) & np.isfinite(sky_data) & np.isfinite(sky_var) & (sky_sat < .95)
+    values = sky_data[sky]
+    if values.size < 5:
+        return None
+    clipped = SigmaClip(sigma=3.0)(values)
+    keep = ~np.ma.getmaskarray(clipped)
+    if np.count_nonzero(keep) < 5:
+        return None
+    # Pixel variance includes sky shot/read noise. Add only uncertainty in the
+    # estimated background, using the Gaussian median variance pi/(2 N).
+    sky_variance = max(float(np.var(values[keep], ddof=1)), float(np.median(sky_var[sky][keep])))
+    background_variance = math.pi / 2 * sky_variance / np.count_nonzero(keep)
+    return math.sqrt(float(np.sum(weights[used] ** 2 * pixel_variance[used])) + aperture.area**2 * background_variance)
+
+
+def _osc_saturation_stats(saturation, aperture):
+    weights, pixels = _osc_pixels(aperture, saturation)
+    used = pixels[(weights > 0) & np.isfinite(pixels)]
+    if not used.size:
+        return None, 0, False
+    count = int(np.count_nonzero(used >= 1.))
+    return float(np.max(used)), count, count > 0
+
+
 def _estimate_flux_error(
 
     background_corrected_flux: float,
@@ -1005,6 +1093,8 @@ def _estimate_flux_error(
     local_background_std: object,
 
     fallback_background_std: float,
+
+    electrons_per_adu: object = None,
 
 ) -> float:
 
@@ -1020,7 +1110,9 @@ def _estimate_flux_error(
 
     background_variance = aperture_area_value * (local_sigma ** 2) * (1.0 + (aperture_area_value / annulus_area_value))
 
-    return math.sqrt(max(0.0, abs(background_corrected_flux)) + max(0.0, background_variance))
+    gain = _coerce_stat_value(electrons_per_adu)
+    source_variance = abs(background_corrected_flux) / (gain if gain is not None and gain > 0 else 1.0)
+    return math.sqrt(source_variance + max(0.0, background_variance))
 
 
 
@@ -1579,6 +1671,7 @@ def _build_measurement(
         file_path=source_path,
 
         observation_time=scan_result.metadata.date_obs,
+        exposure_seconds=scan_result.metadata.exposure_seconds,
 
         filter_name=scan_result.metadata.filter_name,
 
@@ -1605,6 +1698,7 @@ def _build_measurement(
         catalog_magnitude=star.magnitude,
 
         band_magnitudes=_copy_star_band_magnitudes(star),
+        auid=star.metadata.get("auid"),
 
         flags=flags,
 
@@ -1719,6 +1813,7 @@ def _build_manual_measurement(
         file_path=source_path,
 
         observation_time=scan_result.metadata.date_obs,
+        exposure_seconds=scan_result.metadata.exposure_seconds,
 
         filter_name=scan_result.metadata.filter_name,
 
@@ -1745,6 +1840,7 @@ def _build_manual_measurement(
         catalog_magnitude=catalog_magnitude,
 
         band_magnitudes=band_magnitudes,
+        auid=catalog_star.metadata.get("auid") if catalog_star else None,
 
         is_check=source.role == ManualSourceRole.CHECK,
 

@@ -1,5 +1,7 @@
 # Asteroid and Comet Detection
 
+Follow the [illustrated beginner tutorial for the 3I/ATLAS field](tutorials/moving-objects.html) to find a moving object or jump directly to a task.
+
 ## Introduction
 
 Most of the Solar System is invisible until something moves.
@@ -45,7 +47,7 @@ Once a source is loaded, the primary button reads **Generate**. To open a differ
 
 | Area | Role |
 |---|---|
-| Workflow row | **Open / Generate / Apply**, **Align**, then **Trajectory View**, **Synthetic Track**, **Discover**, **Plots**, then **Group** and **Frame** |
+| Workflow row | **Open / Generate / Apply**, **Align**, then **Trajectory View**, **Synthetic Track**, **Photometry**, **Discover**, **Plots**, then **Group** and **Frame** |
 | Image toolbar | **Display** menu, **Target Marker**, **Center Object**, **Track Object**, **Blink**, **Export**, **Hide Info / Show Info** |
 | Image view | The current frame with markers, labels, an optional RA/Dec grid, and an information panel on the right |
 | Predicted Objects table | Known predictions, plus `Candidate …` rows after Discover |
@@ -388,6 +390,61 @@ The **Synthetic Tracking - …** window reports:
 - Per-frame inclusion details
 
 **Overlays** toggles markers and labels for **Predicted center**, **Auto peak**, **Measured peak**, and **Known objects**. **Ctrl + click** the object to override a misidentified measured peak and recompute the metrics; **Reset to Auto** restores automatic peak finding. **Export Image...** saves the preview as PNG, JPEG, or BMP at full resolution, or as a linear raw FITS stack without display stretch.
+
+---
+
+## Photometry
+
+Select a predicted **Comet** or **Asteroid** in the results table and choose **Photometry**, beside Synthetic Track. CAst opens the appropriate workflow automatically: coma measurements and a growth curve for comets, or individual-exposure measurements and a light curve for asteroids. Choose one filter/exposure group first. Both workflows follow the application's current theme and use the same image viewer, with three steps: **Prepare**, **Measure**, and **Review**.
+
+### Asteroid workflow
+
+Confirm the images are calibrated and linear, then choose **Prepare Photometry**. The **Asteroid** tab shows a tracked preview. **Set Target Center** and **Target radius** define the aperture; a center adjustment applies an offset along the predicted path in every original exposure. Check that the circular aperture contains the full target trail. Advanced controls expose the sky annulus, reference-star aperture, reference selection, and tracking method.
+
+The **Light Curve** plots one measurement per exposure at its UTC midpoint. Images are measured independently in their native WCS and normalized by exposure time; the preview stack is not used to derive the light curve. For supported bands, each exposure requires its own valid APASS zero point with at least three selected usable stars. Frames without a valid calibration retain a quality flag and no calibrated magnitude.
+
+For L/clear or unsupported bands, CAst can use V-catalog stars as reference identifiers without assigning a V magnitude to the target. With at least three common usable references, ensemble differential photometry removes their shared brightness changes; the result has an arbitrary zero point. Otherwise results are explicitly instrumental and are not corrected for transparency changes. Missing or changed originals and other failed measurements remain listed with quality flags.
+
+**Measurements** and CSV export retain exposure times, midpoint timestamps, target flux, magnitude system, comparison counts, zero points, and quality flags. Saved `.castphotometry` sessions embed the preview stacks and computed exposure results; the original frames are needed to recalculate after aperture or reference changes. Open a session with the corresponding object type selected. Existing `.castcomet` sessions remain supported for comets.
+
+This initial asteroid workflow uses circular apertures and background/calibration error estimates. Automatic trail apertures, a full detector-noise model, period fitting, phase folding, and ALCDEF export are not yet included. Inspect trails, comparison stability, and field-star contamination before interpreting the light curve.
+
+### Comet workflow
+
+The [3I/ATLAS comet photometry tutorial](comet_photometry.md) walks through all 76 example exposures, the comparison-star sequence and the independently verified measurements.
+
+### Prepare
+
+1. Review the **Frames** tab and uncheck unusable exposures.
+2. Confirm **Images are calibrated and linear**. This first implementation expects calibrated monochrome frames with embedded celestial WCS, timestamps, and positive exposure times. It does not apply bias, dark, or flat calibration itself.
+3. Choose **Prepare Photometry**. CAst obtains positions at the exposure midpoints from JPL Horizons, creates matching star-aligned and comet-aligned stacks, and looks for APASS comparison stars.
+
+All tabs can be opened before preparation; each explains what will appear and provides **Go to Prepare**. There is no comet image to click yet. Aperture controls appear after preparation finishes, and CAst opens the **Comet** tab centered on the predicted position.
+
+Horizons uses the observing site from Settings, then consistent site coordinates from the FITS headers when available. The preparation panel identifies a geocentric fallback. Under **Advanced controls**, **Catalog motion · short sequences** extrapolates constant catalog rates. Inspect centering across the sequence when using this approximation.
+
+Horizons positions are requested in small sequential batches. Temporary connection failures and retryable HTTP errors receive up to three attempts per batch. If a request still fails, preparation stops before stacking and displays a concise error. Retry **Prepare Photometry** later; the offline catalog-motion option remains an explicit choice for short sequences.
+
+Both stacks are equal-weight means of native pixel rates. The FITS unit determines whether an exposure-time division is needed. With no declared unit, the result is in native input units per second. Saturation headers and the zero-padded footprint of CAst-aligned files contribute to the masks. The coma aperture requires coverage across all selected frames.
+
+### Measure
+
+- Choose **Set Coma Center**, then click once on the coma in the **Comet image on the right**. Double-clicking that image also sets the center. **Show Comet** brings the current aperture back into view. Drag to pan and scroll to zoom.
+- The **inner circle** is the coma aperture; the **two outer circles** mark the sky annulus used to estimate the background. In separate-patch mode, a separate circle marks the sky patch instead.
+- Set the **Coma radius** in pixels or arcseconds. **Reset to Predicted Center** restores the initial position.
+- The default sky annulus scales with the aperture. Advanced controls expose its inner and outer radii, always in pixels.
+- For a separate background, select **Separate sky patch**, click **Pick Sky Patch on Image**, and click a clear region away from the coma and tail. Adjust the patch radius as needed. The patch must not overlap any measured coma aperture.
+- In **Comparison Stars**, inspect the star-aligned image, include/exclude stars, and review calibration residuals. Selecting a table row highlights that star. Expert controls include the star aperture and a solar-like color selection.
+
+Calibration requires at least three usable selected stars. CAst uses APASS for Johnson B/V and Sloan g′/r′/i′, and ATLAS Refcat2 for explicitly identified Pan-STARRS passbands. Clear/L defaults to **Instrumental**. An optional APASS V comparison sequence gives an explicitly labeled V-referenced clear/L measurement. A solar-color selection restricts the reference stars used in the fit.
+
+### Review and save
+
+**Growth Curve** shows magnitude versus aperture radius using one shared background region. When calibration is available, it also shows comparison-star residuals. **Measurements** lists the individual aperture results and quality flags. These are fixed-aperture coma measurements, not automatic total magnitudes or bare-nucleus magnitudes.
+
+**Export Measurements…** writes CSV with flux, aperture and sky geometry, magnitude system, calibration scatter, observation interval, tracking method, coverage and uncertainty notes. **Save Session…** writes a `.castphotometry` archive containing both linear stacks, coverage maps, reference WCS, comparison stars, settings and source-file metadata. **Open Session…** also accepts earlier `.castcomet` files. **Prepare Original Selection** rebuilds the launch selection from the source images.
+
+The estimated uncertainty includes background noise and calibration uncertainty. Detector shot noise, resampling covariance, contamination-filter bias and color-transformation systematics are outside that estimate. The tutorial covers the radial star filter, rectangular sky selection, tail ruler, differential extinction, observed-phase Afρ and ICQ report controls.
 
 ---
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
 import math
@@ -250,6 +251,8 @@ class LightCurvePlotPayload:
     status_note: str | None = None
 
     show_legend: bool = False
+
+    axis_warning: str | None = None
 
 
 
@@ -1320,7 +1323,7 @@ def plot_light_curve_payload(
 
     axis.set_axisbelow(True)
 
-    axis.set_title(payload.title)
+    axis.set_title(f"{payload.title}\n{payload.axis_warning}" if payload.axis_warning else payload.title)
 
     axis.set_ylabel(payload.y_axis_label)
 
@@ -1622,6 +1625,25 @@ def _resolved_light_curve_export_colors(
 
 
 
+def available_standard_plot_axis(points: Iterable[LightCurvePoint]) -> str | None:
+    """Prefer a measured standard magnitude, then differential magnitude, then counts."""
+    fallback = None
+    for point in points:
+        if _light_curve_point_value(point, "standard_magnitude") is not None:
+            return "standard_magnitude"
+        if _light_curve_point_value(point, "differential_magnitude") is not None:
+            fallback = "differential_magnitude"
+        elif fallback is None and _light_curve_point_value(point, "flux") is not None:
+            fallback = "flux"
+    return fallback
+
+
+def _standard_plot_warning(axis: str) -> str | None:
+    if axis == "standard_magnitude":
+        return None
+    return f"No Standard Magnitude values are available for this selection. Showing {light_curve_axis_label(axis)}."
+
+
 def build_light_curve_plot_payload(
 
     series: LightCurveSeries,
@@ -1646,6 +1668,11 @@ def build_light_curve_plot_payload(
 
 ) -> LightCurvePlotPayload:
 
+    axis_warning = None
+    if y_axis_mode == "standard_magnitude":
+        y_axis_mode = available_standard_plot_axis(series.points) or y_axis_mode
+        axis_warning = _standard_plot_warning(y_axis_mode)
+
     if reference_layers:
         # Keep the target's fit and time/phase origin unchanged when adding references.
         payload = build_light_curve_plot_payload(
@@ -1653,6 +1680,8 @@ def build_light_curve_plot_payload(
             x_axis_mode=x_axis_mode, phase_period_hours=phase_period_hours,
             phase_anchor_mode=phase_anchor_mode, phase_anchor_jd=phase_anchor_jd,
         )
+        if axis_warning:
+            payload = replace(payload, axis_warning=axis_warning)
         if not payload.points:
             return payload
         target = SimpleNamespace(role="target", legend_label=payload.title, series=series)
@@ -1767,6 +1796,8 @@ def build_light_curve_plot_payload(
 
             points=tuple(timed_points),
 
+            axis_warning=axis_warning,
+
             fit_x_values=fit_x_values,
 
             fit_y_values=fit_y_values,
@@ -1834,6 +1865,8 @@ def build_light_curve_plot_payload(
         invert_y=invert_y,
 
         points=tuple(value_points),
+
+        axis_warning=axis_warning,
 
         fit_x_values=fit_x_values,
 
@@ -1910,6 +1943,17 @@ def build_overview_light_curve_plot_payload(
     """Build a multi-series Overview payload with absolute magnitudes (no fit)."""
 
     resolved_x_axis_mode = "jd" if x_axis_mode == "phase" else x_axis_mode
+
+    axis_warning = None
+    if y_axis_mode == "standard_magnitude":
+        target_layers = [layer for layer in layers if getattr(layer, "role", None) == "target"]
+        timed_points_for_axis = (
+            point for layer in target_layers or layers
+            for point in getattr(getattr(layer, "series", None), "points", ())
+            if point.observation_time is not None
+        )
+        y_axis_mode = available_standard_plot_axis(timed_points_for_axis) or y_axis_mode
+        axis_warning = _standard_plot_warning(y_axis_mode)
 
     y_axis_label = light_curve_axis_label(y_axis_mode)
 
@@ -2082,6 +2126,8 @@ def build_overview_light_curve_plot_payload(
         invert_y=invert_y,
 
         points=tuple(all_points),
+
+        axis_warning=axis_warning,
 
         layers=tuple(render_layers),
 
@@ -3262,7 +3308,8 @@ def _light_curve_point_value(point: object, y_axis_mode: str) -> float | None:
 
     if y_axis_mode == "standard_magnitude":
 
-        return getattr(point, "standard_magnitude", None)
+        value = getattr(point, "standard_magnitude", None)
+        return value if value is not None and math.isfinite(value) else None
 
     if y_axis_mode == "instrumental_magnitude":
 
@@ -3270,7 +3317,8 @@ def _light_curve_point_value(point: object, y_axis_mode: str) -> float | None:
 
     if y_axis_mode == "flux":
 
-        return point.flux
+        value = point.flux
+        return value if value is not None and math.isfinite(value) else None
 
     if y_axis_mode == "relative_flux":
 
@@ -3280,7 +3328,8 @@ def _light_curve_point_value(point: object, y_axis_mode: str) -> float | None:
 
         return point.flux / point.comparison_reference_flux
 
-    return point.differential_magnitude
+    value = point.differential_magnitude
+    return value if value is not None and math.isfinite(value) else None
 
 
 

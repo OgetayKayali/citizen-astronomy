@@ -1,0 +1,523 @@
+{
+  "title": "Binary Light Lab",
+  "intro": "Why do two stars that shine steadily appear to fade together? Watch one pass in front of the other and record their combined light. Then change your viewing angle or the temperature of one star and see which features of the eclipse survive.",
+  "dataset": "CAst with the Binary Light Lab engine and OpenGL 3.3 graphics. The bundled Algol-like system supplies both stars. You can start without telescope images.",
+  "outcome": "A simulated eclipse light curve, a CSV of the measurements, and a saved star system you can reopen for another experiment.",
+  "groups": [
+    {
+      "title": "Record your first eclipse",
+      "steps": [
+        {
+          "id": "launch",
+          "title": "Open Binary Light Lab",
+          "requires": "Start Citizen Astronomy (CAst).",
+          "actions": [
+            "Scroll to **Simulations** on the mode launcher. Click **Binary Light Lab** (1). If another workspace is open, choose **Mode → Binary Light Lab** from its top menu."
+          ],
+          "check": "The left panel shows a preset menu and **Play**. The star view and the **LIVE LIGHT CURVE** graph appear to the right. At the opening phase one star can cover part of the other.",
+          "image": "launch.webp",
+          "alt": "The five simulation cards on the launcher, with Binary Light Lab outlined and numbered.",
+          "links": [
+            {
+              "id": "preset",
+              "label": "Choose the eclipse example"
+            },
+            {
+              "id": "library",
+              "label": "Explore another kind of star"
+            },
+            {
+              "id": "load",
+              "label": "Open a saved system"
+            }
+          ]
+        },
+        {
+          "id": "preset",
+          "title": "Choose the Algol-like binary",
+          "requires": "[Open Binary Light Lab](#launch). If a previous model is playing, click **Pause** first.",
+          "actions": [
+            "Open the preset menu below **Binary Light Lab** (1) and select **Algol-like / unequal temperatures**. If that name is already showing, leave it selected.",
+            "For a fresh run of the current example, click **Restart** below the menu. Export any recording you want to keep before restarting."
+          ],
+          "check": "The description identifies a hot primary star and a cooler companion. At phase zero the companion partly blocks the hotter star in this example.",
+          "image": "preset.webp",
+          "alt": "Preset menu highlighted above the description of the Algol-like binary and the Play and Restart buttons.",
+          "links": [
+            {
+              "id": "record",
+              "label": "Start recording"
+            },
+            {
+              "id": "inclination",
+              "label": "Change the viewing angle"
+            },
+            {
+              "id": "temperature",
+              "label": "Compare the star temperatures"
+            },
+            {
+              "id": "glow",
+              "label": "Adjust the glow around the stars"
+            }
+          ]
+        },
+        {
+          "id": "record",
+          "title": "Play, record, and pause",
+          "requires": "Open a periodic system in the lab. The screenshots use the [Algol-like example](#preset). If you just loaded your own binary, you can record it the same way.",
+          "actions": [
+            "Click **Play** (1). The stars start moving, and the counter beside the graph (2) begins counting samples. Each sample measures the two stars’ combined light.",
+            "Watch the gold line above **Phase / one cycle** travel across the graph. Let it reach the right edge and wrap to the left to record a full orbit.",
+            "Click **Pause** in the same spot (1). To keep adding samples from this phase, click **Play** again."
+          ],
+          "check": "The cyan trace dips when one star crosses in front of the other. Pausing holds the stars, the gold cursor and the samples in place.",
+          "image": "play-ready.webp",
+          "alt": "The Play button and the zero-sample counter marked before playback begins.",
+          "links": [
+            {
+              "id": "prediction",
+              "label": "Compare your trace with the prediction"
+            },
+            {
+              "id": "phase",
+              "label": "Jump to a phase"
+            },
+            {
+              "id": "observations",
+              "label": "Save recorded samples"
+            }
+          ],
+          "imageLabel": "Before playback",
+          "comparison": {
+            "image": "play.webp",
+            "label": "During playback",
+            "alt": "The same panel during recording, with Pause and the rising sample count outlined."
+          }
+        },
+        {
+          "id": "prediction",
+          "title": "Read the two eclipse depths",
+          "requires": "Use the [Algol-like example](#preset). You can reveal the prediction even before recording any samples.",
+          "actions": [
+            "Select **Show prediction** (1) above the graph. Choose **Relative flux** in the menu beside it if another scale is showing.",
+            "Read the gray curve from left to right (2). Phase 0 and phase 1 are the same point in consecutive orbits, so the deep dip at the two ends is one eclipse. Find the shallower dip near phase 0.5."
+          ],
+          "check": "Relative flux near 1 means you see the combined, uneclipsed light. In this example, blocking part of the hotter star removes more light than hiding the cooler star. Cyan marks show the phases you have recorded.",
+          "image": "prediction.webp",
+          "alt": "Show prediction and the graph marked, showing a partially recorded cyan trace over the complete gray prediction.",
+          "links": [
+            {
+              "id": "temperature",
+              "label": "Make the stars equally hot"
+            },
+            {
+              "id": "inclination",
+              "label": "Make the eclipses disappear"
+            },
+            {
+              "id": "magnitude",
+              "label": "Read differential magnitude"
+            }
+          ]
+        },
+        {
+          "id": "phase",
+          "title": "Jump to a particular phase",
+          "requires": "Use the [Algol-like example](#preset). [Export your samples](#observations) first if you want to keep them. Seeking starts a new recording.",
+          "actions": [
+            "Double-click the number beside **Seek phase** (1), type **0.250**, and press **Enter**. Phase is the fraction of one orbit, so this jumps a quarter of the way around.",
+            "To return to the starting phase, click **Restart** (2). Use **Play** when you are ready to record at the new position."
+          ],
+          "check": "Seeking pauses playback, moves the cursor and clears the sample count. At phase 0.250 the two stellar disks are separated in this example.",
+          "image": "phase.webp",
+          "alt": "The Seek phase field at 0.250 and the Restart button outlined in the transport controls.",
+          "links": [
+            {
+              "id": "record",
+              "label": "Record from here"
+            },
+            {
+              "id": "prediction",
+              "label": "Read the predicted curve"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Change the stars or the view",
+      "steps": [
+        {
+          "id": "inclination",
+          "title": "Turn an eclipse on and off",
+          "requires": "Choose the [Algol-like example](#preset), pause playback, and turn on [Show prediction](#prediction). Model changes clear existing samples.",
+          "actions": [
+            "Click **Model** (1). Double-click **Inclination / deg** (2), type **90**, and press **Enter**. Look for the dips in the predicted curve (3). At this angle the orbit is edge-on.",
+            "Replace **90** with **0** and press **Enter**. The orbit is now face-on. Switch between the two screenshots to compare the graph at the same phase."
+          ],
+          "check": "At 90° the stars can pass across each other along your line of sight. At 0° their disks stay separated, and the predicted flux stays at 1 across the orbit.",
+          "image": "edge-on.webp",
+          "alt": "Model tab, inclination at 90 degrees, and the eclipse dips in the predicted curve marked.",
+          "links": [
+            {
+              "id": "temperature",
+              "label": "Change which star supplies the light"
+            },
+            {
+              "id": "preset",
+              "label": "Restore the example"
+            },
+            {
+              "id": "model",
+              "label": "Export the ideal curve"
+            }
+          ],
+          "imageLabel": "Edge-on · 90°",
+          "comparison": {
+            "image": "face-on.webp",
+            "label": "Face-on · 0°",
+            "alt": "The same Model tab at zero degrees. The marked graph shows a flat prediction."
+          }
+        },
+        {
+          "id": "temperature",
+          "title": "Make the eclipse depths more alike",
+          "requires": "Choose the [Algol-like example](#preset) and turn on [Show prediction](#prediction). Recordings start over when you edit a star.",
+          "actions": [
+            "Click **Stars** (1). Under **PRIMARY / A**, double-click **Temperature / K** (2). Replace **10000** with **4800** and press **Enter**. The primary now has the same temperature as the secondary.",
+            "Compare the dips in the predicted curve (3) with the [original unequal-temperature example](#prediction). Read the depth of each dip relative to the level outside eclipse."
+          ],
+          "check": "The stars now have more similar surface brightnesses. Covering a portion of either star removes a more similar amount of light, so the two eclipses are closer in depth.",
+          "image": "temperature.webp",
+          "alt": "Stars tab, primary temperature set to 4800 K, and the graph of more similar eclipse depths marked.",
+          "links": [
+            {
+              "id": "inclination",
+              "label": "Try a different viewing angle"
+            },
+            {
+              "id": "band",
+              "label": "Change the observed wavelength"
+            },
+            {
+              "id": "save",
+              "label": "Save this star system"
+            }
+          ]
+        },
+        {
+          "id": "glow",
+          "title": "Adjust the visible stellar glow",
+          "requires": "[Open the lab](#launch) and pause at a phase where the two stars are separated. For the Algol-like model, try [phase 0.250](#phase).",
+          "actions": [
+            "Click **Look** (1). Double-click **Stellar glow** (2), enter **0**, and press **Enter**. Look at the light outside the edge of each disk.",
+            "Enter **1** in the same field to restore the default glow."
+          ],
+          "check": "Zero removes the soft halo from the rendered stars. The graph and sample count stay at their paused values while you change the display.",
+          "image": "glow.webp",
+          "alt": "Look tab and Stellar glow at zero marked next to the two separated stellar disks and the light curve.",
+          "links": [
+            {
+              "id": "phase",
+              "label": "Choose another orbital phase"
+            },
+            {
+              "id": "record",
+              "label": "Resume recording"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Observe the light",
+      "steps": [
+        {
+          "id": "band",
+          "title": "Compare red and blue light",
+          "requires": "Select the [Algol-like example](#preset), pause, and turn on [Show prediction](#prediction). Export any samples you want to keep before changing the band.",
+          "actions": [
+            "Click **Observe** (1). Open the band menu (2), choose **Blue / 390–490 nm**, and look at both eclipse depths.",
+            "Use the same menu to choose **Red / 600–750 nm**. Compare each dip with the uneclipsed part of its own curve."
+          ],
+          "check": "The cooler companion contributes a larger share of the light in the red band. In this example its eclipse makes a more pronounced secondary dip in red. Changing bands starts a new set of samples.",
+          "image": "band.webp",
+          "alt": "The Observe tab and wavelength menu selected to Blue / 390–490 nm are outlined.",
+          "links": [
+            {
+              "id": "noise",
+              "label": "Add scatter to the measurements"
+            },
+            {
+              "id": "magnitude",
+              "label": "Switch to a magnitude scale"
+            },
+            {
+              "id": "model",
+              "label": "Export a model in this band"
+            }
+          ]
+        },
+        {
+          "id": "noise",
+          "title": "Add scatter to a recording",
+          "requires": "Select the [Algol-like example](#preset). In **Observe**, choose the [blue band](#band) and turn on [Show prediction](#prediction).",
+          "actions": [
+            "Find **Noise / ppm** in **Observe**. Double-click its number (1), type **5000**, and press **Enter**. This adds simulated measurement noise of 5,000 parts per million, or 0.5% of the reference flux.",
+            "Click **Play**, let samples build up, then click **Pause**. Inspect the cyan points around the smooth prediction (2)."
+          ],
+          "check": "Individual recorded measurements scatter above and below the ideal curve. The gray prediction keeps its original shape. Setting noise back to zero starts a fresh recording.",
+          "image": "noise.webp",
+          "alt": "The Noise field at 5000 ppm and the plot outlined, with scattered cyan samples and the smooth predicted curve.",
+          "links": [
+            {
+              "id": "observations",
+              "label": "Export these samples"
+            },
+            {
+              "id": "magnitude",
+              "label": "Read them as magnitudes"
+            }
+          ]
+        },
+        {
+          "id": "magnitude",
+          "title": "Read the curve in magnitudes",
+          "requires": "Start with a [prediction](#prediction) or [recorded samples](#record).",
+          "actions": [
+            "Open the units menu above the graph (1) and choose **Differential mag**. Read the numerical scale at the left (2).",
+            "Compare an eclipse with the level outside it. With the default **Comparison flux** of 1, the uneclipsed Algol-like pair is near zero differential magnitude."
+          ],
+          "check": "As the binary fades, its magnitude difference increases. Larger numbers appear lower on this graph, so eclipses still dip downward. Switch the menu to **Relative flux** to return.",
+          "image": "magnitude.webp",
+          "alt": "Differential mag selected above the marked plot, with the magnitude axis increasing downward.",
+          "links": [
+            {
+              "id": "prediction",
+              "label": "Read relative flux"
+            },
+            {
+              "id": "observations",
+              "label": "Save the measurements"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Explore the stellar library",
+      "steps": [
+        {
+          "id": "library",
+          "title": "Load a different type of star system",
+          "requires": "[Open Binary Light Lab](#launch). Save a custom system or recording you want to keep before selecting another example.",
+          "actions": [
+            "Click **Library** (1). Each **Load** button names an example, with a short description underneath. Scroll inside the left panel to see more.",
+            "Click **Load  EB · Beta Lyrae** (2) to try an eclipsing pair whose surfaces are stretched by gravity."
+          ],
+          "check": "The preset menu switches to **EB · Beta Lyrae**. The workspace loads the new stars and starts a fresh set of observations.",
+          "image": "library.webp",
+          "alt": "Library tab and the Load EB · Beta Lyrae button marked in the variable-star atlas.",
+          "links": [
+            {
+              "id": "roche",
+              "label": "Inspect the stretched stars"
+            },
+            {
+              "id": "record",
+              "label": "Try playback"
+            },
+            {
+              "id": "preset",
+              "label": "Return to the detached pair"
+            }
+          ]
+        },
+        {
+          "id": "roche",
+          "title": "Inspect the Beta Lyrae model",
+          "requires": "Load [EB · Beta Lyrae from Library](#library). Check **Show prediction** above the graph to display the full curve.",
+          "actions": [
+            "Check the preset name above the controls (1) and click **Model** (2). Scroll down the controls to find the **A polar radius / Roche pole** and **B polar radius / Roche pole** fields. They set how fully each star fills the region around it bounded by its Roche lobe.",
+            "Click **Play** and watch the shape each star presents as it turns. Compare the gently changing light outside eclipse with the flat portions of the [detached pair’s curve](#prediction)."
+          ],
+          "check": "The stars have distorted shapes. The combined brightness can change between eclipses as their projected areas change. This model assumes a circular orbit with synchronized stellar rotation.",
+          "image": "roche.webp",
+          "alt": "The selected EB · Beta Lyrae preset and Model tab marked next to the distorted stellar surfaces and the full predicted curve.",
+          "links": [
+            {
+              "id": "library",
+              "label": "Try another family"
+            },
+            {
+              "id": "save",
+              "label": "Keep the system"
+            },
+            {
+              "id": "model",
+              "label": "Export the ideal curve"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Export curves or keep a system",
+      "steps": [
+        {
+          "id": "model",
+          "title": "Export the ideal model curve",
+          "requires": "Choose any valid system. You can export the model before playback.",
+          "actions": [
+            "Click **Observe**. Scroll down inside the left panel to the file buttons. Click **Export model CSV…** (1).",
+            "Choose the folder where you want the file. Enter a new name ending in **.csv**, such as **algol-model.csv**, and click **Save**."
+          ],
+          "check": "The CSV contains model settings and 1,001 points. For the detached binary, the rows cover phase 0 to 1, with time in days, relative flux and magnitude change. Open the CSV in a spreadsheet to inspect the numbers.",
+          "image": "export.webp",
+          "alt": "The Export model CSV button outlined at the bottom of the Observe controls.",
+          "links": [
+            {
+              "id": "observations",
+              "label": "Export the recorded points as well"
+            },
+            {
+              "id": "save",
+              "label": "Keep an editable system"
+            }
+          ]
+        },
+        {
+          "id": "observations",
+          "title": "Export the recorded samples",
+          "requires": "[Record a few samples](#record) and pause. You can include [simulated noise](#noise).",
+          "actions": [
+            "Click **Observe** and scroll down inside the left panel. Look at the sample counter (2) above the graph. If it reads zero, click **Play** briefly and then **Pause**.",
+            "Click **Export observations…** (1)."
+          ],
+          "check": "The **Export model and observations** file dialog opens. You choose one name for the ideal model, and CAst derives a second filename for the measurements.",
+          "image": "observations.webp",
+          "alt": "Export observations marked 1 and the sample counter marked 2 beside the light-curve controls.",
+          "links": [
+            {
+              "id": "name-csv",
+              "label": "Choose the name and save both files"
+            },
+            {
+              "id": "model",
+              "label": "Save just the ideal model"
+            }
+          ]
+        },
+        {
+          "id": "name-csv",
+          "title": "Name the two CSV files",
+          "requires": "Open [Export observations…](#observations).",
+          "actions": [
+            "Choose a folder in the dialog, click **File name** (1), and enter **my-eclipse.csv**. Pick an unused base name to keep an earlier pair of exports.",
+            "Click **Save** (2). Open the chosen folder to find the two files."
+          ],
+          "check": "**my-eclipse.csv** contains the ideal curve. **my-eclipse-observed.csv** contains your recorded points. For an eclipsing binary, compare **ideal_flux** with **measured_flux** on a row, and use **phase** to locate that point in the orbit.",
+          "image": "choose-csv.webp",
+          "alt": "The export dialog with my-eclipse.csv in the numbered File name field and Save highlighted.",
+          "links": [
+            {
+              "id": "noise",
+              "label": "Change the simulated noise"
+            },
+            {
+              "id": "save",
+              "label": "Keep an editable copy of the system"
+            }
+          ]
+        },
+        {
+          "id": "save",
+          "title": "Save an editable star system",
+          "requires": "Choose or edit the system you want to revisit. [Export its recorded points](#observations) separately if you want to keep those measurements.",
+          "actions": [
+            "Click **Observe** and scroll down the controls on the left. Click **Save system…** (1)."
+          ],
+          "check": "The **Save system** dialog opens for a CAst stellar model file. This file keeps the system and observing parameters for another session.",
+          "image": "save-system.webp",
+          "alt": "The Save system button marked in the Observe tab’s file controls.",
+          "links": [
+            {
+              "id": "name-system",
+              "label": "Name the system file"
+            },
+            {
+              "id": "load",
+              "label": "Reopen an earlier system"
+            }
+          ]
+        },
+        {
+          "id": "name-system",
+          "title": "Name the system file",
+          "requires": "Open [Save system…](#save).",
+          "actions": [
+            "Choose a folder. Click **File name** (1) and type **my-binary.starlab**.",
+            "Click **Save** (2)."
+          ],
+          "check": "The selected folder contains **my-binary.starlab**. You can reopen it and continue changing the stars or observing settings.",
+          "image": "choose-system.webp",
+          "alt": "The file name my-binary.starlab and the Save button highlighted in the dialog.",
+          "links": [
+            {
+              "id": "load",
+              "label": "Reopen the system"
+            },
+            {
+              "id": "observations",
+              "label": "Save a recording too"
+            }
+          ]
+        },
+        {
+          "id": "load",
+          "title": "Open a saved star system",
+          "requires": "Have a **.starlab** file available. Loading replaces the current system and starts a fresh recording.",
+          "actions": [
+            "In the lab, click **Observe**. Scroll down in the left panel and click **Load system…** (1)."
+          ],
+          "check": "The **Load system** dialog lets you browse for a CAst Stellar Lab file.",
+          "image": "load-system.webp",
+          "alt": "The Load system button outlined in the Observe tab’s file controls.",
+          "links": [
+            {
+              "id": "open-file",
+              "label": "Choose your system file"
+            },
+            {
+              "id": "save",
+              "label": "Save the current system instead"
+            }
+          ]
+        },
+        {
+          "id": "open-file",
+          "title": "Choose the saved system",
+          "requires": "Open [Load system…](#load) and browse to the folder that contains the saved file.",
+          "actions": [
+            "Click the file, or enter its name in **File name** (1). The example uses **my-binary.starlab**.",
+            "Click **Open** (2)."
+          ],
+          "check": "The description in the lab begins with **Loaded**. The controls now show the saved settings. Click **Play** to make a new recording from them.",
+          "image": "open-system.webp",
+          "alt": "The saved model name in File name and the Open button marked in the Load system dialog.",
+          "links": [
+            {
+              "id": "record",
+              "label": "Record the reopened system"
+            },
+            {
+              "id": "model",
+              "label": "Export its ideal curve"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

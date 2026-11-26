@@ -1,0 +1,619 @@
+{
+  "title": "Distance Map",
+  "intro": "Two stars can look like neighbors in M46 and still lie far apart. Open the cluster image, give the map enough depth to include its distant stars, then look for a group that moves together.",
+  "dataset": "M46.xisf from the M 46 (Open Cluster) folder. You can also use a plate-solved image of your own. Allow internet access for the first Gaia lookup and use an OpenGL-capable graphics driver for the 3D view.",
+  "outcome": "Read a stellar distance, identify candidate cluster members, move the original photograph through the 3D map, or save a view.",
+  "heroAlt": "The M46 photograph tilted as a plane through the Gaia star field in the 3D Distance Map.",
+  "groups": [
+    {
+      "title": "Open M46 and build the map",
+      "steps": [
+        {
+          "id": "launch",
+          "title": "Enter Distance Map",
+          "requires": "Start Citizen Astronomy (CAst). Have your M46.xisf file available.",
+          "actions": [
+            "In the launcher, scroll to **Explore, Visualize & Process**. Click **Distance Map** (1). If a different mode is open, you can choose **Mode → Distance Map** from the top menu."
+          ],
+          "check": "The workspace opens with **Open** at the left end of its toolbar. The empty panels are labeled **Field Image**, **3D Distance Map**, **Catalog Stars**, and **Work Log**.",
+          "image": "launch.webp",
+          "alt": "The Distance Map card is outlined in the launcher row containing Sky Atlas, Sky Explorer, HR Diagram and Deep Stack.",
+          "links": [
+            {
+              "id": "open",
+              "label": "Open the image picker"
+            },
+            {
+              "id": "build",
+              "label": "I already opened my image"
+            }
+          ]
+        },
+        {
+          "id": "open",
+          "title": "Open the image picker",
+          "requires": "The [Distance Map workspace](#launch) is visible.",
+          "actions": [
+            "Click **Open** (1) at the left end of the mode toolbar. You can also use **File → Open File**."
+          ],
+          "check": "A file picker titled **Select source image for Distance Map** opens. You will choose a single image.",
+          "image": "open.webp",
+          "alt": "The Open button is outlined above the empty Field Image panel.",
+          "links": [
+            {
+              "id": "choose",
+              "label": "Choose M46.xisf"
+            }
+          ]
+        },
+        {
+          "id": "choose",
+          "title": "Choose the M46 image",
+          "requires": "The [image picker](#open) is open.",
+          "actions": [
+            "Open the extracted **M46** folder and select **M46.xisf**, or type its path in **File name** (1).",
+            "Click **Open** (2). Leave the app running while it reads the image coordinates and looks for Gaia stars in that part of the sky."
+          ],
+          "check": "The M46 photograph appears in **Field Image**. The toolbar may briefly show **Building...**. A previously cached catalog can make this step finish quickly.",
+          "image": "choose.webp",
+          "alt": "The image picker shows M46.xisf in its File name field. File name and Open are numbered.",
+          "links": [
+            {
+              "id": "build",
+              "label": "Check the build"
+            },
+            {
+              "id": "limits",
+              "label": "Set the depth for M46"
+            }
+          ]
+        },
+        {
+          "id": "build",
+          "title": "Check that Gaia stars were drawn",
+          "requires": "You have [chosen M46.xisf](#choose).",
+          "actions": [
+            "Find **Work Log** under the catalog table on the right (1). Scroll inside it to the lines beginning **Distance Map built from M46.xisf** and **Stars drawn in the 3D map**.",
+            "Look at the **Distance Limit** value in the toolbar. The 500 pc starting limit shows nearby foreground stars. Increase this limit to explore the cluster in depth."
+          ],
+          "check": "This example drew 107 stars at 500 pc using the saved Gaia DR3 field catalog for this exact image. A parsec (pc) is about 3.26 light-years. Your count can vary with saved settings, catalog coverage and query limits.",
+          "image": "build.webp",
+          "alt": "The marked Work Log reports how many Gaia sources were queried and how many stars were drawn for M46.",
+          "links": [
+            {
+              "id": "limits",
+              "label": "Include more distant stars"
+            },
+            {
+              "id": "camera",
+              "label": "Explore the current map"
+            },
+            {
+              "id": "query",
+              "label": "Understand the other catalog limits"
+            }
+          ]
+        },
+        {
+          "id": "limits",
+          "title": "Include the cluster in the depth range",
+          "requires": "A [build has finished](#build). Use the M46 image for this example.",
+          "actions": [
+            "In **Distance Limit** (1), select the number, enter **3000**, and press Enter. For this example leave **Mag Limit** at **17.0**, **Max Stars** at **500**, and **Min SNR** at **5.0**.",
+            "Click **Apply** (2). Wait until the controls become available again and the **Work Log** reports the new number drawn."
+          ],
+          "check": "The new range includes stars out to 3,000 pc. In the example, 1,351 catalog stars passed the footprint, distance and quality filters, and CAst drew the brightest 500 of them. Those 500 include foreground and background stars as well as cluster candidates.",
+          "image": "limits.webp",
+          "alt": "The toolbar shows a Distance Limit of 3000 pc and the Apply button outlined.",
+          "links": [
+            {
+              "id": "depth",
+              "label": "See distances derived from parallax"
+            },
+            {
+              "id": "find",
+              "label": "Search for stars moving together"
+            },
+            {
+              "id": "slice",
+              "label": "Place the photograph in the map"
+            }
+          ]
+        },
+        {
+          "id": "query",
+          "title": "Change which catalog stars enter the map",
+          "requires": "An [image is loaded](#build). These settings change the sample for every later task.",
+          "actions": [
+            "Change **Mag Limit** (1) if you want a different brightness cutoff. A smaller number keeps brighter stars. **Max Stars** (2) caps the number drawn after filtering.",
+            "Use **Min SNR** (3) to set the minimum ratio of measured parallax to its error. Increasing it asks for more precise parallaxes. Keep **17.0**, **500**, and **5.0** to match this tutorial.",
+            "Click **Apply** (4). Read the new counts in **Work Log** before running another cluster search."
+          ],
+          "check": "The star map and table update to the new selection. If too few stars remain, undo the last change and click **Apply** again.",
+          "image": "query.webp",
+          "alt": "Mag Limit, Max Stars, Min SNR and Apply are marked across the catalog controls.",
+          "links": [
+            {
+              "id": "limits",
+              "label": "Choose the depth range"
+            },
+            {
+              "id": "table",
+              "label": "Read the catalog measurements"
+            },
+            {
+              "id": "find",
+              "label": "Find a group in this sample"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Read and navigate the 3D field",
+      "steps": [
+        {
+          "id": "depth",
+          "title": "Switch between measured and modeled depth",
+          "requires": "A [map is drawn](#limits). The example starts with **Model Cluster Depth** checked.",
+          "actions": [
+            "If **Model Cluster Depth** (1) is checked, click it once to clear the check. Leave it clear when comparing distances derived directly from parallax.",
+            "To try the display model later, turn it back on. CAst redistributes likely members within a compact model around the group distance."
+          ],
+          "check": "With the box clear, the **Distance (pc)** column uses 1,000 divided by parallax in milliarcseconds. When the model is enabled, candidate positions and their displayed distances can change. Their Gaia parallaxes stay the same.",
+          "image": "depth.webp",
+          "alt": "The checked Model Cluster Depth box is highlighted. Clearing this box shows the parallax-derived distances.",
+          "links": [
+            {
+              "id": "table",
+              "label": "Read one catalog row"
+            },
+            {
+              "id": "camera",
+              "label": "Choose a camera angle"
+            },
+            {
+              "id": "find",
+              "label": "Search for a moving group"
+            }
+          ]
+        },
+        {
+          "id": "camera",
+          "title": "Choose a view and declutter it",
+          "requires": "[Build a map](#build). These controls are on its toolbar.",
+          "actions": [
+            "Open **View** (1) and choose **Side View**. Try **Top-Down** for a different direction or **Field Center** for a closer preset.",
+            "Clear **Labels** (2) if the star names cover the points. Leave labels off for the example screenshots.",
+            "After moving the camera, click **Reset View** (3) to return to the selected preset."
+          ],
+          "check": "Seen from the side, this narrow patch of sky looks like a long, thin group of points. Stars close together in the photograph can be widely separated along this line.",
+          "image": "camera.webp",
+          "alt": "The View list shows Side View. Labels and Reset View are also marked on the toolbar.",
+          "links": [
+            {
+              "id": "orbit",
+              "label": "Rotate or zoom with the mouse"
+            },
+            {
+              "id": "ruler",
+              "label": "Add a depth scale"
+            },
+            {
+              "id": "table",
+              "label": "Read a numerical distance"
+            }
+          ]
+        },
+        {
+          "id": "orbit",
+          "title": "Rotate and zoom the point cloud",
+          "requires": "A [3D view](#camera) is on screen. Use the middle panel titled **3D Distance Map**.",
+          "actions": [
+            "Place the mouse over the marked patch in the 3D panel (1). Hold the left mouse button and drag sideways to orbit, then release.",
+            "Roll the wheel up to zoom in or down to zoom out. To shift the view without rotating it, hold the middle mouse button and drag."
+          ],
+          "check": "The point cloud changes orientation or size while the photograph and table keep their positions. If the cloud leaves the screen, **Reset View** restores your selected camera preset.",
+          "image": "orbit.webp",
+          "alt": "An outlined drag region lies over the thin M46 line of sight in the 3D map.",
+          "links": [
+            {
+              "id": "ruler",
+              "label": "Add a scale in parsecs"
+            },
+            {
+              "id": "slice",
+              "label": "Insert the actual image"
+            },
+            {
+              "id": "save",
+              "label": "Save this camera view"
+            }
+          ]
+        },
+        {
+          "id": "table",
+          "title": "Read the distance to one star",
+          "requires": "A [map is drawn](#build). For a distance derived directly from parallax, [clear Model Cluster Depth](#depth).",
+          "actions": [
+            "In **Catalog Stars** at the right, click a row to keep your place. Read the entries under **Parallax** and **Distance (pc)** in that same row (1).",
+            "Read **Name** to identify the catalog source and **G mag** for its Gaia brightness. Smaller magnitude numbers indicate brighter stars."
+          ],
+          "check": "The row stays selected while you read across it. A parallax of 1 milliarcsecond corresponds to 1,000 pc on this scale. Selecting a row leaves the 3D camera in place.",
+          "image": "table.webp",
+          "alt": "The first catalog row is selected, with its parallax and distance cells outlined together.",
+          "links": [
+            {
+              "id": "uncertainty",
+              "label": "Show how uncertain a distance is"
+            },
+            {
+              "id": "find",
+              "label": "Identify candidate group members"
+            },
+            {
+              "id": "query",
+              "label": "Adjust the catalog quality cut"
+            }
+          ]
+        },
+        {
+          "id": "ruler",
+          "title": "Add a scale along the line of sight",
+          "requires": "The [3D field](#camera) is visible. Use **Side View** to see depth spread across the screen.",
+          "actions": [
+            "Click **Distance Ruler** (1) to check it. Follow the scale along the direction from the observer through the star field.",
+            "Zoom toward the points with the mouse wheel if the tick marks are crowded. Click the box again to remove the scale."
+          ],
+          "check": "The 3D panel gains tick marks and distances in parsecs along the viewing direction. The same stars remain in the table.",
+          "image": "ruler.webp",
+          "alt": "The checked Distance Ruler control is outlined above the 3D map.",
+          "links": [
+            {
+              "id": "uncertainty",
+              "label": "Add parallax uncertainty"
+            },
+            {
+              "id": "slice",
+              "label": "Compare the scale with the image plane"
+            },
+            {
+              "id": "save",
+              "label": "Save the scaled view"
+            }
+          ]
+        },
+        {
+          "id": "uncertainty",
+          "title": "Show uncertainty in stellar depth",
+          "requires": "A [map is drawn](#build). Choose **Side View** to see differences along the line of sight.",
+          "actions": [
+            "Check **Parallax Uncertainty** (1). Look along the points in the 3D map for the line segments marking their distance intervals.",
+            "If the stars crowd together, zoom in. Clear **Parallax Uncertainty** when you want to see only the points again."
+          ],
+          "check": "Longer segments indicate a wider range of plausible depth from parallax error. The **Work Log** reports how many intervals CAst drew. Increasing **Min SNR** gives a way to examine only more precisely measured stars.",
+          "image": "uncertainty.webp",
+          "alt": "The checked Parallax Uncertainty control sits above the side-on field and its depth intervals.",
+          "links": [
+            {
+              "id": "query",
+              "label": "Set the minimum parallax quality"
+            },
+            {
+              "id": "table",
+              "label": "Inspect a catalog row"
+            },
+            {
+              "id": "ruler",
+              "label": "Add the scale"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Find and inspect a moving group",
+      "steps": [
+        {
+          "id": "find",
+          "title": "Find stars that move together",
+          "requires": "[Build the M46 map out to 3,000 pc](#limits). For this example, [clear Model Cluster Depth](#depth) and use the default cluster search preset.",
+          "actions": [
+            "Click **Find Cluster** (1). CAst searches the drawn stars for a group with similar proper motions and, when available, similar parallaxes.",
+            "Read the **Highlighted … likely cluster member(s)** line in **Work Log**. If you want to change the search first, click **Advanced...** (2) and use the preset branch below."
+          ],
+          "check": "With the example settings and cached catalog, the default search highlighted 145 candidates. The button changes to **Find All**, and matching catalog rows turn gold. The shared motion makes these stars candidates for membership in the cluster.",
+          "image": "find.webp",
+          "alt": "The Find Cluster and Advanced buttons are highlighted next to Open.",
+          "links": [
+            {
+              "id": "group",
+              "label": "Show only those candidates"
+            },
+            {
+              "id": "advanced",
+              "label": "Choose a detection preset"
+            },
+            {
+              "id": "field",
+              "label": "Locate the candidates in the photograph"
+            },
+            {
+              "id": "sphere",
+              "label": "Check the globular-cluster overlay"
+            }
+          ]
+        },
+        {
+          "id": "group",
+          "title": "Isolate the candidate stars",
+          "requires": "Complete a [Find Cluster search](#find) so the button reads **Find All**.",
+          "actions": [
+            "Check **Only Group** (1). To inspect a candidate row or locate it in the photograph, leave this box checked and choose one of those tasks below.",
+            "To see the surrounding stars while keeping the candidates highlighted, clear **Only Group**. When you want to clear the highlights too, click **Find All** (2)."
+          ],
+          "check": "With **Only Group** checked, the example table contains the 145 highlighted stars. After **Find All**, the map returns to the full sample and the search button reads **Find Cluster** again.",
+          "image": "group.webp",
+          "alt": "Only Group and Find All are numbered in the toolbar after a successful search.",
+          "links": [
+            {
+              "id": "members",
+              "label": "Read a highlighted member row"
+            },
+            {
+              "id": "field",
+              "label": "Inspect the circles on the photograph"
+            },
+            {
+              "id": "advanced",
+              "label": "Change the search"
+            }
+          ]
+        },
+        {
+          "id": "members",
+          "title": "Read a highlighted member row",
+          "requires": "[Find a group](#find), then check [Only Group](#group).",
+          "actions": [
+            "Scroll through **Catalog Stars** and click a highlighted row (1). Read across for the candidate’s name, brightness, parallax and distance.",
+            "To see its parallax-derived distance, check that **Model Cluster Depth** is clear."
+          ],
+          "check": "Only candidate rows appear while the group filter is active. Their distances still span a range because parallax measurements have uncertainties.",
+          "image": "members.webp",
+          "alt": "The highlighted members table shows a numbered marker at one candidate’s name.",
+          "links": [
+            {
+              "id": "uncertainty",
+              "label": "Inspect the depth intervals"
+            },
+            {
+              "id": "field",
+              "label": "View the candidate markers"
+            },
+            {
+              "id": "depth",
+              "label": "Compare measured and modeled depth"
+            },
+            {
+              "guide": "hr-diagram",
+              "id": "motion",
+              "label": "Explore candidate motions in HR Diagram"
+            }
+          ]
+        },
+        {
+          "id": "field",
+          "title": "Locate candidates in the original M46 photograph",
+          "requires": "Complete [Find Cluster](#find). Keep the group selected.",
+          "actions": [
+            "Move the pointer over the left **Field Image** panel (1). Scroll up to magnify the photograph and left-drag to bring a region of interest into view.",
+            "Look for the colored circles around candidate stars. Use the central 3D panel when you want to rotate the depth map."
+          ],
+          "check": "The source photograph keeps its sky orientation as you pan and zoom. Circles identify the stars highlighted by the group search.",
+          "image": "field.webp",
+          "alt": "The central part of the actual M46 field image is outlined as the place to zoom or drag.",
+          "links": [
+            {
+              "id": "members",
+              "label": "Read the candidate table"
+            },
+            {
+              "id": "slice",
+              "label": "Place this photograph in 3D"
+            },
+            {
+              "id": "group",
+              "label": "Return to the full sample"
+            }
+          ]
+        },
+        {
+          "id": "advanced",
+          "title": "Choose a tighter or looser search",
+          "requires": "A [map is drawn](#limits). If **Find All** is showing, click it to clear the previous search. Then click **Advanced...** beside **Find Cluster**.",
+          "actions": [
+            "Open **Preset** (1). Choose **Tight** for a more concentrated group, **Loose** for a broader proper-motion search, or **Default** to reproduce the example.",
+            "Check **Turn on Only Group automatically after detection** (2) if you want the map to isolate candidates immediately. Click **OK** (3), then **Find Cluster** on the toolbar."
+          ],
+          "check": "The **Work Log** names the chosen preset. A different preset can select a different candidate set. If nothing is identified, try **Default** or **Loose** and make sure the distance range includes the cluster.",
+          "image": "advanced.webp",
+          "alt": "The cluster detection dialog shows the preset list, automatic Only Group checkbox, and OK button.",
+          "links": [
+            {
+              "id": "find",
+              "label": "Run the chosen search"
+            },
+            {
+              "id": "expert",
+              "label": "Adjust individual search settings"
+            },
+            {
+              "id": "limits",
+              "label": "Check the distance cutoff"
+            }
+          ]
+        },
+        {
+          "id": "expert",
+          "title": "Adjust individual cluster settings",
+          "requires": "Open [Advanced...](#advanced). Click **Show Expert Controls** if the extra fields are folded.",
+          "actions": [
+            "Use **Strictness** (1) to adjust how closely the stars must group in the search. A lower value tightens the selection.",
+            "Open **Parallax** (2) to choose **Auto**, **Require parallax**, or **Proper motion only**. Changing an expert setting switches **Preset** to **Custom**.",
+            "Click **OK** (3) to keep the settings and run **Find Cluster** again. To return to the original settings, reopen the dialog and choose **Default**."
+          ],
+          "check": "The dialog records a Custom preset for your changes. Each new search uses the same stars until you change a catalog limit and click **Apply**.",
+          "image": "expert.webp",
+          "alt": "The expert controls show Strictness and the Parallax selector, followed by OK.",
+          "links": [
+            {
+              "id": "find",
+              "label": "Run the custom search"
+            },
+            {
+              "id": "advanced",
+              "label": "Restore a built-in preset"
+            }
+          ]
+        },
+        {
+          "id": "sphere",
+          "title": "Check for a cataloged globular cluster",
+          "requires": "A [map is drawn](#build). This optional overlay is useful when exploring a globular-cluster field.",
+          "actions": [
+            "Click **Catalog Sphere** (1). Read **Work Log** to see whether CAst matched the image to a globular cluster in its bundled list.",
+            "Clear **Catalog Sphere** to turn the overlay off. For M46, use **Find Cluster** to search the actual stars for a moving group."
+          ],
+          "check": "M46 is an open cluster. For this image the log reports that no named globular cluster matched, so there is no sphere to draw. A matched globular field can show a wireframe sphere at the catalog distance.",
+          "image": "sphere.webp",
+          "alt": "The Catalog Sphere checkbox is marked on the Distance Map toolbar.",
+          "links": [
+            {
+              "id": "find",
+              "label": "Search the open-cluster field"
+            },
+            {
+              "id": "depth",
+              "label": "Inspect the depth model"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Move the photograph through the map",
+      "steps": [
+        {
+          "id": "slice",
+          "title": "Place the M46 photograph inside the 3D map",
+          "requires": "[Build the map](#limits). If the group filter is active, use [Find All](#group) to return to the full map.",
+          "actions": [
+            "Click **Tomography** (1). The **View** selector changes to **Tomography Face-On**.",
+            "Move the pointer over the middle of the 3D panel and scroll up until the image plane is easy to see. A wide depth range can make the plane look very small at first. Use the two screenshot buttons here to compare the starting and enlarged views."
+          ],
+          "check": "Your M46 image appears as a translucent plane perpendicular to the line of sight. It starts partway through the stars’ depth range. The **Work Log** gives its starting distance in parsecs.",
+          "image": "slice-start.webp",
+          "alt": "Tomography is marked in the toolbar. At the initial face-on zoom the M46 image plane looks like a small patch near the center.",
+          "links": [
+            {
+              "id": "slice-depth",
+              "label": "Slide the plane in depth"
+            },
+            {
+              "id": "save",
+              "label": "Save the current slice"
+            },
+            {
+              "id": "camera",
+              "label": "Choose a different viewpoint"
+            }
+          ],
+          "imageLabel": "Starting zoom",
+          "comparison": {
+            "label": "After zooming in",
+            "image": "slice.webp",
+            "alt": "Tomography stays selected as the enlarged M46 photograph fills the middle of the 3D panel."
+          }
+        },
+        {
+          "id": "slice-depth",
+          "title": "Move the image plane nearer or farther",
+          "requires": "[Turn on Tomography](#slice). Choose **Orbit Overview** from **View** so you can see the direction of depth.",
+          "actions": [
+            "Place the pointer over the marked region of the 3D panel (1). Hold **Ctrl** and the left mouse button, then drag up to move the slice farther away or down to bring it closer.",
+            "Release the mouse and Ctrl. To inspect the plane head-on again, choose **Tomography Face-On** from **View**. Click **Tomography** again to remove it."
+          ],
+          "check": "The photograph changes depth within the same star map. The slice is a movable reference plane. Its position does not assign a common distance to all the stars in the image.",
+          "image": "slice-depth.webp",
+          "alt": "A marked drag region in the orbit view shows where to move the image slice with Ctrl and the left mouse button.",
+          "links": [
+            {
+              "id": "save",
+              "label": "Save this view"
+            },
+            {
+              "id": "ruler",
+              "label": "Read the scale along the slice"
+            },
+            {
+              "id": "slice",
+              "label": "Return to the face-on image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Save a figure",
+      "steps": [
+        {
+          "id": "save",
+          "title": "Export the 3D view",
+          "requires": "A [map is drawn](#build). Arrange the camera, group highlights, ruler or slice as you want them to appear.",
+          "actions": [
+            "Click **Save** (1) on the Distance Map toolbar. This captures the current 3D panel."
+          ],
+          "check": "The **Save Distance Map Image** picker opens with a proposed filename based on the source image.",
+          "image": "save.webp",
+          "alt": "The Save button is highlighted between the camera controls and the query limits.",
+          "links": [
+            {
+              "id": "filename",
+              "label": "Name and save the figure"
+            },
+            {
+              "id": "camera",
+              "label": "Adjust the camera first"
+            }
+          ]
+        },
+        {
+          "id": "filename",
+          "title": "Choose the filename and format",
+          "requires": "The [Save Distance Map Image picker](#save) is open.",
+          "actions": [
+            "Choose a folder you can write to. In **File name** (1), enter **M46_3D_example.png** or another new name. Leave **PNG Files** selected for this example.",
+            "Click **Save** (2). Locate that file in your chosen folder and open it to inspect the result."
+          ],
+          "check": "The saved image contains the 3D scene from your selected camera. The **Work Log** reports the saved path. You can return to CAst, change the view and save a second figure with a different name.",
+          "image": "filename.webp",
+          "alt": "File name and Save are marked in the PNG save dialog.",
+          "links": [
+            {
+              "id": "slice",
+              "label": "Make a tomography view"
+            },
+            {
+              "id": "group",
+              "label": "Make a candidate-only view"
+            },
+            {
+              "id": "camera",
+              "label": "Choose another angle"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

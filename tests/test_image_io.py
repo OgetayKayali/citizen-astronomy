@@ -210,24 +210,11 @@ class ImageIoTest(unittest.TestCase):
         self.assertEqual(data.shape, (3, 4, 3))
         np.testing.assert_allclose(data[0, 0], np.asarray([0.0, 1.0, 2.0], dtype=np.float32))
 
-    def test_read_differential_photometry_raw_collapses_rgb_to_luminance(self) -> None:
-        path = Path("frame.cr2")
-        rgb = np.asarray(
-            [
-                [[30.0, 60.0, 90.0], [3.0, 6.0, 9.0]],
-                [[12.0, 24.0, 36.0], [100.0, 200.0, 300.0]],
-            ],
-            dtype=np.float32,
-        )
-
-        with patch("photometry_app.core.image_io.read_photometry_image_data", return_value=rgb):
-            data = read_differential_photometry_image_data(path, dtype=np.float32)
-
-        self.assertEqual(data.shape, (2, 2))
-        np.testing.assert_allclose(
-            data,
-            np.asarray([[60.0, 6.0], [24.0, 200.0]], dtype=np.float32),
-        )
+    def test_read_differential_photometry_raw_requires_native_preparation(self) -> None:
+        with patch("photometry_app.core.image_io.read_photometry_image_data") as decode:
+            with self.assertRaisesRegex(ValueError, "Prepare OSC"):
+                read_differential_photometry_image_data(Path("frame.cr2"), dtype=np.float32)
+        decode.assert_not_called()
 
     def test_read_header_and_shape_reads_standard_raster_image_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

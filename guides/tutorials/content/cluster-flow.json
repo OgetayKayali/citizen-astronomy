@@ -1,0 +1,559 @@
+{
+  "title": "Cluster Flow",
+  "intro": "Where does gas collect as it flows through a galaxy cluster? Start with the glowing filaments, freeze the flow, and turn the cube to inspect a dense knot. You can also jump straight to the expanding-universe model, record a run for replay, or save an image or movie.",
+  "dataset": "CAst for Windows with OpenGL 3.3 support. The simulation builds its own gas volume. You can start without any telescope images.",
+  "outcome": "Explore gas in three dimensions, change the conditions that drive its motion, and save a view or a recording you can revisit.",
+  "groups": [
+    {
+      "title": "Open the lab and look around",
+      "steps": [
+        {
+          "id": "launch",
+          "title": "Open Cluster Flow",
+          "requires": "Start Citizen Astronomy (CAst). If another workspace is open, choose **Mode → Choose Mode…** to reach the mode picker.",
+          "actions": [
+            "Scroll down to **Simulations**. Click the **Cluster Flow** card outlined in the screenshot."
+          ],
+          "check": "The workspace opens with **CLUSTER FLOW** above the controls. After the filament network is ready, a glowing gas distribution appears and the simulation time begins to advance.",
+          "image": "launch.webp",
+          "alt": "The Simulations row of the CAst launcher with the Cluster Flow card outlined and numbered.",
+          "links": [
+            {
+              "id": "pause",
+              "label": "Pause the gas"
+            },
+            {
+              "id": "orbit",
+              "label": "Explore with the mouse"
+            },
+            {
+              "id": "cosmology",
+              "label": "Try the cosmological model"
+            },
+            {
+              "id": "cache-open",
+              "label": "Open an existing recording"
+            }
+          ]
+        },
+        {
+          "id": "pause",
+          "title": "Freeze the gas to examine a knot",
+          "requires": "[Open Cluster Flow](#launch). If you are in cache replay, [return to live](#return).",
+          "actions": [
+            "At the top left, click **Pause**. Use one bright knot where several filaments meet as your landmark.",
+            "Read **Time** below the button. When you want gas to move again, click the same button, now labeled **Resume**."
+          ],
+          "check": "Pausing holds the simulated gas and its time at the current state. You can orbit or change the displayed field while it is paused. **Restart** rebuilds the initial gas distribution using the current Scene settings.",
+          "image": "pause.webp",
+          "alt": "Live cluster density view with the Pause button marked beside the running gas volume.",
+          "links": [
+            {
+              "id": "orbit",
+              "label": "Explore with the mouse"
+            },
+            {
+              "id": "field",
+              "label": "Compare the gas fields"
+            },
+            {
+              "id": "physics",
+              "label": "Adjust live physics"
+            }
+          ]
+        },
+        {
+          "id": "orbit",
+          "title": "Turn the volume and look inside",
+          "requires": "A live or recorded volume is visible. [Pause the gas](#pause) if you want to follow the same knot as the camera moves.",
+          "actions": [
+            "Place the pointer in the marked area of the picture. Hold the left mouse button, drag sideways, then release to orbit the cube.",
+            "Keep the pointer over the picture and roll the wheel to move closer or farther away. Hold the right mouse button and drag to shift a knot toward the center.",
+            "To get back to the opening view, expand **View** if needed, scroll the left panel, and click **Reset camera**."
+          ],
+          "check": "Foreground and background filaments shift relative to one another as you orbit. Zooming changes how close you are to the existing structures.",
+          "image": "orbit.webp",
+          "alt": "An outlined drag area on the live cluster image to the right of the camera controls.",
+          "links": [
+            {
+              "id": "rotate",
+              "label": "Set up a camera orbit"
+            },
+            {
+              "id": "slice",
+              "label": "Look through a slice"
+            },
+            {
+              "id": "image",
+              "label": "Save a PNG"
+            }
+          ]
+        },
+        {
+          "id": "rotate",
+          "title": "Rotate the camera automatically",
+          "requires": "Open **View → Camera motion** in the left panel. Camera controls also work on a [replayed recording](#scrub).",
+          "actions": [
+            "Drag **Horizontal speed (deg/s)** a little to the right of the center for a positive speed. The center is zero.",
+            "Tick **Rotate horizontally** and watch the view turn around its focus. A negative speed turns it the other way.",
+            "Click **Stop camera motion** when a filament is at the angle you want to keep."
+          ],
+          "check": "The camera can circle the cluster even while the gas is paused. Stopping the motion keeps the current angle.",
+          "image": "rotate.webp",
+          "alt": "Camera motion controls with Horizontal speed, Rotate horizontally, and Stop camera motion numbered in order.",
+          "links": [
+            {
+              "id": "image",
+              "label": "Save a PNG"
+            },
+            {
+              "id": "field",
+              "label": "Compare the gas fields"
+            },
+            {
+              "id": "movie",
+              "label": "Export a movie"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Choose what the picture shows",
+      "steps": [
+        {
+          "id": "field",
+          "title": "Switch from density to temperature",
+          "requires": "Open **View** in a live or replayed run. Click the **Camera motion** heading to collapse it if you need more room.",
+          "actions": [
+            "Click the arrow beside **Display field** and select **Temperature**. Compare the pattern with **Gas density**, which shows where gas collects.",
+            "If the field is too dim to inspect, move **Exposure** to the right a little. In the same menu, try **Gas speed** to see how fast gas moves or **Compression / shocks** to see where flows converge."
+          ],
+          "check": "The selected field name changes in the dropdown and the picture redraws immediately. The temperature image shown here highlights a different pattern within the same gas volume. Exposure changes the image brightness.",
+          "image": "field.webp",
+          "alt": "Display field set to Temperature and the Exposure slider marked beside the resulting gas image.",
+          "links": [
+            {
+              "id": "slice",
+              "label": "Look through a slice"
+            },
+            {
+              "id": "burst",
+              "label": "Trigger one outburst"
+            },
+            {
+              "id": "image",
+              "label": "Save a PNG"
+            }
+          ]
+        },
+        {
+          "id": "slice",
+          "title": "Cut a thin slab through the cube",
+          "requires": "Open **View** and scroll the left panel until you see **Slice thickness**. Select **Gas density** under [Display field](#field) to match the example.",
+          "actions": [
+            "Drag **Slice thickness** left from its full-width setting to about 0.40. The **Slice position** slider appears underneath.",
+            "Drag **Slice position** slowly in either direction to move the slab through the cube. To restore the whole volume, drag **Slice thickness** fully right."
+          ],
+          "check": "Some filaments disappear when they fall outside the slab. As you move the slab, different knots enter the picture.",
+          "image": "slice.webp",
+          "alt": "Gas density rendered as a slab with Slice thickness and Slice position highlighted.",
+          "links": [
+            {
+              "id": "orbit",
+              "label": "Explore with the mouse"
+            },
+            {
+              "id": "field",
+              "label": "Compare the gas fields"
+            },
+            {
+              "id": "image",
+              "label": "Save a PNG"
+            }
+          ]
+        },
+        {
+          "id": "image",
+          "title": "Save the view as a PNG",
+          "requires": "Frame the picture you want in a live or replayed run. Expand **View**, then scroll the controls below **Ray samples**.",
+          "actions": [
+            "Click **Save image...**. In the file dialog, choose a folder, enter a filename such as **cluster-density.png**, and click **Save**.",
+            "Open the PNG from the folder you chose to inspect the exported view."
+          ],
+          "check": "The PNG contains the rendered gas at the viewport’s dimensions. The chosen camera angle, display field, and slice are visible in the image.",
+          "image": "image.webp",
+          "alt": "Save image button marked at the bottom of the View controls beside the density image.",
+          "links": [
+            {
+              "id": "field",
+              "label": "Compare the gas fields"
+            },
+            {
+              "id": "cache-settings",
+              "label": "Set up a recording"
+            },
+            {
+              "id": "movie",
+              "label": "Export a movie"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Experiment with live physics",
+      "steps": [
+        {
+          "id": "physics",
+          "title": "Change the speed of evolution and cooling",
+          "requires": "Use the live **Cluster flow** model. Click **Resume** if the gas is paused. Collapse **View** and expand **Physics**.",
+          "actions": [
+            "Drag **Evolution pace** left to ask the solver to advance less simulated time per second. Watch the **Time** readout above the panel.",
+            "For a cooling experiment, note the current **Cooling rate**, then drag its slider a little to the right. Use the [Temperature field](#field) to watch how the gas changes as time advances."
+          ],
+          "check": "The slider readouts change immediately. Cooling affects the evolving cluster gas, so give the simulation time to show the difference. Drag a slider back to its earlier value to restore that setting.",
+          "image": "physics.webp",
+          "alt": "Physics section open with Evolution pace and Cooling rate highlighted beside the cluster.",
+          "links": [
+            {
+              "id": "burst",
+              "label": "Trigger one outburst"
+            },
+            {
+              "id": "solver",
+              "label": "Choose the timestep"
+            },
+            {
+              "id": "cluster",
+              "label": "Set up a cluster"
+            }
+          ]
+        },
+        {
+          "id": "burst",
+          "title": "Trigger one outburst",
+          "requires": "Choose the live **Cluster flow** model and let the run advance. Expand **Physics → Outbursts**. The [Temperature field](#field) makes local heating easier to follow.",
+          "actions": [
+            "Clear **Automatic outbursts** to control when the next event happens.",
+            "Check that **Outflow strength** is above zero. Leave the other outburst settings at their defaults for this trial.",
+            "Click **Trigger outburst** once and watch the gas around the two central halos over the next few simulation steps. Tick **Automatic outbursts** again to restore repeated events."
+          ],
+          "check": "The model injects heat and motion near the centers. How clearly a change shows up depends on the display field, time elapsed, and outburst strength.",
+          "image": "burst.webp",
+          "alt": "Outbursts controls with Automatic outbursts, Outflow strength, and Trigger outburst marked.",
+          "links": [
+            {
+              "id": "field",
+              "label": "Compare the gas fields"
+            },
+            {
+              "id": "physics",
+              "label": "Adjust live physics"
+            },
+            {
+              "id": "cache-settings",
+              "label": "Set up a recording"
+            }
+          ]
+        },
+        {
+          "id": "solver",
+          "title": "Choose how finely the solver steps",
+          "requires": "In a live run, expand **Physics → Timestep & solver**. Collapse **Outbursts** or scroll the panel to reach it.",
+          "actions": [
+            "Open **Preset** and choose **Fine timesteps** to ask for smaller advances in simulated time. Read **Last step** below the controls while the run is advancing.",
+            "For manual control, drag **Maximum timestep** left. The preset changes to **Custom**. You can select **Balanced** from the preset menu to switch back to a preset."
+          ],
+          "check": "The preset and timestep readouts reflect the new settings. Shorter steps can take more computing time to cover the same span of simulated time.",
+          "image": "solver.webp",
+          "alt": "Timestep and solver controls with Preset and Maximum timestep highlighted.",
+          "links": [
+            {
+              "id": "physics",
+              "label": "Adjust live physics"
+            },
+            {
+              "id": "cluster",
+              "label": "Set up a cluster"
+            },
+            {
+              "id": "cache-settings",
+              "label": "Set up a recording"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Build a starting scene",
+      "steps": [
+        {
+          "id": "cluster",
+          "title": "Set the size and detail of a cluster",
+          "requires": "Use a live run. Collapse **View** and **Physics**, then expand **Scene**. If a recording is open, [return to live](#return) first.",
+          "actions": [
+            "Set **Model** to **Cluster flow**. This model draws gas along filaments into fixed dark halos.",
+            "Drag **Cluster cube size (code units)** a little to the right. Read the estimated number of clumps and cell size immediately below the slider.",
+            "Open **Gas grid** to choose the number of cells along each side. A larger grid resolves finer structures and uses more memory. Keep the existing grid for a first run, then [apply the scene](#apply)."
+          ],
+          "check": "The scene values update in the panel. As long as the change is pending, the gas in the viewport still belongs to the current run.",
+          "image": "cluster.webp",
+          "alt": "Scene settings with Cluster flow, Cluster cube size, and Gas grid numbered next to the current live volume.",
+          "links": [
+            {
+              "id": "apply",
+              "label": "Apply the scene settings"
+            },
+            {
+              "id": "cosmology",
+              "label": "Try the cosmological model"
+            },
+            {
+              "id": "solver",
+              "label": "Choose the timestep"
+            }
+          ]
+        },
+        {
+          "id": "cosmology",
+          "title": "Try a cube of the expanding universe",
+          "requires": "In live mode, collapse **View** and **Physics** and open **Scene**. You can [return to live](#return) from any recording.",
+          "actions": [
+            "Open **Model** and choose **Cosmological volume**. This model follows gas and dark matter as density variations grow in an expanding universe.",
+            "Inspect **Comoving cube size (Mpc)**. Keep the displayed size for a first run, or move the slider to choose the width of the simulated region. Leave the remaining cosmology settings at their defaults.",
+            "Scroll down within **Scene** and [apply the scene](#apply)."
+          ],
+          "check": "Cosmology settings appear, including the cell size and starting redshift. The cluster can remain in the picture until you apply and restart.",
+          "image": "cosmology.webp",
+          "alt": "Cosmological volume selected and Comoving cube size marked while the prior cluster is still displayed.",
+          "links": [
+            {
+              "id": "apply",
+              "label": "Apply the scene settings"
+            },
+            {
+              "id": "cosmic-clock",
+              "label": "Read the expansion clock"
+            },
+            {
+              "id": "cluster",
+              "label": "Set up a cluster"
+            }
+          ]
+        },
+        {
+          "id": "apply",
+          "title": "Apply your settings and start the new scene",
+          "requires": "You have changed the [cluster settings](#cluster) or selected [Cosmological volume](#cosmology). Applying starts that live model from its beginning.",
+          "actions": [
+            "Scroll to the bottom of **Scene** and click **Apply scene & restart** (marker 1).",
+            "Watch the amber **Scene changes pending** message (marker 2) disappear. Give the new grid time to appear. If **Resume** is showing at the top, click it to advance the new run."
+          ],
+          "check": "The pending message disappears. The live display uses the new scene. A cluster shows **Time** and **Box side** at the top. The expanding-universe model shows **Elapsed** and **z**.",
+          "image": "apply.webp",
+          "alt": "Apply scene and restart button and its amber pending-change message at the bottom of Scene.",
+          "links": [
+            {
+              "id": "cosmic-clock",
+              "label": "Read the expansion clock"
+            },
+            {
+              "id": "pause",
+              "label": "Pause the gas"
+            },
+            {
+              "id": "cache-settings",
+              "label": "Set up a recording"
+            }
+          ]
+        },
+        {
+          "id": "cosmic-clock",
+          "title": "Read time and redshift in cosmology mode",
+          "requires": "[Select Cosmological volume](#cosmology) and [apply the scene](#apply), then scroll the control panel to the top.",
+          "actions": [
+            "Find the marked two-line readout under the playback controls. **Elapsed** gives time since the starting redshift in billions of years (Gyr). **z** gives the redshift.",
+            "If **Resume** appears, click it and watch the numbers as the run advances. **a** is the scale factor, a measure of how far the model universe has expanded. **Box** gives the width in comoving megaparsecs."
+          ],
+          "check": "As elapsed time increases, the scale factor increases and redshift falls. The example starts at z = 9 with a scale factor of 0.100.",
+          "image": "cosmic-clock.webp",
+          "alt": "The time, redshift, comoving box width, and scale factor marked above a freshly initialized cosmological volume.",
+          "links": [
+            {
+              "id": "field",
+              "label": "Compare the gas fields"
+            },
+            {
+              "id": "cache-settings",
+              "label": "Set up a recording"
+            },
+            {
+              "id": "cluster",
+              "label": "Set up a cluster"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Record, replay, or export",
+      "steps": [
+        {
+          "id": "cache-settings",
+          "title": "Set up a short practice recording",
+          "requires": "In a live run, scroll to **Bake** and click its heading to expand it. A bake computes a run from its starting conditions and stores selected states as frames.",
+          "actions": [
+            "Drag **Evolution duration** left for a short trial. The cluster example uses about 0.35 in simulation units. In the cosmological model the label shows Gyr.",
+            "Drag **Cached frames** near the left end to save roughly 20 states. Set **Cached volume grid** and **Cached tracers** lower for a smaller file. You can use nearby values.",
+            "Read **Estimated cache** before choosing a file. More frames give you more moments to replay. A larger cached grid preserves more detail in each frame."
+          ],
+          "check": "The estimate updates as you change the settings. The example stores 20 frames at 32 cubed with 8,000 tracers for about 0.01 GB.",
+          "image": "cache-settings.webp",
+          "alt": "Evolution duration, Cached frames, and the estimated cache size numbered in the live Bake section.",
+          "links": [
+            {
+              "id": "cache-write",
+              "label": "Bake to a new file"
+            },
+            {
+              "id": "cache-open",
+              "label": "Open an existing recording"
+            }
+          ]
+        },
+        {
+          "id": "cache-write",
+          "title": "Bake the run to a .cflow file",
+          "requires": "Open **Bake** and [choose recording settings](#cache-settings). A bake uses the current Scene and Physics settings, including any pending scene changes.",
+          "actions": [
+            "Click **Bake from start...**. Choose a folder, enter a new filename such as **filaments.cflow**, and click **Save**.",
+            "Wait for the cached-frame count to finish. If you need to stop early, click **Cancel bake (keep frames)** to retain the frames already computed."
+          ],
+          "check": "After a completed bake, the cache opens for replay. Its filename and frame count appear in **Bake**, along with a **Cached frame** slider.",
+          "image": "cache-write.webp",
+          "alt": "The Bake from start button marked below the estimate for a 20-frame practice run.",
+          "links": [
+            {
+              "id": "scrub",
+              "label": "Scrub or play the frames"
+            },
+            {
+              "id": "movie",
+              "label": "Export a movie"
+            },
+            {
+              "id": "cache-open",
+              "label": "Open an existing recording"
+            }
+          ]
+        },
+        {
+          "id": "cache-open",
+          "title": "Open a recording you already have",
+          "requires": "You have a **.cflow** file from an earlier [bake](#cache-write). Open Cluster Flow and expand **Bake** in the left panel.",
+          "actions": [
+            "Click **Open cache...**. Navigate to the folder containing your recording, select the **.cflow** file, and click **Open**."
+          ],
+          "check": "The selected filename and number of cached frames appear. Use the replay controls to visit a frame or play the recording.",
+          "image": "cache-open.webp",
+          "alt": "The Open cache button marked in the Bake section of the live workspace.",
+          "links": [
+            {
+              "id": "scrub",
+              "label": "Scrub or play the frames"
+            },
+            {
+              "id": "movie",
+              "label": "Export a movie"
+            },
+            {
+              "id": "return",
+              "label": "Return to live physics"
+            }
+          ]
+        },
+        {
+          "id": "scrub",
+          "title": "Find a frame or play the recording",
+          "requires": "A recording is open under **Bake**. [Open an existing file](#cache-open) or [bake a run](#cache-write) to get here.",
+          "actions": [
+            "If the recording is playing, click **Pause replay** above the panel. Drag **Cached frame** (marker 1) to inspect a single saved state.",
+            "Click **Play replay** (marker 2) to advance through the frames. Use **Playback frames / second** in the Bake section to set the preview speed.",
+            "Tick **Loop replay** (marker 3) to play repeatedly. To return to the first frame and pause, click **To start** beside the playback button."
+          ],
+          "check": "The timeline moves through saved frames. You can still orbit the image and switch display fields while inspecting the same recording.",
+          "image": "scrub.webp",
+          "alt": "Recording named filaments.cflow with Cached frame, Play replay, and Loop replay numbered.",
+          "links": [
+            {
+              "id": "image",
+              "label": "Save a PNG"
+            },
+            {
+              "id": "movie",
+              "label": "Export a movie"
+            },
+            {
+              "id": "return",
+              "label": "Return to live physics"
+            }
+          ]
+        },
+        {
+          "id": "movie",
+          "title": "Turn a recording into an MP4",
+          "requires": "[Bake a run](#cache-write) or [open a .cflow file](#cache-open), then expand **Bake** and scroll to the bottom of its replay controls.",
+          "actions": [
+            "Choose **Movie resolution**, such as **1280 x 720**.",
+            "Set **Movie FPS**. Each cached frame becomes one video frame. For example, 20 frames at 10 FPS make a two-second video.",
+            "Click **Export MP4...**. Choose a filename with the **.mp4** extension and click **Save**. Wait for the export progress bar to finish before opening the file."
+          ],
+          "check": "The chosen folder contains a movie of the recording in your current view. Enabled camera rotation follows movie time during export. **Stop export (keep video)** finishes a shorter movie if you stop partway through.",
+          "image": "movie.webp",
+          "alt": "Movie resolution, Movie FPS, and Export MP4 marked in the recording’s Bake section.",
+          "links": [
+            {
+              "id": "scrub",
+              "label": "Scrub or play the frames"
+            },
+            {
+              "id": "rotate",
+              "label": "Set up a camera orbit"
+            },
+            {
+              "id": "return",
+              "label": "Return to live physics"
+            }
+          ]
+        },
+        {
+          "id": "return",
+          "title": "Leave replay and edit the simulation",
+          "requires": "A cache is open and any movie export has finished. Expand **Bake** and scroll below **Loop replay**.",
+          "actions": [
+            "Click **Return to live**. If you want the gas to advance, scroll to the top and click **Resume** if that button is showing.",
+            "Expand **Scene** to edit a new starting model, or **Physics** to change how the current live gas evolves."
+          ],
+          "check": "The cached timeline and movie controls disappear, and the live physics and scene controls are available again. Your saved .cflow file can be reopened later.",
+          "image": "return.webp",
+          "alt": "Return to live button outlined between the replay and movie controls.",
+          "links": [
+            {
+              "id": "cluster",
+              "label": "Set up a cluster"
+            },
+            {
+              "id": "physics",
+              "label": "Adjust live physics"
+            },
+            {
+              "id": "cache-open",
+              "label": "Open an existing recording"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

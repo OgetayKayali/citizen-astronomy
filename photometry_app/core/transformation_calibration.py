@@ -43,6 +43,9 @@ def inspect_calibration_images(paths: list[Path], filter_system: str,
         if is_raw_camera_image_path(path):
             raise ValueError(f"{path.name}: use separately extracted, linear blue and green images; camera RAW is not supported here.")
         header, _, _ = read_header_and_shape(path)
+        from photometry_app.core.osc import has_cfa
+        if has_cfa(header):
+            raise ValueError(f"{path.name}: use Prepare OSC / Bayer to create TB/TG channels first.")
         if int(header.get("NAXIS", 2)) != 2:
             raise ValueError(f"{path.name}: use separate 2D channel images, rather than a combined color image.")
         token = str(header.get("FILTER") or "").strip()
@@ -379,7 +382,7 @@ def limit_wide_calibration_fields(solved, settings, progress=lambda message: Non
         output, field = _crop_frame_around_field(scan, _solve, target, settings)
         source_paths[output.resolve()] = scan.path.resolve()
         cropped.append(_solved_copy(output, scan, settings, field))
-    if _frames_share_orientation(cropped, target):
+    if any(read_header_and_shape(scan.path)[0].get("OSCCHAN") for scan, _ in cropped) or _frames_share_orientation(cropped, target):
         return cropped, f"Cropped to one degree around {target.name}.", source_paths
     progress(f"Aligning {target.name} frames onto one solution…")
     aligned = _align_frames(cropped, source_paths, settings, progress, check_cancel, target)
@@ -543,7 +546,15 @@ def _crop_frame_around_field(scan: FileScanResult, solve: PlateSolveResult, targ
             f"Citizen Astronomy cropped this frame to one degree around {target.name}.",
             target.name,
         )
-        fits.PrimaryHDU(data=cropped, header=header).writeto(output, overwrite=True)
+        extensions = []
+        if source_header.get("OSCCHAN"):
+            from photometry_app.core.osc import read_plane_extensions
+            variance, saturation = read_plane_extensions(scan.path, image.shape)
+            if variance is None or saturation is None:
+                raise ValueError("Prepared OSC frame is missing uncertainty/saturation extensions.")
+            extensions = [fits.ImageHDU(variance[y0:y1, x0:x1], name="VARIANCE"),
+                          fits.ImageHDU(saturation[y0:y1, x0:x1], name="SATFRAC")]
+        fits.HDUList([fits.PrimaryHDU(data=cropped, header=header), *extensions]).writeto(output, overwrite=True)
         field = _field_from_file(output)
         if field is not None and field.radius_deg <= _MAX_CALIBRATION_RADIUS_DEG:
             return output, field

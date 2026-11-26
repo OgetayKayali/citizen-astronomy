@@ -517,7 +517,7 @@ class ExportersTest(unittest.TestCase):
             self.assertEqual(accepted_json["rows"][0]["reported_value"], 11.5)
             self.assertEqual(accepted_json["rows"][0]["reported_uncertainty"], 0.012)
             self.assertFalse(accepted_json["rows"][0]["transformed_requested"])
-            self.assertEqual(accepted_json["rows"][0]["aavso_mtype_candidate"], "STD")
+            self.assertEqual(accepted_json["rows"][0]["aavso_mtype_candidate"], "DIF")
             self.assertNotIn("SNR 2.5 is below the analysis threshold.", accepted_csv)
             self.assertIn("SNR 2.5 is below the analysis threshold.", rejected_csv)
             self.assertEqual(rejected_json["schema"], "science-observation-v3")
@@ -668,11 +668,11 @@ class ExportersTest(unittest.TestCase):
             self.assertIn("#SOFTWARE=Citizen Photometry", aavso_text)
             self.assertIn("#DELIM=,", aavso_text)
             self.assertIn("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES", aavso_text)
-            self.assertIn(",11.5,0.012,R,NO,STD,Comp 1,-9.7,Check 1,-9.4,1.234,na,X12345ABC,Untransformed standard export Zero-point sources: 1|VMAGINS=-9.2|CMAGINS=-9.7|CREFMAG=11.0|KMAGINS=-9.4|KREFMAG=11.3", aavso_text)
+            self.assertIn(",-0.2,0.012,R,NO,DIF,Comp 1,-9.7,Check 1,-9.4,1.234,na,X12345ABC,Untransformed standard export|VMAGINS=-9.2|CMAGINS=-9.7|KMAGINS=-9.4", aavso_text)
             self.assertTrue(preflight["chart_id_present"])
-            self.assertEqual(preflight["standard_observation_count"], 1)
-            self.assertEqual(preflight["differential_observation_count"], 0)
-            self.assertEqual(preflight["warning_count"], 0)
+            self.assertEqual(preflight["standard_observation_count"], 0)
+            self.assertEqual(preflight["differential_observation_count"], 1)
+            self.assertTrue(any("MTYPE=DIF" in warning for warning in preflight["warnings"]))
 
     def test_export_processing_report_prefers_science_export_filter_setting(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -698,6 +698,10 @@ class ExportersTest(unittest.TestCase):
                         file_path=measurement_path,
                         observation_time=datetime(2026, 3, 16, 1, 0, 0),
                         filter_name="L",
+                        standard_magnitude=12.1, standard_magnitude_error=0.012,
+                        standard_catalog_source="vsp", standard_catalog_band="V",
+                        standard_zero_point_source_count=1,
+                        comparison_source_names=["113"],
                         ra_deg=10.0,
                         dec_deg=20.0,
                         x=100.0,
@@ -727,7 +731,7 @@ class ExportersTest(unittest.TestCase):
                 if line and not line.startswith("#")
             ][0]
 
-            self.assertIn(",CV,NO,DIF,", export_line)
+            self.assertIn(",CV,NO,STD,", export_line)
             self.assertIn("Source filter: L; exported as CV per settings", export_line)
 
     def test_legacy_transformed_checkbox_does_not_certify_untransformed_data(self) -> None:
@@ -765,6 +769,9 @@ class ExportersTest(unittest.TestCase):
                         differential_magnitude_error=0.012,
                         is_variable=True,
                         is_reference=False,
+                        standard_magnitude=11.5, standard_magnitude_error=0.012,
+                        standard_catalog_source="vsp", standard_catalog_band="R",
+                        standard_zero_point_magnitude=20.7, standard_zero_point_source_count=1,
                         comparison_source_ids=["2"],
                         comparison_source_names=["Comp 1"],
                         flags=[],
@@ -784,6 +791,7 @@ class ExportersTest(unittest.TestCase):
                         flux=7000.0,
                         flux_error=10.0,
                         instrumental_magnitude=-9.7,
+                        band_magnitudes={"R": {"mag": 11.0, "source": "vsp"}},
                         differential_magnitude=None,
                         is_variable=False,
                         is_reference=True,
